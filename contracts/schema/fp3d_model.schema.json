@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fp3d_model.schema.json",
+  "title": "fp3d_model registry file",
+  "type": "array",
+  "maxItems": 100000,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["type", "id", "kind"],
+    "properties": {
+      "type": { "const": "fp3d_model" },
+      "id": {
+        "oneOf": [
+          { "$ref": "#/$defs/cdda_id" },
+          { "type": "array", "items": { "$ref": "#/$defs/cdda_id" }, "minItems": 1, "maxItems": 256 }
+        ]
+      },
+      "kind": { "enum": ["terrain", "furniture", "trap", "field", "item", "monster", "vehicle_part"] },
+      "model": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.glb$", "maxLength": 200, "not": { "pattern": "\\.\\." } },
+      "mesher": { "enum": ["floor", "wall", "window", "door", "fence", "stairs_up", "stairs_down", "ramp", "water", "roof", "open_air"] },
+      "material": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
+      "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+      "offset": { "type": "array", "items": { "type": "number", "minimum": -10, "maximum": 10 }, "minItems": 3, "maxItems": 3 },
+      "random_yaw": { "type": "boolean" },
+      "states": { "type": "object", "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/cdda_id" } },
+      "anim_set": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
+      "//": { "type": "string" }
+    },
+    "anyOf": [ { "required": ["model"] }, { "required": ["mesher"] } ]
+  },
+  "$defs": {
+    "cdda_id": { "type": "string", "pattern": "^[A-Za-z0-9_:\\-]+$", "maxLength": 128 }
+  }
+}

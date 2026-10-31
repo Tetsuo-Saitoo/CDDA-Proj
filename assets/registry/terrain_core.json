@@ -1,0 +1,14 @@
+[
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "floor", "material": "soil",
+    "id": ["t_soil", "t_dirt", "t_region_groundcover", "t_region_groundcover_urban"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "floor", "material": "grass", "id": ["t_grass"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "floor", "material": "asphalt", "id": ["t_pavement"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "floor", "material": "concrete",
+    "id": ["t_sidewalk", "t_concrete", "t_thconc_floor"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "floor", "material": "wood_floor", "id": ["t_floor"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "wall", "material": "concrete", "id": ["t_concrete_wall"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "wall", "material": "plaster_white", "id": ["t_wall", "t_wall_w"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "wall", "material": "brick", "id": ["t_brick_wall"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "roof", "material": "roof_tar", "id": ["t_flat_roof"] },
+  { "type": "fp3d_model", "kind": "terrain", "mesher": "open_air", "id": ["t_open_air"] }
+]

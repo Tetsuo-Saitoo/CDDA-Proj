@@ -1,0 +1,12 @@
+# CDDA fork is its own git repo for now (becomes a submodule once a GitHub fork exists)
+/cdda/
+# Build output, caches, local game installs and saves
+out/
+build/
+.godot/
+*.pdb
+*.obj
+/game/
+save/
+__pycache__/
+/tools/out/
