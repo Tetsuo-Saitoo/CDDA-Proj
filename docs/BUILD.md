@@ -23,5 +23,6 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    - `src/RelWithDebInfo/cataclysm-tiles.exe`: the normal game
    - `tests/RelWithDebInfo/cata_test-tiles.exe`: CDDA's unit tests (run from `cdda/`)
    - `src/fp3d/RelWithDebInfo/fp3d-headless.exe`: B1 smoke test (run from `cdda/`, writes the bubble JSON)
+   - `src/fp3d/RelWithDebInfo/fp3d-sim-test.exe`: B2 test, plays open door / pick up / eat through the bridge (run from `cdda/`, ~1 min, exit 0 = pass)
 5. **Art coverage** (no build needed):
    `python -I tools/coverage/coverage.py --data cdda/data/json` → `tools/out/coverage_*.csv`
