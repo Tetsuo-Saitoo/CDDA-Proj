@@ -9,7 +9,8 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [x] A1 MSVC build works (game, cata_test-tiles, fp3d-headless). Test baseline (seed 1): 1144/1155 pass, see Key facts
 - [x] B1 `fp3d-headless` boots CDDA windowless (~25 s), finds a town, writes `contracts/mock/town_bubble.json`
 - [x] B2 slice 1: game loop on a worker thread behind `fp3d::bridge`; `fp3d-sim-test` passes open door / pick up / eat
-- [ ] B2 slice 2: dedicated `direction`/`target` request kinds; hook `look_around`/aiming; multi-step activities; save/quit path; real-time clock hooks (D3)
+- [x] B2 slice 2: `direction`/`target` requests (look_around, target_ui), activities, save/quit/reload, D3 clock in the bridge (real time, timescale, pause, auto-pause, interrupt); `fp3d-sim-test` 8/8
+- [ ] B2 leftovers: peeking's blind throw/fire (`peek_action`); `fp3d::interrupt()` and auto-travel (`has_destination`) untested; game-over/death path to the client
 - [ ] B2 tech debt: CDDA's SDL window is created hidden because game code calls `tilecontext` directly (~70 sites). Replace with a headless tile context later
 - [ ] B3 Snapshot API (mock format in town_bubble.json is a first cut: ter/furn index grids per z)
 - [ ] B6 Id tables from C++ (until then tools/coverage reads JSON directly)
@@ -39,8 +40,11 @@ Later waves: see PLAN.md "Agent waves".
 - 16 terrain registry entries already cover ~62 % of spawn-weighted terrain (73 % with looks_like).
 - Test baseline, unmodified game code, seed 1: 11 failures. 5 are translation tests (LOCALIZE off). `limit_mod_size_bonus` fails even alone (a creature already stands on the spawn tile). It leaves a creature behind, which makes 4 `monsters_spawn_*` tests and `mission_goal_condition_test` fail in the full run; they pass alone.
 - Delete `cdda/test_user_dir/` before each test run: tests write past games there, and a second run then fails `achievements_tracker` and `default_overmap_generation_has_non_mandatory_specials_at_origin`. After B2 with a clean dir: same 11 failures as baseline.
-- Bridge facts: the main loop polls on a 125 ms timer even with animations off (hooked in `get_player_input`). `choose_direction` blinks on a timer (hooked). `init_interface()` itself does SDL init, then options init+load (boot mirrors main). `game::start_game` is private: use `fp3d_game_access` (one friend line in game.h).
+- Bridge facts: the main loop polls on a 125 ms timer even with animations off (hooked in `get_player_input`). `choose_direction`, `look_around` and `target_ui::run` (EDGE_SCROLL timeout) are replaced by one request each. `init_interface()` itself does SDL init, then options init+load (boot mirrors main). `game::start_game` is private: use `fp3d_game_access` (one friend line in game.h).
 - Never use CDDA's `init_crash_handlers()` in automated runs: it shows an SDL message box and hangs. On MSVC, signal handlers are per thread; fp3d-sim-test uses a vectored handler that prints the stack and exits 3.
 - A CMake re-configure can fail on vcpkg's SDL2_ttf (`Freetype::Freetype` not found); `cmake --preset fp3d-msvc --fresh` fixes it.
-- Agent tooling: in Bash heredocs, `\n` inside Python strings reached C++ files as real newlines. Use the Edit tool for C string escapes.
+- Agent tooling: in Bash heredocs, `\n` inside Python strings reached C++ files as real newlines. Use the Edit tool for C string escapes. Python's `read_text`/`write_text` default to cp1252 here and `write_text` empties the file before failing on non-cp1252 text: use `read_bytes().decode("utf-8")` / `write_bytes`. It also turns LF into CRLF (harmless: `core.autocrlf` is on).
+- `input_context::get_registered_actions()` / `is_action_registered()` exist only in Android builds.
+- Real-time clock lives in `fp3d/bridge.cpp` (`pace_turn` in `do_turn` before the turn advances; the main-loop request is `timed`). Auto-pause hooks safe mode's STOP in `game::mon_info_update` (reason "hostile spotted").
+- Random starts can put an NPC next to you or start in an unlit room: `fp3d-sim-test` kills NPCs and gives the avatar `DEBUG_NIGHTVISION`.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.
