@@ -1,7 +1,7 @@
 # WORKLOG
 
+- 2026-10-31 — Committed B2 slice 1 (cdda fp3d 14007d3, root 79e92a5).
 - 2026-10-30 — B2 regression: full build OK, smoke test OK, unit tests same as baseline once `test_user_dir` is cleaned (stale dir caused 2 extra failures).
-- 2026-10-31 — Committed B2 slice 1 (cdda fp3d 14007d3; root docs in the commit after it).
 - 2026-10-30 — B2 slice 1: `cdda/src/fp3d/bridge.*` + hooks in 9 CDDA files (input_context, uilist, popup, string_input_popup, inventory_ui, sdltiles, ui_manager, handle_action, action) + friend in game.h; `fp3d-sim-test` 3/3 goals.
 - 2026-10-30 — Committed wave 1 (root 40c012b, cdda fp3d 8ef7597); repo-local git identity set.
 - 2026-10-30 — cata_test-tiles baseline (seed 1, ~33 min): 1144/1155 pass; failures explained in TASKS.md Key facts.
