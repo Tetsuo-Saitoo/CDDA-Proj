@@ -2,7 +2,7 @@
 /cdda/
 # Build output, caches, local game installs and saves
 out/
-build/
+/build/
 .godot/
 *.pdb
 *.obj

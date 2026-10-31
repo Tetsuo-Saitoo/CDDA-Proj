@@ -3,7 +3,7 @@
 ## State
 Wave 1 in progress. Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
-Project root is a git repo (`main`); nothing committed yet, and the `fp3d` branch in cdda/ has uncommitted changes. vcpkg lives at `D:\vcpkg`.
+Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Both committed locally, no GitHub remote yet. vcpkg lives at `D:\vcpkg`.
 
 ## Open tasks
 - [x] A1 MSVC build works (game, cata_test-tiles, fp3d-headless). Test baseline (seed 1): 1144/1155 pass, see Key facts
