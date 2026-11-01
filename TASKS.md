@@ -13,6 +13,8 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] B2 leftovers: peeking's blind throw/fire (`peek_action`); `fp3d::interrupt()` and auto-travel (`has_destination`) untested; game-over/death path to the client
 - [ ] B2 tech debt: CDDA's SDL window is created hidden because game code calls `tilecontext` directly (~70 sites). Replace with a headless tile context later
 - [x] B3 Snapshot API (`fp3d/snapshot.*`, `contracts/snapshot.md`); `fp3d-snapshot-test` passes
+- [x] B4 Event bus (`fp3d/events.*`, `contracts/events.md`): sound, message, attack, damage, projectile, explosion, death, anim, turn_end; `fp3d-events-test` passes
+- [ ] B4 leftovers: `ui_sound` and `sfx::` sound ids (stubs while SOUND is off), melee technique, bullet ammo itype, spell area effects
 - [ ] B5 Threading: snapshot handoff exists (`publish_snapshot`/`latest_snapshot`, mutex); left: action queue, TSan on Linux CI
 - [ ] B6 Id tables from C++: pre-fill the snapshot's session tables (itype, mtype, …) and send them whole (until then tools/coverage reads JSON directly)
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
@@ -49,4 +51,6 @@ Later waves: see PLAN.md "Agent waves".
 - Real-time clock lives in `fp3d/bridge.cpp` (`pace_turn` in `do_turn` before the turn advances; the main-loop request is `timed`). Auto-pause hooks safe mode's STOP in `game::mon_info_update` (reason "hostile spotted").
 - Random starts can put an NPC next to you or start in an unlit room: `fp3d-sim-test` kills NPCs and gives the avatar `DEBUG_NIGHTVISION`.
 - Snapshot facts: a capture takes ~110 ms (RelWithDebInfo, full bubble); unchanged submaps are shared pointers. CDDA's vehicle caches are lazy (insides/fake parts refresh on `actualize`, e.g. a map shift), so vehicle roof flags can change on a shift: a real revision bump, not a bug. Fresh loads need `rebuild_vehicle_level_caches` + `build_map_cache` (boot.cpp does it).
+- Event facts: hooks cost one atomic load while events are disabled (CDDA's unit tests never enable them). Sounds are taken where CDDA works out what the player hears (`process_sound_markers`), not in `sounds::sound`. `fp3d-sim-test` sees ~350 turn_end events over its 8 goals: a client must drain often or lose them first.
+- Agent tooling: `for( x : make_shared_thing()->member )` dangles (the temporary shared_ptr dies before the loop): keep the snapshot in a variable.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.

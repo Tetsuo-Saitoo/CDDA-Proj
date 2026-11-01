@@ -86,8 +86,10 @@ struct environment_view {
 ## Ids
 
 - `ter`, `furn`, `trap`, `field`: CDDA's own int ids (index 0 = null), stable for the session.
-- `itype`, `mtype`, `vpart`, `weather`, `body_part`, `move_mode`: session tables, index 0 = none, handed out on
-  first use and never changed (`fp3d::intern_id`, `id_names`). Block B6 will pre-fill them and send full tables.
+- `itype`, `mtype`, `vpart`, `weather`, `body_part`, `move_mode` (and, for events, `damage_type`, `activity`,
+  `sound`, `explosion`): session tables, index 0 = none, handed out on first use and never changed
+  (`fp3d::intern_id`, `id_names`). Block B6 will pre-fill them and send full tables.
+- `seq` and creature uids keep counting across `reset_snapshots` (a reload), so they are never reused in a session.
 
 ## Not yet in the snapshot
 
