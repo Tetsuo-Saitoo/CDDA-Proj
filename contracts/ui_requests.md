@@ -52,10 +52,24 @@ code calls its tile renderer directly).
   client resumes.
 - **Interrupt**: `fp3d::interrupt()` stops the current activity (CDDA confirms with a popup first).
 
+### Action queue (block B5: `fp3d::queue_action`, `clear_actions`, `queued_actions`)
+
+The client doesn't have to catch each `timed` request: it can queue main-loop actions (names as in a timed
+request's `actions`) at any time, up to 32 (`queue_action` returns false when full). The sim takes one per timed
+request before waiting, under the lock that posts the request, so the client only ever sees a timed request when
+the queue is empty. Nothing is taken while paused. An action that isn't valid there is dropped with a `message`
+event ("Can't do that here: …"). Auto-pause clears the queue. Menus and other untimed requests are still answered
+with `answer()`. Asking again after a bad answer keeps the request `timed` (fixed in B5: it used to lose the flag).
+
+Threads: the sim runs on its own thread; the client polls `wait_request( 0 )`, `latest_snapshot()` and
+`drain_events()` from its frame loop and never blocks. All of them are mutex-guarded handoffs.
+
 Verified by `fp3d-sim-test`: a real `start_game()` character opens a door (`direction`), picks up an apple
 (`item_multi`), eats it (`item_select` + `popup`), looks (`target`/look), throws a rock at a square
 (`target`/throw + FIRE), waits 5 minutes (`menu`, 300 turns of activity), runs 3 real-time turns at 4×, is
-auto-paused by a zombie and resumed, then saves, quits and reloads with the world intact.
+auto-paused by a zombie and resumed, then saves, quits and reloads with the world intact. Then it queues a bad
+action, `safemode` and three `pause`s (all run, 3 turns pass, no answers), checks the queue waits while paused and
+refuses a 33rd action.
 
 Rules
 - One outstanding request at a time per sim thread; requests carry an `id`; answers with a wrong id are ignored.

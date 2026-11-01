@@ -16,5 +16,8 @@ action is rejected with a `message` event, never applied partly.
 | `time` | pause \| resume \| timescale (0.25–16) \| wait N turns | real-time clock (block D3) |
 | `answer` | request id + payload | reply to a `ui_request` |
 
+Implemented so far: `raw_action` through the action queue (`fp3d::queue_action`, see ui_requests.md) or as the
+answer to a timed request; `time` through the bridge clock; `answer`. The others come with blocks D1, E1 and E2.
+
 Item location handles are opaque tokens issued in snapshots/ui_requests and expire after N turns, so the client
 can never point at memory or items it was not shown.
