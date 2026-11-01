@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-10-31 — Committed C1 + C2 on branch `claude/zen-wiles-fbfef9` (same commit as this line).
+- 2026-10-31 — C1 + C2: Godot 4.7.2 client in `client/` (coords, validated snapshot loader, terrain catalog/mesher, cutaway + roof toggle, fly camera); headless tests all pass; registry: `t_soil` moved from floor to wall.
 - 2026-10-31 — Committed B3 (cdda fp3d 8fbeffb; root docs in the same commit as this line).
 - 2026-10-31 — B3 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B3: `cdda/src/fp3d/snapshot.*` (all 2541 submaps as shared immutable views, two revisions, creatures/vehicles/player/env, JSON writer), `fp3d-snapshot-test` all pass, sim test publishes snapshots; mock is now `contracts/mock/snapshot_town.json` (town_bubble.json removed).
