@@ -1,5 +1,8 @@
 # WORKLOG
 
+- 2026-10-31 — Committed B3 (cdda fp3d 8fbeffb; root docs in the same commit as this line).
+- 2026-10-31 — B3 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
+- 2026-10-31 — B3: `cdda/src/fp3d/snapshot.*` (all 2541 submaps as shared immutable views, two revisions, creatures/vehicles/player/env, JSON writer), `fp3d-snapshot-test` all pass, sim test publishes snapshots; mock is now `contracts/mock/snapshot_town.json` (town_bubble.json removed).
 - 2026-10-31 — Committed B2 slice 2 (cdda fp3d 0ac63c8; root docs in the same commit as this line).
 - 2026-10-31 — B2 slice 2 regression: full build OK, smoke test OK, unit tests 1144/1155 (same 11 failures and 17 assertions as baseline).
 - 2026-10-31 — B2 slice 2: `direction`/`target` requests (choose_direction, look_around, target_ui), bridge clock (real time 1 s/timescale, pause, auto-pause on "hostile spotted", interrupt), save/quit/reload; hooks in game.cpp, ranged.cpp, do_turn.cpp; `fp3d-sim-test` 8/8.

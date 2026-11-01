@@ -7,13 +7,14 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 
 ## Open tasks
 - [x] A1 MSVC build works (game, cata_test-tiles, fp3d-headless). Test baseline (seed 1): 1144/1155 pass, see Key facts
-- [x] B1 `fp3d-headless` boots CDDA windowless (~25 s), finds a town, writes `contracts/mock/town_bubble.json`
+- [x] B1 `fp3d-headless` boots CDDA windowless (~25 s), finds a town, writes a snapshot JSON (`contracts/mock/snapshot_town.json`)
 - [x] B2 slice 1: game loop on a worker thread behind `fp3d::bridge`; `fp3d-sim-test` passes open door / pick up / eat
 - [x] B2 slice 2: `direction`/`target` requests (look_around, target_ui), activities, save/quit/reload, D3 clock in the bridge (real time, timescale, pause, auto-pause, interrupt); `fp3d-sim-test` 8/8
 - [ ] B2 leftovers: peeking's blind throw/fire (`peek_action`); `fp3d::interrupt()` and auto-travel (`has_destination`) untested; game-over/death path to the client
 - [ ] B2 tech debt: CDDA's SDL window is created hidden because game code calls `tilecontext` directly (~70 sites). Replace with a headless tile context later
-- [ ] B3 Snapshot API (mock format in town_bubble.json is a first cut: ter/furn index grids per z)
-- [ ] B6 Id tables from C++ (until then tools/coverage reads JSON directly)
+- [x] B3 Snapshot API (`fp3d/snapshot.*`, `contracts/snapshot.md`); `fp3d-snapshot-test` passes
+- [ ] B5 Threading: snapshot handoff exists (`publish_snapshot`/`latest_snapshot`, mutex); left: action queue, TSan on Linux CI
+- [ ] B6 Id tables from C++: pre-fill the snapshot's session tables (itype, mtype, …) and send them whole (until then tools/coverage reads JSON directly)
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
@@ -47,4 +48,5 @@ Later waves: see PLAN.md "Agent waves".
 - `input_context::get_registered_actions()` / `is_action_registered()` exist only in Android builds.
 - Real-time clock lives in `fp3d/bridge.cpp` (`pace_turn` in `do_turn` before the turn advances; the main-loop request is `timed`). Auto-pause hooks safe mode's STOP in `game::mon_info_update` (reason "hostile spotted").
 - Random starts can put an NPC next to you or start in an unlit room: `fp3d-sim-test` kills NPCs and gives the avatar `DEBUG_NIGHTVISION`.
+- Snapshot facts: a capture takes ~110 ms (RelWithDebInfo, full bubble); unchanged submaps are shared pointers. CDDA's vehicle caches are lazy (insides/fake parts refresh on `actualize`, e.g. a map shift), so vehicle roof flags can change on a shift: a real revision bump, not a bug. Fresh loads need `rebuild_vehicle_level_caches` + `build_map_cache` (boot.cpp does it).
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.
