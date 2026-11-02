@@ -1,8 +1,11 @@
 # WORKLOG
 
+- 2026-11-01 — Merged C1 + C2 (branch `claude/zen-wiles-fbfef9`, 57c3aae) into main.
 - 2026-11-01 — Committed B5 (cdda fp3d 0388b94; root docs in the same commit as this line).
 - 2026-10-31 — B5 regression: full build OK, events and snapshot tests pass, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B5: action queue in `fp3d/bridge.*` (client queues main-loop actions any time; sim takes one per timed request, none while paused; bad ones dropped with a message event); fixed re-asks losing the `timed` flag (input_context); sim test queue checks pass.
+- 2026-10-31 — Committed C1 + C2 on branch `claude/zen-wiles-fbfef9` (same commit as this line).
+- 2026-10-31 — C1 + C2: Godot 4.7.2 client in `client/` (coords, validated snapshot loader, terrain catalog/mesher, cutaway + roof toggle, fly camera); headless tests all pass; registry: `t_soil` moved from floor to wall.
 - 2026-10-31 — Committed B4 (cdda fp3d 66ea970; root docs in the same commit as this line).
 - 2026-10-31 — B4 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B4: `cdda/src/fp3d/events.*` event bus (9 kinds, perception filter, cap 4096 with drop order, UTF-8-safe text cut) + hooks in sounds, messages, melee, monster, creature, character, ballistics, explosion, do_turn; `fp3d-events-test` all pass; sim test drains events (ok, none dropped); snapshot seq/uids now survive `reset_snapshots`.

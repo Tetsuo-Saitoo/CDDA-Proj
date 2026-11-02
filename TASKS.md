@@ -1,7 +1,7 @@
 # TASKS
 
 ## State
-Wave 1 done; wave 2 started with B2. Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
+Wave 1 done; wave 2 started with B2. Client: C1 + C2 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
 Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Both committed locally, no GitHub remote yet. vcpkg lives at `D:\vcpkg`.
 
@@ -18,6 +18,9 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [x] B5 Threading: action queue in the bridge (`queue_action`, 32 max, taken at timed requests, held while paused, cleared by auto-pause); snapshot/event/request handoffs are mutex-guarded; checked by `fp3d-sim-test`
 - [ ] B5 leftover: ThreadSanitizer run on Linux CI (needs A3; MSVC has no TSan)
 - [ ] B6 Id tables from C++: pre-fill the snapshot's session tables (itype, mtype, …) and send them whole (until then tools/coverage reads JSON directly)
+- [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
+- [ ] C2 leftovers: use ter flags / `connect_groups` from B6 instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
+- [ ] C3 props (furniture, items); C7 z-level view beyond the PgUp/PgDn cutaway
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
@@ -33,6 +36,9 @@ Later waves: see PLAN.md "Agent waves".
 - Art coverage: `python -I tools/coverage/coverage.py --data cdda/data/json` (3 s).
 
 ## Key facts
+- Client: run `D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe --path client` (keys in the HUD; `-- --snapshot=<path>` loads another file). Tests: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --import` once, then `--headless --path client --script res://tests/run_tests.gd`. The 363-submap mock builds in ~0.45 s, 500 k vertices.
+- Client axes: 1 tile = 1 m, 1 z = 3 m, east = +X, south = +Z; Godot origin = bubble corner, rebased on shift. Walls fill their tile. Godot's JSON gives every number as a float.
+- CDDA's sun azimuth (`env.sun_az_deg`) is measured from the south, positive toward the west (calendar.cpp). `t_soil` is solid earth (a wall), not a floor.
 - CDDA: C++, JSON data (0.I: all items are type `ITEM`), licence CC-BY-SA 3.0, so this project must be too.
 - Reality bubble 11×11 submaps of 12×12 tiles (132×132), z -10..+10 (`map_scale_constants.h`); 100 moves = 1 turn = 1 s.
 - Game code is the OBJECT library `cataclysm-tiles-common`; tests link it with `SDL_MAIN_HANDLED` — so does fp3d-headless.
