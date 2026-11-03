@@ -1,5 +1,8 @@
 # WORKLOG
 
+- 2026-11-02 — Committed B6 (cdda fp3d 6526a25; root docs and mocks in the same commit as this line).
+- 2026-11-02 — B6 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
+- 2026-11-02 — B6: `cdda/src/fp3d/id_tables.*` (definitions for ter/furn/trap/field/itype/mtype/vpart, session tables pre-filled sorted, generation in snapshots); snapshot JSON no longer embeds session tables; mocks regenerated (`id_tables.json` 2.7 MB); `fp3d-ids-test` all pass, other fp3d tests and client tests pass. Art direction decided: low-poly-ish with environmental detail.
 - 2026-11-01 — Merged C1 + C2 (branch `claude/zen-wiles-fbfef9`, 57c3aae) into main.
 - 2026-11-01 — Committed B5 (cdda fp3d 0388b94; root docs in the same commit as this line).
 - 2026-10-31 — B5 regression: full build OK, events and snapshot tests pass, unit tests same 11 failures / 17 assertions as baseline.

@@ -17,15 +17,17 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] B4 leftovers: `ui_sound` and `sfx::` sound ids (stubs while SOUND is off), melee technique, bullet ammo itype, spell area effects
 - [x] B5 Threading: action queue in the bridge (`queue_action`, 32 max, taken at timed requests, held while paused, cleared by auto-pause); snapshot/event/request handoffs are mutex-guarded; checked by `fp3d-sim-test`
 - [ ] B5 leftover: ThreadSanitizer run on Linux CI (needs A3; MSVC has no TSan)
-- [ ] B6 Id tables from C++: pre-fill the snapshot's session tables (itype, mtype, …) and send them whole (until then tools/coverage reads JSON directly)
+- [x] B6 Id tables (`fp3d/id_tables.*`, `contracts/id_tables.md`): ter/furn/trap/field/itype/mtype/vpart definitions, session tables pre-filled sorted, `ids_generation` in snapshots, `contracts/mock/id_tables.json`; `fp3d-ids-test` passes
+- [ ] B6 follow-ups: client reads `id_tables.json` (C2 leftover below); `tools/coverage` could read it instead of parsing CDDA's JSON
 - [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
-- [ ] C2 leftovers: use ter flags / `connect_groups` from B6 instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
+- [ ] C2 leftovers: use ter flags / `connect_groups` from `contracts/mock/id_tables.json` (B6 done) instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
 - [ ] C3 props (furniture, items); C7 z-level view beyond the PgUp/PgDn cutaway
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
 - [ ] H1 Write more registry entries (furniture, monsters) once models exist; H3 tileset placeholders
-- [ ] User: art direction (stylised low-poly vs realistic), real-time vs turn-based default
+- [x] User: art direction decided 2026-11-02: low-poly-ish, but with enough environmental detail (clutter, trim, props) that places read well. H blocks and the registry follow this
+- [ ] User: real-time vs turn-based default
 
 Later waves: see PLAN.md "Agent waves".
 
@@ -59,6 +61,7 @@ Later waves: see PLAN.md "Agent waves".
 - Random starts can put an NPC next to you or start in an unlit room: `fp3d-sim-test` kills NPCs and gives the avatar `DEBUG_NIGHTVISION`.
 - Snapshot facts: a capture takes ~110 ms (RelWithDebInfo, full bubble); unchanged submaps are shared pointers. CDDA's vehicle caches are lazy (insides/fake parts refresh on `actualize`, e.g. a map shift), so vehicle roof flags can change on a shift: a real revision bump, not a bug. Fresh loads need `rebuild_vehicle_level_caches` + `build_map_cache` (boot.cpp does it).
 - CDDA's safe mode refuses `pause` and moves while a hostile is in view (only a message, no turn passes): scripted tests send `safemode` first.
+- Id table facts: 1109 ter, 660 furn, 9913 items, 1155 monsters, 702 vehicle parts (0.I + dda). Wall symbols are CDDA line-drawing codes, exported as "". `trap::visibility` is private (not exported). Connect group names come from `fp3d_connect_group_names()` (FP3D addition in mapdata.cpp).
 - Event facts: hooks cost one atomic load while events are disabled (CDDA's unit tests never enable them). Sounds are taken where CDDA works out what the player hears (`process_sound_markers`), not in `sounds::sound`. `fp3d-sim-test` sees ~350 turn_end events over its 8 goals: a client must drain often or lose them first.
 - Agent tooling: `for( x : make_shared_thing()->member )` dangles (the temporary shared_ptr dies before the loop): keep the snapshot in a variable.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.

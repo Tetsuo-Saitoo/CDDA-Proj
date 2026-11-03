@@ -23,6 +23,7 @@ struct snapshot {
     uint32 contract_version;      // 0
     int64  turn;                  // game turns since the cataclysm, 1 turn = 1 s
     uint64 seq;                   // +1 per capture
+    uint32 ids_generation;        // the id tables (id_tables.md) its indices belong to
     ui_point bubble_origin;       // absolute submap at bubble (0,0); z = 0
     player_view player;
     std::vector<shared_ptr<const submap_view>> submaps;   // all 2541, z -10..10
@@ -87,8 +88,9 @@ struct environment_view {
 
 - `ter`, `furn`, `trap`, `field`: CDDA's own int ids (index 0 = null), stable for the session.
 - `itype`, `mtype`, `vpart`, `weather`, `body_part`, `move_mode` (and, for events, `damage_type`, `activity`,
-  `sound`, `explosion`): session tables, index 0 = none, handed out on first use and never changed
-  (`fp3d::intern_id`, `id_names`). Block B6 will pre-fill them and send full tables.
+  `sound`, `explosion`): session tables, index 0 = none (`fp3d::intern_id`, `id_names`). The id tables (block B6,
+  [id_tables.md](id_tables.md)) pre-fill them sorted and define every id; `ids_generation` in each snapshot names
+  the tables its indices belong to.
 - `seq` and creature uids keep counting across `reset_snapshots` (a reload), so they are never reused in a session.
 
 ## Not yet in the snapshot
@@ -100,9 +102,10 @@ temperature, map memory contents (the client keeps what it last saw on remembere
 
 `fp3d-headless <out.json> [z_below] [z_above]` writes a snapshot of a town with the same field names, submaps
 limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]`, fields as
-`[tile, type, intensity, age]`, vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus `ids`: the names
-of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`) and the session tables in full (`"itype": ["", ...]`).
-Mock: `mock/snapshot_town.json`.
+`[tile, type, intensity, age]`, vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
+`ids_generation` and `ids`: the names of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`). Session tables and
+all definitions are in the id tables JSON (4th argument). Mock: `mock/snapshot_town.json` with
+`mock/id_tables.json`.
 
 ## Done-when (B3)
 
