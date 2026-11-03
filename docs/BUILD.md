@@ -27,5 +27,18 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    - `src/fp3d/RelWithDebInfo/fp3d-snapshot-test.exe`: B3 test, checks snapshots against CDDA's submap buffer, sharing, revisions, uids and a map shift; run from `cdda/`, ~40 s, prints `all checks passed`
    - `src/fp3d/RelWithDebInfo/fp3d-ids-test.exe`: B6 test, checks the id tables against CDDA's data, stable indices, snapshot ids resolving, the JSON; run from `cdda/`, ~40 s, prints `all checks passed`
    - `src/fp3d/RelWithDebInfo/fp3d-events-test.exe`: B4 test, makes each kind of event happen next to the player and checks what the bus queues (and leaves out); run from `cdda/`, ~40 s, prints `all checks passed`
-5. **Art coverage** (no build needed):
+5. **Godot bridge** (GDExtension, API in `contracts/bridge_api.md`). Get godot-cpp once (MIT; it ships Godot 4.7's
+   API, so nothing else is needed). We use commit `e103d348` (2026-10-30):
+   ```bash
+   git clone --depth 1 https://github.com/godotengine/godot-cpp bridge/godot-cpp
+   ```
+   Re-configure (`& $cm --preset fp3d-msvc --fresh`): `cdda/src/fp3d/CMakeLists.txt` adds `bridge/` when
+   godot-cpp is there. Build target `fp3d-cdda` (first time ~10 min for godot-cpp); it copies
+   `fp3d_cdda.windows.x86_64.dll` (~40 MB, imports only Windows DLLs) to `client/bin/`. Close Godot first: it
+   locks the DLL.
+   - Live test, ~1 min: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --script res://tests/live_test.gd`
+     prints `live tests: all passed`. It plays in `%APPDATA%\Godot\app_userdata\CDDA-3D\cdda-test\`.
+   - Play: `Godot_v4.7.2-stable_win64.exe --path client -- --live` (new game each start, world `fp3d-live` under
+     `...\CDDA-3D\cdda\`; keys in the HUD).
+6. **Art coverage** (no build needed):
    `python -I tools/coverage/coverage.py --data cdda/data/json` → `tools/out/coverage_*.csv`

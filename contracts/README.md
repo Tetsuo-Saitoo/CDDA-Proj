@@ -11,6 +11,7 @@ minor version and breaking changes bump the major.
 | [id_tables.md](id_tables.md) | sim → client | What the ids mean: names, symbols, looks_like, flags, connect groups; once per world |
 | [actions.md](actions.md) | client → sim | What the player wants to do |
 | [ui_requests.md](ui_requests.md) | sim ⇄ client | Blocking prompts the sim asks and the client answers |
+| [bridge_api.md](bridge_api.md) | Godot ⇄ sim | The GDExtension class `CddaSim` that carries all of the above in-process |
 | [assets.md](assets.md) | data | `fp3d_model` registry and art fallback chain |
 | [ids.md](ids.md) | sim → client | Id tables (ter/furn/trap/field/item/monster/vpart) sent once per session |
 

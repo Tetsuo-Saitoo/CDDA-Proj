@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-03 — Committed M0 bridge (cdda fp3d c436f92; root bridge, client and docs in the same commit as this line).
+- 2026-11-03 — M0 bridge: GDExtension in `bridge/` (godot-cpp e103d348 in `bridge/godot-cpp`, not in git), built by the cdda build as target `fp3d-cdda` into `client/bin/`; class `CddaSim` (`contracts/bridge_api.md`) runs CDDA on its own thread; client `LiveSession` + `main.gd --live` (debug UI); `tests/live_test.gd` all pass in 35 s, client tests pass, `--live` headless smoke run meshes the live bubble (363 submaps, 0.55 s). Fixed: Godot hung on exit (CDDA's `atexit( SDL_Quit )` deadlocked in DllMain; now `fp3d::shutdown_world()` on the game thread; also fixes an exit crash of `fp3d-sim-test`), 108 debug prompts from `build_id_tables` colour lookups; CDDA's hidden window uses SDL's software renderer under the bridge. `boot.h` gains `init_paths`. `tools/debug/stacks.py` dumps thread stacks of a hung process.
 - 2026-11-02 — Committed B6 (cdda fp3d 6526a25; root docs and mocks in the same commit as this line).
 - 2026-11-02 — B6 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-11-02 — B6: `cdda/src/fp3d/id_tables.*` (definitions for ter/furn/trap/field/itype/mtype/vpart, session tables pre-filled sorted, generation in snapshots); snapshot JSON no longer embeds session tables; mocks regenerated (`id_tables.json` 2.7 MB); `fp3d-ids-test` all pass, other fp3d tests and client tests pass. Art direction decided: low-poly-ish with environmental detail.

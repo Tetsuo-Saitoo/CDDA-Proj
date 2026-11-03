@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "fp3d_cdda_init"
+compatibility_minimum = "4.7"
+reloadable = false
+
+[libraries]
+
+windows.x86_64 = "res://bin/fp3d_cdda.windows.x86_64.dll"

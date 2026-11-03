@@ -1,7 +1,7 @@
 # TASKS
 
 ## State
-Wave 1 done; wave 2 started with B2. Client: C1 + C2 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
+Wave 1 done; wave 2 started with B2. Client: C1 + C2 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). M0 bridge done: the client can run a live CDDA game in-process (`--live`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
 Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Both committed locally, no GitHub remote yet. vcpkg lives at `D:\vcpkg`.
 
@@ -20,6 +20,8 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [x] B6 Id tables (`fp3d/id_tables.*`, `contracts/id_tables.md`): ter/furn/trap/field/itype/mtype/vpart definitions, session tables pre-filled sorted, `ids_generation` in snapshots, `contracts/mock/id_tables.json`; `fp3d-ids-test` passes
 - [ ] B6 follow-ups: client reads `id_tables.json` (C2 leftover below); `tools/coverage` could read it instead of parsing CDDA's JSON
 - [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
+- [x] M0 bridge: GDExtension `bridge/` (godot-cpp in `bridge/godot-cpp`, not in git) → `client/bin/fp3d_cdda.windows.x86_64.dll`, class `CddaSim` (`contracts/bridge_api.md`); client `LiveSession` + `main.gd --live` (debug UI: camera-relative walking, numbered menu answers); `client/tests/live_test.gd` passes
+- [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format); one game per process (no restart after stop, no loading saves yet); the live UI is a debug stand-in for block E
 - [ ] C2 leftovers: use ter flags / `connect_groups` from `contracts/mock/id_tables.json` (B6 done) instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
 - [ ] C3 props (furniture, items); C7 z-level view beyond the PgUp/PgDn cutaway
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
@@ -64,4 +66,6 @@ Later waves: see PLAN.md "Agent waves".
 - Id table facts: 1109 ter, 660 furn, 9913 items, 1155 monsters, 702 vehicle parts (0.I + dda). Wall symbols are CDDA line-drawing codes, exported as "". `trap::visibility` is private (not exported). Connect group names come from `fp3d_connect_group_names()` (FP3D addition in mapdata.cpp).
 - Event facts: hooks cost one atomic load while events are disabled (CDDA's unit tests never enable them). Sounds are taken where CDDA works out what the player hears (`process_sound_markers`), not in `sounds::sound`. `fp3d-sim-test` sees ~350 turn_end events over its 8 goals: a client must drain often or lose them first.
 - Agent tooling: `for( x : make_shared_thing()->member )` dangles (the temporary shared_ptr dies before the loop): keep the snapshot in a variable.
+- Bridge facts: CDDA runs on its own 8 MB-stack thread in Godot's process; CDDA's hidden window uses SDL's software renderer whenever the bridge is active (no GPU device or driver threads for nothing). After a headless boot, call `fp3d::shutdown_world()` on the game thread before exit (the DLL and `fp3d-sim-test` do): CDDA's `atexit( SDL_Quit )` otherwise runs before its static tile caches free their textures (crash at exit), and in a DLL it runs inside DllMain and deadlocks on SDL's timer thread (Godot hung on exit). Stack dumps of a hung process (no debugger installed): `python -I tools/debug/stacks.py <pid>`. Boot ~30 s; `stop()` waits for boot to finish. Godot locks the DLL while running: close it before building. Snapshot JSON for 3 levels is ~0.9 MB.
+- Id tables: 108 items have colour `c_unset`; `color_manager::get_name` raises a debug message for those (a popup outside test mode), so the tables use their own colour map.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.
