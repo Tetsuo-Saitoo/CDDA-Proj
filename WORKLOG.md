@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-05 — Before going public: both repos' histories checked (only no-reply emails, no secrets or keys, no security-hole lists); added `README.md` and `LICENSE.md` (CC BY-SA 3.0); BUILD.md shows how to clone CDDA-3D-code.
+- 2026-11-05 — PLAN.md: L7 motion time (time speed follows player motion, gradual; flat screen too).
 - 2026-11-05 — PLAN.md: VR added as block L (L1 headset ghost walk after M1; L2-L6 hands, aim/melee, world-space UI, comfort, VR perf after M3), VR-ready rules for all agents, VR decision row (PC VR via OpenXR, always real-time), waves, risks 7-8, open decision on the headset; TASKS.md updated.
 - 2026-11-05 — First push to GitHub (private): CDDA-Proj `main`, CDDA-3D-code `fp3d` + `upstream`.
 - 2026-11-05 — Committed M1 save loading (cdda fp3d 6fc4137; root 77bdad6), C3 (64b99cb) and E3 (c7769c1) on their branches, merged both into main; merged tree: client + UI tests (285 checks), live test (save + load in a second run) and a headless `--live` run (451 furniture drawn from the live game) pass. Then rewrote both repos' history to the GitHub no-reply email (hashes in this log updated). Remotes `origin` set (private CDDA-Proj, CDDA-3D-code), not pushed.

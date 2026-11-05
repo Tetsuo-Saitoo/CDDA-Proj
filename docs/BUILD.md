@@ -7,8 +7,9 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    git clone https://github.com/microsoft/vcpkg.git D:/vcpkg
    D:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
    ```
-2. **Source.** `cdda/` holds CDDA **0.I-1** (from the release tarball). It is its own git repo: branch `upstream`
-   is pristine, branch `fp3d` carries our changes. Copy `tools/build/CMakeUserPresets.json` into `cdda/` (upstream
+2. **Source.** `cdda/` holds CDDA **0.I-1** (from the release tarball). It is its own git repo
+   (`git clone -b fp3d https://github.com/Tetsuo-Saitoo/CDDA-3D-code cdda` from the project root): branch
+   `upstream` is pristine, branch `fp3d` carries our changes. Copy `tools/build/CMakeUserPresets.json` into `cdda/` (upstream
    gitignores that file). It inherits CDDA's `windows-tiles-sounds-x64-msvc` preset, points `VCPKG_ROOT` at
    `D:/vcpkg`, and turns off translations and CDDA's own sound (vcpkg's SDL2_mixer needs libxmp).
 3. **Configure + build** (first run also builds SDL2 etc. through vcpkg, ~20 min):

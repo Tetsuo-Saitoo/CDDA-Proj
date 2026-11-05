@@ -34,7 +34,7 @@ Keep CDDA's C++ simulation as the authority and replace only the frontend.
 | Art fallback | model → `looks_like` chain → category generic → billboard from tileset sprite |
 | Saves | Vanilla-compatible; new fields optional |
 | Licence | CDDA is CC-BY-SA 3.0, so the project ships CC-BY-SA; assets must be CC0 / CC-BY / CC-BY-SA |
-| VR | Optional mode (block L): PC VR through Godot OpenXR (SteamVR, Quest via Link/Air Link, Index, WMR); no standalone Quest (CDDA is a Windows DLL). VR is **always real-time**: pause and slow-mo stay, the classic turn toggle is off |
+| VR | Optional mode (block L): PC VR through Godot OpenXR (SteamVR, Quest via Link/Air Link, Index, WMR); no standalone Quest (CDDA is a Windows DLL). VR is **always real-time**: pause and slow-mo stay, the classic turn toggle is off; optional motion time (L7) |
 
 ## Repo layout
 
@@ -215,7 +215,7 @@ Each line: **ID — task.** Done-when. *(depends on)*
   from data); load DLLs only from the app directory; no secrets in the repo.
 - **K6 — Release:** packaging, CC-BY-SA attribution, per-asset licences, changelog.
 
-### L. VR — 1 agent; L1 after M1, L2–L6 after M3
+### L. VR — 1 agent; L1 after M1, L2–L7 after M3
 PC VR only (Godot OpenXR). Always real-time (pause and slow-mo allowed, no turn mode). The sim stays the
 authority: VR changes how the player gives actions, never how CDDA resolves them.
 - **L1 — VR ghost walk.** OpenXR rig (`XROrigin3D`, `XRCamera3D`, two controllers) on the live world; teleport
@@ -232,6 +232,12 @@ authority: VR changes how the player gives actions, never how CDDA resolves them
   options (vignette, snap turn, teleport only), left-handed mode. *(E5)*
 - **L6 — VR performance.** 90 fps stereo: foveated rendering where the runtime offers it, culling and LOD,
   tighter frame budget than K3; no main-thread stalls. *(K3)*
+- **L7 — Motion time (option).** Time flows with how much the player moves: still ≈ stopped, slow movement =
+  slow time, normal movement = 1×. The client measures motion each frame (locomotion and hands count most, head
+  turning little), maps it through a tunable curve and eases the bridge timescale over a fraction of a second.
+  Needs the bridge's timescale floor lowered from 0.25 to ~0 and D4's creature smoothing (CDDA moves creatures
+  in 1 s steps). Open design point: whether swings and reloads spend time as they happen or take effect at
+  once. Also usable on a flat screen. Our own name for it, not another game's. *(D3, D4, L3)*
 
 **VR-ready rules for every agent, from now on** (cheap now, expensive to retrofit):
 - Gameplay input goes through E1's action map only; no hard-coded keys or mouse reads in game logic.
@@ -251,7 +257,7 @@ authority: VR changes how the player gives actions, never how CDDA resolves them
 | 2 | M0 done, mock snapshot exists | B2–B5 · C-world (C1–C3, C7) · E1 · G8 |
 | 3 | M1 done | C-actors (C4–C6) · E2–E3 · D1–D3 · G1 · L1 |
 | 4 | M2 done | D4–D7 · F · C5 · G2–G7 · H3–H6 · I |
-| 5 | M3–M4 done | J · C8–C10 · K in full · E4–E5 · L2–L6 |
+| 5 | M3–M4 done | J · C8–C10 · K in full · E4–E5 · L2–L7 |
 
 At most ~6 agents at once; one owner per directory; contract changes go through the B lead.
 
