@@ -6,6 +6,8 @@ extends Node3D
 ## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda):
 ## arrows / numpad move relative to the camera, KP5 or . waits, [ ] take stairs. CDDA's prompts show in
 ## RequestUI (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
+## --vr shows it in a PC VR headset (block L1, scripts/vr/); Godot itself must run with --xr-mode on (before
+## `--`). Options --vr-move= --vr-turn= --vr-snap= --vr-speed= --vr-vignette= (VrRig.settings_from_args).
 
 const HELP := "RMB look  WASD move  E/Q up/down  Shift fast  wheel speed  PgUp/PgDn level  R roofs  F5 reload  Home player"
 const LIVE_HELP := "RMB look  WASD fly  arrows/numpad walk  KP5/. wait  [ ] stairs  prompts: mouse or keys, Esc cancels  PgUp/PgDn level  R roofs  Home player"
@@ -29,6 +31,8 @@ var hud: Label
 var request_ui: RequestUI
 var player_marker: MeshInstance3D
 var live: LiveSession
+var vr: VrRig
+var vr_perf: VrPerf
 var snapshot_path := ""
 var status := ""
 var _args := {}
@@ -60,6 +64,8 @@ func _ready() -> void:
 		world.set_view_z_max(String(_args["view-z"]).to_int())
 	if _args.has("no-roofs"):
 		world.set_roofs_visible(false)
+	if _args.has("vr"):
+		_start_vr()
 	_frame_player()
 	if _args.has("camera"):
 		var c := String(_args["camera"]).split_floats(",")
@@ -114,13 +120,47 @@ func _show(snap: Snapshot) -> void:
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
 	player_marker.visible = true
 	player_marker.position = world.coords.ms_center_to_world(snap.player_pos) + Vector3(0, 0.85, 0)
+	if vr != null:
+		world.set_view_z_max(CddaCoords.Z_MAX)   # first person: every level, ceilings included
 
 
 func _frame_player() -> void:
 	if world.snapshot == null:
 		return
+	if vr != null:
+		vr.go_to_player(world.snapshot.player_pos)
+		return
 	var target := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	camera.look_from(target + Vector3(-20, 28, 30), target)
+
+
+## The headset view (block L1). OpenXR only starts when Godot runs with --xr-mode on.
+func _start_vr() -> void:
+	var xr := XRServer.find_interface("OpenXR")
+	if xr == null or not xr.is_initialized():
+		status = "VR: OpenXR isn't running. Start Godot with --xr-mode on, with the headset's runtime (SteamVR, Meta) on"
+		push_error(status)
+		return
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
+	get_viewport().use_xr = true
+	vr = VrRig.new(world, VrRig.settings_from_args(_args))
+	add_child(vr)
+	vr.camera.make_current()
+	camera.set_process_unhandled_input(false)
+	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
+	if xr.has_signal("session_stopping"):
+		xr.connect("session_stopping", get_tree().quit)
+	if xr.has_signal("pose_recentered"):
+		xr.connect("pose_recentered", func() -> void: XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true))
+	vr_perf = VrPerf.new(xr)
+	add_child(vr_perf)
+	if world.snapshot != null:
+		world.set_view_z_max(CddaCoords.Z_MAX)
+	print("VR on: %s" % vr.settings)
+
+
+func _view() -> Node3D:
+	return vr.camera if vr != null else camera
 
 
 func _start_live() -> void:
@@ -193,10 +233,10 @@ func _on_live_events(events: Array) -> void:
 
 
 func _octant(dir: Vector2) -> int:
-	var fwd := -camera.global_basis.z
+	var fwd := -_view().global_basis.z
 	fwd.y = 0.0
 	if fwd.length() < 0.01:
-		fwd = camera.global_basis.y   # looking straight down: up on screen is forward
+		fwd = _view().global_basis.y   # looking straight down: up on screen is forward
 		fwd.y = 0.0
 	fwd = fwd.normalized()
 	var v := Vector3(-fwd.z, 0.0, fwd.x) * dir.x + fwd * dir.y
@@ -288,11 +328,13 @@ func _setup_player_marker() -> void:
 
 
 func _process(_delta: float) -> void:
-	camera.set_process(not request_ui.wants_text_input())   # typing must not fly the camera
-	var tile := world.coords.world_to_ms(camera.position)
+	camera.set_process(vr == null and not request_ui.wants_text_input())   # typing must not fly the camera
+	var tile := world.coords.world_to_ms(_view().global_position)
 	var lines := PackedStringArray([status, "camera square %s  view z <= %d  roofs %s  speed %.0f  %d fps" % [
 			tile, world.view_z_max, "on" if world.roofs_visible else "off", camera.speed,
 			Engine.get_frames_per_second()], LIVE_HELP if live != null else HELP])
+	if vr != null:
+		lines.append("VR level %d  %s" % [vr.z, vr_perf.last_line])
 	lines.append_array(_log)
 	hud.text = "\n".join(lines)
 

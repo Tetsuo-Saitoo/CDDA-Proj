@@ -35,7 +35,9 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] H1 Write more registry entries (monsters; furniture models once they exist: 70 furniture ids have `placeholder` shapes); H3 tileset placeholders
 - [x] User: art direction decided 2026-11-02: low-poly-ish, but with enough environmental detail (clutter, trim, props) that places read well. H blocks and the registry follow this
 - [ ] User: real-time vs turn-based default (flat screen only; VR is always real-time, decided 2026-11-05)
-- [ ] L VR (PLAN.md block L, added 2026-11-05): L1 headset ghost walk after M1 (wave 3); L2-L7 hands, aim/melee, world-space UI, comfort, 90 fps, motion time (time flows with how much you move; needs timescale floor ~0 and D4 smoothing) after M3. PC VR via OpenXR only. User: which headset to test on
+- [x] L1 VR ghost walk (2026-11-05): `client/scripts/vr/` (`VrWalk` standable squares / slide / teleport arc / level search from the snapshot and id tables; `VrRig` XROrigin3D with head, placeholder hands, smooth move, snap/smooth turn, teleport, level up/down, back to player, tunnel vignette, blink; `VrPerf` frame-time log), `main.gd --vr` (needs Godot's `--xr-mode on`), `project.godot` XR shaders on; `tests/vr_tests.gd` (in run_tests) 34 checks; how to run in docs/BUILD.md step 6
+- [ ] L1 leftovers: not yet tried in a headset (tester: a friend of the user with VR gear; ask for `vr_perf.log`); controller bindings are Godot's defaults (B/A/Y may differ on WMR/Vive); level up/down works anywhere (ghost), not only on stairs; live snapshots only carry z-1..z+1, so going higher shows nothing; prompts only on the desktop window; snapshot parse still on the main thread (hitches when turns pass)
+- [ ] L2-L7 (PLAN.md block L): hands, aim/melee, world-space UI, comfort, 90 fps, motion time (time flows with how much you move; needs timescale floor ~0 and D4 smoothing) after M3. PC VR via OpenXR only
 
 Later waves: see PLAN.md "Agent waves".
 

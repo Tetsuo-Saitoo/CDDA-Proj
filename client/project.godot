@@ -18,3 +18,7 @@ window/size/viewport_height=900
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
+
+[xr]
+
+shaders/enabled=true

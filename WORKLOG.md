@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-05 — L1 VR ghost walk: `client/scripts/vr/` (VrWalk, VrRig, VrPerf), `main.gd --vr` (with Godot `--xr-mode on`), XR shaders on in project.godot; `tests/vr_tests.gd` 34 checks, client tests all pass; `--vr` without a headset falls back to the normal view; arc, target ring and vignette checked in screenshots through the rig camera; not yet tried in a headset. BUILD.md step 6 (VR), README status.
 - 2026-11-05 — Before going public: both repos' histories checked (only no-reply emails, no secrets or keys, no security-hole lists); added `README.md` and `LICENSE.md` (CC BY-SA 3.0); BUILD.md shows how to clone CDDA-3D-code.
 - 2026-11-05 — PLAN.md: L7 motion time (time speed follows player motion, gradual; flat screen too).
 - 2026-11-05 — PLAN.md: VR added as block L (L1 headset ghost walk after M1; L2-L6 hands, aim/melee, world-space UI, comfort, VR perf after M3), VR-ready rules for all agents, VR decision row (PC VR via OpenXR, always real-time), waves, risks 7-8, open decision on the headset; TASKS.md updated.

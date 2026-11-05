@@ -46,5 +46,21 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this never deletes anything,
      but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
      Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
-6. **Art coverage** (no build needed):
+6. **VR** (block L1: PC VR through OpenXR, scripts in `client/scripts/vr/`). The mock town needs only Godot
+   4.7.2; a live game needs the bridge (step 5). Start the headset's OpenXR runtime first (SteamVR, or the Meta
+   Quest app for Link / Air Link), then:
+   ```powershell
+   Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --vr          # mock town
+   Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --live --vr   # a live game
+   ```
+   Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
+   Controls: left stick walks where you look (walls stop you, doors don't); right stick left/right turns 45°;
+   right stick forward aims a teleport (green = OK) and jumps on release; right B / A: level up / down; left
+   Y: back to the player. Options after `--`: `--vr-move=teleport` (no stick walking), `--vr-turn=smooth`,
+   `--vr-snap=<deg>`, `--vr-speed=<m/s>`, `--vr-vignette=<0-1>` (0 = off). Every 10 s frame times go to the
+   console and to `%APPDATA%\Godot\app_userdata\CDDA-3D\vr_perf.log` (numbers and the GPU name only; testers
+   can send it). The first run writes Godot's default controller bindings to `client/openxr_action_map.tres`.
+   Without a headset or runtime the normal view starts and the HUD says why. A live game's prompts still show
+   only on the desktop window (L4 brings them into VR).
+7. **Art coverage** (no build needed):
    `python -I tools/coverage/coverage.py --data cdda/data/json` → `tools/out/coverage_*.csv`

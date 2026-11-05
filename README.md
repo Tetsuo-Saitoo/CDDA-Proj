@@ -5,8 +5,8 @@ the game and still decides everything. This repo holds the Godot client, the bri
 GDExtension) and the plan.
 
 **Status: early.** You can start or load a CDDA game and walk it turn by turn in 3D with placeholder art. VR
-isn't built yet: it is block L in [PLAN.md](PLAN.md), and its first step is looking around the live world in a
-headset.
+has its first step (block L1 in [PLAN.md](PLAN.md)): walk around the world in a PC VR headset, no interaction
+yet. The mock town needs only Godot 4.7.2: see [docs/BUILD.md](docs/BUILD.md) step 6.
 
 ## Get the code
 
