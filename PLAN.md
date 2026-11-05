@@ -33,6 +33,7 @@ Keep CDDA's C++ simulation as the authority and replace only the frontend.
 | Authority | Sim decides everything (hits, AI sight, damage); client renders and predicts only |
 | Art fallback | model → `looks_like` chain → category generic → billboard from tileset sprite |
 | Saves | Vanilla-compatible; new fields optional |
+| Platforms | Windows first; Linux next (the VR tester runs Arch); macOS flat-screen only (no PC VR runtime there). The client is plain GDScript; only the bridge needs per-platform builds |
 | Licence | CDDA is CC-BY-SA 3.0, so the project ships CC-BY-SA; assets must be CC0 / CC-BY / CC-BY-SA |
 | VR | Optional mode (block L): PC VR through Godot OpenXR (SteamVR, Quest via Link/Air Link, Index, WMR); no standalone Quest (CDDA is a Windows DLL). VR is **always real-time**: pause and slow-mo stay, the classic turn toggle is off; optional motion time (L7) |
 

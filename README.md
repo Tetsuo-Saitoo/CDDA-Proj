@@ -6,7 +6,8 @@ GDExtension) and the plan.
 
 **Status: early.** You can start or load a CDDA game and walk it turn by turn in 3D with placeholder art. VR
 has its first step (block L1 in [PLAN.md](PLAN.md)): walk around the world in a PC VR headset, no interaction
-yet. The mock town needs only Godot 4.7.2: see [docs/BUILD.md](docs/BUILD.md) step 6.
+yet. The mock town needs only Godot 4.7.2, on Windows or Linux (macOS has no PC VR): see
+[docs/BUILD.md](docs/BUILD.md) step 6. Live CDDA games run on Windows only for now.
 
 ## Get the code
 
@@ -17,6 +18,8 @@ git clone -b fp3d https://github.com/Tetsuo-Saitoo/CDDA-3D-code cdda
 ```
 
 Building needs Windows, Visual Studio 2022 Build Tools, vcpkg and Godot 4.7.2: see [docs/BUILD.md](docs/BUILD.md).
+To skip building, take the bridge DLL from the newest [release](https://github.com/Tetsuo-Saitoo/CDDA-Proj/releases)
+(only Godot 4.7.2 needed then).
 
 ## Where things are
 

@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-05 — The VR tester runs Arch Linux (desktop) and macOS (laptop): BUILD.md step 6 and README now cover Linux (OpenXR runtimes, Godot binary, log path) and say macOS has no VR; v0.1.0 notes say Windows only; PLAN.md platforms row; TASKS A5 Linux bridge.
+- 2026-11-05 — Release `v0.1.0` (prerelease, CDDA-Proj): bridge DLL built from fec70f0 + cdda 6fc4137 (SHA256 bc8c3256...7196) and THIRD_PARTY_LICENSES.txt (`tools/release/third_party_licenses.py`); DLL scanned for personal strings first. BUILD.md step 5 and README say how to use it.
 - 2026-11-05 — L1 VR ghost walk: `client/scripts/vr/` (VrWalk, VrRig, VrPerf), `main.gd --vr` (with Godot `--xr-mode on`), XR shaders on in project.godot; `tests/vr_tests.gd` 34 checks, client tests all pass; `--vr` without a headset falls back to the normal view; arc, target ring and vignette checked in screenshots through the rig camera; not yet tried in a headset. BUILD.md step 6 (VR), README status.
 - 2026-11-05 — Before going public: both repos' histories checked (only no-reply emails, no secrets or keys, no security-hole lists); added `README.md` and `LICENSE.md` (CC BY-SA 3.0); BUILD.md shows how to clone CDDA-3D-code.
 - 2026-11-05 — PLAN.md: L7 motion time (time speed follows player motion, gradual; flat screen too).
