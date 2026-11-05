@@ -10,8 +10,9 @@ out/
 save/
 __pycache__/
 /tools/out/
-# godot-cpp is fetched by hand (docs/BUILD.md); the bridge DLL is built into client/bin
+# godot-cpp is fetched by hand (docs/BUILD.md); the bridge library is built into client/bin
 /bridge/godot-cpp/
 /client/bin/*.dll
+/client/bin/*.so
 /client/bin/*.exp
 /client/bin/*.lib

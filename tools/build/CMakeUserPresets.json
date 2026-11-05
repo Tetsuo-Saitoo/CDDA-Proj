@@ -6,12 +6,29 @@
       "displayName": "FP3D: Windows Tiles Sounds x64 MSVC (vcpkg at D:/vcpkg)",
       "inherits": "windows-tiles-sounds-x64-msvc",
       "binaryDir": "${sourceDir}/out/build/fp3d-msvc",
-      "environment": { "VCPKG_ROOT": "D:/vcpkg" },
+      "environment": {
+        "VCPKG_ROOT": "D:/vcpkg"
+      },
       "cacheVariables": {
         "LOCALIZE": "False",
         "SOUND": "False",
         "CMAKE_PROJECT_INCLUDE_BEFORE": "${sourceDir}/build-scripts/windows-tiles-sounds-x64-msvc.cmake",
         "VCPKG_INSTALLED_DIR": "D:/vcpkg/installed-cdda"
+      }
+    },
+    {
+      "name": "fp3d-linux",
+      "displayName": "FP3D: Linux Tiles x64 (GCC, system SDL2)",
+      "inherits": "linux-tiles-sounds-x64",
+      "binaryDir": "${sourceDir}/out/build/fp3d-linux",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "LOCALIZE": "False",
+        "SOUND": "False",
+        "TESTS": "False",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "USE_PREFIX_DATA_DIR": "OFF",
+        "CMAKE_POSITION_INDEPENDENT_CODE": "ON"
       }
     }
   ]

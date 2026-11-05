@@ -26,7 +26,7 @@
 #include <process.h>
 #include "platform_win.h"
 #else
-#include <thread>
+#include <pthread.h>
 #endif
 
 namespace fp3d_session
@@ -40,7 +40,7 @@ constexpr size_t max_world_name = 32;
 constexpr size_t max_name_bytes = 128;
 // Folder entries looked at per listing, so a huge or hostile folder can't stall the caller.
 constexpr size_t max_dir_entries = 4096;
-// CDDA was written for a main thread; Windows gives new threads 1 MB of stack unless asked.
+// CDDA was written for a main thread; new threads get 1 MB (Windows) or 512 KB (macOS) unless asked.
 constexpr unsigned sim_stack_bytes = 8u << 20;
 
 std::atomic<int> cur_state{ static_cast<int>( state::idle ) };
@@ -53,7 +53,8 @@ std::string boot_save;
 #if defined(_WIN32)
 HANDLE sim_thread = nullptr;
 #else
-std::thread sim_thread;
+pthread_t sim_thread;
+bool sim_thread_running = false;
 #endif
 
 void set_state( state s )
@@ -117,6 +118,12 @@ unsigned __stdcall sim_entry( void * )
 {
     sim_main();
     return 0;
+}
+#else
+void *sim_entry( void * )
+{
+    sim_main();
+    return nullptr;
 }
 #endif
 
@@ -409,7 +416,19 @@ std::string start( const std::string &data_dir, const std::string &user_dir, con
         return "cannot create the game thread";
     }
 #else
-    sim_thread = std::thread( sim_main );
+    pthread_attr_t attr;
+    bool started = pthread_attr_init( &attr ) == 0;
+    if( started ) {
+        started = pthread_attr_setstacksize( &attr, sim_stack_bytes ) == 0 &&
+                  pthread_create( &sim_thread, &attr, sim_entry, nullptr ) == 0;
+        pthread_attr_destroy( &attr );
+    }
+    if( !started ) {
+        set_state( state::failed );
+        set_error( "cannot create the game thread" );
+        return "cannot create the game thread";
+    }
+    sim_thread_running = true;
 #endif
     return "";
 }
@@ -424,8 +443,9 @@ void stop()
         sim_thread = nullptr;
     }
 #else
-    if( sim_thread.joinable() ) {
-        sim_thread.join();
+    if( sim_thread_running ) {
+        pthread_join( sim_thread, nullptr );
+        sim_thread_running = false;
     }
 #endif
     if( get_state() == state::booting || get_state() == state::running ) {

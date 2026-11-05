@@ -1,0 +1,6 @@
+/* Linux linker version script for the bridge: Godot only needs the entry symbol (fp3d_cdda.gdextension).
+   Everything else (CDDA's objects, godot-cpp, the C++ runtime bits) stays local to the library. */
+{
+    global: fp3d_cdda_init;
+    local: *;
+};

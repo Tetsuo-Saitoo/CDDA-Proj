@@ -49,18 +49,38 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this never deletes anything,
      but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
      Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
+   - **Linux** (a Linux PC or WSL; Ubuntu 24.04 / Arch). Packages: Ubuntu `sudo apt install build-essential cmake
+     ninja-build git pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libfreetype-dev zlib1g-dev
+     libbz2-dev`; Arch `sudo pacman -S --needed base-devel cmake ninja git sdl2 sdl2_image sdl2_ttf freetype2`.
+     Then, with godot-cpp cloned as above:
+     ```bash
+     cp tools/build/CMakeUserPresets.json cdda/ && cd cdda
+     cmake --preset fp3d-linux
+     cmake --build out/build/fp3d-linux --target fp3d-cdda   # -> client/bin/fp3d_cdda.linux.x86_64.so
+     ```
+     The `.so` links SDL2 from the system and exports only `fp3d_cdda_init`. Under the bridge, CDDA's hidden
+     window uses SDL's `offscreen` driver, so the game thread needs no display.
+     From Windows through WSL (Ubuntu 24.04, packages as above): `bash tools/build/wsl_build.sh [targets]` from
+     the checkout under `/mnt/...`. It copies the tree (no `.git`, no build output) to `~/cdda3d` (Linux disk
+     is much faster), builds there with one job per 2 GB of RAM (more get killed by the OOM killer), and
+     copies the `.so` back to `client/bin/`. `KEEP_GOING=1` lists every compile error in one run. Tests on
+     Linux run from `~/cdda3d/cdda` (`out/build/fp3d-linux/src/fp3d/fp3d-*-test`) and with the Linux Godot
+     (`--headless --path ~/cdda3d/client --script res://tests/live_test.gd`).
 6. **VR** (block L1: PC VR through OpenXR, scripts in `client/scripts/vr/`). The mock town needs only Godot
    4.7.2 (the official build from godotengine.org; distro packages may be older) and works on **Windows and
-   Linux**; a live game needs the bridge (step 5), which is **Windows-only for now**. macOS has no PC VR
+   Linux**; a live game needs the bridge (step 5): Windows and Linux. macOS has no PC VR
    runtime, so no VR there (the flat mock town runs). Start the headset's OpenXR runtime first: Windows:
    SteamVR or the Meta Quest app (Link / Air Link); Linux: SteamVR, or Monado / WiVRn / ALVR (Quest over
-   Wi-Fi), set as the active OpenXR runtime. Then:
+   Wi-Fi), set as the active OpenXR runtime. The launchers `tools\vr\play_vr.cmd` (Windows) and
+   `tools/vr/play_vr.sh` (Linux; Godot from `$GODOT` or the PATH) prefer SteamVR's runtime when SteamVR is
+   installed and `XR_RUNTIME_JSON` isn't set, and pass options on (`play_vr.cmd --live`). By hand:
    ```powershell
    Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --vr          # mock town
    Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --live --vr   # a live game (Windows)
    ```
-   On Linux: `./Godot_v4.7.2-stable_linux.x86_64 --xr-mode on --path client -- --vr`. Without a Linux bridge,
-   Godot prints once that `fp3d_cdda.gdextension` has no library for linux.x86_64; that is expected.
+   On Linux: `./Godot_v4.7.2-stable_linux.x86_64 --xr-mode on --path client -- --vr` (add `--live` with the
+   `.so` built). Without the bridge, Godot prints once that `fp3d_cdda.gdextension` has no library for this
+   platform; the mock town still runs.
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
    Controls: left stick walks where you look (walls stop you, doors don't); right stick left/right turns 45°;
    right stick forward aims a teleport (green = OK) and jumps on release; right B / A: level up / down; left

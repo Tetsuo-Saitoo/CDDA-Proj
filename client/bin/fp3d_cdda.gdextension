@@ -7,3 +7,4 @@ reloadable = false
 [libraries]
 
 windows.x86_64 = "res://bin/fp3d_cdda.windows.x86_64.dll"
+linux.x86_64 = "res://bin/fp3d_cdda.linux.x86_64.so"
