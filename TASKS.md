@@ -3,7 +3,7 @@
 ## State
 Wave 1 done; wave 2 started with B2. Client: C1 + C2 + C3 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). M0 bridge done: the client can run a live CDDA game in-process (`--live`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
-Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Remotes (`origin`, private GitHub repos of Tetsuo-Saitoo): root → `CDDA-Proj`, cdda/ → `CDDA-3D-code` (a plain repo, not a GitHub fork: forks of public repos can't be private). Nothing pushed yet; push only when the user says. Commits use the GitHub no-reply email (repo-local `user.email`); history was rewritten to it on 2026-11-05. vcpkg lives at `D:\vcpkg`.
+Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Remotes (`origin`, private GitHub repos of Tetsuo-Saitoo): root → `CDDA-Proj`, cdda/ → `CDDA-3D-code` (a plain repo, not a GitHub fork: forks of public repos can't be private). First push 2026-11-05 (root `main`; cdda `fp3d` + `upstream`, default branch `fp3d`). Push only when the user says. Commits use the GitHub no-reply email (repo-local `user.email`); history was rewritten to it on 2026-11-05. vcpkg lives at `D:\vcpkg`.
 
 ## Open tasks
 - [x] A1 MSVC build works (game, cata_test-tiles, fp3d-headless). Test baseline (seed 1): 1144/1155 pass, see Key facts
