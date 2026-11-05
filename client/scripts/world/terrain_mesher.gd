@@ -238,7 +238,7 @@ func _fence(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) -
 	_solid.box(c - Vector3(0.06, 0, 0.06), c + Vector3(0.06, st.height + 0.05, 0.06), st.color, ALL & ~NY)
 	for d in 4:
 		var n := _style_at(p + DIRS[d])
-		if n == null or not n.kind in [K.FENCE, K.WALL, K.DOOR, K.WINDOW]:
+		if not _joins(st, n, [K.FENCE, K.WALL, K.DOOR, K.WINDOW]):
 			continue
 		var dv := Vector3(DIRS[d].x, 0, DIRS[d].y) * 0.5
 		var lo := c + Vector3(minf(dv.x, 0) - (t if dv.x == 0 else 0.0), 0, minf(dv.z, 0) - (t if dv.z == 0 else 0.0))
@@ -302,8 +302,17 @@ func _style_at(p: Vector3i) -> TerrainCatalog.Style:
 
 ## Wall-like neighbour in direction d (index into DIRS): doors and windows run along those.
 func _connects(p: Vector3i, d: int) -> bool:
-	var n := _style_at(p + DIRS[d])
-	return n != null and n.kind in [K.WALL, K.DOOR, K.WINDOW]
+	return _joins(_style_at(p), _style_at(p + DIRS[d]), [K.WALL, K.DOOR, K.WINDOW])
+
+
+## CDDA's rule: a tile joins a neighbour whose connect groups it connects to. Without id tables
+## (no groups on either side) neighbours of the given kinds join.
+func _joins(st: TerrainCatalog.Style, n: TerrainCatalog.Style, kinds: Array) -> bool:
+	if st == null or n == null:
+		return false
+	if st.connects_to != 0 or n.groups != 0:
+		return (st.connects_to & n.groups) != 0
+	return n.kind in kinds
 
 
 func _walkable(s: TerrainCatalog.Style) -> bool:

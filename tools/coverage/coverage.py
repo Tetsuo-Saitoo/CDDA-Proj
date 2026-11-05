@@ -233,9 +233,17 @@ def load_registry(root):
     return reg
 
 
+def usable(obj, kind):
+    """Art the client can show for this kind: terrain needs a mesher or model, props a placeholder or model."""
+    if obj is None:
+        return False
+    keys = ("mesher", "model") if kind == "terrain" else ("placeholder", "model")
+    return any(isinstance(obj.get(k), str) and obj.get(k) for k in keys)
+
+
 def resolve(data, kind, cid, reg):
     """Return (status, via) following the fallback chain from contracts/assets.md (steps 1-2)."""
-    if cid in reg:
+    if usable(reg.get(cid), kind):
         return "exact", cid
     cur, seen = data.defs[kind].get(cid), {cid}
     for _ in range(MAX_CHAIN):
@@ -245,7 +253,7 @@ def resolve(data, kind, cid, reg):
         nxt = nxt or (cur.get("copy-from") if isinstance(cur.get("copy-from"), str) else None)
         if not nxt or nxt in seen:
             break
-        if nxt in reg:
+        if usable(reg.get(nxt), kind):
             return "looks_like", nxt
         seen.add(nxt)
         cur = data.defs[kind].get(nxt) or data.abstracts.get(nxt)
