@@ -3,7 +3,7 @@
 ## State
 Wave 1 done; wave 2 started with B2. Client: C1 + C2 + C3 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). M0 bridge done: the client can run a live CDDA game in-process (`--live`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
-Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Both committed locally, no GitHub remote yet. vcpkg lives at `D:\vcpkg`.
+Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Remotes (`origin`, private GitHub repos of Tetsuo-Saitoo): root → `CDDA-Proj`, cdda/ → `CDDA-3D-code` (a plain repo, not a GitHub fork: forks of public repos can't be private). Nothing pushed yet; push only when the user says. Commits use the GitHub no-reply email (repo-local `user.email`); history was rewritten to it on 2026-11-05. vcpkg lives at `D:\vcpkg`.
 
 ## Open tasks
 - [x] A1 MSVC build works (game, cata_test-tiles, fp3d-headless). Test baseline (seed 1): 1144/1155 pass, see Key facts
@@ -29,7 +29,7 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] C7 z-level view beyond the PgUp/PgDn cutaway
 - [x] E3 generic UI-request renderer: `client/scripts/ui/` (`RequestUI` + one widget per kind: list for menu/key/item_select/item_multi, popup, string, direction, target; CDDA colour tags -> BBCode in `cdda_text.gd`); main.gd uses it; `tests/ui_tests.gd` (in run_tests) feeds fake requests
 - [ ] E3 leftovers: not yet tried in a live game; target cursor isn't drawn in the 3D view and can't be picked with the mouse there (`RequestUI.set_target_cursor` is ready for E2); creature names for target candidates (client doesn't parse snapshot creatures yet); the `number` kind isn't sent by the bridge (query_int goes through `string`); CDDA's own menu hotkeys aren't sent
-- [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
+- [ ] A3 CI (GitHub Actions): repos exist (private); `gh` is logged in with a fine-grained token (Contents, Workflows, Actions, Pull requests: read/write, only those two repos). Private repos have limited Actions minutes (Windows counts double): keep CI lean until they go public
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
 - [ ] H1 Write more registry entries (monsters; furniture models once they exist: 70 furniture ids have `placeholder` shapes); H3 tileset placeholders

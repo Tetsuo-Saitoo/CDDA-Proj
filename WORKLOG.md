@@ -1,32 +1,33 @@
 # WORKLOG
 
+- 2026-11-05 — Committed M1 save loading (cdda fp3d 6fc4137; root 77bdad6), C3 (64b99cb) and E3 (c7769c1) on their branches, merged both into main; merged tree: client + UI tests (285 checks), live test (save + load in a second run) and a headless `--live` run (451 furniture drawn from the live game) pass. Then rewrote both repos' history to the GitHub no-reply email (hashes in this log updated). Remotes `origin` set (private CDDA-Proj, CDDA-3D-code), not pushed.
 - 2026-11-05 — E3: generic UI-request renderer in `client/scripts/ui/` (RequestUI, list/popup/string/direction/target widgets, colour tags -> escaped BBCode); main.gd's debug request label replaced; `tests/ui_tests.gd` (fake requests, keys, clicks, malformed input, answers checked like `CddaSim.answer()`); client tests all pass.
 - 2026-11-05 — C2 leftovers + C3: client loads and validates id tables (`IdTables`; live: `LiveSession` fetches per `ids_generation`), terrain kinds from flags/connect groups/open-close/roof links instead of id names, props (furniture, traps, item piles on furniture surfaces, deterministic sub-tile slots) through the registry fallback chain with procedural placeholder shapes; snapshot checks for `trap`, `items`, `ids_generation`; registry `placeholder` field, `furniture_core.json`, `generic.json`; coverage tool counts only usable art; tests all pass (188 checks), screenshots of the mock town show props.
 - 2026-11-05 — M1 load a save: `fp3d::boot_saved_game` (boot.*, main menu's load path, deletes nothing); bridge `CddaSim.start_load`, `list_worlds(user_dir)`, `list_saves(user_dir, world)` (own folder scan, strict name and base64 checks, caps), end reason `saved and quit`; `LiveSession.start_load/list_*/save`, `main.gd --live --world= --save=`; `live_test.gd` now saves and a second Godot run loads it (turn and position match), all pass; `fp3d-sim-test` 8/8; client tests pass.
-- 2026-11-03 — Committed M0 bridge (cdda fp3d c436f92; root bridge, client and docs in the same commit as this line).
+- 2026-11-03 — Committed M0 bridge (cdda fp3d 4ff1552; root bridge, client and docs in the same commit as this line).
 - 2026-11-03 — M0 bridge: GDExtension in `bridge/` (godot-cpp e103d348 in `bridge/godot-cpp`, not in git), built by the cdda build as target `fp3d-cdda` into `client/bin/`; class `CddaSim` (`contracts/bridge_api.md`) runs CDDA on its own thread; client `LiveSession` + `main.gd --live` (debug UI); `tests/live_test.gd` all pass in 35 s, client tests pass, `--live` headless smoke run meshes the live bubble (363 submaps, 0.55 s). Fixed: Godot hung on exit (CDDA's `atexit( SDL_Quit )` deadlocked in DllMain; now `fp3d::shutdown_world()` on the game thread; also fixes an exit crash of `fp3d-sim-test`), 108 debug prompts from `build_id_tables` colour lookups; CDDA's hidden window uses SDL's software renderer under the bridge. `boot.h` gains `init_paths`. `tools/debug/stacks.py` dumps thread stacks of a hung process.
-- 2026-11-02 — Committed B6 (cdda fp3d 6526a25; root docs and mocks in the same commit as this line).
+- 2026-11-02 — Committed B6 (cdda fp3d 21c6fc3; root docs and mocks in the same commit as this line).
 - 2026-11-02 — B6 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-11-02 — B6: `cdda/src/fp3d/id_tables.*` (definitions for ter/furn/trap/field/itype/mtype/vpart, session tables pre-filled sorted, generation in snapshots); snapshot JSON no longer embeds session tables; mocks regenerated (`id_tables.json` 2.7 MB); `fp3d-ids-test` all pass, other fp3d tests and client tests pass. Art direction decided: low-poly-ish with environmental detail.
-- 2026-11-01 — Merged C1 + C2 (branch `claude/zen-wiles-fbfef9`, 57c3aae) into main.
-- 2026-11-01 — Committed B5 (cdda fp3d 0388b94; root docs in the same commit as this line).
+- 2026-11-01 — Merged C1 + C2 (branch `claude/zen-wiles-fbfef9`, 185b270) into main.
+- 2026-11-01 — Committed B5 (cdda fp3d 7437187; root docs in the same commit as this line).
 - 2026-10-31 — B5 regression: full build OK, events and snapshot tests pass, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B5: action queue in `fp3d/bridge.*` (client queues main-loop actions any time; sim takes one per timed request, none while paused; bad ones dropped with a message event); fixed re-asks losing the `timed` flag (input_context); sim test queue checks pass.
 - 2026-10-31 — Committed C1 + C2 on branch `claude/zen-wiles-fbfef9` (same commit as this line).
 - 2026-10-31 — C1 + C2: Godot 4.7.2 client in `client/` (coords, validated snapshot loader, terrain catalog/mesher, cutaway + roof toggle, fly camera); headless tests all pass; registry: `t_soil` moved from floor to wall.
-- 2026-10-31 — Committed B4 (cdda fp3d 66ea970; root docs in the same commit as this line).
+- 2026-10-31 — Committed B4 (cdda fp3d a582843; root docs in the same commit as this line).
 - 2026-10-31 — B4 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B4: `cdda/src/fp3d/events.*` event bus (9 kinds, perception filter, cap 4096 with drop order, UTF-8-safe text cut) + hooks in sounds, messages, melee, monster, creature, character, ballistics, explosion, do_turn; `fp3d-events-test` all pass; sim test drains events (ok, none dropped); snapshot seq/uids now survive `reset_snapshots`.
-- 2026-10-31 — Committed B3 (cdda fp3d 8fbeffb; root docs in the same commit as this line).
+- 2026-10-31 — Committed B3 (cdda fp3d fea7f47; root docs in the same commit as this line).
 - 2026-10-31 — B3 regression: full build OK, unit tests same 11 failures / 17 assertions as baseline.
 - 2026-10-31 — B3: `cdda/src/fp3d/snapshot.*` (all 2541 submaps as shared immutable views, two revisions, creatures/vehicles/player/env, JSON writer), `fp3d-snapshot-test` all pass, sim test publishes snapshots; mock is now `contracts/mock/snapshot_town.json` (town_bubble.json removed).
-- 2026-10-31 — Committed B2 slice 2 (cdda fp3d 0ac63c8; root docs in the same commit as this line).
+- 2026-10-31 — Committed B2 slice 2 (cdda fp3d 92f7ce1; root docs in the same commit as this line).
 - 2026-10-31 — B2 slice 2 regression: full build OK, smoke test OK, unit tests 1144/1155 (same 11 failures and 17 assertions as baseline).
 - 2026-10-31 — B2 slice 2: `direction`/`target` requests (choose_direction, look_around, target_ui), bridge clock (real time 1 s/timescale, pause, auto-pause on "hostile spotted", interrupt), save/quit/reload; hooks in game.cpp, ranged.cpp, do_turn.cpp; `fp3d-sim-test` 8/8.
-- 2026-10-31 — Committed B2 slice 1 (cdda fp3d 14007d3, root 79e92a5).
+- 2026-10-31 — Committed B2 slice 1 (cdda fp3d 5c08108, root a6d7dff).
 - 2026-10-30 — B2 regression: full build OK, smoke test OK, unit tests same as baseline once `test_user_dir` is cleaned (stale dir caused 2 extra failures).
 - 2026-10-30 — B2 slice 1: `cdda/src/fp3d/bridge.*` + hooks in 9 CDDA files (input_context, uilist, popup, string_input_popup, inventory_ui, sdltiles, ui_manager, handle_action, action) + friend in game.h; `fp3d-sim-test` 3/3 goals.
-- 2026-10-30 — Committed wave 1 (root 40c012b, cdda fp3d 8ef7597); repo-local git identity set.
+- 2026-10-30 — Committed wave 1 (root 1ba7e47, cdda fp3d 3fb482e); repo-local git identity set.
 - 2026-10-30 — cata_test-tiles baseline (seed 1, ~33 min): 1144/1155 pass; failures explained in TASKS.md Key facts.
 - 2026-10-30 — A1/B1 done: MSVC build OK (sound off); fp3d-headless dumps a town bubble (96 ter / 82 furn ids, 3 z-levels) to contracts/mock/town_bubble.json.
 - 2026-10-30 — Wave 1: CDDA 0.I-1 into `cdda/` (git, branches upstream/fp3d); vcpkg at D:\vcpkg; MSVC build via `fp3d-msvc` preset; contracts v0 drafts; asset registry schema + 16 terrain entries; `tools/coverage/coverage.py`; B1 smoke test `cdda/src/fp3d/headless_smoke.cpp`.
