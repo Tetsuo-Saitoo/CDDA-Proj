@@ -1,5 +1,5 @@
 extends SceneTree
-## Headless checks for blocks C1/C2. From the repo root:
+## Headless checks for blocks C1/C2 and E3 (tests/ui_tests.gd). From the repo root:
 ##   godot --headless --path client --import          (once, so class names resolve)
 ##   godot --headless --path client --script res://tests/run_tests.gd
 ## Exit code 0 = all passed.
@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_mock(data)
 	_test_malformed(data)
 	_test_catalog()
+	preload("res://tests/ui_tests.gd").new().run(root, _check)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 

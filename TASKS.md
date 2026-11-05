@@ -21,9 +21,11 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] B6 follow-ups: client reads `id_tables.json` (C2 leftover below); `tools/coverage` could read it instead of parsing CDDA's JSON
 - [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
 - [x] M0 bridge: GDExtension `bridge/` (godot-cpp in `bridge/godot-cpp`, not in git) → `client/bin/fp3d_cdda.windows.x86_64.dll`, class `CddaSim` (`contracts/bridge_api.md`); client `LiveSession` + `main.gd --live` (debug UI: camera-relative walking, numbered menu answers); `client/tests/live_test.gd` passes
-- [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format); one game per process (no restart after stop, no loading saves yet); the live UI is a debug stand-in for block E
+- [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format); one game per process (no restart after stop, no loading saves yet); the live HUD and walking are a debug stand-in (prompts use E3 now)
 - [ ] C2 leftovers: use ter flags / `connect_groups` from `contracts/mock/id_tables.json` (B6 done) instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
 - [ ] C3 props (furniture, items); C7 z-level view beyond the PgUp/PgDn cutaway
+- [x] E3 generic UI-request renderer: `client/scripts/ui/` (`RequestUI` + one widget per kind: list for menu/key/item_select/item_multi, popup, string, direction, target; CDDA colour tags -> BBCode in `cdda_text.gd`); main.gd uses it; `tests/ui_tests.gd` (in run_tests) feeds fake requests
+- [ ] E3 leftovers: not yet tried in a live game; target cursor isn't drawn in the 3D view and can't be picked with the mouse there (`RequestUI.set_target_cursor` is ready for E2); creature names for target candidates (client doesn't parse snapshot creatures yet); the `number` kind isn't sent by the bridge (query_int goes through `string`); CDDA's own menu hotkeys aren't sent
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
@@ -40,7 +42,7 @@ Later waves: see PLAN.md "Agent waves".
 - Art coverage: `python -I tools/coverage/coverage.py --data cdda/data/json` (3 s).
 
 ## Key facts
-- Client: run `D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe --path client` (keys in the HUD; `-- --snapshot=<path>` loads another file). Tests: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --import` once, then `--headless --path client --script res://tests/run_tests.gd`. The 363-submap mock builds in ~0.45 s, 500 k vertices.
+- Client: run `D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe --path client` (keys in the HUD; `-- --snapshot=<path>` loads another file). Tests: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --import` once, then `--headless --path client --script res://tests/run_tests.gd` (also runs the E3 UI tests). The 363-submap mock builds in ~0.45 s, 500 k vertices.
 - Client axes: 1 tile = 1 m, 1 z = 3 m, east = +X, south = +Z; Godot origin = bubble corner, rebased on shift. Walls fill their tile. Godot's JSON gives every number as a float.
 - CDDA's sun azimuth (`env.sun_az_deg`) is measured from the south, positive toward the west (calendar.cpp). `t_soil` is solid earth (a wall), not a floor.
 - CDDA: C++, JSON data (0.I: all items are type `ITEM`), licence CC-BY-SA 3.0, so this project must be too.
@@ -68,4 +70,5 @@ Later waves: see PLAN.md "Agent waves".
 - Agent tooling: `for( x : make_shared_thing()->member )` dangles (the temporary shared_ptr dies before the loop): keep the snapshot in a variable.
 - Bridge facts: CDDA runs on its own 8 MB-stack thread in Godot's process; CDDA's hidden window uses SDL's software renderer whenever the bridge is active (no GPU device or driver threads for nothing). After a headless boot, call `fp3d::shutdown_world()` on the game thread before exit (the DLL and `fp3d-sim-test` do): CDDA's `atexit( SDL_Quit )` otherwise runs before its static tile caches free their textures (crash at exit), and in a DLL it runs inside DllMain and deadlocks on SDL's timer thread (Godot hung on exit). Stack dumps of a hung process (no debugger installed): `python -I tools/debug/stacks.py <pid>`. Boot ~30 s; `stop()` waits for boot to finish. Godot locks the DLL while running: close it before building. Snapshot JSON for 3 levels is ~0.9 MB.
 - Id tables: 108 items have colour `c_unset`; `color_manager::get_name` raises a debug message for those (a popup outside test mode), so the tables use their own colour map.
+- Request UI (E3): `RequestUI.show_request(req)` -> `answered(answer)` -> `LiveSession.answer()`. Keys reach it in `_input`, before main.gd's `_unhandled_input`; keys a widget doesn't use fall through (WASD flies). Directions and the target cursor are camera-relative through `direction_mapper`. RAW_KEY reads and timed (main-loop) requests never show: main.gd answers / skips them. Godot 4.7's Range doesn't emit `value_changed` when a script sets `value`: tests emit the signal themselves.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.

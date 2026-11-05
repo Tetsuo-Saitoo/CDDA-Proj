@@ -76,4 +76,5 @@ Rules
 - Every request has a **cancel** path; the client shows it, and closing the window sends cancel.
 - Answers are validated (entry id exists and is enabled, number in range, handle was offered). Strings are length
   capped and stripped of control characters; coordinates beyond ±2^28 are dropped.
-- Text is CDDA's own colour-tagged text (`<color_x>`); the client converts tags to rich text.
+- Text is CDDA's own colour-tagged text (`<color_x>`); the client converts tags to rich text
+  (`client/scripts/ui/cdda_text.gd`; the renderer is `client/scripts/ui/request_ui.gd`).
