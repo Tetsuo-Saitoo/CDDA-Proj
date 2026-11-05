@@ -22,7 +22,7 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
 - [x] M0 bridge: GDExtension `bridge/` (godot-cpp in `bridge/godot-cpp`, not in git) → `client/bin/fp3d_cdda.windows.x86_64.dll`, class `CddaSim` (`contracts/bridge_api.md`); client `LiveSession` + `main.gd --live` (debug UI: camera-relative walking, numbered menu answers); `client/tests/live_test.gd` passes
 - [x] M1 load a save: `CddaSim.start_load` / `list_worlds` / `list_saves` (`fp3d::boot_saved_game`), client `--live --world= --save=`; `live_test.gd` saves, then a second Godot run loads it (turn and position match)
-- [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format); one game per process (no restart after stop); the live HUD and walking are a debug stand-in (prompts use E3 now) and there is no save key yet (queue `save`, answer YES)
+- [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format; required for VR, see PLAN.md block L); one game per process (no restart after stop); the live HUD and walking are a debug stand-in (prompts use E3 now) and there is no save key yet (queue `save`, answer YES)
 - [x] C2 terrain from id tables (`IdTables`, flags/connect groups/open-close/roof links, no name rules) and C3 props: furniture, known traps, item piles via the registry fallback chain (`AssetRegistry`, `PropCatalog`, `PropMesher`, placeholder shapes in `PropShapes`, registry `furniture_core.json` + `generic.json`)
 - [ ] C2 leftovers: stairs/ramp direction is a guess; ramp low ends draw as floor (real wedges); darken by `vis`/`light` (C6)
 - [ ] C3 leftovers: load `.glb` models (none exist; model-only entries fall through); fields (`snapshot.gd` still ignores them); multi-tile furniture is per tile; live-mode id tables path untested (no DLL in worktrees)
@@ -34,13 +34,15 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
 - [ ] H1 Write more registry entries (monsters; furniture models once they exist: 70 furniture ids have `placeholder` shapes); H3 tileset placeholders
 - [x] User: art direction decided 2026-11-02: low-poly-ish, but with enough environmental detail (clutter, trim, props) that places read well. H blocks and the registry follow this
-- [ ] User: real-time vs turn-based default
+- [ ] User: real-time vs turn-based default (flat screen only; VR is always real-time, decided 2026-11-05)
+- [ ] L VR (PLAN.md block L, added 2026-11-05): L1 headset ghost walk after M1 (wave 3); L2-L6 hands, aim/melee, world-space UI, comfort, 90 fps after M3. PC VR via OpenXR only. User: which headset to test on
 
 Later waves: see PLAN.md "Agent waves".
 
 ## How-to
 - Each agent takes one sub-block ID from PLAN.md, works on branch `blk/<ID>`, owns only that block's directory.
 - Contract changes go through the B lead; update TASKS.md + WORKLOG.md when a sub-block is done.
+- VR-ready rules (PLAN.md block L): input only via E1's action map; UI works inside a `SubViewport` (no screen size, OS cursor or global mouse); no heavy main-thread work; camera rig separate from the player body.
 - Edits inside `cdda/` go under `cdda/src/fp3d/` or carry a `// FP3D:` / `# FP3D:` marker.
 - Art coverage: `python -I tools/coverage/coverage.py --data cdda/data/json` (3 s).
 

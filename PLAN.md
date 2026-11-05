@@ -34,6 +34,7 @@ Keep CDDA's C++ simulation as the authority and replace only the frontend.
 | Art fallback | model → `looks_like` chain → category generic → billboard from tileset sprite |
 | Saves | Vanilla-compatible; new fields optional |
 | Licence | CDDA is CC-BY-SA 3.0, so the project ships CC-BY-SA; assets must be CC0 / CC-BY / CC-BY-SA |
+| VR | Optional mode (block L): PC VR through Godot OpenXR (SteamVR, Quest via Link/Air Link, Index, WMR); no standalone Quest (CDDA is a Windows DLL). VR is **always real-time**: pause and slow-mo stay, the classic turn toggle is off |
 
 ## Repo layout
 
@@ -64,6 +65,9 @@ to an upstream file with `// FP3D:` so merges stay cheap.
 
 Critical path: **A1 → B1 → B3 → C2 → B2 → D1 → F**. Everything else runs in parallel against `contracts/` with
 mock data.
+
+VR (block L) is off the critical path: L1 (look around the live world in a headset) can start after M1; the rest
+needs M3 (real-time clock, free movement, first-person combat) and ships with M6.
 
 ## Contracts (write first; block B owns, every other block reviews)
 
@@ -211,6 +215,32 @@ Each line: **ID — task.** Done-when. *(depends on)*
   from data); load DLLs only from the app directory; no secrets in the repo.
 - **K6 — Release:** packaging, CC-BY-SA attribution, per-asset licences, changelog.
 
+### L. VR — 1 agent; L1 after M1, L2–L6 after M3
+PC VR only (Godot OpenXR). Always real-time (pause and slow-mo allowed, no turn mode). The sim stays the
+authority: VR changes how the player gives actions, never how CDDA resolves them.
+- **L1 — VR ghost walk.** OpenXR rig (`XROrigin3D`, `XRCamera3D`, two controllers) on the live world; teleport
+  and smooth locomotion, snap/smooth turn, comfort vignette; no interaction yet. Proves 90 fps stereo on the
+  bubble. *(C1–C3, B3)*
+- **L2 — Hands.** Point or reach to pick a target, grip/trigger for E2's actions (open, examine, pick up, use);
+  items in hand follow the controller; picking up and dropping map to CDDA actions. *(E2)*
+- **L3 — Aim and melee.** Point the weapon to aim (target from the controller ray, CDDA rolls the hit); a swing
+  above a speed threshold starts a melee attack on what it touches, CDDA resolves it; hit feedback (haptics,
+  sound, flinch) from events. *(F, B4)*
+- **L4 — World-space UI.** E3 widgets and G's HUD on a wrist panel or a floating panel (`SubViewport` on a
+  quad), laser-pointer input; text size readable in a headset. *(E3, G)*
+- **L5 — Body and comfort.** Seated/standing, height calibration, crouch/prone from head height (D5), comfort
+  options (vignette, snap turn, teleport only), left-handed mode. *(E5)*
+- **L6 — VR performance.** 90 fps stereo: foveated rendering where the runtime offers it, culling and LOD,
+  tighter frame budget than K3; no main-thread stalls. *(K3)*
+
+**VR-ready rules for every agent, from now on** (cheap now, expensive to retrofit):
+- Gameplay input goes through E1's action map only; no hard-coded keys or mouse reads in game logic.
+- UI widgets work inside a `SubViewport`: no reliance on screen size, the OS cursor or global mouse position.
+- Nothing heavy on the main thread: snapshot parsing and meshing move to a worker thread; a frame hitch makes
+  people sick in VR.
+- The camera rig is separate from the player's body/sim position (head ≠ body), and the HUD is not drawn
+  straight onto the screen in a way that can't move into world space.
+
 ---
 
 ## Agent waves
@@ -219,9 +249,9 @@ Each line: **ID — task.** Done-when. *(depends on)*
 |---|---|---|
 | 1 | Now | A · B1 + B6 · contracts draft (B lead) · H1 + H2 |
 | 2 | M0 done, mock snapshot exists | B2–B5 · C-world (C1–C3, C7) · E1 · G8 |
-| 3 | M1 done | C-actors (C4–C6) · E2–E3 · D1–D3 · G1 |
+| 3 | M1 done | C-actors (C4–C6) · E2–E3 · D1–D3 · G1 · L1 |
 | 4 | M2 done | D4–D7 · F · C5 · G2–G7 · H3–H6 · I |
-| 5 | M3–M4 done | J · C8–C10 · K in full · E4–E5 |
+| 5 | M3–M4 done | J · C8–C10 · K in full · E4–E5 · L2–L6 |
 
 At most ~6 agents at once; one owner per directory; contract changes go through the B lead.
 
@@ -233,9 +263,14 @@ At most ~6 agents at once; one owner per directory; contract changes go through 
 4. **Thousands of ids need art** → fallback chain + coverage-ranked production.
 5. **132-tile bubble limits view distance** → overmap impostors (C8); a bigger bubble only if perf allows.
 6. **Licence** → CC-BY-SA covers the whole derivative; compatible assets only.
+7. **VR comfort and frame rate** (motion sickness, 90 fps stereo) → comfort options, worker-thread snapshot
+   work, L6 budgets; test in a headset early (L1).
+8. **VR melee vs CDDA's dice** (a swing that visibly connects but misses) → CDDA still decides; clear miss/block
+   feedback; tune in playtests.
 
 ## Open decisions for the user
 
 - Engine: Godot 4 (default) / Unreal 5 / custom C++ renderer.
 - Art direction: stylised low-poly (fast, consistent) / realistic (far more art).
-- Default mode: real-time / turn-based.
+- Default mode: real-time / turn-based (flat screen only; VR is always real-time).
+- VR headset to test on (L1).
