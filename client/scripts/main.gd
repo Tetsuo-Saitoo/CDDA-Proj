@@ -4,11 +4,11 @@ extends Node3D
 ## the player. Command line, after `--`: --snapshot=<path> --ids=<id tables path> --view-z=<z> --no-roofs
 ## --camera=<x>,<y>,<z>,<yaw_deg>,<pitch_deg> (Godot metres) --screenshot=<png> (save one frame, quit).
 ## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda):
-## arrows / numpad move relative to the camera, KP5 or . waits, [ ] take stairs, 1-9 / Enter pick in a
-## menu, Esc cancels it.
+## arrows / numpad move relative to the camera, KP5 or . waits, [ ] take stairs. CDDA's prompts show in
+## RequestUI (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
 
 const HELP := "RMB look  WASD move  E/Q up/down  Shift fast  wheel speed  PgUp/PgDn level  R roofs  F5 reload  Home player"
-const LIVE_HELP := "RMB look  WASD fly  arrows/numpad walk  KP5/. wait  [ ] stairs  1-9/Enter pick  Esc cancel  PgUp/PgDn level  R roofs  Home player"
+const LIVE_HELP := "RMB look  WASD fly  arrows/numpad walk  KP5/. wait  [ ] stairs  prompts: mouse or keys, Esc cancels  PgUp/PgDn level  R roofs  Home player"
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
 ## Camera-relative move: octant 0 = east, counting clockwise as seen from above (CDDA's y points south).
@@ -26,15 +26,13 @@ var world: WorldView
 var camera: FlyCamera
 var sun: DirectionalLight3D
 var hud: Label
-var request_label: Label
+var request_ui: RequestUI
 var player_marker: MeshInstance3D
 var live: LiveSession
 var snapshot_path := ""
 var status := ""
 var _args := {}
 var _log := PackedStringArray()
-var _options := []   # [label, answer] pairs for the pending request, picked with 1-9 / Enter
-var _color_tags := RegEx.create_from_string("</?color[^>]*>")
 
 
 func _ready() -> void:
@@ -168,59 +166,30 @@ func _on_live_snapshot(snap: Snapshot) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
-	_options = []
-	request_label.text = ""
 	if req.is_empty() or req.get("timed", false):
+		request_ui.clear()   # the main loop: walking keys queue actions
 		return
 	if req.get("context", "") == "RAW_KEY":
-		# A raw key read: CDDA's debug message prompt and "press any key" screens. Space goes on.
+		# A raw key read: CDDA's debug message prompt and "press any key" screens (the text is only in
+		# debug.log). Space goes on.
+		request_ui.clear()
 		live.answer({"id": req["id"], "action": " "})
 		return
-	_options = _request_options(req)
-	var lines := PackedStringArray(["[%s] %s" % [req.get("kind", ""), _plain(req.get("title", ""))]])
-	var text := _plain(req.get("text", ""))
-	if not text.is_empty():
-		lines.append(text.left(400))
-	for i in _options.size():
-		lines.append("%d  %s" % [i + 1, _plain(_options[i][0])])
-	if req.get("kind", "") == "direction":
-		lines.append("arrows / numpad: direction")
-	lines.append("Esc  cancel")
-	request_label.text = "\n".join(lines)
+	if not request_ui.show_request(req):
+		push_warning("live: request without a usable id or kind: %s" % req)
 
 
-## [label, answer] pairs for the number keys: enabled entries of menus, else the request's actions.
-func _request_options(req: Dictionary) -> Array:
-	var out := []
-	var kind: String = req.get("kind", "")
-	if kind in ["menu", "item_select", "item_multi"]:
-		for e: Dictionary in req.get("entries", []):
-			if e.get("enabled", true):
-				var a := {"id": req["id"]}
-				if kind == "item_multi":
-					a["picks"] = [[e["id"], 0]]
-				else:
-					a["entry"] = e["id"]
-				out.append([e.get("label", ""), a])
-	elif kind in ["key", "popup", "target"]:
-		for act: String in req.get("actions", PackedStringArray()):
-			var a := {"id": req["id"], "action": act}
-			if kind == "target":
-				a["pos"] = req.get("cursor", Vector3i.ZERO)
-			out.append([act, a])
-	return out.slice(0, 9)
+func _on_request_answered(a: Dictionary) -> void:
+	if live != null and not live.answer(a):
+		push_warning("live: bridge refused the answer %s" % a)
 
 
 func _on_live_events(events: Array) -> void:
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
-			_log.append(_plain(e.get("text", "")).left(200))
+			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
 	if _log.size() > LOG_LINES:
 		_log = _log.slice(_log.size() - LOG_LINES)
-
-
-func _plain(s: String) -> String:
-	return _color_tags.sub(s, "", true)
 
 
 func _octant(dir: Vector2) -> int:
@@ -234,17 +203,19 @@ func _octant(dir: Vector2) -> int:
 	return wrapi(roundi(atan2(v.z, v.x) / (PI / 4.0)), 0, 8)
 
 
-## Live-mode keys; true if used.
+## Camera-relative CDDA step for a (right, forward) screen direction; RequestUI uses it for directions and
+## the target cursor.
+func _screen_step(dir: Vector2) -> Vector2i:
+	return OCT_STEPS[_octant(dir)]
+
+
+## Live-mode keys in the main loop (prompts take their keys in RequestUI first); true if used.
 func _live_key(code: Key) -> bool:
 	var req := live.request
 	var in_main_loop: bool = req.is_empty() or req.get("timed", false)
 	if MOVE_KEYS.has(code):
-		var oct := _octant(MOVE_KEYS[code])
-		if req.get("kind", "") == "direction":
-			var d: Vector2i = OCT_STEPS[oct]
-			live.answer({"id": req["id"], "pos": Vector3i(d.x, d.y, 0)})
-		elif in_main_loop:
-			live.queue_action(OCT_ACTIONS[oct])
+		if in_main_loop:
+			live.queue_action(OCT_ACTIONS[_octant(MOVE_KEYS[code])])
 		return true
 	match code:
 		KEY_KP_5, KEY_PERIOD:
@@ -255,19 +226,6 @@ func _live_key(code: Key) -> bool:
 			if in_main_loop:
 				live.queue_action("LEVEL_DOWN" if code == KEY_BRACKETLEFT else "LEVEL_UP")
 			return true
-		KEY_ESCAPE:
-			if not in_main_loop:
-				live.answer({"id": req["id"], "cancel": true})
-			return true
-		KEY_ENTER, KEY_KP_ENTER:
-			if not _options.is_empty():
-				live.answer(_options[0][1])
-			return true
-	if code >= KEY_1 and code <= KEY_9:
-		var i: int = code - KEY_1
-		if i < _options.size():
-			live.answer(_options[i][1])
-		return true
 	return false
 
 
@@ -305,12 +263,13 @@ func _setup_hud() -> void:
 	add_child(layer)
 	hud = Label.new()
 	hud.position = Vector2(10, 8)
-	request_label = Label.new()
-	request_label.position = Vector2(10, 260)
-	for l: Label in [hud, request_label]:
-		l.add_theme_color_override("font_outline_color", Color.BLACK)
-		l.add_theme_constant_override("outline_size", 4)
-		layer.add_child(l)
+	hud.add_theme_color_override("font_outline_color", Color.BLACK)
+	hud.add_theme_constant_override("outline_size", 4)
+	layer.add_child(hud)
+	request_ui = RequestUI.new()
+	request_ui.direction_mapper = _screen_step
+	request_ui.answered.connect(_on_request_answered)
+	layer.add_child(request_ui)
 
 
 ## A stand-in for the player until there are character models.
@@ -329,6 +288,7 @@ func _setup_player_marker() -> void:
 
 
 func _process(_delta: float) -> void:
+	camera.set_process(not request_ui.wants_text_input())   # typing must not fly the camera
 	var tile := world.coords.world_to_ms(camera.position)
 	var lines := PackedStringArray([status, "camera square %s  view z <= %d  roofs %s  speed %.0f  %d fps" % [
 			tile, world.view_z_max, "on" if world.roofs_visible else "off", camera.speed,
