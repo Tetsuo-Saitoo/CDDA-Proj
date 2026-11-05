@@ -19,6 +19,7 @@
       "kind": { "enum": ["terrain", "furniture", "trap", "field", "item", "monster", "vehicle_part"] },
       "model": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.glb$", "maxLength": 200, "not": { "pattern": "\\.\\." } },
       "mesher": { "enum": ["floor", "wall", "window", "door", "fence", "stairs_up", "stairs_down", "ramp", "water", "roof", "open_air"] },
+      "placeholder": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
       "material": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
       "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
       "offset": { "type": "array", "items": { "type": "number", "minimum": -10, "maximum": 10 }, "minItems": 3, "maxItems": 3 },
@@ -27,7 +28,7 @@
       "anim_set": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
       "//": { "type": "string" }
     },
-    "anyOf": [ { "required": ["model"] }, { "required": ["mesher"] } ]
+    "anyOf": [ { "required": ["model"] }, { "required": ["mesher"] }, { "required": ["placeholder"] } ]
   },
   "$defs": {
     "cdda_id": { "type": "string", "pattern": "^[A-Za-z0-9_:\\-]+$", "maxLength": 128 }

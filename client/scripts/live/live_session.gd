@@ -5,6 +5,8 @@ extends Node
 ## CddaSim as a type, so the client still loads when the DLL isn't built.
 
 signal state_changed(state: String)
+## New id tables (contracts/id_tables.md), emitted before the first snapshot of their generation.
+signal id_tables_ready(tables: IdTables)
 signal snapshot_ready(snap: Snapshot)
 ## {} when nothing is pending. Timed requests (the main game loop) come through here too.
 signal request_changed(request: Dictionary)
@@ -18,6 +20,7 @@ var state := "idle"
 var error := ""
 var request := {}
 var snapshot_seq := 0
+var ids_generation := -1
 var _sim: RefCounted
 
 
@@ -102,6 +105,8 @@ func _process(_delta: float) -> void:
 	if seq != snapshot_seq:
 		var snap := Snapshot.parse_text(_sim.get_snapshot_json(Z_BELOW, Z_ABOVE))
 		snapshot_seq = seq
+		if snap.is_valid() and snap.ids_generation != ids_generation:
+			_fetch_id_tables(snap.ids_generation)
 		if snap.is_valid():
 			snapshot_ready.emit(snap)
 		else:
@@ -110,6 +115,17 @@ func _process(_delta: float) -> void:
 	if r.get("id", 0) != request.get("id", 0):
 		request = r
 		request_changed.emit(r)
+
+
+## Asked once per generation: a failed or mismatched fetch leaves the world on the snapshot's names.
+func _fetch_id_tables(generation: int) -> void:
+	ids_generation = generation
+	var t := IdTables.parse_text(_sim.get_id_tables_json())
+	if not t.is_valid():
+		push_error("live id tables rejected: " + t.error)
+	elif t.generation != generation:
+		push_warning("live id tables are generation %d, the snapshot wants %d" % [t.generation, generation])
+	id_tables_ready.emit(t)
 
 
 func _exit_tree() -> void:

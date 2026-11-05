@@ -1,7 +1,7 @@
 extends Node3D
 ## M1 "ghost walk" viewer: loads a snapshot (default: the mock town), meshes it, and lets you fly around.
 ## Keys: PageUp/PageDown show levels up to z (cutaway), R roofs, F5 reload the snapshot, Home back to
-## the player. Command line, after `--`: --snapshot=<path> --view-z=<z> --no-roofs
+## the player. Command line, after `--`: --snapshot=<path> --ids=<id tables path> --view-z=<z> --no-roofs
 ## --camera=<x>,<y>,<z>,<yaw_deg>,<pitch_deg> (Godot metres) --screenshot=<png> (save one frame, quit).
 ## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda):
 ## arrows / numpad move relative to the camera, KP5 or . waits, [ ] take stairs, 1-9 / Enter pick in a
@@ -56,6 +56,7 @@ func _ready() -> void:
 	if _args.has("live"):
 		_start_live()
 	else:
+		_load_id_tables()
 		_reload()
 	if _args.has("view-z"):
 		world.set_view_z_max(String(_args["view-z"]).to_int())
@@ -84,6 +85,14 @@ func _parse_args() -> Dictionary:
 	return out
 
 
+## Mock mode: the id tables next to the mock snapshot (live mode gets them from the game).
+func _load_id_tables() -> void:
+	var t := IdTables.load_file(_args.get("ids", _repo_path("contracts/mock/id_tables.json")))
+	if not t.is_valid():
+		push_warning("id tables rejected, showing registry art only: " + t.error)
+	world.set_id_tables(t)
+
+
 func _reload() -> void:
 	var t0 := Time.get_ticks_msec()
 	var snap := Snapshot.load_file(snapshot_path)
@@ -101,8 +110,9 @@ func _reload() -> void:
 func _show(snap: Snapshot) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := world.apply_snapshot(snap)
-	status = "rebuilt %d of %d submaps in %d ms, %d k vertices" % [n, snap.submaps.size(),
-			Time.get_ticks_msec() - t0, world.vertex_count / 1000]
+	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
+			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
+			world.prop_counts["furniture"], world.prop_counts["items"]]
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
 	player_marker.visible = true
 	player_marker.position = world.coords.ms_center_to_world(snap.player_pos) + Vector3(0, 0.85, 0)
@@ -119,6 +129,7 @@ func _start_live() -> void:
 	live = LiveSession.new()
 	live.name = "Live"
 	add_child(live)
+	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)

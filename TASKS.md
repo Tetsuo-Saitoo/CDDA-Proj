@@ -1,7 +1,7 @@
 # TASKS
 
 ## State
-Wave 1 done; wave 2 started with B2. Client: C1 + C2 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). M0 bridge done: the client can run a live CDDA game in-process (`--live`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
+Wave 1 done; wave 2 started with B2. Client: C1 + C2 + C3 done against the mock (Godot 4.7.2 at `D:\Tools\Godot\`). M0 bridge done: the client can run a live CDDA game in-process (`--live`). Plan, blocks and agent waves: [PLAN.md](PLAN.md). Build steps: [docs/BUILD.md](docs/BUILD.md).
 Engine decided: **Godot 4**. CDDA source **0.I-1** in `cdda/` (own git repo: `upstream` = pristine, `fp3d` = ours).
 Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. Both committed locally, no GitHub remote yet. vcpkg lives at `D:\vcpkg`.
 
@@ -18,17 +18,19 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`. 
 - [x] B5 Threading: action queue in the bridge (`queue_action`, 32 max, taken at timed requests, held while paused, cleared by auto-pause); snapshot/event/request handoffs are mutex-guarded; checked by `fp3d-sim-test`
 - [ ] B5 leftover: ThreadSanitizer run on Linux CI (needs A3; MSVC has no TSan)
 - [x] B6 Id tables (`fp3d/id_tables.*`, `contracts/id_tables.md`): ter/furn/trap/field/itype/mtype/vpart definitions, session tables pre-filled sorted, `ids_generation` in snapshots, `contracts/mock/id_tables.json`; `fp3d-ids-test` passes
-- [ ] B6 follow-ups: client reads `id_tables.json` (C2 leftover below); `tools/coverage` could read it instead of parsing CDDA's JSON
+- [ ] B6 follow-up: `tools/coverage` could read `id_tables.json` instead of parsing CDDA's JSON
 - [x] C1 Coordinates (`client/scripts/world/coords.gd`) and C2 terrain mesher (`terrain_mesher.gd`, `world_view.gd`), fly camera, hostile-input loader (`snapshot.gd`); headless tests pass
 - [x] M0 bridge: GDExtension `bridge/` (godot-cpp in `bridge/godot-cpp`, not in git) → `client/bin/fp3d_cdda.windows.x86_64.dll`, class `CddaSim` (`contracts/bridge_api.md`); client `LiveSession` + `main.gd --live` (debug UI: camera-relative walking, numbered menu answers); `client/tests/live_test.gd` passes
 - [x] M1 load a save: `CddaSim.start_load` / `list_worlds` / `list_saves` (`fp3d::boot_saved_game`), client `--live --world= --save=`; `live_test.gd` saves, then a second Godot run loads it (turn and position match)
 - [ ] Bridge leftovers: snapshot JSON is built and parsed on Godot's main thread (move to a worker or a binary format); one game per process (no restart after stop); the live UI is a debug stand-in for block E and has no save key yet (queue `save`, answer YES)
-- [ ] C2 leftovers: use ter flags / `connect_groups` from `contracts/mock/id_tables.json` (B6 done) instead of name rules (`terrain_catalog.gd`); stairs/ramp direction is a guess; darken by `vis`/`light` (C6); real ramp wedges
-- [ ] C3 props (furniture, items); C7 z-level view beyond the PgUp/PgDn cutaway
+- [x] C2 terrain from id tables (`IdTables`, flags/connect groups/open-close/roof links, no name rules) and C3 props: furniture, known traps, item piles via the registry fallback chain (`AssetRegistry`, `PropCatalog`, `PropMesher`, placeholder shapes in `PropShapes`, registry `furniture_core.json` + `generic.json`)
+- [ ] C2 leftovers: stairs/ramp direction is a guess; ramp low ends draw as floor (real wedges); darken by `vis`/`light` (C6)
+- [ ] C3 leftovers: load `.glb` models (none exist; model-only entries fall through); fields (`snapshot.gd` still ignores them); multi-tile furniture is per tile; live-mode id tables path untested (no DLL in worktrees)
+- [ ] C7 z-level view beyond the PgUp/PgDn cutaway
 - [ ] A3 CI (GitHub Actions) — needs a GitHub repo; ask the user before creating one
 - [ ] A4 Upstream merge playbook (tarball has no git history: fetch tag 0.I-1 from GitHub as merge base)
 - [ ] Contracts: review v0 drafts in `contracts/` with block C/E/G leads before wave 2
-- [ ] H1 Write more registry entries (furniture, monsters) once models exist; H3 tileset placeholders
+- [ ] H1 Write more registry entries (monsters; furniture models once they exist: 70 furniture ids have `placeholder` shapes); H3 tileset placeholders
 - [x] User: art direction decided 2026-11-02: low-poly-ish, but with enough environmental detail (clutter, trim, props) that places read well. H blocks and the registry follow this
 - [ ] User: real-time vs turn-based default
 
@@ -41,7 +43,7 @@ Later waves: see PLAN.md "Agent waves".
 - Art coverage: `python -I tools/coverage/coverage.py --data cdda/data/json` (3 s).
 
 ## Key facts
-- Client: run `D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe --path client` (keys in the HUD; `-- --snapshot=<path>` loads another file). Tests: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --import` once, then `--headless --path client --script res://tests/run_tests.gd`. The 363-submap mock builds in ~0.45 s, 500 k vertices.
+- Client: run `D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe --path client` (keys in the HUD; `-- --snapshot=<path>` loads another file, `--ids=<path>` other id tables; `--view-z=0 --no-roofs --camera=x,y,z,yaw,pitch --screenshot=<png>` for a picture). Tests: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --import` once, then `--headless --path client --script res://tests/run_tests.gd`. The 363-submap mock builds in ~0.6 s, 735 k vertices with props (1058 furniture); the id tables JSON parses and validates in ~0.3 s.
 - Client axes: 1 tile = 1 m, 1 z = 3 m, east = +X, south = +Z; Godot origin = bubble corner, rebased on shift. Walls fill their tile. Godot's JSON gives every number as a float.
 - CDDA's sun azimuth (`env.sun_az_deg`) is measured from the south, positive toward the west (calendar.cpp). `t_soil` is solid earth (a wall), not a floor.
 - CDDA: C++, JSON data (0.I: all items are type `ITEM`), licence CC-BY-SA 3.0, so this project must be too.
@@ -71,3 +73,5 @@ Later waves: see PLAN.md "Agent waves".
 - Load facts: `boot_saved_game` = main menu's load (`world_generator->init()`, `g->setup()`, `build_id_tables`, `game::load`); it never deletes. After a load `new_game` is true, so the first `do_turn` doesn't advance the turn: the first request has the saved turn. Save files are `#` + CDDA base64 (alphabet ends `+ -`) + `.sav` (`.sav.zzip` if compressed); a name starting with `#` is stored raw, so the bridge refuses those. The bridge lists folders itself (no CDDA globals) and only loads names its own listing gives.
 - Id tables: 108 items have colour `c_unset`; `color_manager::get_name` raises a debug message for those (a popup outside test mode), so the tables use their own colour map.
 - Planned scale: 1 tile = 1 m, 1 z-level = 3 m, 4×4 sub-tiles per tile.
+- Client terrain rules (`terrain_catalog.gd`): kinds come from flags in a fixed order, then the looks_like chain (never structural kinds: monkey bars look like a ladder). Roofs = the `roof` of an INDOORS/WALL/WINDOW/DOOR terrain that isn't ground (t_soil's roof is t_dirt); treetops = the `roof` of a TREE. Colour: registry material, else the muted CDDA colour (`CddaPalette`: cyan reads as metal/glass).
+- Registry field `placeholder` (procedural prop shape) added to the schema; coverage (0.I): furniture 65 % exact, 76 % with looks_like, the rest hit `generic_furniture_*`.

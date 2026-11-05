@@ -1,0 +1,24 @@
+[
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "flower", "random_yaw": true, "id": "generic_furniture_flower" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "sign", "id": "generic_furniture_sign" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "chair", "material": "wood", "id": "generic_furniture_seat" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "table", "material": "wood", "id": "generic_furniture_table" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "dresser", "id": "generic_furniture_container" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "shelf", "id": "generic_furniture_shelf" },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "block", "id": "generic_furniture" },
+
+  { "type": "fp3d_model", "kind": "trap", "placeholder": "trap_plate", "id": "generic_trap" },
+
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_box", "id": ["generic_item", "generic_item_food", "generic_item_other", "generic_item_artifacts"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_book",
+    "id": ["generic_item_books", "generic_item_manuals", "generic_item_ma_manuals", "generic_item_maps", "generic_item_software", "generic_item_e_files"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_cloth", "id": ["generic_item_clothing", "generic_item_armor"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_bottle", "id": ["generic_item_drugs", "generic_item_chems", "generic_item_mutagen"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_can", "id": ["generic_item_container", "generic_item_fuel"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_long", "id": ["generic_item_weapons", "generic_item_guns"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_tool",
+    "id": ["generic_item_tools", "generic_item_tool_magazine", "generic_item_spare_parts", "generic_item_veh_parts", "generic_item_mods", "generic_item_traps", "generic_item_keys"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_small",
+    "id": ["generic_item_ammo", "generic_item_magazines", "generic_item_currency", "generic_item_seeds", "generic_item_bionics"] },
+  { "type": "fp3d_model", "kind": "item", "placeholder": "item_corpse", "id": ["generic_item_corpses"] }
+]

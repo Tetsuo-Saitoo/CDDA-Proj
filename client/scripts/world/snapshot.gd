@@ -4,8 +4,8 @@ extends RefCounted
 ##
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
-## Fields the client doesn't use yet (traps, items, fields, creatures, vehicles) are ignored, not
-## trusted; whoever starts using them adds their checks here.
+## Fields the client doesn't use yet (fields, creatures, vehicles) are ignored, not trusted; whoever
+## starts using them adds their checks here. A submap without `trap` or `items` has none.
 
 const CONTRACT_VERSION := 0
 const TILES := 144
@@ -17,6 +17,8 @@ const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well i
 const MAX_TURN := 1 << 52                 # JSON numbers are doubles
 const MAX_NAMES := 65536
 const MAX_NAME_LEN := 128
+const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
+const PILE_STRIDE := 6                    # items: tile, count, top[4]
 
 const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
@@ -30,6 +32,8 @@ class Submap:
 	var detail_revision: int
 	var ter: PackedInt32Array     # index = y * 12 + x
 	var furn: PackedInt32Array
+	var trap: PackedInt32Array    # CDDA trap ids, 0 = none (only traps the player knows)
+	var items: PackedInt32Array   # piles, PILE_STRIDE ints each: tile, count, top[4] (itype indices, 0 = none)
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -38,6 +42,7 @@ class Submap:
 var error := ""
 var turn := 0
 var seq := 0
+var ids_generation := -1   # -1: the snapshot doesn't say
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var sun_alt_deg := 45.0
@@ -45,6 +50,7 @@ var sun_az_deg := 180.0
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
+var trap_names := {}    # int -> String
 
 
 func is_valid() -> bool:
@@ -77,6 +83,7 @@ static func from_data(data: Variant) -> Snapshot:
 		snap.submaps.clear()
 		snap.ter_names.clear()
 		snap.furn_names.clear()
+		snap.trap_names.clear()
 	return snap
 
 
@@ -96,6 +103,8 @@ func _read(data: Variant) -> void:
 		_fail("contract_version %d, this client reads %d" % [version, CONTRACT_VERSION])
 	turn = _int(d.get("turn"), -MAX_TURN, MAX_TURN, "turn")
 	seq = _int(d.get("seq"), 0, MAX_TURN, "seq")
+	if d.has("ids_generation"):
+		ids_generation = _int(d["ids_generation"], 0, 0xFFFFFFFF, "ids_generation")
 	bubble_origin = _vec3i(d.get("bubble_origin"), MAX_ABS_SM, "bubble_origin")
 	if is_valid() and bubble_origin.z != 0:
 		_fail("bubble_origin z must be 0")
@@ -138,6 +147,7 @@ func _read_ids(v: Variant) -> void:
 		return
 	ter_names = _names((v as Dictionary).get("ter"), "ids.ter")
 	furn_names = _names((v as Dictionary).get("furn"), "ids.furn")
+	trap_names = _names((v as Dictionary).get("trap"), "ids.trap")
 
 
 func _read_submaps(v: Variant) -> void:
@@ -173,6 +183,8 @@ func _read_submaps(v: Variant) -> void:
 		sm.detail_revision = _int(s.get("detail_revision"), 0, MAX_REVISION, what + ".detail_revision")
 		sm.ter = _ids(s.get("ter"), what + ".ter")
 		sm.furn = _ids(s.get("furn"), what + ".furn")
+		sm.trap = _ids(s["trap"], what + ".trap") if s.has("trap") else _zeros()
+		sm.items = _piles(s.get("items"), what + ".items")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -247,6 +259,42 @@ func _ids(v: Variant, what: String) -> PackedInt32Array:
 			out[i] = x
 		else:
 			_fail("%s[%d]: not an id" % [what, i])
+			return out
+	return out
+
+
+static func _zeros() -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(TILES)
+	return out
+
+
+## [[tile, count, [top...]], ...]: at most one pile per tile, at most 4 top itypes.
+func _piles(v: Variant, what: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > TILES:
+		_fail("%s: expected a list of at most %d piles" % [what, TILES])
+		return out
+	var seen := {}
+	for i in (v as Array).size():
+		var p: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not p is Array or (p as Array).size() != 3 or not p[2] is Array or (p[2] as Array).size() > 4:
+			_fail(w + ": expected [tile, count, [up to 4 itypes]]")
+			return out
+		var tile := _int(p[0], 0, TILES - 1, w + ".tile")
+		var count := _int(p[1], 0, MAX_ITEM_COUNT, w + ".count")
+		if is_valid() and seen.has(tile):
+			_fail("%s: tile %d has two piles" % [w, tile])
+		seen[tile] = true
+		out.append(tile)
+		out.append(count)
+		var top: Array = p[2]
+		for k in 4:
+			out.append(_int(top[k], 0, MAX_ID, w + ".top") if k < top.size() else 0)
+		if not is_valid():
 			return out
 	return out
 
