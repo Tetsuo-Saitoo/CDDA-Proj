@@ -142,6 +142,9 @@ void CddaSim::_bind_methods()
     using godot::ClassDB;
     using godot::D_METHOD;
     ClassDB::bind_method( D_METHOD( "start", "data_dir", "user_dir", "world" ), &CddaSim::start );
+    ClassDB::bind_method( D_METHOD( "start_load", "data_dir", "user_dir", "world", "save" ), &CddaSim::start_load );
+    ClassDB::bind_method( D_METHOD( "list_worlds", "user_dir" ), &CddaSim::list_worlds );
+    ClassDB::bind_method( D_METHOD( "list_saves", "user_dir", "world" ), &CddaSim::list_saves );
     ClassDB::bind_method( D_METHOD( "stop" ), &CddaSim::stop );
     ClassDB::bind_method( D_METHOD( "get_state" ), &CddaSim::get_state );
     ClassDB::bind_method( D_METHOD( "get_error" ), &CddaSim::get_error );
@@ -173,6 +176,57 @@ String CddaSim::start( const String &data_dir, const String &user_dir, const Str
         return to_godot( fp3d_session::start( to_std( data_dir ), to_std( user_dir ), to_std( world ) ) );
     } catch( const std::exception &e ) {
         return to_godot( std::string( "start failed: " ) + e.what() );
+    }
+}
+
+String CddaSim::start_load( const String &data_dir, const String &user_dir, const String &world,
+                            const String &save )
+{
+    if( save.is_empty() ) {
+        return "no save given";
+    }
+    try {
+        return to_godot( fp3d_session::start( to_std( data_dir ), to_std( user_dir ), to_std( world ),
+                                              to_std( save ) ) );
+    } catch( const std::exception &e ) {
+        return to_godot( std::string( "start failed: " ) + e.what() );
+    }
+}
+
+namespace
+{
+godot::PackedStringArray to_names( const std::vector<std::string> &names, const std::string &why,
+                                   const char *what )
+{
+    if( !why.empty() ) {
+        godot::UtilityFunctions::push_error( String( "CddaSim." ) + what + ": " + to_godot( why ) );
+    }
+    godot::PackedStringArray out;
+    for( const std::string &n : names ) {
+        out.push_back( to_godot( n ) );
+    }
+    return out;
+}
+} // namespace
+
+godot::PackedStringArray CddaSim::list_worlds( const String &user_dir ) const
+{
+    std::string why;
+    try {
+        return to_names( fp3d_session::list_worlds( to_std( user_dir ), why ), why, "list_worlds" );
+    } catch( const std::exception &e ) {
+        return to_names( {}, e.what(), "list_worlds" );
+    }
+}
+
+godot::PackedStringArray CddaSim::list_saves( const String &user_dir, const String &world ) const
+{
+    std::string why;
+    try {
+        return to_names( fp3d_session::list_saves( to_std( user_dir ), to_std( world ), why ), why,
+                         "list_saves" );
+    } catch( const std::exception &e ) {
+        return to_names( {}, e.what(), "list_saves" );
     }
 }
 

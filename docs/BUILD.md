@@ -36,9 +36,14 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    godot-cpp is there. Build target `fp3d-cdda` (first time ~10 min for godot-cpp); it copies
    `fp3d_cdda.windows.x86_64.dll` (~40 MB, imports only Windows DLLs) to `client/bin/`. Close Godot first: it
    locks the DLL.
-   - Live test, ~1 min: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --script res://tests/live_test.gd`
-     prints `live tests: all passed`. It plays in `%APPDATA%\Godot\app_userdata\CDDA-3D\cdda-test\`.
+   - Live test, ~2 min: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --script res://tests/live_test.gd`
+     prints `live tests: all passed`. It plays a new game, saves it, then starts a second Godot run
+     (`-- --load`, output prefixed `|`) that loads the save and checks turn and position. It plays in
+     `%APPDATA%\Godot\app_userdata\CDDA-3D\cdda-test\` (listing checks in `...\cdda-list-test\`).
    - Play: `Godot_v4.7.2-stable_win64.exe --path client -- --live` (new game each start, world `fp3d-live` under
-     `...\CDDA-3D\cdda\`; keys in the HUD).
+     `...\CDDA-3D\cdda\`; keys in the HUD). Load a save instead with `--live --world=<world> [--save=<character>]`
+     (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this never deletes anything,
+     but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
+     Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
 6. **Art coverage** (no build needed):
    `python -I tools/coverage/coverage.py --data cdda/data/json` → `tools/out/coverage_*.csv`

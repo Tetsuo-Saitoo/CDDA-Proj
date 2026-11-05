@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
 class CddaSim : public godot::RefCounted
@@ -23,6 +24,10 @@ class CddaSim : public godot::RefCounted
 
         godot::String start( const godot::String &data_dir, const godot::String &user_dir,
                              const godot::String &world );
+        godot::String start_load( const godot::String &data_dir, const godot::String &user_dir,
+                                  const godot::String &world, const godot::String &save );
+        godot::PackedStringArray list_worlds( const godot::String &user_dir ) const;
+        godot::PackedStringArray list_saves( const godot::String &user_dir, const godot::String &world ) const;
         void stop();
         godot::String get_state() const;
         godot::String get_error() const;

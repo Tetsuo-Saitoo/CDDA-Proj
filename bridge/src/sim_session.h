@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace fp3d_session
 {
@@ -22,14 +23,23 @@ enum class state : int {
 const char *state_name( state s );
 
 // Starts CDDA on its own thread with data from `data_dir` (the folder holding data/ and gfx/), config, saves and
-// debug.log under `user_dir`, and a new game in world `world` (an existing world of that name is deleted first).
-// Both paths must be absolute; `world` is 1-32 of A-Z a-z 0-9 _ -. Once per process: CDDA's state is global.
-// Returns "" when started, otherwise why not.
-std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world );
+// debug.log under `user_dir`. With `save` empty: a new game in world `world` (an existing world of that name is
+// deleted first; `world` is 1-32 of A-Z a-z 0-9 _ -). Otherwise: loads the character `save` from the existing
+// world `world`, deleting nothing; both must be names list_saves() gives. Both paths must be absolute.
+// Once per process: CDDA's state is global. Returns "" when started, otherwise why not.
+std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
+                   const std::string &save = "" );
 // Shuts the bridge down and waits for the game thread. While booting that wait lasts until loading finishes.
 void stop();
 state get_state();
 std::string error();
+
+// Worlds under `user_dir`/save (folders holding worldoptions.json or master.gsav) and the characters saved in
+// one, sorted, at most max_listed each. Read straight from the folders, so they work before start(). Names that
+// aren't plain text or could be paths are left out. Empty if there are none; `why` says if the input was bad.
+constexpr size_t max_listed = 256;
+std::vector<std::string> list_worlds( const std::string &user_dir, std::string &why );
+std::vector<std::string> list_saves( const std::string &user_dir, const std::string &world, std::string &why );
 
 // The newest snapshot (0 before the first one).
 uint64_t snapshot_seq();

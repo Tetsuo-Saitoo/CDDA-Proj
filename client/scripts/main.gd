@@ -124,8 +124,23 @@ func _start_live() -> void:
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error))
+	# --live alone: a new game in LIVE_WORLD (replaced each time). --world=<name> and/or --save=<character>
+	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
+	# looks in LIVE_WORLD. Saves live under user://cdda/save/<world>/ (copy CDDA worlds there).
 	var user_dir := OS.get_user_data_dir().path_join("cdda")
-	if live.start(_args.get("cdda", _repo_path("cdda")), user_dir, LIVE_WORLD):
+	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
+	var ok := false
+	if _args.has("world") or _args.has("save"):
+		var w: String = _args.get("world", LIVE_WORLD)
+		var saves := LiveSession.list_saves(user_dir, w)
+		var s: String = _args.get("save", saves[0] if not saves.is_empty() else "")
+		if s.is_empty():
+			live.error = "no saves in world %s (worlds: %s)" % [w, ", ".join(LiveSession.list_worlds(user_dir))]
+		else:
+			ok = live.start_load(data_dir, user_dir, w, s)
+	else:
+		ok = live.start(data_dir, user_dir, LIVE_WORLD)
+	if ok:
 		status = "game booting (~30 s)"
 	else:
 		status = "live mode failed: " + live.error

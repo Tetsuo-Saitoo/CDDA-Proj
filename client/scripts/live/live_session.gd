@@ -27,12 +27,45 @@ static func available() -> bool:
 
 ## Starts a new game in `world` (an existing world of that name is replaced). Paths must be absolute.
 func start(data_dir: String, user_dir: String, world: String) -> bool:
+	if not _make_sim():
+		return false
+	error = _sim.start(data_dir, user_dir, world)
+	return error.is_empty()
+
+
+## Loads the character `save` from the existing `world` under `user_dir` (names from list_saves). Deletes nothing.
+func start_load(data_dir: String, user_dir: String, world: String, save: String) -> bool:
+	if not _make_sim():
+		return false
+	error = _sim.start_load(data_dir, user_dir, world, save)
+	return error.is_empty()
+
+
+## Worlds under `user_dir`/save, sorted; [] without the bridge. Works before a game starts.
+static func list_worlds(user_dir: String) -> PackedStringArray:
+	if not available():
+		return PackedStringArray()
+	return ClassDB.instantiate("CddaSim").list_worlds(user_dir)
+
+
+## Characters saved in `world`, sorted; [] without the bridge or if there are none.
+static func list_saves(user_dir: String, world: String) -> PackedStringArray:
+	if not available():
+		return PackedStringArray()
+	return ClassDB.instantiate("CddaSim").list_saves(user_dir, world)
+
+
+## CDDA's "save and quit" (it asks to confirm with a popup request). The game then ends with state "ended".
+func save() -> bool:
+	return queue_action("save")
+
+
+func _make_sim() -> bool:
 	if not available():
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
-	error = _sim.start(data_dir, user_dir, world)
-	return error.is_empty()
+	return true
 
 
 func stop() -> void:
