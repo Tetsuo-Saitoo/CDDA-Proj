@@ -17,8 +17,9 @@ cd cdda-3d
 git clone -b fp3d https://github.com/Tetsuo-Saitoo/CDDA-3D-code cdda
 ```
 
-Building needs Windows, Visual Studio 2022 Build Tools, vcpkg and Godot 4.7.2: see [docs/BUILD.md](docs/BUILD.md).
-To skip building, take the bridge DLL from the newest [release](https://github.com/Tetsuo-Saitoo/CDDA-Proj/releases)
+Building needs Windows (Visual Studio 2022 Build Tools, vcpkg) or Linux (GCC, CMake, SDL2), and Godot 4.7.2: see
+[docs/BUILD.md](docs/BUILD.md). To skip building, take the bridge (Windows DLL or Linux `.so`) from the newest
+[release](https://github.com/Tetsuo-Saitoo/CDDA-Proj/releases)
 (only Godot 4.7.2 needed then).
 
 ## Where things are

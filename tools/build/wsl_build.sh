@@ -4,6 +4,8 @@
 # /mnt/<drive> is slow, then builds there with preset fp3d-linux and copies the .so back to client/bin/.
 #   bash tools/build/wsl_build.sh [targets...]      (default: fp3d-cdda; JOBS=<n> overrides the job count)
 # Linux folder: $FP3D_LINUX_DIR, default ~/cdda3d. Files deleted here are deleted there on the next run.
+# CDDA's data cache (cdda/data/cache/) stays apart: Windows' entries carry other file times, and CDDA
+# would stop at boot with "stale game data".
 set -eu
 src="$(cd "$(dirname "$0")/../.." && pwd)"
 dst="${FP3D_LINUX_DIR:-$HOME/cdda3d}"
@@ -15,6 +17,7 @@ rsync -a --delete \
     --exclude=.git/ --exclude=/cdda/out/ --exclude=/client/.godot/ --exclude=/tools/out/ --exclude=/game/ \
     --exclude='*.dll' --exclude='*.so' --exclude='*.pdb' --exclude='*.exp' --exclude='*.lib' \
     --exclude=__pycache__/ --exclude=/cdda/CMakeUserPresets.json \
+    --exclude=/cdda/data/cache/ \
     "$src/" "$dst/"
 cp -p "$dst/tools/build/CMakeUserPresets.json" "$dst/cdda/"
 cd "$dst/cdda"

@@ -29,8 +29,9 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    - `src/fp3d/RelWithDebInfo/fp3d-ids-test.exe`: B6 test, checks the id tables against CDDA's data, stable indices, snapshot ids resolving, the JSON; run from `cdda/`, ~40 s, prints `all checks passed`
    - `src/fp3d/RelWithDebInfo/fp3d-events-test.exe`: B4 test, makes each kind of event happen next to the player and checks what the bus queues (and leaves out); run from `cdda/`, ~40 s, prints `all checks passed`
 5. **Godot bridge** (GDExtension, API in `contracts/bridge_api.md`). No compiler? Take
-   `fp3d_cdda.windows.x86_64.dll` from the newest GitHub release of CDDA-Proj, put it in `client/bin/`, check
-   its SHA256 (`Get-FileHash`) against the release notes, and skip to the tests and play below; `cdda/`
+   `fp3d_cdda.windows.x86_64.dll` (Windows) or `fp3d_cdda.linux.x86_64.so` (Linux, needs the system's SDL2,
+   SDL2_image, SDL2_ttf and glibc 2.38+) from the newest GitHub release of CDDA-Proj, put it in `client/bin/`,
+   check its SHA256 (`Get-FileHash` / `sha256sum`) against the release notes, and skip to the tests and play below; `cdda/`
    (CDDA-3D-code) is still needed for the game data. To build it instead: get godot-cpp once (MIT; it ships Godot 4.7's
    API, so nothing else is needed). We use commit `e103d348` (2026-10-30):
    ```bash
@@ -49,13 +50,13 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this never deletes anything,
      but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
      Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
-   - **Linux** (a Linux PC or WSL; Ubuntu 24.04 / Arch). Packages: Ubuntu `sudo apt install build-essential cmake
    - Views (with or without `--live`): first person by default, eyes 1.6 m up; **V** switches to the outside
      (fly) camera and back; `--view=outside` starts outside (so does `--camera=`, unless `--view=first`). First
      person: hold RMB and move the mouse to look (or the right stick); live, WASD / left stick, arrows and
      numpad step where you look (held keys keep stepping, one step queued at a time), `[ ]` stairs; on the
      mock town WASD walks (walls stop you, doors don't), Shift faster, `[ ]` level down / up, Home back to the
      player. Bindings are Godot actions (`client/scripts/input/input_actions.gd`, defaults until E1).
+   - **Linux** (a Linux PC or WSL; Ubuntu 24.04 / Arch). Packages: Ubuntu `sudo apt install build-essential cmake
      ninja-build git pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libfreetype-dev zlib1g-dev
      libbz2-dev`; Arch `sudo pacman -S --needed base-devel cmake ninja git sdl2 sdl2_image sdl2_ttf freetype2`.
      Then, with godot-cpp cloned as above:
