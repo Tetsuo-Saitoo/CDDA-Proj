@@ -28,6 +28,8 @@
         "TESTS": "False",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "USE_PREFIX_DATA_DIR": "OFF",
+        "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceParentDir}/=",
+        "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceParentDir}/=",
         "CMAKE_POSITION_INDEPENDENT_CODE": "ON"
       }
     }
