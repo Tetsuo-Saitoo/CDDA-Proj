@@ -84,6 +84,11 @@ func queue_action(action: String) -> bool:
 	return _sim != null and _sim.queue_action(action)
 
 
+## Actions waiting in the bridge's queue (0 without a game).
+func queued_actions() -> int:
+	return _sim.get_queued_actions() if _sim != null else 0
+
+
 func sim() -> RefCounted:
 	return _sim
 

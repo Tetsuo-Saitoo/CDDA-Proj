@@ -50,6 +50,12 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
      Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
    - **Linux** (a Linux PC or WSL; Ubuntu 24.04 / Arch). Packages: Ubuntu `sudo apt install build-essential cmake
+   - Views (with or without `--live`): first person by default, eyes 1.6 m up; **V** switches to the outside
+     (fly) camera and back; `--view=outside` starts outside (so does `--camera=`, unless `--view=first`). First
+     person: hold RMB and move the mouse to look (or the right stick); live, WASD / left stick, arrows and
+     numpad step where you look (held keys keep stepping, one step queued at a time), `[ ]` stairs; on the
+     mock town WASD walks (walls stop you, doors don't), Shift faster, `[ ]` level down / up, Home back to the
+     player. Bindings are Godot actions (`client/scripts/input/input_actions.gd`, defaults until E1).
      ninja-build git pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libfreetype-dev zlib1g-dev
      libbz2-dev`; Arch `sudo pacman -S --needed base-devel cmake ninja git sdl2 sdl2_image sdl2_ttf freetype2`.
      Then, with godot-cpp cloned as above:
