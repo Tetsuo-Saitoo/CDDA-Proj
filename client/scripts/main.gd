@@ -129,6 +129,9 @@ func _frame_player() -> void:
 		return
 	if vr != null:
 		vr.go_to_player(world.snapshot.player_pos)
+		print("VR: player square %s, rig at %s, head at %s, player at %s" % [world.snapshot.player_pos,
+				vr.global_position, vr.camera.global_position,
+				world.coords.ms_center_to_world(world.snapshot.player_pos)])
 		return
 	var target := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	camera.look_from(target + Vector3(-20, 28, 30), target)
@@ -150,6 +153,9 @@ func _start_vr() -> void:
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
 	if xr.has_signal("session_stopping"):
 		xr.connect("session_stopping", get_tree().quit)
+	for sig in ["session_begun", "session_visible", "session_focussed", "session_stopping", "session_loss_pending"]:
+		if xr.has_signal(sig):
+			xr.connect(sig, func() -> void: print("VR: " + sig))
 	if xr.has_signal("pose_recentered"):
 		xr.connect("pose_recentered", func() -> void: XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true))
 	vr_perf = VrPerf.new(xr)
@@ -172,7 +178,8 @@ func _start_live() -> void:
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
-		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error))
+		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
+		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
 	# --live alone: a new game in LIVE_WORLD (replaced each time). --world=<name> and/or --save=<character>
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD. Saves live under user://cdda/save/<world>/ (copy CDDA worlds there).
@@ -209,6 +216,8 @@ func _on_live_request(req: Dictionary) -> void:
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
+	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
+			str(req.get("text", "")).left(120).replace("\n", " ")])
 	if req.get("context", "") == "RAW_KEY":
 		# A raw key read: CDDA's debug message prompt and "press any key" screens (the text is only in
 		# debug.log). Space goes on.
@@ -360,9 +369,28 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _screenshot_and_quit(path: String) -> void:
+	while live != null and world.snapshot == null and live.state != "failed" and live.state != "ended":
+		await get_tree().process_frame   # a live game: wait for its first world
 	for i in 4:
 		await get_tree().process_frame
-	await RenderingServer.frame_post_draw
-	var err := get_viewport().get_texture().get_image().save_png(path)
+	var img: Image
+	if vr != null:
+		# The XR view can't be read back: a plain camera at the head's pose renders the same scene.
+		var sv := SubViewport.new()
+		sv.size = Vector2i(1280, 720)
+		sv.render_target_update_mode = SubViewport.UPDATE_ONCE
+		var cam := Camera3D.new()
+		cam.fov = 90.0
+		sv.add_child(cam)
+		add_child(sv)
+		cam.global_transform = vr.camera.global_transform
+		cam.current = true
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+		img = sv.get_texture().get_image()
+	else:
+		await RenderingServer.frame_post_draw
+		img = get_viewport().get_texture().get_image()
+	var err := img.save_png(path)
 	print("screenshot %s: %s" % [path, error_string(err)])
 	get_tree().quit()

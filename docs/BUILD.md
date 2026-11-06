@@ -73,7 +73,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    SteamVR or the Meta Quest app (Link / Air Link); Linux: SteamVR, or Monado / WiVRn / ALVR (Quest over
    Wi-Fi), set as the active OpenXR runtime. The launchers `tools\vr\play_vr.cmd` (Windows) and
    `tools/vr/play_vr.sh` (Linux; Godot from `$GODOT` or the PATH) prefer SteamVR's runtime when SteamVR is
-   installed and `XR_RUNTIME_JSON` isn't set, and pass options on (`play_vr.cmd --live`). By hand:
+   installed and `XR_RUNTIME_JSON` isn't set, start SteamVR and wait for it when it isn't running yet (the game
+   can't open a VR session before SteamVR's compositor is up), and pass options on (`play_vr.cmd --live`). By hand:
    ```powershell
    Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --vr          # mock town
    Godot_v4.7.2-stable_win64.exe --xr-mode on --path client -- --live --vr   # a live game (Windows)
@@ -87,7 +88,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    Y: back to the player. Options after `--`: `--vr-move=teleport` (no stick walking), `--vr-turn=smooth`,
    `--vr-snap=<deg>`, `--vr-speed=<m/s>`, `--vr-vignette=<0-1>` (0 = off). Every 10 s frame times go to the
    console and to `vr_perf.log` in Godot's user folder (Windows `%APPDATA%\Godot\app_userdata\CDDA-3D\`,
-   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; numbers and the GPU name only; testers can send it). The first run writes Godot's default controller bindings to `client/openxr_action_map.tres`.
+   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; numbers and the GPU name only; testers can send it). Controller bindings: `client/openxr_action_map.tres` (Godot's defaults for now).
+   The console also logs the live game's state, its prompts and the VR session's states.
    Without a headset or runtime the normal view starts and the HUD says why. A live game's prompts still show
    only on the desktop window (L4 brings them into VR).
 7. **Art coverage** (no build needed):
