@@ -42,6 +42,7 @@ var player_marker: MeshInstance3D
 var live: LiveSession
 var vr: VrRig
 var vr_perf: VrPerf
+var _quitting := false
 var snapshot_path := ""
 var status := ""
 var _args := {}
@@ -204,8 +205,9 @@ func _start_vr() -> void:
 	fp.set_process_unhandled_input(false)
 	player_marker.visible = world.snapshot != null
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
+	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
-		xr.connect("session_stopping", get_tree().quit)
+		xr.connect("session_stopping", _quit)
 	for sig in ["session_begun", "session_visible", "session_focussed", "session_stopping", "session_loss_pending"]:
 		if xr.has_signal(sig):
 			xr.connect(sig, func() -> void: print("VR: " + sig))
@@ -490,4 +492,35 @@ func _screenshot_and_quit(path: String) -> void:
 		img = get_viewport().get_texture().get_image()
 	var err := img.save_png(path)
 	print("screenshot %s: %s" % [path, error_string(err)])
+	_quit()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and vr != null:
+		_quit()
+
+
+## VR quits through here. Once a session has drawn frames, the engine's teardown crashes inside SteamVR on
+## Windows (access violation; Vulkan, D3D12 and OpenGL alike, even with XR turned off first; 2026-11-06,
+## SteamVR 2.18.4, null driver). So: turn XR off, free the scene (the live game's thread joins, files close),
+## and with SteamVR on Windows end the process before that teardown (exit code 0).
+func _quit() -> void:
+	if _quitting:
+		return
+	_quitting = true
+	if vr != null:
+		var xr := XRServer.find_interface("OpenXR")
+		var runtime := ""
+		if xr != null:
+			runtime = str(xr.get_system_info().get("XRRuntimeName", ""))
+		vr_perf.set_process(false)
+		get_viewport().use_xr = false
+		if xr != null and xr.is_initialized():
+			xr.uninitialize()
+		await get_tree().process_frame
+		for c in get_children():
+			c.free()
+		print("VR off (%s)" % runtime)
+		if OS.get_name() == "Windows" and runtime.contains("SteamVR"):
+			OS.kill(OS.get_process_id())
 	get_tree().quit()
