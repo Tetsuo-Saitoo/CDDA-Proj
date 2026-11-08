@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-07 — Release `v0.3.0` (prerelease): Windows DLL (SHA256 aad9acbf...0c21) + Linux `.so` (475aafda...f3f3, stripped, exports only `fp3d_cdda_init`, glibc 2.38) from CDDA-Proj 4596d3c + cdda 024eba3; both scanned for personal strings; sim test (hands), client tests and live save/load test pass on Windows and Linux (WSL); GitHub digests match. README status updated.
 - 2026-11-07 — Placeholder creatures: the client reads the snapshot's creatures and the `mtype` table; green capsules for monsters (blue for NPCs) sized by CDDA's size class, name labels, look hits them; client tests pass, live probe checked. GDScript `\` line continuations replaced by parentheses (they break when git checks files out with CRLF).
 - 2026-11-07 — Rebindable keys: all game keys are actions (`InputActions.ACTIONS`), F1 key menu (`KeyMenu`), saved to `user://keys.json` (only changes; hostile-file checks), HUD built from the bindings, `--keys` opens the menu; fly camera and live keys read actions; fp_tests key checks; client tests pass, menu checked in a screenshot.
 - 2026-11-07 — Hand attacks: fork actions `fp3d_attack_<main|off>_<DIR>` (main = weapon, off = unarmed strike, refused with a two-handed weapon or broken left arm), client keys 1/2 strike where you face, sim test hand checks.

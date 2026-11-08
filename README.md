@@ -4,10 +4,12 @@ Cataclysm: Dark Days Ahead (0.I-1) as a 3D first-person game in Godot 4. CDDA's 
 the game and still decides everything. This repo holds the Godot client, the bridge between the two (a
 GDExtension) and the plan.
 
-**Status: early.** You can start or load a CDDA game and walk it turn by turn in 3D with placeholder art. VR
-has its first step (block L1 in [PLAN.md](PLAN.md)): walk around the world in a PC VR headset, no interaction
-yet. The mock town needs only Godot 4.7.2, on Windows or Linux (macOS has no PC VR): see
-[docs/BUILD.md](docs/BUILD.md) step 6. Live CDDA games run on Windows only for now.
+**Status: early.** You can start or load a CDDA game and play it turn by turn in 3D, in first person, with
+placeholder art: walk, use CDDA's action keys (pick up, wield, eat, open, ...), strike with either hand and
+click things to look at them; monsters are green capsules for now. Every key can be rebound (F1). VR has its
+first step (block L1 in [PLAN.md](PLAN.md)): walk around the world in a PC VR headset, no interaction yet.
+The mock town needs only Godot 4.7.2, on Windows or Linux (macOS has no PC VR): see
+[docs/BUILD.md](docs/BUILD.md) step 6. Live CDDA games run on Windows and Linux.
 
 ## Get the code
 
