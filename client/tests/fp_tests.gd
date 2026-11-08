@@ -21,6 +21,10 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_walk(world)
 	_test_follow(world)
 	_test_octants(world)
+	_test_compass()
+	_test_look_ray(world)
+	_test_cdda_keys()
+	_test_rebinding(root)
 	world.free()
 
 
@@ -34,7 +38,7 @@ func _test_args() -> void:
 
 
 func _test_actions() -> void:
-	InputActions.ensure()
+	InputActions.ensure(false)
 	var all := true
 	for a in InputActions.names():
 		all = all and InputMap.has_action(a)
@@ -42,18 +46,18 @@ func _test_actions() -> void:
 	var w := InputMap.action_get_events(&"move_forward")
 	_check.call(w.size() == 2 and w.any(func(e: InputEvent) -> bool: return e is InputEventKey and e.physical_keycode == KEY_W),
 			"fp: move_forward is W and the left stick")
-	InputActions.ensure()
+	InputActions.ensure(false)
 	_check.call(InputMap.action_get_events(&"move_forward").size() == 2, "fp: ensure twice adds nothing")
 	InputMap.erase_action(&"view_toggle")
 	InputMap.add_action(&"view_toggle")
 	var u := InputEventKey.new()
 	u.physical_keycode = KEY_U
 	InputMap.action_add_event(&"view_toggle", u)
-	InputActions.ensure()
+	InputActions.ensure(false)
 	var ev := InputMap.action_get_events(&"view_toggle")
 	_check.call(ev.size() == 1 and ev[0].physical_keycode == KEY_U, "fp: a binding already there is kept")
 	InputMap.erase_action(&"view_toggle")
-	InputActions.ensure()
+	InputActions.ensure(false)
 
 
 func _test_look(world: WorldView) -> void:
@@ -182,3 +186,171 @@ func _test_octants(world: WorldView) -> void:
 	_check.call(acts[Main.octant_for(fp.basis, fwd)] == "RIGHTDOWN" and acts[Main.octant_for(fp.basis, Vector2(0, -1))] == "LEFTUP",
 			"fp: steps follow where the first-person camera looks")
 	fp.free()
+
+
+func _test_compass() -> void:
+	var ok := true
+	for want: float in [0.0, 90.0, 180.0, 270.0]:
+		var b := Basis(Vector3.UP, deg_to_rad(-want))   # yaw: turning right from north (-z)
+		ok = ok and is_equal_approx(fposmod(Compass.heading_of(b) - want + 180.0, 360.0) - 180.0, 0.0)
+	_check.call(ok, "look: compass reads N/E/S/W (-z is north)")
+	var down := Basis.from_euler(Vector3(-PI / 2, 0, 0))   # looking straight down, north up on screen
+	_check.call(is_equal_approx(Compass.heading_of(down), 0.0), "look: compass looking straight down")
+
+
+func _test_look_ray(world: WorldView) -> void:
+	var lr := LookRay.new(world)
+	var p := world.snapshot.player_pos
+	var above := world.coords.ms_center_to_world(p) + Vector3(0, 1.6, 0)
+	var r := lr.cast(above, Vector3.DOWN)
+	_check.call(r["hit"] and r["what"] == "floor" and r["square"] == p, "look: straight down hits the floor you stand on (%s)" % r)
+	var lines := lr.describe(p)
+	_check.call(lines.size() >= 2 and lines[0].begins_with("terrain: ") and not lines[0].contains("#"),
+			"look: describes the terrain by name (%s)" % lines)
+	var pair := _wall_and_floor_next_to_it(world, lr, p)
+	_check.call(not pair.is_empty(), "look: the mock town has a wall next to an empty floor near the player")
+	if not pair.is_empty():
+		var w: Vector3i = pair[0]
+		var f: Vector3i = pair[1]
+		var h := lr.cast(world.coords.ms_center_to_world(f) + Vector3(0, 1.5, 0), Vector3(w.x - f.x, 0, w.y - f.y))
+		_check.call(h["hit"] and h["what"] == "wall" and h["square"] == w, "look: a level look meets the wall in front (%s)" % h)
+	_check.call(not lr.cast(above, Vector3.UP * 0.0)["hit"], "look: no direction, no hit")
+
+
+func _test_cdda_keys() -> void:
+	InputActions.ensure(false)
+	var ok := true
+	for a: StringName in InputActions.CDDA:
+		ok = ok and not InputActions.info(a).is_empty()
+	_check.call(ok, "keys: every CDDA action is in the action list")
+	# Walking, steps, hands and CDDA actions are all read in a live game: no default key may be shared.
+	var seen := {}
+	var clash := PackedStringArray()
+	for a: Array in InputActions.ACTIONS:
+		if a[0] in [&"fly_up", &"fly_down", &"move_fast"]:
+			continue   # outside view only (E/Q also fly there: TASKS leftover)
+		for t: String in a[3]:
+			if seen.has(t):
+				clash.append("%s: %s and %s" % [t, seen[t], a[0]])
+			seen[t] = a[0]
+	_check.call(clash.is_empty(), "keys: no two actions share a default key %s" % clash)
+	var round_trip := true
+	for a in InputActions.names():
+		for t: String in InputActions.info(a)[3]:
+			var e := InputActions.parse_event(t)
+			round_trip = round_trip and e != null and InputActions.event_text(e) == t
+	_check.call(round_trip, "keys: every default key reads back to the same text")
+	var eat := InputEventKey.new()
+	eat.physical_keycode = KEY_E
+	eat.shift_pressed = true
+	eat.pressed = true
+	_check.call(InputActions.pressed(eat, &"cdda_eat") and not InputActions.pressed(eat, &"cdda_examine"),
+			"keys: Shift+E is eat, not examine")
+	var bang := eat.duplicate() as InputEventKey
+	bang.physical_keycode = KEY_1
+	_check.call(InputActions.pressed(bang, &"cdda_safemode") and not InputActions.pressed(bang, &"hand_off"),
+			"keys: Shift+1 is safe mode, not the left hand")
+
+
+## Rebinding: hostile key files, save/load, and the key menu.
+func _test_rebinding(root: Node) -> void:
+	var path := "user://keys_test.json"
+	InputActions.reset_all()
+	for t: String in ["", "Nope", "mouse:0", "mouse:99", "pad:-1", "pad:x", "axis:9+", "axis:1*", "Shift+",
+			"Shift+Nope", "w", "A".repeat(50)]:
+		_check.call(InputActions.parse_event(t) == null, "keys: \"%s\" is refused" % t.left(12))
+	var sx := InputActions.parse_event("Shift+X")
+	_check.call(sx is InputEventKey and sx.shift_pressed and sx.physical_keycode == KEY_X, "keys: Shift+X reads")
+	var shift_key := InputEventKey.new()
+	shift_key.physical_keycode = KEY_SHIFT
+	shift_key.shift_pressed = true
+	_check.call(InputActions.event_text(InputActions.binding_from(shift_key)) == "Shift",
+			"keys: Shift pressed alone binds without a modifier")
+	# Save writes only what changed; load brings it back.
+	var x: Array[InputEvent] = [InputActions.parse_event("X")]
+	InputActions.set_slots(&"cdda_examine", x)
+	_check.call(InputActions.save_bindings(path) == "", "keys: saved")
+	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check.call(saved is Dictionary and saved["actions"].keys() == ["cdda_examine"], "keys: only changed actions are written")
+	InputActions.reset_all()
+	_check.call(InputActions.load_bindings(path).is_empty() and InputActions.key_of(&"cdda_examine") == "X"
+			and InputActions.key_of(&"move_forward") == "W", "keys: loaded back, others keep their defaults")
+	# A hostile file: unknown actions, junk entries, a non-list; only good entries are used.
+	InputActions.reset_all()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"actions": {"bogus": ["W"], "cdda_wield": ["Nope", 5, "K", "K"],
+			"move_back": "S", "../x": []}}))
+	f.close()
+	var bad := InputActions.load_bindings(path)
+	_check.call(bad.size() == 5 and InputActions.key_of(&"cdda_wield") == "K"
+			and InputActions.slots(&"cdda_wield").size() == 1 and InputActions.key_of(&"move_back") == "S",
+			"keys: a hostile file only gives its good entries (%s)" % ", ".join(bad))
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[" + "1,".repeat(InputActions.MAX_FILE_BYTES / 2) + "1]")
+	f.close()
+	_check.call(InputActions.load_bindings(path).size() == 1, "keys: an oversized file is ignored")
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("not json")
+	f.close()
+	_check.call(InputActions.load_bindings(path).size() == 1, "keys: a broken file is ignored")
+	# The menu: click a slot, press a key.
+	InputActions.reset_all()
+	var menu := KeyMenu.new()
+	menu.save_path = path
+	root.add_child(menu)
+	menu.open()
+	menu.start_capture(&"cdda_wield", 0)
+	var k := InputEventKey.new()
+	k.physical_keycode = KEY_Y
+	k.pressed = true
+	_check.call(menu.take(k) and InputActions.key_of(&"cdda_wield") == "Y", "keys menu: a pressed key binds")
+	menu.start_capture(&"cdda_wield", 1)
+	var ctrl := InputEventKey.new()
+	ctrl.physical_keycode = KEY_CTRL
+	ctrl.ctrl_pressed = true
+	ctrl.pressed = true
+	menu.take(ctrl)
+	k.ctrl_pressed = true
+	menu.take(k)
+	var texts := []
+	for e in InputActions.slots(&"cdda_wield"):
+		texts.append(InputActions.event_text(e))
+	_check.call(texts == ["Y", "Ctrl+Y"], "keys menu: Ctrl+Y goes in the second slot (%s)" % [texts])
+	menu.start_capture(&"cdda_wield", 0)
+	var bs := InputEventKey.new()
+	bs.physical_keycode = KEY_BACKSPACE
+	bs.pressed = true
+	menu.take(bs)
+	_check.call(InputActions.key_of(&"cdda_wield") == "Ctrl+Y", "keys menu: Backspace clears a slot")
+	menu.start_capture(&"cdda_wield", 0)
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	menu.take(esc)
+	_check.call(InputActions.key_of(&"cdda_wield") == "Ctrl+Y" and menu.visible, "keys menu: Esc cancels a capture")
+	saved = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check.call(saved is Dictionary and saved["actions"].get("cdda_wield") == ["Ctrl+Y"], "keys menu: each change is saved")
+	menu.take(esc)
+	_check.call(not menu.visible, "keys menu: Esc closes")
+	menu.free()
+	InputActions.reset_all()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+## Nearest wall square on p's level with an empty floor square beside it: [wall, floor], or [].
+func _wall_and_floor_next_to_it(world: WorldView, lr: LookRay, p: Vector3i) -> Array:
+	var K := TerrainCatalog.Kind
+	for r in range(1, 40):
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var q := p + Vector3i(dx, dy, 0)
+				var c := lr._cell(q)
+				if c.is_empty() or world.catalog.style_for(c["ter"]).kind != K.WALL:
+					continue
+				for n: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0)]:
+					var nc := lr._cell(q + n)
+					if not nc.is_empty() and nc["furn"] == 0 and world.catalog.style_for(nc["ter"]).kind == K.FLOOR:
+						return [q, q + n]
+	return []

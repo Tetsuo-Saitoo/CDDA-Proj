@@ -39,6 +39,10 @@ Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the s
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process
   resumes it: the first request has the saved turn and the player stands where they were.
 - A loaded save's world uses its own options and mods; mods CDDA can't find come up as popup requests.
+- Hand attacks (first person / VR, `cdda/src/fp3d/hands.h`): main-loop actions `fp3d_attack_main_<DIR>` and
+  `fp3d_attack_off_<DIR>`, DIR one of the eight move actions (UP = north). Main hand: CDDA's melee attack with
+  what is wielded; off hand: an unarmed strike (the `attack` event's `type` is 0), refused while the wielded item
+  needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time.
 - CDDA's debug message prompts and "press any key" screens come as `key` requests with context `RAW_KEY` and no
   actions; answer `action: " "`. The message itself is in `debug.log`.
 - CDDA's window still exists, hidden, with SDL's software renderer (B2 tech debt); it is created and destroyed

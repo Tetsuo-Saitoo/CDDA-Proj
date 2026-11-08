@@ -2,9 +2,11 @@ extends Node3D
 ## M1 "ghost walk" viewer: loads a snapshot (default: the mock town), meshes it, and shows it in first person
 ## (block C9, FirstPersonCamera: WASD walks with VrWalk's collisions, [ ] level down / up) or from outside
 ## (the fly camera); V switches. Keys: PageUp/PageDown show levels up to z (cutaway), R roofs, F5 reload the
-## snapshot, Home back to the player. Command line, after `--`: --view=first|outside --snapshot=<path>
+## snapshot, Home back to the player; every one is an action in InputActions and F1 opens the key menu
+## (KeyMenu) to rebind them. Command line, after `--`: --view=first|outside --snapshot=<path>
 ## --ids=<id tables path> --view-z=<z> --no-roofs --camera=<x>,<y>,<z>,<yaw_deg>,<pitch_deg> (Godot metres,
-## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit).
+## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
+## --keys (start with the key menu open).
 ## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda): the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
@@ -12,10 +14,6 @@ extends Node3D
 ## --vr shows it in a PC VR headset (block L1, scripts/vr/); Godot itself must run with --xr-mode on (before
 ## `--`). Options --vr-move= --vr-turn= --vr-snap= --vr-speed= --vr-vignette= (VrRig.settings_from_args).
 
-const HELP := "RMB look  WASD move  E/Q up/down  Shift fast  wheel speed  PgUp/PgDn level  R roofs  F5 reload  Home player  V first person"
-const FP_HELP := "RMB look  WASD walk  Shift fast  [ ] level down/up  PgUp/PgDn cutaway  R roofs  F5 reload  Home player  V outside view"
-const LIVE_HELP := "RMB look  WASD fly  arrows/numpad walk  KP5/. wait  [ ] stairs  prompts: mouse or keys, Esc cancels  PgUp/PgDn level  R roofs  Home player  V first person"
-const LIVE_FP_HELP := "RMB look  WASD/arrows/numpad walk where you look  KP5/. wait  [ ] stairs  prompts: mouse or keys, Esc cancels  PgUp/PgDn cutaway  R roofs  V outside view"
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
 const LIVE_WORLD := "fp3d-live"
@@ -24,12 +22,6 @@ const LOG_LINES := 6
 const OCT_ACTIONS := ["RIGHT", "RIGHTDOWN", "DOWN", "LEFTDOWN", "LEFT", "LEFTUP", "UP", "RIGHTUP"]
 const OCT_STEPS := [Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0),
 		Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1)]
-## Key -> (right, forward) relative to the camera.
-const MOVE_KEYS := {
-	KEY_UP: Vector2(0, 1), KEY_DOWN: Vector2(0, -1), KEY_LEFT: Vector2(-1, 0), KEY_RIGHT: Vector2(1, 0),
-	KEY_KP_8: Vector2(0, 1), KEY_KP_2: Vector2(0, -1), KEY_KP_4: Vector2(-1, 0), KEY_KP_6: Vector2(1, 0),
-	KEY_KP_7: Vector2(-1, 1), KEY_KP_9: Vector2(1, 1), KEY_KP_1: Vector2(-1, -1), KEY_KP_3: Vector2(1, -1),
-}
 
 var world: WorldView
 var camera: FlyCamera          # the outside view
@@ -38,6 +30,11 @@ var first_person := true
 var sun: DirectionalLight3D
 var hud: Label
 var request_ui: RequestUI
+var key_menu: KeyMenu
+var compass: Compass
+var look_panel: Label
+var look_ray: LookRay
+var _look_line: MeshInstance3D   # player -> what was clicked
 var player_marker: MeshInstance3D
 var live: LiveSession
 var vr: VrRig
@@ -60,7 +57,8 @@ func _ready() -> void:
 		push_warning(w)
 	add_child(world)
 	_setup_environment()
-	InputActions.ensure()
+	for problem in InputActions.ensure():
+		push_warning("keys: " + problem)
 	camera = FlyCamera.new()
 	add_child(camera)
 	fp = FirstPersonCamera.new(world)
@@ -90,6 +88,8 @@ func _ready() -> void:
 		if c.size() == 5:
 			camera.position = Vector3(c[0], c[1], c[2])
 			camera.rotation = Vector3(deg_to_rad(c[4]), deg_to_rad(c[3]), 0)
+	if _args.has("keys"):
+		_open_key_menu()
 	if _args.has("screenshot"):
 		_screenshot_and_quit(_args["screenshot"])
 
@@ -321,23 +321,107 @@ func _screen_step(dir: Vector2) -> Vector2i:
 	return OCT_STEPS[_octant(dir)]
 
 
-## Live-mode keys in the main loop (prompts take their keys in RequestUI first); true if used.
-func _live_key(code: Key) -> bool:
-	var in_main_loop := _in_main_loop()
-	if MOVE_KEYS.has(code):
-		if in_main_loop:
-			live.queue_action(OCT_ACTIONS[_octant(MOVE_KEYS[code])])
-		return true
-	match code:
-		KEY_KP_5, KEY_PERIOD:
-			if in_main_loop:
-				live.queue_action("pause")
-			return true
-		KEY_BRACKETLEFT, KEY_BRACKETRIGHT:
-			if in_main_loop:
-				live.queue_action("LEVEL_DOWN" if code == KEY_BRACKETLEFT else "LEVEL_UP")
-			return true
-	return false
+## Live-mode actions in the main loop (prompts take their keys in RequestUI first); true if used.
+func _live_action(event: InputEvent) -> bool:
+	var act := ""
+	for a: StringName in InputActions.STEPS:
+		if InputActions.pressed(event, a):
+			act = OCT_ACTIONS[_octant(InputActions.STEPS[a])]
+	for a: StringName in InputActions.CDDA:
+		if InputActions.pressed(event, a):
+			act = InputActions.CDDA[a]
+	if InputActions.pressed(event, &"wait"):
+		act = "pause"
+	elif InputActions.pressed(event, &"level_down"):
+		act = "LEVEL_DOWN"
+	elif InputActions.pressed(event, &"level_up"):
+		act = "LEVEL_UP"
+	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
+		# strike the square you face: the left (off) hand or the right (main) hand
+		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
+		act = "fp3d_attack_%s_%s" % [hand, OCT_ACTIONS[_octant(Vector2(0, 1))]]
+	if act == "":
+		return false
+	if _in_main_loop():
+		live.queue_action(act)
+	return true
+
+
+## Left click: what is under the mouse (the screen centre while the mouse looks around), with a line from
+## the player to it, its distance and what the snapshot says is there.
+func _look_at_screen(pos: Vector2) -> void:
+	if world.snapshot == null:
+		return
+	if look_ray == null:
+		look_ray = LookRay.new(world)
+	var cam := get_viewport().get_camera_3d()
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		pos = get_viewport().get_visible_rect().size / 2.0
+	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	_clear_look()
+	if not r["hit"]:
+		look_panel.text = "look: nothing there"
+		return
+	# From the chest: in first person a line from the eyes would run straight away from the view.
+	var from := world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
+	if _fp_active():
+		from = fp.global_position - Vector3(0, 0.6, 0)
+	var me := world.coords.world_to_ms(from)
+	var sq: Vector3i = r["square"]
+	var d := sq - me
+	var where := "%d squares away (%.1f m)" % [maxi(absi(d.x), absi(d.y)), from.distance_to(r["point"])]
+	if d.z != 0:
+		where += ", %d level%s %s" % [absi(d.z), "" if absi(d.z) == 1 else "s", "up" if d.z > 0 else "down"]
+	var lines := PackedStringArray(["look: %s, %s" % [r["what"], where]])
+	lines.append_array(look_ray.describe(sq))
+	look_panel.text = "
+".join(lines)
+	_look_line = _line_mesh(from, r["point"])
+	add_child(_look_line)
+
+
+func _clear_look() -> void:
+	if look_panel != null:
+		look_panel.text = ""
+	if _look_line != null:
+		_look_line.queue_free()
+		_look_line = null
+
+
+## A line from a to b with a dot at b, drawn over everything.
+static func _line_mesh(a: Vector3, b: Vector3) -> MeshInstance3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.albedo_color = Color(1.0, 0.85, 0.2)
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINES, mat)
+	im.surface_add_vertex(a)
+	im.surface_add_vertex(b)
+	im.surface_end()
+	var dot := SphereMesh.new()
+	dot.radius = 0.05
+	dot.height = 0.1
+	dot.material = mat
+	var mi := MeshInstance3D.new()
+	mi.name = "LookLine"
+	mi.mesh = im
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var d := MeshInstance3D.new()
+	d.mesh = dot
+	d.position = b
+	d.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.add_child(d)
+	return mi
+
+
+## Name of what the player holds, from the newest snapshot and the id tables.
+func _wielded_name() -> String:
+	var idx := world.snapshot.player_wielded if world.snapshot != null else 0
+	if idx <= 0:
+		return "nothing"
+	var d: IdTables.Def = world.tables.def_at("itype", idx) if world.tables != null else null
+	return CddaText.plain(d.name).left(60) if d != null and d.name != "" else "item #%d" % idx
 
 
 func _in_main_loop() -> bool:
@@ -348,7 +432,7 @@ func _in_main_loop() -> bool:
 ## next step waits until the sim has taken the last one, so letting go leaves nothing queued.
 func _fp_live_step(now: bool) -> void:
 	var mv := Input.get_vector(&"move_left", &"move_right", &"move_back", &"move_forward")
-	if mv == Vector2.ZERO or not _in_main_loop():
+	if mv == Vector2.ZERO or not _in_main_loop() or Input.is_key_pressed(KEY_SHIFT):
 		return
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
@@ -390,14 +474,46 @@ func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	hud = Label.new()
-	hud.position = Vector2(10, 8)
+	hud.position = Vector2(10, 40)
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(hud)
+	compass = Compass.new()
+	compass.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	compass.offset_left = -180
+	compass.offset_right = 180
+	compass.offset_top = 6
+	compass.offset_bottom = 32
+	compass.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(compass)
+	look_panel = Label.new()
+	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	look_panel.offset_left = 10
+	look_panel.offset_top = -10
+	look_panel.offset_bottom = -10
+	look_panel.add_theme_color_override("font_outline_color", Color.BLACK)
+	look_panel.add_theme_constant_override("outline_size", 4)
+	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(look_panel)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.answered.connect(_on_request_answered)
 	layer.add_child(request_ui)
+	key_menu = KeyMenu.new()
+	key_menu.closed.connect(_on_key_menu_closed)
+	layer.add_child(key_menu)
+
+
+func _open_key_menu() -> void:
+	camera.set_process_unhandled_input(false)
+	fp.set_process_unhandled_input(false)
+	key_menu.open()
+
+
+func _on_key_menu_closed() -> void:
+	if vr == null:
+		_set_first_person(first_person)   # cameras take their input again
 
 
 ## A stand-in for the player until there are character models.
@@ -416,55 +532,114 @@ func _setup_player_marker() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input()   # typing must not move the camera
+	var typing := request_ui.wants_text_input() or key_menu.visible   # typing must not move the camera
 	camera.set_process(vr == null and not first_person and not typing)
 	fp.set_process(_fp_active() and not typing)
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
+	compass.visible = vr == null
+	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
-	var help := (LIVE_FP_HELP if _fp_active() else LIVE_HELP) if live != null else (FP_HELP if _fp_active() else HELP)
+	var help := _help()
 	var lines := PackedStringArray([status, "%s  camera square %s  view z <= %d  roofs %s  %d fps" % [
 			view, tile, world.view_z_max, "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
 	if vr != null:
 		lines.append("VR level %d  %s" % [vr.z, vr_perf.last_line])
+	if live != null:
+		lines.append(_act_help())
+		lines.append("in hands: " + _wielded_name())
 	lines.append_array(_log)
 	hud.text = "\n".join(lines)
+	hud.visible = not key_menu.visible
+
+
+## The view's key line, from the current bindings.
+func _help() -> String:
+	var k := InputActions.key_of
+	var walk := _keys([&"move_forward", &"move_left", &"move_back", &"move_right"])
+	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
+	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
+	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
+	var out := "%s look  %s look at  " % [k.call(&"look"), k.call(&"look_at")]
+	if live != null and _fp_active():
+		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
+				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
+	elif live != null:
+		out += "%s fly  %s/%s up/down  %s walk  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s level  %s roofs  %s player  %s first person" % [
+				walk, k.call(&"fly_up"), k.call(&"fly_down"), steps, k.call(&"wait"), lv, cut,
+				k.call(&"roofs_toggle"), k.call(&"frame_player"), k.call(&"view_toggle")]
+	elif _fp_active():
+		out += "%s walk  %s fast  %s level down/up  %s cutaway  %s roofs  %s reload  %s player  %s outside view" % [
+				walk, k.call(&"move_fast"), lv, cut, k.call(&"roofs_toggle"), k.call(&"reload"),
+				k.call(&"frame_player"), k.call(&"view_toggle")]
+	else:
+		out += "%s move  %s/%s up/down  %s fast  wheel speed  %s level  %s roofs  %s reload  %s player  %s first person" % [
+				walk, k.call(&"fly_up"), k.call(&"fly_down"), k.call(&"move_fast"), cut, k.call(&"roofs_toggle"),
+				k.call(&"reload"), k.call(&"frame_player"), k.call(&"view_toggle")]
+	return out + "  F1 keys"
+
+
+## Live game: the CDDA action keys and the hands, from the current bindings.
+func _act_help() -> String:
+	var parts := PackedStringArray()
+	for a: StringName in InputActions.CDDA:
+		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
+	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
+	return "  ".join(parts)
+
+
+## "WASD" when every key is one letter, else "W/A/S/D".
+static func _keys(actions: Array) -> String:
+	var ks := PackedStringArray()
+	var short := true
+	for a: StringName in actions:
+		ks.append(InputActions.key_of(a))
+		short = short and ks[-1].length() == 1
+	return "".join(ks) if short else "/".join(ks)
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed(&"view_toggle"):
+	if key_menu.visible:
+		return
+	var key := event as InputEventKey
+	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
+		_open_key_menu()
+		return
+	if vr == null and InputActions.pressed(event, &"look_at"):
+		var mb := event as InputEventMouseButton
+		_look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		return
+	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()
 		return
 	if _fp_active() and live != null:
 		for a: StringName in [&"move_forward", &"move_back", &"move_left", &"move_right"]:
-			if event.is_action_pressed(a):
+			if InputActions.pressed(event, a):   # exactly: Shift+W is wear
 				_fp_live_step(true)
 				return
 	elif _fp_active() and world.snapshot != null:
 		for dz: int in [1, -1]:
-			if event.is_action_pressed(&"level_up" if dz > 0 else &"level_down"):
+			if InputActions.pressed(event, &"level_up" if dz > 0 else &"level_down"):
 				var ok := fp.change_level(dz)
 				status = ("level %d" % fp.z) if ok else ("nowhere to stand on level %d" % (fp.z + dz))
 				return
-	var k := event as InputEventKey
-	if k == null or not k.pressed or k.echo:
+	if live != null and _live_action(event):
 		return
-	if live != null and _live_key(k.physical_keycode):
-		return
-	match k.physical_keycode:
-		KEY_PAGEUP:
-			world.set_view_z_max(world.view_z_max + 1)
-		KEY_PAGEDOWN:
-			world.set_view_z_max(world.view_z_max - 1)
-		KEY_R:
-			world.set_roofs_visible(not world.roofs_visible)
-		KEY_F5:
-			if live == null:
-				_reload()
-		KEY_HOME:
-			_frame_player()
+	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
+		_clear_look()
+	elif InputActions.pressed(event, &"cutaway_up"):
+		world.set_view_z_max(world.view_z_max + 1)
+	elif InputActions.pressed(event, &"cutaway_down"):
+		world.set_view_z_max(world.view_z_max - 1)
+	elif InputActions.pressed(event, &"roofs_toggle"):
+		world.set_roofs_visible(not world.roofs_visible)
+	elif InputActions.pressed(event, &"reload"):
+		if live == null:
+			_reload()
+	elif InputActions.pressed(event, &"frame_player"):
+		_frame_player()
 
 
 func _screenshot_and_quit(path: String) -> void:

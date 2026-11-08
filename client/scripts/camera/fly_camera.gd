@@ -26,12 +26,14 @@ func look_from(from: Vector3, target: Vector3) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_RIGHT:
+		if mb.is_action(&"look"):
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if mb.pressed else Input.MOUSE_MODE_VISIBLE
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			speed = minf(speed * 1.25, 200.0)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			speed = maxf(speed / 1.25, 1.0)
+	elif event is InputEventKey and event.is_action(&"look"):
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if event.is_pressed() else Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var mm := event as InputEventMouseMotion
 		_yaw -= mm.relative.x * sensitivity
@@ -41,18 +43,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	var v := Vector3.ZERO
-	if Input.is_physical_key_pressed(KEY_W):
-		v -= basis.z
-	if Input.is_physical_key_pressed(KEY_S):
-		v += basis.z
-	if Input.is_physical_key_pressed(KEY_A):
-		v -= basis.x
-	if Input.is_physical_key_pressed(KEY_D):
-		v += basis.x
-	if Input.is_physical_key_pressed(KEY_E) or Input.is_physical_key_pressed(KEY_SPACE):
-		v += Vector3.UP
-	if Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_CTRL):
-		v -= Vector3.UP
+	var mv := Input.get_vector(&"move_left", &"move_right", &"move_back", &"move_forward")
+	v += basis.x * mv.x - basis.z * mv.y
+	v += Vector3.UP * (Input.get_action_strength(&"fly_up") - Input.get_action_strength(&"fly_down"))
 	if v != Vector3.ZERO:
-		var s := speed * (4.0 if Input.is_physical_key_pressed(KEY_SHIFT) else 1.0)
+		var s := speed * (4.0 if Input.is_action_pressed(&"move_fast") else 1.0)
 		position += v.normalized() * s * delta

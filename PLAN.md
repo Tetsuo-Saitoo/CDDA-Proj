@@ -142,9 +142,11 @@ Each line: **ID — task.** Done-when. *(depends on)*
 - **D2 — Sub-tile collision.** 4×4 occupancy from optional JSON `subtile_shape`; defaults from flags (walls full,
   thin furniture partial, flat none). Furniture height for vaulting and cover. *(J1)*
 - **D3 — Real-time clock.** Turns tick by wall time with timescale; long activities (craft, read, sleep, wait)
-  fast-forward like Project Zomboid; pause, auto-pause via CDDA safe-mode interrupts; classic turn toggle.
+  fast-forward like Project Zomboid; pause, auto-pause via CDDA safe-mode interrupts; classic turn toggle; a SUPERHOT-style mode (time runs
+  while the player moves or acts, crawls when they stand still).
 - **D4 — AI movement.** Keep CDDA tile pathfinding and AI; client smoothing/steering so creatures don't slide on
-  a grid. Keep "one creature per tile" in the sim until after M3.
+  a grid; tile snapping is an option (snap / smooth blend between squares, for the player and creatures);
+  smooth paths need pathfinding that knows sub-tile shapes (D2). Keep "one creature per tile" in the sim until after M3.
 - **D5 — Vertical movement.** Stairs/ladders/ramps as continuous traversal that triggers z-change; climbing
   (CDDA climb checks); falling → CDDA fall damage; walk/run/crouch/prone → camera height and hitbox; roof
   access.

@@ -45,6 +45,7 @@ var seq := 0
 var ids_generation := -1   # -1: the snapshot doesn't say
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
+var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
 var submaps := {}       # Vector3i (absolute submap) -> Submap
@@ -124,6 +125,9 @@ func _read_player(v: Variant) -> void:
 	var p: Variant = (v as Dictionary).get("pos")
 	if p != null:
 		player_pos = _vec3i(p, MAX_ABS_SM * CddaCoords.SEEX, "player.pos")
+	var w: Variant = (v as Dictionary).get("wielded")
+	if w != null:
+		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
 
 
 func _read_env(v: Variant) -> void:
