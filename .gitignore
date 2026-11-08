@@ -1,5 +1,3 @@
-# CDDA fork is its own git repo for now (becomes a submodule once a GitHub fork exists)
-/cdda/
 # Build output, caches, local game installs and saves
 out/
 /build/

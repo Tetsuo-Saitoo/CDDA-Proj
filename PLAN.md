@@ -221,11 +221,33 @@ Each line: **ID — task.** Done-when. *(depends on)*
 ### L. VR — 1 agent; L1 after M1, L2–L7 after M3
 PC VR only (Godot OpenXR). Always real-time (pause and slow-mo allowed, no turn mode). The sim stays the
 authority: VR changes how the player gives actions, never how CDDA resolves them.
+VR is meant to become the main way to play (user, 2026-11-07): picking things up and opening containers by hand
+should be less clunky than CDDA's menus. VR-first rule: wherever CDDA asks through a menu (doors, items, containers, crafting,
+construction, vehicles), VR should get a physical way to do it; each one needs a menu-free bridge action
+for one given thing, which the flat screen can use too.
 - **L1 — VR ghost walk.** OpenXR rig (`XROrigin3D`, `XRCamera3D`, two controllers) on the live world; teleport
   and smooth locomotion, snap/smooth turn, comfort vignette; no interaction yet. Proves 90 fps stereo on the
   bubble. *(C1–C3, B3)*
 - **L2 — Hands.** Point or reach to pick a target, grip/trigger for E2's actions (open, examine, pick up, use);
-  items in hand follow the controller; picking up and dropping map to CDDA actions. *(E2)*
+  items in hand follow the controller; picking up and dropping map to CDDA actions. Analog doors (user,
+  2026-11-07): grab the handle and swing the door by hand, any angle; the angle is the client's, CDDA's door
+  stays open/closed: past a threshold the client queues `open`/`close` (CDDA's time cost). A door held ajar
+  lets you peek into the room: CDDA's sight needs a rule for it (treat as open for sight from the doorway, or
+  a narrow sight cone through the gap, a small fork change); NPCs/monsters may push it. Flat screen gets the
+  same doors through mouse drag. *(E2, D2)*
+  Physical item handling (user, 2026-11-07; the kind Half-Life: Alyx made common): items lie as physics
+  objects where they fell (sub-tile positions are the client's, CDDA keeps them per square); grab one by hand,
+  or point and pull it to the hand from nearby; hold, turn, hand it to the other hand; put it over the
+  shoulder or at the hip to store it (CDDA puts it into a worn container: volume and weight limits stay
+  CDDA's); let go to drop, throw with the release speed (CDDA `throw` with the target from the arc). Needs
+  per-item handles in the bridge (snapshots only list the top 4 itypes of a pile) and pick-up/insert/drop
+  of one given item without CDDA's menus; how far a pull may reach is a rules question (CDDA picks up only
+  from adjacent squares). Details from the user and the VR tester (2026-11-07): pull = aim and press, or flick
+  the wrist; the flying item stays tethered to the hand until caught (catch assist, the part that makes it
+  feel good); held containers shouldn't tip or spill (more frustrating than fun); fill a container by dipping
+  it into a water source, e.g. a jug into a sink (CDDA's fill from terrain/furniture liquid, no liquid
+  simulation; sloshing at most as a shader); a quick switch per hand (take a given item from the inventory
+  into a given hand); later, hand intent from finger pose (how the hand is held says what it is meant to do).
 - **L3 — Aim and melee.** Point the weapon to aim (target from the controller ray, CDDA rolls the hit); a swing
   above a speed threshold starts a melee attack on what it touches, CDDA resolves it; hit feedback (haptics,
   sound, flinch) from events. *(F, B4)*

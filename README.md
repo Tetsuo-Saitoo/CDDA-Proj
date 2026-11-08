@@ -14,10 +14,15 @@ The mock town needs only Godot 4.7.2, on Windows or Linux (macOS has no PC VR): 
 ## Get the code
 
 ```bash
-git clone https://github.com/Tetsuo-Saitoo/CDDA-Proj cdda-3d
-cd cdda-3d
-git clone -b fp3d https://github.com/Tetsuo-Saitoo/CDDA-3D-code cdda
+git clone --recursive https://github.com/Tetsuo-Saitoo/CDDA-Proj cdda-3d
 ```
+
+`--recursive` also fetches `cdda/`: [CDDA-3D-code](https://github.com/Tetsuo-Saitoo/CDDA-3D-code), CDDA 0.I-1
+with this project's changes and the game data, as a git submodule. Cloned without it: run
+`git submodule update --init` in `cdda-3d/`. If you cloned CDDA-3D-code into `cdda/` by hand before, the same
+command after `git pull` takes that folder over. After later pulls, `git submodule update` brings `cdda/` along.
+On Windows, CDDA has file paths near Windows' 260-character limit: clone into a short folder path, or run
+`git config --global core.longpaths true` first.
 
 Building needs Windows (Visual Studio 2022 Build Tools, vcpkg) or Linux (GCC, CMake, SDL2), and Godot 4.7.2: see
 [docs/BUILD.md](docs/BUILD.md). To skip building, take the bridge (Windows DLL or Linux `.so`) from the newest
