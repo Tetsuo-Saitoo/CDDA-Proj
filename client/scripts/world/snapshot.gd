@@ -171,6 +171,11 @@ func _read_creatures(v: Variant) -> void:
 		creatures.append(c)
 
 
+## Call after changing creature positions (tests, demos): creature_at() rebuilds its index.
+func creatures_moved() -> void:
+	_creature_at.clear()
+
+
 ## The creature (not the player) standing on square p, or null.
 func creature_at(p: Vector3i) -> Creature:
 	if _creature_at.is_empty():

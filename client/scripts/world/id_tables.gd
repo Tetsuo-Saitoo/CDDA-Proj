@@ -44,6 +44,8 @@ class Def:
 	var volume_ml := 0
 	var weight_g := 0
 	var size := 0           # mtype: CDDA's creature_size, 1 tiny .. 5 huge
+	var species := {}       # mtype: species name -> true (HUMAN, ZOMBIE, MAMMAL, ...)
+	var bodytype := ""      # mtype: CDDA's body type (human, dog, insect, ...), "" if the bridge doesn't say
 
 	func has(flag: String) -> bool:
 		return flags.has(flag)
@@ -206,6 +208,8 @@ func _read_table(table: String, v: Variant) -> void:
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
 		elif table == "mtype":
 			def.size = _int(r.get("size"), 0, 5, what + ".size")
+			def.species = _flags(r.get("species"), what + ".species")
+			def.bodytype = _str(r.get("bodytype"), MAX_FLAG_LEN, what + ".bodytype")
 		if not is_valid():
 			return
 		if not def.id.is_empty():

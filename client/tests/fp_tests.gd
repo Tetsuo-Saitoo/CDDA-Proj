@@ -357,19 +357,40 @@ func _wall_and_floor_next_to_it(world: WorldView, lr: LookRay, p: Vector3i) -> A
 	return []
 
 
-## Placeholder creatures: read from the snapshot, drawn as capsules, met by look; bad data is refused.
+## Placeholder creatures: read from the snapshot, drawn as figures by body type, moved smoothly, animated by
+## events, met by look; bad data is refused.
 func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTables) -> void:
-	var zi := -1
-	for i in tables.mtype.size():
-		if tables.mtype[i].id == "mon_zombie":
-			zi = i
-	_check.call(zi >= 0 and tables.mtype[zi].size == 3, "creatures: the id tables have mon_zombie, medium")
+	var zi := tables.index_of("mtype", "mon_zombie")
+	var di := tables.index_of("mtype", "mon_dog_zombie_cop")
+	_check.call(zi >= 0 and tables.mtype[zi].size == 3 and tables.mtype[zi].bodytype == "human"
+			and tables.mtype[zi].species.has("ZOMBIE"), "creatures: mon_zombie is medium, human, a zombie")
+	var P := CreatureFigure.Plan
+	var plans := {}
+	for id: String in ["mon_zombie", "mon_dog_zombie_cop", "mon_ant", "mon_rattlesnake", "mon_crow", "mon_blob",
+			"mon_bear", "mon_fish_bluegill"]:
+		var d := tables.def_named("mtype", id)
+		plans[id] = CreatureFigure.plan_for(Snapshot.Creature.MONSTER, d) if d != null else -1
+	_check.call(plans["mon_zombie"] == P.HUMANOID and plans["mon_dog_zombie_cop"] == P.QUADRUPED
+			and plans["mon_ant"] == P.CRAWLER and plans["mon_rattlesnake"] == P.SNAKE and plans["mon_crow"] == P.FLYER
+			and plans["mon_blob"] == P.BLOB and plans["mon_bear"] == P.QUADRUPED,
+			"creatures: body plans from CDDA's body types %s" % plans)
+	var old := IdTables.Def.new()   # an older bridge: no body type, species decide
+	old.species = {"ZOMBIE": true, "MAMMAL": true}
+	var odd := IdTables.Def.new()
+	odd.bodytype = "apeirohedra"
+	_check.call(CreatureFigure.plan_for(Snapshot.Creature.MONSTER, old) == P.QUADRUPED
+			and CreatureFigure.plan_for(Snapshot.Creature.MONSTER, odd) == P.BLOB
+			and CreatureFigure.plan_for(Snapshot.Creature.NPC, null) == P.HUMANOID,
+			"creatures: no body type -> species (zombie mammal = four legs); unknown body type -> blob; NPC -> human")
 	var d: Dictionary = (data as Dictionary).duplicate(true)
 	var pp: Array = d["player"]["pos"]
 	var me: Dictionary = d["creatures"][0]
 	var zp := Vector3i(int(pp[0]) + 1, int(pp[1]), int(pp[2]))
-	d["creatures"] = [me, {"uid": 8589934593, "kind": 2, "type": zi, "pos": [zp.x, zp.y, zp.z], "hp_frac": 128},
-			{"uid": 4294967297, "kind": 1, "type": 0, "pos": [zp.x - 1, zp.y + 1, zp.z], "hp_frac": 255}]
+	var zuid := 8589934593
+	var nuid := 4294967297
+	var zombie := {"uid": zuid, "kind": 2, "type": zi, "pos": [zp.x, zp.y, zp.z], "hp_frac": 128}
+	var npc := {"uid": nuid, "kind": 1, "type": 0, "pos": [zp.x - 1, zp.y + 1, zp.z], "hp_frac": 255}
+	d["creatures"] = [me, zombie, npc]
 	var snap := Snapshot.from_data(d)
 	_check.call(snap.is_valid() and snap.creatures.size() == 3, "creatures: read (%s)" % snap.error)
 	if not snap.is_valid():
@@ -378,29 +399,69 @@ func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTabl
 	var cv := CreatureView.new()
 	root.add_child(cv)
 	cv.apply(snap, world)
-	_check.call(cv.count() == 2, "creatures: a capsule each for the zombie and the NPC, none for the player")
-	var z := cv.get_node_or_null("creature_8589934593") as MeshInstance3D
-	var ok := z != null
-	if ok:
-		var m := z.mesh as CapsuleMesh
-		var l := z.get_child(0) as Label3D
-		ok = (is_equal_approx(m.height, 1.75) and (m.material as StandardMaterial3D).albedo_color == CreatureView.MONSTER_COLOR
-				and z.position.is_equal_approx(world.coords.ms_center_to_world(zp) + Vector3(0, 0.875, 0))
-				and l != null and l.text == "zombie")
-	_check.call(ok, "creatures: the zombie is a green 1.75 m capsule on its square, named")
+	_check.call(cv.count() == 2, "creatures: a figure each for the zombie and the NPC, none for the player in first person")
+	cv.show_player = true
+	_check.call(cv.count() == 3 and cv.figure(1) != null, "creatures: the player's own figure for the outside view")
+	cv.show_player = false
+	var z := cv.figure(zuid)
+	var at := world.coords.ms_center_to_world(zp)
+	var label := z.get_child(z.get_child_count() - 1) as Label3D if z != null else null
+	_check.call(z != null and z.plan == P.HUMANOID and z.shamble and is_equal_approx(z.top, 1.75)
+			and z.position.is_equal_approx(at) and label != null and label.text == "zombie",
+			"creatures: the zombie is a 1.75 m shambling human figure on its square, named")
 	var lr := LookRay.new(world)
 	var eye := world.coords.ms_center_to_world(zp - Vector3i(1, 0, 0)) + Vector3(0, 1.0, 0)
 	var h := lr.cast(eye, Vector3.RIGHT)
 	_check.call(h["hit"] and h["what"] == "zombie" and h["square"] == zp, "creatures: look meets the zombie (%s)" % h)
 	_check.call("creature: zombie, health 50%" in lr.describe(zp), "creatures: look names it with its health")
-	cv.view_z_max = zp.z - 1
-	_check.call(not z.visible, "creatures: hidden above the cutaway")
-	cv.view_z_max = CddaCoords.Z_MAX
+	# One square east: it walks there over the move time, turning to face east.
+	zombie["pos"] = [zp.x + 1, zp.y, zp.z]
+	var snap2 := Snapshot.from_data(d)
+	world.apply_snapshot(snap2)
+	cv.apply(snap2, world)
+	var to := world.coords.ms_center_to_world(zp + Vector3i(1, 0, 0))
+	_check.call(z.is_moving() and z.position.is_equal_approx(at), "creatures: a step starts a walk, not a jump")
+	cv.tick(0.05)
+	var mid := z.position.x
+	for i in 30:
+		cv.tick(0.05)
+	_check.call(mid > at.x and mid < to.x and z.position.is_equal_approx(to) and not z.is_moving(),
+			"creatures: it walks over to the next square (%.2f between %.2f and %.2f)" % [mid, at.x, to.x])
+	_check.call(absf(angle_difference(z.rotation.y, -PI / 2.0)) < 0.05, "creatures: it turned to face east (%.2f)" % z.rotation.y)
+	# Far away: a jump. Snapping off: every step is a jump.
+	zombie["pos"] = [zp.x + 6, zp.y, zp.z]
+	var snap3 := Snapshot.from_data(d)
+	cv.apply(snap3, world)
+	_check.call(not z.is_moving() and z.position.is_equal_approx(world.coords.ms_center_to_world(zp + Vector3i(6, 0, 0))),
+			"creatures: a long jump isn't walked")
+	cv.smooth = false
+	zombie["pos"] = [zp.x + 5, zp.y, zp.z]
+	cv.apply(Snapshot.from_data(d), world)
+	_check.call(not z.is_moving(), "creatures: with snapping on, steps jump")
+	cv.smooth = true
+	# Events: attack, damage, death; junk is skipped.
+	cv.on_events([{"kind": "attack", "uid": zuid, "other": nuid, "pos": zp}, {"kind": "damage", "uid": nuid},
+			{"kind": 5, "uid": zuid}, {"kind": "death", "uid": "x"}, "junk", {"kind": "attack", "uid": 99}])
+	var n := cv.figure(nuid)
+	_check.call(z.is_attacking() and n.is_hurt(), "creatures: attack lunges, damage flinches")
+	for i in 20:
+		cv.tick(0.05)
+	_check.call(not z.is_attacking() and not n.is_hurt(), "creatures: the lunge and the flinch end")
+	cv.on_events([{"kind": "death", "uid": nuid}])
+	_check.call(cv.figure(nuid) == null and cv.dying_count() == 1, "creatures: a death starts the fall")
+	for i in 80:
+		cv.tick(0.05)
+	_check.call(cv.dying_count() == 0, "creatures: the fallen figure is removed after a while")
+	# Out of sight without a death: it lingers a moment, then goes.
 	d["creatures"] = [me]
 	var gone := Snapshot.from_data(d)
 	world.apply_snapshot(gone)
 	cv.apply(gone, world)
-	_check.call(cv.count() == 0, "creatures: gone when the next snapshot doesn't have them")
+	_check.call(cv.count() == 0 and cv.get_child_count() == 1, "creatures: out of sight, it lingers")
+	for i in 20:
+		cv.tick(0.05)
+	_check.call(cv.get_child_count() == 0, "creatures: then it is gone")
+	cv.view_z_max = zp.z - 1
 	cv.free()
 	for bad: Variant in [[{"uid": 2, "kind": 7, "pos": pp}], [{"uid": -1, "kind": 2, "pos": pp}],
 			[{"uid": 2, "kind": 2, "pos": [1, 2]}], ["zombie"], {"uid": 2}]:

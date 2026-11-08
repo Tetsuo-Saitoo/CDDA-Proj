@@ -6,7 +6,8 @@ extends Node3D
 ## (KeyMenu) to rebind them. Command line, after `--`: --view=first|outside --snapshot=<path>
 ## --ids=<id tables path> --view-z=<z> --no-roofs --camera=<x>,<y>,<z>,<yaw_deg>,<pitch_deg> (Godot metres,
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
-## --keys (start with the key menu open).
+## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
+## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
 ## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda): the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
@@ -35,8 +36,8 @@ var compass: Compass
 var look_panel: Label
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
-var player_marker: MeshInstance3D
-var creature_view: CreatureView   # placeholder capsules for monsters and NPCs
+var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
+var _demo_step := 0
 var live: LiveSession
 var vr: VrRig
 var vr_perf: VrPerf
@@ -59,6 +60,7 @@ func _ready() -> void:
 	add_child(world)
 	creature_view = CreatureView.new()
 	creature_view.name = "Creatures"
+	creature_view.smooth = str(_args.get("creatures", "smooth")) != "snap"
 	add_child(creature_view)
 	_setup_environment()
 	for problem in InputActions.ensure():
@@ -69,8 +71,8 @@ func _ready() -> void:
 	add_child(fp)
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: camera.position += d)
 	world.coords.origin_shifted.connect(fp.shift)
+	world.coords.origin_shifted.connect(creature_view.shift)
 	_setup_hud()
-	_setup_player_marker()
 	var view := FirstPersonCamera.view_from_args(_args)
 	if _args.has("view") and _args["view"] != view:
 		push_warning("--view= takes first or outside; starting in %s" % view)
@@ -127,6 +129,8 @@ func _reload() -> void:
 		push_error(status)
 		return
 	var t1 := Time.get_ticks_msec()
+	if _args.has("demo-creatures"):
+		_add_demo_creatures(snap)
 	_show(snap)
 	status = "turn %d seq %d: load %d ms, %s" % [snap.turn, snap.seq, t1 - t0, status]
 	print(status)
@@ -136,13 +140,12 @@ func _reload() -> void:
 func _show(snap: Snapshot) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := world.apply_snapshot(snap)
+	creature_view.show_player = not _fp_active()   # in first person you are the player
 	creature_view.apply(snap, world)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
-	player_marker.visible = not _fp_active()   # in first person the marker is you
-	player_marker.position = world.coords.ms_center_to_world(snap.player_pos) + Vector3(0, 0.85, 0)
 	if vr != null:
 		world.set_view_z_max(CddaCoords.Z_MAX)   # first person: every level, ceilings included
 
@@ -183,7 +186,7 @@ func _set_first_person(on: bool) -> void:
 	camera.set_process_unhandled_input(not on)
 	fp.set_process_unhandled_input(on)
 	(fp if on else camera).make_current()
-	player_marker.visible = world.snapshot != null and not on
+	creature_view.show_player = not on
 
 
 func _toggle_view() -> void:
@@ -208,7 +211,7 @@ func _start_vr() -> void:
 	vr.camera.make_current()
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
-	player_marker.visible = world.snapshot != null
+	creature_view.show_player = true
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
 	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
@@ -297,6 +300,7 @@ func _on_request_answered(a: Dictionary) -> void:
 
 
 func _on_live_events(events: Array) -> void:
+	creature_view.on_events(events)
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
@@ -521,19 +525,61 @@ func _on_key_menu_closed() -> void:
 		_set_first_person(first_person)   # cameras take their input again
 
 
-## A stand-in for the player until there are character models.
-func _setup_player_marker() -> void:
-	var mesh := CapsuleMesh.new()
-	mesh.radius = 0.3
-	mesh.height = 1.7
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.55, 0.1)
-	mesh.material = mat
-	player_marker = MeshInstance3D.new()
-	player_marker.name = "PlayerMarker"
-	player_marker.mesh = mesh
-	player_marker.visible = false
-	add_child(player_marker)
+## --demo-creatures (mock town): one of several body types each, and an NPC, near the player. Every second
+## they step east or west; now and then they attack the player or flinch, as the bridge's events would say.
+const DEMO_MONSTERS := ["mon_zombie", "mon_dog_zombie_cop", "mon_zombie_brute", "mon_ant",
+		"mon_rattlesnake", "mon_crow", "mon_blob", "mon_bear", "mon_spider_wolf_giant", "mon_bee",
+		"mon_zombie_child", "mon_skeleton_hulk"]
+
+
+func _add_demo_creatures(snap: Snapshot) -> void:
+	if world.tables == null:
+		return
+	var p := snap.player_pos
+	var i := 0
+	for id: String in DEMO_MONSTERS:
+		var t := world.tables.index_of("mtype", id)
+		if t < 0:
+			continue
+		var c := Snapshot.Creature.new()
+		c.uid = (2 << 32) + i
+		c.type = t
+		c.pos = p + Vector3i(-7 + (i % 6) * 3, -4 - (i / 6) * 4, 0)
+		snap.creatures.append(c)
+		i += 1
+	var npc := Snapshot.Creature.new()
+	npc.uid = (1 << 32) + 1
+	npc.kind = Snapshot.Creature.NPC
+	npc.pos = p + Vector3i(3, 2, 0)
+	snap.creatures.append(npc)
+	snap.creatures_moved()
+	if get_node_or_null("DemoTimer") == null:
+		var timer := Timer.new()
+		timer.name = "DemoTimer"
+		timer.wait_time = 1.0
+		timer.timeout.connect(_demo_tick)
+		add_child(timer)
+		timer.start()
+
+
+func _demo_tick() -> void:
+	var snap := world.snapshot
+	if snap == null:
+		return
+	_demo_step += 1
+	var dx := 1 if (_demo_step / 3) % 2 == 0 else -1
+	var events := []
+	for c in snap.creatures:
+		if c.kind == Snapshot.Creature.PLAYER:
+			continue
+		c.pos.x += dx
+		if _demo_step % 4 == 0:
+			events.append({"kind": "attack", "uid": c.uid, "other": 1, "pos": snap.player_pos})
+		elif _demo_step % 4 == 2:
+			events.append({"kind": "damage", "uid": c.uid})
+	snap.creatures_moved()
+	creature_view.apply(snap, world)
+	creature_view.on_events(events)
 
 
 func _process(_delta: float) -> void:

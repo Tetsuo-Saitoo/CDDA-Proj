@@ -122,7 +122,8 @@ Each line: **ID — task.** Done-when. *(depends on)*
   registry + fallback chain. *(H1)*
 - **C4 — Creatures.** Player/NPC/monster models, interpolation between sim positions, animation state machine
   (idle/walk/run/attack/hurt/die/crouch/prone) fed by events; billboard fallback. Render only creatures the sim
-  says the player can see. *(B4)*
+  says the player can see. *(B4)* First slice done 2026-11-08: figures from simple shapes per body type,
+  smooth moves, lunge/flinch/fall from events (TASKS.md).
 - **C5 — Vehicles.** Mesh from the parts grid, smooth rotation between CDDA facing steps, part damage states,
   doors, lights. *(C3)*
 - **C6 — Atmosphere.** Sky/sun/moon from CDDA calendar and season; weather particles; CDDA lightmap → lamps and

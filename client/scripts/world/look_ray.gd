@@ -5,7 +5,7 @@ extends RefCounted
 ## headless. The ray meets what the 3D view draws: every square in the snapshot, also ones the character never
 ## saw (the view has no fog of war yet); the details say so. Out to the edge of the loaded area (~60 squares).
 ## Creatures the player perceives are hit
-## as their placeholder capsules (CreatureView). CDDA's own look text isn't in here: the bridge has no "describe".
+## as their placeholder figures (CreatureView). CDDA's own look text isn't in here: the bridge has no "describe".
 
 const K := TerrainCatalog.Kind
 const SOLID := [K.WALL, K.WINDOW, K.FENCE, K.TREE, K.BOX]
@@ -44,7 +44,7 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M) -> Dictionary:
 			return {"hit": false}   # out of the loaded area
 		var floor_y := world.coords.ms_to_world(p).y
 		var cr := world.snapshot.creature_at(p)
-		if cr != null and pt.y - floor_y < CreatureView.height_of(_size(cr)):
+		if cr != null and pt.y - floor_y < CreatureView.height_of(cr.kind, CreatureView.def_of(world, cr)):
 			return _hit(p, pt, creature_name(cr))
 		var style := world.catalog.style_for(c["ter"])
 		if style.kind in SOLID:
@@ -87,13 +87,6 @@ func creature_name(cr: Snapshot.Creature) -> String:
 	if cr.kind == Snapshot.Creature.NPC:
 		return "someone (NPC)"
 	return _name("mtype", cr.type, {})
-
-
-func _size(cr: Snapshot.Creature) -> int:
-	if world.tables == null or cr.kind != Snapshot.Creature.MONSTER:
-		return 0
-	var d := world.tables.def_at("mtype", cr.type)
-	return d.size if d != null else 0
 
 
 func _hit(p: Vector3i, pt: Vector3, what: String) -> Dictionary:

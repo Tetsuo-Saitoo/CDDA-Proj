@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-08 — C4 first slice: creature figures by CDDA body type (humanoid, four-legged, crawler, snake, flyer, fish, blob), smooth walking between squares with facing, lunge/flinch/fall from attack/damage/death events, player figure in the outside view; fork id tables send `bodytype` (ids test checks zombie = human, zombie police dog = dog), mock patched; `--demo-creatures`, `--creatures=snap`; client tests pass, screenshots checked.
 - 2026-11-07 — `cdda/` (CDDA-3D-code) is now a git submodule of CDDA-Proj, pinned at 024eba3 (`branch = fp3d`): `git clone --recursive` gets both; README, BUILD.md step 2 and TASKS say how to clone, take over a hand-made `cdda/` clone, and move the pin.
 - 2026-11-07 — Notes from a chat with the VR tester: VR as the main way to play (PLAN L), catch assist / dip-to-fill / no tipping / per-hand quick switch (PLAN L2), VR walk passes closed doors on purpose until L2, one-repo idea (submodule), co-op fork pointer (TASKS).
 - 2026-11-07 — PLAN.md L2: analog doors for VR (swing by hand, peek through a door held ajar; CDDA stays open/closed, sight rule needed) and physical item handling (grab, pull to hand, store over the shoulder, throw; needs per-item handles in the bridge).
