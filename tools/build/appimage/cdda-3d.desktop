@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=CDDA-3D
+Comment=Cataclysm: Dark Days Ahead in 3D, first person and VR
+Exec=cdda-3d
+Icon=cdda-3d
+Categories=Game;RolePlaying;
+Terminal=false

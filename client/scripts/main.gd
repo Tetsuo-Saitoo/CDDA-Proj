@@ -100,8 +100,12 @@ func _ready() -> void:
 		_screenshot_and_quit(_args["screenshot"])
 
 
+## A file of the repo (cdda/, assets/, contracts/). An exported game (the AppImage) has them next to its executable.
 func _repo_path(rel: String) -> String:
-	return ProjectSettings.globalize_path("res://").path_join("..").path_join(rel).simplify_path()
+	var root := ProjectSettings.globalize_path("res://").path_join("..")
+	if OS.has_feature("template"):
+		root = OS.get_executable_path().get_base_dir()
+	return root.path_join(rel).simplify_path()
 
 
 func _parse_args() -> Dictionary:

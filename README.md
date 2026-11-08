@@ -9,7 +9,9 @@ placeholder art: walk, use CDDA's action keys (pick up, wield, eat, open, ...), 
 click things to look at them; monsters are green capsules for now. Every key can be rebound (F1). VR has its
 first step (block L1 in [PLAN.md](PLAN.md)): walk around the world in a PC VR headset, no interaction yet.
 The mock town needs only Godot 4.7.2, on Windows or Linux (macOS has no PC VR): see
-[docs/BUILD.md](docs/BUILD.md) step 6. Live CDDA games run on Windows and Linux.
+[docs/BUILD.md](docs/BUILD.md) step 6. Live CDDA games run on Windows and Linux. On Linux the
+[releases](https://github.com/Tetsuo-Saitoo/CDDA-Proj/releases) also have one AppImage with everything in it
+(glibc 2.38+, e.g. Arch): `chmod +x CDDA-3D-x86_64.AppImage`, then run it, with `--vr` for VR.
 
 ## Get the code
 

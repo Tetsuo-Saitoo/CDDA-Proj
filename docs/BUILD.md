@@ -105,3 +105,15 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    only on the desktop window (L4 brings them into VR).
 7. **Art coverage** (no build needed):
    `python -I tools/coverage/coverage.py --data cdda/data/json` → `tools/out/coverage_*.csv`
+8. **Linux AppImage** (one file with everything: the exported client, the bridge, CDDA's data and tilesets, SDL2).
+   Built in WSL Ubuntu 24.04 (or such a Linux) with the step 5 Linux packages plus `squashfs-tools`; runs on
+   x86_64 Linux with glibc 2.38 or newer (Arch, Fedora 39+, Ubuntu 24.04+). One command from Windows:
+   `wsl.exe -d Ubuntu-24.04 --cd "<repo>" -- bash tools/build/appimage.sh` → `tools/out/appimage/`
+   (`CDDA-3D-x86_64.AppImage`, its `.sha256`, `THIRD_PARTY_LICENSES.txt`). The first run downloads Godot's
+   export templates (1.3 GB, only the Linux release template is kept) and the AppImage runtime into `~/tools`,
+   both checked against pinned SHA-256; it needs Godot 4.7.2's Linux editor (`$GODOT`, else
+   `~/tools/godot-4.7.2/`). Playing: `chmod +x CDDA-3D-x86_64.AppImage`, then `./CDDA-3D-x86_64.AppImage`
+   starts a new live game on the desktop, `--vr` in VR (the system's OpenXR runtime; SteamVR is preferred and
+   started when installed, like `tools/vr/play_vr.sh`), `--town` the mock town; other step 5/6 options pass
+   through. Saves, keys and logs stay in `~/.local/share/godot/app_userdata/CDDA-3D/`; no VR runtime is inside.
+   Needs FUSE 3 (`fusermount3`; Arch: `fuse3`), else run it with `--appimage-extract-and-run`.

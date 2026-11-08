@@ -1,3 +1,5 @@
 # Scripts keep the line endings their shell needs, whatever core.autocrlf says
 *.sh text eol=lf
 *.cmd text eol=crlf
+# AppImage files run on Linux: AppRun and the desktop entry need LF
+tools/build/appimage/* text eol=lf

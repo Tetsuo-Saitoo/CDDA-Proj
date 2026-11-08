@@ -53,6 +53,12 @@ else()
         target_link_options(fp3d-cdda PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map
             -Wl,--exclude-libs,ALL -Wl,-Bsymbolic -Wl,--no-undefined -Wl,-z,relro,-z,now)
         set_target_properties(fp3d-cdda PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/exports.map)
+        # The AppImage puts SDL2 and what it needs in libs/ next to the library (tools/build/appimage.sh). An
+        # RPATH (not RUNPATH) also covers those libraries' own dependencies and comes before LD_LIBRARY_PATH,
+        # and it applies to the bridge only: Godot keeps the system's X11, Wayland and GL libraries.
+        # Without libs/ (a normal checkout) the system's libraries load as before.
+        set_target_properties(fp3d-cdda PROPERTIES BUILD_RPATH "$ORIGIN/libs" INSTALL_RPATH "$ORIGIN/libs")
+        target_link_options(fp3d-cdda PRIVATE -Wl,--disable-new-dtags)
     endif()
 endif()
 set_target_properties(fp3d-cdda PROPERTIES PREFIX "" OUTPUT_NAME "fp3d_cdda.${FP3D_PLATFORM}.x86_64")
