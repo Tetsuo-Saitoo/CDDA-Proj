@@ -210,8 +210,8 @@ static func parse_event(t: String) -> InputEvent:
 	if t.begins_with("axis:"):
 		var s := t.substr(5)
 		var n := s.left(-1)
-		if s.length() < 2 or not s[-1] in ["-", "+"] or not n.is_valid_int() or n.to_int() < 0 \
-				or n.to_int() >= JOY_AXIS_SDL_MAX:
+		if (s.length() < 2 or not s[-1] in ["-", "+"] or not n.is_valid_int() or n.to_int() < 0
+				or n.to_int() >= JOY_AXIS_SDL_MAX):
 			return null
 		var m := InputEventJoypadMotion.new()
 		m.axis = n.to_int() as JoyAxis
@@ -355,5 +355,5 @@ static func _texts(events: Array) -> Array[String]:
 
 
 static func _mods_text(e: InputEventWithModifiers) -> String:
-	return ("Shift+" if e.shift_pressed else "") + ("Ctrl+" if e.ctrl_pressed else "") \
-			+ ("Alt+" if e.alt_pressed else "") + ("Meta+" if e.meta_pressed else "")
+	return (("Shift+" if e.shift_pressed else "") + ("Ctrl+" if e.ctrl_pressed else "")
+			+ ("Alt+" if e.alt_pressed else "") + ("Meta+" if e.meta_pressed else ""))

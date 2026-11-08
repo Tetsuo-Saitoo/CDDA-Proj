@@ -25,6 +25,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_look_ray(world)
 	_test_cdda_keys()
 	_test_rebinding(root)
+	_test_creatures(root, world, data, tables)
 	world.free()
 
 
@@ -354,3 +355,59 @@ func _wall_and_floor_next_to_it(world: WorldView, lr: LookRay, p: Vector3i) -> A
 					if not nc.is_empty() and nc["furn"] == 0 and world.catalog.style_for(nc["ter"]).kind == K.FLOOR:
 						return [q, q + n]
 	return []
+
+
+## Placeholder creatures: read from the snapshot, drawn as capsules, met by look; bad data is refused.
+func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTables) -> void:
+	var zi := -1
+	for i in tables.mtype.size():
+		if tables.mtype[i].id == "mon_zombie":
+			zi = i
+	_check.call(zi >= 0 and tables.mtype[zi].size == 3, "creatures: the id tables have mon_zombie, medium")
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pp: Array = d["player"]["pos"]
+	var me: Dictionary = d["creatures"][0]
+	var zp := Vector3i(int(pp[0]) + 1, int(pp[1]), int(pp[2]))
+	d["creatures"] = [me, {"uid": 8589934593, "kind": 2, "type": zi, "pos": [zp.x, zp.y, zp.z], "hp_frac": 128},
+			{"uid": 4294967297, "kind": 1, "type": 0, "pos": [zp.x - 1, zp.y + 1, zp.z], "hp_frac": 255}]
+	var snap := Snapshot.from_data(d)
+	_check.call(snap.is_valid() and snap.creatures.size() == 3, "creatures: read (%s)" % snap.error)
+	if not snap.is_valid():
+		return
+	world.apply_snapshot(snap)
+	var cv := CreatureView.new()
+	root.add_child(cv)
+	cv.apply(snap, world)
+	_check.call(cv.count() == 2, "creatures: a capsule each for the zombie and the NPC, none for the player")
+	var z := cv.get_node_or_null("creature_8589934593") as MeshInstance3D
+	var ok := z != null
+	if ok:
+		var m := z.mesh as CapsuleMesh
+		var l := z.get_child(0) as Label3D
+		ok = (is_equal_approx(m.height, 1.75) and (m.material as StandardMaterial3D).albedo_color == CreatureView.MONSTER_COLOR
+				and z.position.is_equal_approx(world.coords.ms_center_to_world(zp) + Vector3(0, 0.875, 0))
+				and l != null and l.text == "zombie")
+	_check.call(ok, "creatures: the zombie is a green 1.75 m capsule on its square, named")
+	var lr := LookRay.new(world)
+	var eye := world.coords.ms_center_to_world(zp - Vector3i(1, 0, 0)) + Vector3(0, 1.0, 0)
+	var h := lr.cast(eye, Vector3.RIGHT)
+	_check.call(h["hit"] and h["what"] == "zombie" and h["square"] == zp, "creatures: look meets the zombie (%s)" % h)
+	_check.call("creature: zombie, health 50%" in lr.describe(zp), "creatures: look names it with its health")
+	cv.view_z_max = zp.z - 1
+	_check.call(not z.visible, "creatures: hidden above the cutaway")
+	cv.view_z_max = CddaCoords.Z_MAX
+	d["creatures"] = [me]
+	var gone := Snapshot.from_data(d)
+	world.apply_snapshot(gone)
+	cv.apply(gone, world)
+	_check.call(cv.count() == 0, "creatures: gone when the next snapshot doesn't have them")
+	cv.free()
+	for bad: Variant in [[{"uid": 2, "kind": 7, "pos": pp}], [{"uid": -1, "kind": 2, "pos": pp}],
+			[{"uid": 2, "kind": 2, "pos": [1, 2]}], ["zombie"], {"uid": 2}]:
+		d["creatures"] = bad
+		_check.call(not Snapshot.from_data(d).is_valid(), "creatures: refused %s" % str(bad).left(40))
+	var many := []
+	many.resize(Snapshot.MAX_CREATURES + 1)
+	many.fill(me)
+	d["creatures"] = many
+	_check.call(not Snapshot.from_data(d).is_valid(), "creatures: more than %d refused" % Snapshot.MAX_CREATURES)

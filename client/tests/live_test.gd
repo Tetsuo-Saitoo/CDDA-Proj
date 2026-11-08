@@ -122,8 +122,8 @@ func _run() -> void:
 func _run_load() -> void:
 	_check(ClassDB.class_exists("CddaSim"), "extension loaded (class CddaSim)")
 	var expect: Variant = JSON.parse_string(FileAccess.get_file_as_string(_user_dir.path_join(EXPECT_FILE)))
-	var ok: bool = expect is Dictionary and expect.get("save") is String and expect.get("turn") is float \
-			and expect.get("pos") is Array and (expect["pos"] as Array).size() == 3
+	var ok: bool = (expect is Dictionary and expect.get("save") is String and expect.get("turn") is float
+			and expect.get("pos") is Array and (expect["pos"] as Array).size() == 3)
 	_check(ok, "reads what run 1 saved (%s)" % EXPECT_FILE)
 	if _failed > 0:
 		_finish()

@@ -36,6 +36,7 @@ var look_panel: Label
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
 var player_marker: MeshInstance3D
+var creature_view: CreatureView   # placeholder capsules for monsters and NPCs
 var live: LiveSession
 var vr: VrRig
 var vr_perf: VrPerf
@@ -56,6 +57,9 @@ func _ready() -> void:
 	for w in world.catalog.warnings:
 		push_warning(w)
 	add_child(world)
+	creature_view = CreatureView.new()
+	creature_view.name = "Creatures"
+	add_child(creature_view)
 	_setup_environment()
 	for problem in InputActions.ensure():
 		push_warning("keys: " + problem)
@@ -132,6 +136,7 @@ func _reload() -> void:
 func _show(snap: Snapshot) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := world.apply_snapshot(snap)
+	creature_view.apply(snap, world)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -538,6 +543,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
+	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed

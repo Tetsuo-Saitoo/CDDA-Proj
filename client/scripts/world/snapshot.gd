@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
-## Fields the client doesn't use yet (fields, creatures, vehicles) are ignored, not trusted; whoever
+## Fields the client doesn't use yet (fields, vehicles) are ignored, not trusted; whoever
 ## starts using them adds their checks here. A submap without `trap` or `items` has none.
 
 const CONTRACT_VERSION := 0
@@ -18,6 +18,8 @@ const MAX_TURN := 1 << 52                 # JSON numbers are doubles
 const MAX_NAMES := 65536
 const MAX_NAME_LEN := 128
 const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
+const MAX_CREATURES := 1024               # the contract's cap
+const MAX_UID := 1 << 53                  # JSON numbers are doubles
 const PILE_STRIDE := 6                    # items: tile, count, top[4]
 
 const FLAG_ROOF := 1        # not outside
@@ -46,12 +48,26 @@ var ids_generation := -1   # -1: the snapshot doesn't say
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
+var creatures: Array[Creature] = []        # the ones the player perceives, the player first
+var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
 var trap_names := {}    # int -> String
+
+
+## A creature the player perceives (contracts/snapshot.md creature_view).
+class Creature:
+	const PLAYER := 0
+	const NPC := 1
+	const MONSTER := 2
+	var uid := 0
+	var kind := MONSTER
+	var type := 0        # mtype index (monsters), 0 otherwise
+	var pos := Vector3i.ZERO
+	var hp_frac := 255   # 0..255
 
 
 func is_valid() -> bool:
@@ -85,6 +101,7 @@ static func from_data(data: Variant) -> Snapshot:
 		snap.ter_names.clear()
 		snap.furn_names.clear()
 		snap.trap_names.clear()
+		snap.creatures.clear()
 	return snap
 
 
@@ -113,6 +130,7 @@ func _read(data: Variant) -> void:
 	_read_env(d.get("env"))
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
+	_read_creatures(d.get("creatures"))
 
 
 func _read_player(v: Variant) -> void:
@@ -128,6 +146,39 @@ func _read_player(v: Variant) -> void:
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
+
+
+func _read_creatures(v: Variant) -> void:
+	if v == null or not is_valid():
+		return
+	if not v is Array or (v as Array).size() > MAX_CREATURES:
+		_fail("creatures: expected a list of at most %d" % MAX_CREATURES)
+		return
+	for i in (v as Array).size():
+		var what := "creatures[%d]" % i
+		var r: Variant = v[i]
+		if not r is Dictionary:
+			_fail(what + " is not an object")
+			return
+		var c := Creature.new()
+		c.uid = _int(r.get("uid"), 0, MAX_UID, what + ".uid")
+		c.kind = _int(r.get("kind"), 0, 2, what + ".kind")
+		c.type = _int(r.get("type", 0), 0, MAX_ID, what + ".type")
+		c.pos = _vec3i(r.get("pos"), MAX_ABS_SM * CddaCoords.SEEX, what + ".pos")
+		c.hp_frac = _int(r.get("hp_frac", 255), 0, 255, what + ".hp_frac")
+		if not is_valid():
+			return
+		creatures.append(c)
+
+
+## The creature (not the player) standing on square p, or null.
+func creature_at(p: Vector3i) -> Creature:
+	if _creature_at.is_empty():
+		for c in creatures:
+			if c.kind != Creature.PLAYER:
+				_creature_at[c.pos] = c
+		_creature_at[Vector3i.MAX] = null   # built, even when nobody is there
+	return _creature_at.get(p)
 
 
 func _read_env(v: Variant) -> void:

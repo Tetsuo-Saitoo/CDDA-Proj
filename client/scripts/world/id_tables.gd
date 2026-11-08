@@ -5,7 +5,8 @@ extends RefCounted
 ##
 ## The input is hostile like a snapshot: every field the client reads is type-, range- and size-checked,
 ## and tables with any bad field are rejected whole ([member error] set, every table empty). A missing
-## field takes its default; a present one must be valid. `mtype`, `vpart` and `tables` aren't read yet,
+## field takes its default; a present one must be valid (`mtype` may be missing: no monster names). `vpart`
+## and `tables` aren't read yet,
 ## so they aren't trusted either: whoever starts using them adds their checks here.
 
 const MAX_FILE_BYTES := 16 << 20          # the 0.I tables are ~2.7 MB
@@ -20,7 +21,7 @@ const MAX_FLAG_LEN := 64
 const MAX_GROUPS := 64
 ## Connect groups past this many get no bit (CDDA has ~36); they then join nothing.
 const MAX_GROUP_BITS := 62
-const TABLES := ["ter", "furn", "trap", "field", "itype"]
+const TABLES := ["ter", "furn", "trap", "field", "itype", "mtype"]
 
 
 class Def:
@@ -42,6 +43,7 @@ class Def:
 	var category := ""       # itype
 	var volume_ml := 0
 	var weight_g := 0
+	var size := 0           # mtype: CDDA's creature_size, 1 tiny .. 5 huge
 
 	func has(flag: String) -> bool:
 		return flags.has(flag)
@@ -54,6 +56,7 @@ var furn: Array[Def] = []
 var trap: Array[Def] = []
 var field: Array[Def] = []
 var itype: Array[Def] = []
+var mtype: Array[Def] = []
 var group_bits := {}     # connect group name -> bit index
 var _by_name := {}       # table -> {id -> index}
 ## Terrain ids built on top of a TREE (treetops) and of anything else (roofs).
@@ -128,6 +131,7 @@ func _table(table: String) -> Array[Def]:
 		"trap": return trap
 		"field": return field
 		"itype": return itype
+		"mtype": return mtype
 	return []
 
 
@@ -153,6 +157,8 @@ func _read(data: Variant) -> void:
 	var d: Dictionary = data
 	generation = _int(d.get("generation"), 0, 0xFFFFFFFF, "generation")
 	for t: String in TABLES:
+		if t == "mtype" and d.get(t) == null:
+			continue   # older tables: monsters go unnamed
 		_read_table(t, d.get(t))
 		if not is_valid():
 			return
@@ -198,6 +204,8 @@ func _read_table(table: String, v: Variant) -> void:
 			def.category = _str(r.get("category"), MAX_FLAG_LEN, what + ".category")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
+		elif table == "mtype":
+			def.size = _int(r.get("size"), 0, 5, what + ".size")
 		if not is_valid():
 			return
 		if not def.id.is_empty():
