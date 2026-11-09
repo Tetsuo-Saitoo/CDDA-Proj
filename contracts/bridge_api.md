@@ -47,11 +47,14 @@ Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the s
   what is wielded; off hand: an unarmed strike (the `attack` event's `type` is 0), refused while the wielded item
   needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time.
 - Held items and context use (`cdda/src/fp3d/held.h`): the off hand (left) holds one carried item, marked with
-  the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it), empty while the wielded
-  item needs both hands or the left arm is broken. Main-loop actions: `fp3d_hold_off` (an `item_select`
-  prompt), `fp3d_stow_off`, `fp3d_use_<DIR>`: a hose (quality HOSE) in one hand and a container in the other
-  siphon the vehicle on that square into the container with no menu (the tank there, else the only one with
-  liquid, else a pick); anything else is CDDA's examine of that square. A liquid fill (`ACT_FILL_LIQUID`)
+  the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it; a token the avatar keeps
+  too means an item that left the avatar isn't held again on return), empty while the wielded item needs both
+  hands or the left arm is broken; an off-hand strike hits with it. Main-loop actions: `fp3d_hold_off` (an
+  `item_select` prompt of one-handed items; a message when none fit), `fp3d_stow_off`, `fp3d_use_<DIR>`, first
+  that fits: a hose (quality HOSE) in one hand and a container in the other siphon the vehicle on that square
+  into the container with no menu (the tank there, else the only one with liquid, else a pick); a held
+  container's liquid goes into a vehicle tank there that takes it (refuel); a held container fills from liquid
+  there (river, lake, keg, barrel, puddle); anything else is CDDA's examine of that square. A liquid fill (`ACT_FILL_LIQUID`)
   runs one turn per second of wall time in both clock modes, so it can be watched.
 - CDDA's debug message prompts and "press any key" screens come as `key` requests with context `RAW_KEY` and no
   actions; answer `action: " "`. The message itself is in `debug.log`.

@@ -39,6 +39,9 @@ var _fade_node: MeshInstance3D
 var _arc_mesh: ImmediateMesh
 var _arc_mat: StandardMaterial3D
 var _marker: MeshInstance3D
+var left_held: VrHeld      # live game: what each hand holds, on its controller (show_held)
+var right_held: VrHeld
+var _was_filling := false
 
 
 ## Options after `--`: --vr-move=smooth|teleport --vr-turn=snap|smooth --vr-snap=<deg 10-90>
@@ -255,6 +258,25 @@ func _on_right_button(n: String) -> void:
 		change_level(1)
 	elif n == "ax_button":
 		change_level(-1)
+
+
+## Live game: what the hands hold (CddaSim.get_held) on the controllers, left = off hand, right = main hand.
+## A buzz in both hands when a fill ends.
+func show_held(held: Dictionary) -> void:
+	if left == null or right == null:
+		return
+	if left_held == null:
+		left_held = VrHeld.new("Left")
+		left.add_child(left_held)
+		right_held = VrHeld.new("Right")
+		right.add_child(right_held)
+	var filling := str(held.get("activity", "")) == HandsPanel.FILL_ACTIVITY
+	left_held.show_hand(held.get("off") if held.get("off") is Dictionary else {}, filling)
+	right_held.show_hand(held.get("main") if held.get("main") is Dictionary else {}, filling)
+	if _was_filling and not filling:
+		_buzz(left)
+		_buzz(right)
+	_was_filling = filling
 
 
 static func _buzz(c: XRController3D) -> void:

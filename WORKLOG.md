@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-08 — Context actions, second slice: E refuels a vehicle from a held can and fills a held container from water, a keg or a puddle; off-hand mark forgets items that left you; hold lists one-handed items only (message, no popup); off-hand strike uses the held item; VR controllers show held items + level gauge; sim test, client tests, live test pass.
 - 2026-11-08 — Context actions, first slice: off hand (H / Shift+H, item var), E = use what you hold on what you face (hose + container + vehicle = siphon, no menus; else examine), fills paced 1 turn/s, `CddaSim.get_held()`, hands panel with fill gauge; sim test siphon checks + UI tests pass.
 - 2026-11-08 — Saving live games: bridge `save_game` (saves at the main loop, also paused, plays on) + `get_save_status`; client continues `fp3d-live` by default (`--new` starts over), F5 saves, closing saves first, 5-min autosave; live test covers save while paused + load in run 2.
 - 2026-11-08 — Linux AppImage: `tools/build/appimage.sh` builds one `CDDA-3D-x86_64.AppImage` in WSL (exported client, stripped bridge with RPATH `$ORIGIN/libs`, CDDA data + tilesets, bundled SDL2 closure, licences); desktop live game by default, `--vr`, `--town`; tested in WSL (town, live game, VR fallback); release `v0.4.0`.

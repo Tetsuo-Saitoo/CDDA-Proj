@@ -442,3 +442,13 @@ func _test_hands_panel(root: Node) -> void:
 	panel.show_held({"seq": 4, "main": {}, "off": "junk", "activity": 5})
 	_check.call(not panel.visible, "hands: hidden with empty hands (junk off hand ignored)")
 	panel.free()
+	# VR: the same data on a controller, label plus a level gauge.
+	var vh := VrHeld.new("Left")
+	root.add_child(vh)
+	vh.show_hand(can, true)
+	_check.call(vh.visible and is_equal_approx(vh.ratio, 0.13), "hands: VR gauge at the can's level")
+	vh.show_hand({"name": "rubber hose"}, false)
+	_check.call(vh.visible and vh.ratio == -1.0, "hands: VR plain item, no gauge")
+	vh.show_hand({}, false)
+	_check.call(not vh.visible, "hands: VR empty hand hidden")
+	vh.free()

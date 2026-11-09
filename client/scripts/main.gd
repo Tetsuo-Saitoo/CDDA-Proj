@@ -231,6 +231,8 @@ func _start_vr() -> void:
 		xr.connect("pose_recentered", func() -> void: XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true))
 	vr_perf = VrPerf.new(xr)
 	add_child(vr_perf)
+	if live != null:
+		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
 		world.set_view_z_max(CddaCoords.Z_MAX)
 	print("VR on: %s" % vr.settings)
