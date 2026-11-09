@@ -34,6 +34,7 @@ var request_ui: RequestUI
 var key_menu: KeyMenu
 var compass: Compass
 var look_panel: Label
+var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
 var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
@@ -253,6 +254,7 @@ func _start_live() -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
 		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
 	live.saved.connect(_on_live_saved)
+	live.held_changed.connect(hands_panel.show_held)
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
@@ -400,6 +402,13 @@ func _live_action(event: InputEvent) -> bool:
 		act = "LEVEL_DOWN"
 	elif InputActions.pressed(event, &"level_up"):
 		act = "LEVEL_UP"
+	elif InputActions.pressed(event, &"use_held"):
+		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons)
+		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
+	elif InputActions.pressed(event, &"hold_off"):
+		act = "fp3d_hold_off"
+	elif InputActions.pressed(event, &"stow_off"):
+		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
 		# strike the square you face: the left (off) hand or the right (main) hand
 		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
@@ -560,6 +569,8 @@ func _setup_hud() -> void:
 	look_panel.add_theme_constant_override("outline_size", 4)
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
+	hands_panel = HandsPanel.new()
+	layer.add_child(hands_panel)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.answered.connect(_on_request_answered)
@@ -694,6 +705,8 @@ func _act_help() -> String:
 	for a: StringName in InputActions.CDDA:
 		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
+	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
+			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
 	parts.append("%s save" % InputActions.key_of(&"save_game"))
 	return "  ".join(parts)
 

@@ -30,6 +30,7 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `get_clock()` | `Dictionary` | `real_time`, `timescale`, `paused`, `pause_reason`. |
 | `set_real_time(on)` / `set_timescale(s)` / `set_paused(on)` / `interrupt()` | | The clock (`ui_requests.md`); timescale clamps to 0.25-16. |
 | `save_game(only_if_changed = false)` | `bool` | Saves the game where it stands and plays on (CDDA's quicksave, no popup). The sim saves at the main loop's next request, even while paused; in another prompt or a long activity it waits for that. `only_if_changed` (autosave) skips it when nothing happened since the last save. False unless the game is `running`. |
+| `get_held()` | `Dictionary` | What the hands hold: `seq` (bumps on every update: before each request and once per turn, also during activities), `turn`, `main` and `off` (`{}` when empty, else `id`, `name`, `liquid` ("" none), `ml` and `capacity_ml` (0: not a container)), `activity` (the avatar's activity id, "" none). Names are capped at 128 bytes. |
 | `get_save_status()` | `Dictionary` | `pending` (asked, not finished), `done` (saves finished since start, skipped ones too), `ok` (the last one). The message log also gets "Game saved." or "The game could not be saved." |
 
 Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the snapshot.
@@ -45,6 +46,13 @@ Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the s
   `fp3d_attack_off_<DIR>`, DIR one of the eight move actions (UP = north). Main hand: CDDA's melee attack with
   what is wielded; off hand: an unarmed strike (the `attack` event's `type` is 0), refused while the wielded item
   needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time.
+- Held items and context use (`cdda/src/fp3d/held.h`): the off hand (left) holds one carried item, marked with
+  the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it), empty while the wielded
+  item needs both hands or the left arm is broken. Main-loop actions: `fp3d_hold_off` (an `item_select`
+  prompt), `fp3d_stow_off`, `fp3d_use_<DIR>`: a hose (quality HOSE) in one hand and a container in the other
+  siphon the vehicle on that square into the container with no menu (the tank there, else the only one with
+  liquid, else a pick); anything else is CDDA's examine of that square. A liquid fill (`ACT_FILL_LIQUID`)
+  runs one turn per second of wall time in both clock modes, so it can be watched.
 - CDDA's debug message prompts and "press any key" screens come as `key` requests with context `RAW_KEY` and no
   actions; answer `action: " "`. The message itself is in `debug.log`.
 - CDDA's window still exists, hidden, with SDL's software renderer (B2 tech debt); it is created and destroyed

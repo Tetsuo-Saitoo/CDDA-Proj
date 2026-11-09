@@ -13,6 +13,9 @@ signal request_changed(request: Dictionary)
 signal events_arrived(events: Array)
 ## A save finished (save(), autosave): ok or not. Skipped autosaves (nothing changed) count as ok.
 signal saved(ok: bool)
+## What the hands hold (CddaSim.get_held): {seq, turn, main, off, activity}; on every change, also each turn
+## while a fill runs.
+signal held_changed(held: Dictionary)
 
 ## Levels sent around the player's z (the whole bubble is 21 levels, ~6 MB of JSON).
 const Z_BELOW := 1
@@ -28,6 +31,7 @@ var ids_generation := -1
 var _sim: RefCounted
 var _saves_done := 0
 var _since_save := 0.0
+var _held_seq := 0
 
 
 static func available() -> bool:
@@ -127,6 +131,12 @@ func _process(delta: float) -> void:
 		_since_save += delta
 		if _since_save >= AUTOSAVE_S:
 			save(true)
+	if _sim.has_method("get_held"):
+		var held: Dictionary = _sim.get_held()
+		var hs: int = held.get("seq", 0)
+		if hs != _held_seq:
+			_held_seq = hs
+			held_changed.emit(held)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
 		events_arrived.emit(events)

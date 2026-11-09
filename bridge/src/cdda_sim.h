@@ -51,6 +51,7 @@ class CddaSim : public godot::RefCounted
         void interrupt();
 
         bool save_game( bool only_if_changed );
+        godot::Dictionary get_held() const;
         godot::Dictionary get_save_status() const;
 };
 

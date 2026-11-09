@@ -18,6 +18,7 @@
 
 #include "fp3d/bridge.h"
 #include "fp3d/events.h"
+#include "fp3d/held.h"
 #include "sim_session.h"
 
 using godot::Array;
@@ -166,6 +167,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "interrupt" ), &CddaSim::interrupt );
     ClassDB::bind_method( D_METHOD( "save_game", "only_if_changed" ), &CddaSim::save_game, DEFVAL( false ) );
     ClassDB::bind_method( D_METHOD( "get_save_status" ), &CddaSim::get_save_status );
+    ClassDB::bind_method( D_METHOD( "get_held" ), &CddaSim::get_held );
 }
 
 void CddaSim::stop_session()
@@ -421,5 +423,34 @@ Dictionary CddaSim::get_save_status() const
     d["pending"] = s.pending;
     d["done"] = static_cast<int64_t>( std::min<uint64_t>( s.done, INT64_MAX ) );
     d["ok"] = s.ok;
+    return d;
+}
+
+namespace
+{
+Dictionary hand_dict( const fp3d::hand_view &h )
+{
+    Dictionary d;
+    if( !h.held ) {
+        return d;
+    }
+    d["id"] = to_godot( h.id );
+    d["name"] = to_godot( h.name );
+    d["liquid"] = to_godot( h.liquid );
+    d["ml"] = h.ml;
+    d["capacity_ml"] = h.capacity_ml;
+    return d;
+}
+} // namespace
+
+Dictionary CddaSim::get_held() const
+{
+    const fp3d::held_view v = fp3d::latest_held();
+    Dictionary d;
+    d["seq"] = static_cast<int64_t>( std::min<uint64_t>( v.seq, INT64_MAX ) );
+    d["turn"] = v.turn;
+    d["main"] = hand_dict( v.main );
+    d["off"] = hand_dict( v.off );
+    d["activity"] = to_godot( v.activity );
     return d;
 }

@@ -268,13 +268,13 @@ func _test_rebinding(root: Node) -> void:
 	_check.call(InputActions.event_text(InputActions.binding_from(shift_key)) == "Shift",
 			"keys: Shift pressed alone binds without a modifier")
 	# Save writes only what changed; load brings it back.
-	var x: Array[InputEvent] = [InputActions.parse_event("X")]
+	var x: Array[InputEvent] = [InputActions.parse_event("Y")]
 	InputActions.set_slots(&"cdda_examine", x)
 	_check.call(InputActions.save_bindings(path) == "", "keys: saved")
 	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	_check.call(saved is Dictionary and saved["actions"].keys() == ["cdda_examine"], "keys: only changed actions are written")
 	InputActions.reset_all()
-	_check.call(InputActions.load_bindings(path).is_empty() and InputActions.key_of(&"cdda_examine") == "X"
+	_check.call(InputActions.load_bindings(path).is_empty() and InputActions.key_of(&"cdda_examine") == "Y"
 			and InputActions.key_of(&"move_forward") == "W", "keys: loaded back, others keep their defaults")
 	# A hostile file: unknown actions, junk entries, a non-list; only good entries are used.
 	InputActions.reset_all()

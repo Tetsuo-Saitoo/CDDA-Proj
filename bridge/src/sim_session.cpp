@@ -16,6 +16,7 @@
 #include "fp3d/bridge.h"
 #include "fp3d/events.h"
 #include "fp3d/game_access.h"
+#include "fp3d/held.h"
 #include "fp3d/id_tables.h"
 #include "fp3d/snapshot.h"
 #include "game.h"
@@ -96,6 +97,7 @@ void sim_main()
         // The client reads the world while the sim waits for it, so every request comes with a fresh snapshot.
         fp3d::set_before_ask_hook( [] {
             fp3d::publish_snapshot( fp3d::capture_snapshot() );
+            fp3d::publish_held();
         } );
         set_state( state::running );
         while( !do_turn() ) {

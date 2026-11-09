@@ -24,6 +24,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_target()
 	_test_hostile()
 	ui.free()
+	_test_hands_panel(root)
 
 
 func _req(kind: String, fields: Dictionary, id := 7) -> Dictionary:
@@ -420,3 +421,24 @@ func _test_hostile() -> void:
 	_expect({"id": 8, "action": "CONFIRM"}, "a new request replaces the old one")
 	ui.clear()
 	_check.call(not ui.visible and not _key(KEY_ENTER), "clear hides and ignores keys")
+
+
+## The live hands panel: text and level from get_held() data, junk clamped.
+func _test_hands_panel(root: Node) -> void:
+	var can := {"id": "jerrycan", "name": "plastic jerrycan", "liquid": "gasoline", "ml": 1300, "capacity_ml": 10000}
+	_check.call(HandsPanel.hand_text("Left", can) == "Left: plastic jerrycan - gasoline 1.3 / 10.0 L",
+			"hands: container text (%s)" % HandsPanel.hand_text("Left", can))
+	_check.call(HandsPanel.hand_text("Right", {"name": "rubber hose", "ml": 0, "capacity_ml": 0}) == "Right: rubber hose",
+			"hands: plain item")
+	_check.call(HandsPanel.hand_text("Left", {}) == "Left: -", "hands: empty hand")
+	_check.call(is_equal_approx(HandsPanel.fill_ratio(can), 0.13), "hands: fill ratio")
+	_check.call(HandsPanel.fill_ratio({"name": "x", "ml": 99999, "capacity_ml": 10}) == 1.0
+			and HandsPanel.fill_ratio({"name": "x", "ml": -5, "capacity_ml": 10}) == 0.0
+			and HandsPanel.fill_ratio({"name": "x", "ml": "lots", "capacity_ml": [1]}) == -1.0, "hands: junk clamped")
+	var panel := HandsPanel.new()
+	root.add_child(panel)
+	panel.show_held({"seq": 3, "main": {"name": "rubber hose"}, "off": can, "activity": "ACT_FILL_LIQUID"})
+	_check.call(panel.visible, "hands: panel shows while something is held")
+	panel.show_held({"seq": 4, "main": {}, "off": "junk", "activity": 5})
+	_check.call(not panel.visible, "hands: hidden with empty hands (junk off hand ignored)")
+	panel.free()
