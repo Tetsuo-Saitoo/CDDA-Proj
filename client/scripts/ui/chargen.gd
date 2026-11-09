@@ -38,6 +38,8 @@ var traits := {}
 var skills: Array[Dictionary] = []
 var default_scenario := ""
 var templates: Array[String] = []
+## Template name -> its choices (answer format), from the catalog; missing for templates that didn't load.
+var template_choices := {}
 # Choices.
 var scenario := ""
 var profession := ""
@@ -122,6 +124,11 @@ func _read(d: Dictionary) -> void:
 	for t: String in _ids(d, "templates"):
 		if template_name_ok(t) and templates.size() < 256:
 			templates.append(t)
+	var tc: Variant = d.get("template_choices")
+	if tc is Dictionary:
+		for t: String in templates:
+			if (tc as Dictionary).get(t) is Dictionary:
+				template_choices[t] = tc[t]
 	if scenarios.is_empty():
 		error = "the catalog has no scenarios"
 		return
@@ -391,6 +398,47 @@ static func template_name_ok(n: String) -> bool:
 		if not (c >= "a" and c <= "z" or c >= "A" and c <= "Z" or c >= "0" and c <= "9" or c in [" ", "_", "-"]):
 			return false
 	return true
+
+
+## Fills the choices from template `t` so they can be edited; returns what couldn't be applied (the scenario,
+## profession and so on as the sim described them, checked by the same rules as clicks).
+func load_template_choices(t: String) -> PackedStringArray:
+	var skipped := PackedStringArray()
+	var d: Variant = template_choices.get(t)
+	if not d is Dictionary:
+		skipped.append("the whole template")
+		return skipped
+	if not set_scenario(_str(d, "scenario", MAX_ID)):
+		skipped.append("scenario")
+		return skipped
+	var prof := _str(d, "profession", MAX_ID)
+	if not set_profession(prof):
+		skipped.append("profession " + prof)
+	picked_backgrounds.clear()
+	for b in _ids(d, "backgrounds"):
+		if not toggle_background(b):
+			skipped.append("background " + b)
+	for k: String in STATS:
+		if not set_stat(k, _int(d, k, 8, -1000, 1000)):
+			skipped.append(STAT_NAMES[k])
+	for tr in _ids(d, "traits"):
+		if not picked_traits.has(tr) and not toggle_trait(tr):
+			skipped.append("trait " + (traits[tr]["name"] if traits.has(tr) else tr))
+	var sk: Variant = d.get("skills")
+	if sk is Dictionary:
+		for id: Variant in sk:
+			if not (id is String and set_skill(id, _int(sk, id, 0, 0, 100))):
+				skipped.append("skill %s" % str(id).left(MAX_ID))
+	set_name(_str(d, "name", MAX_NAME))
+	male = not (d.get("male") is bool) or d["male"]
+	set_age(_int(d, "age", age, 0, 1000))
+	set_height(_int(d, "height", height, 0, 10000))
+	return skipped
+
+
+## The answer `text` that deletes template `t`; "" if it isn't listed.
+func delete_answer(t: String) -> String:
+	return JSON.stringify({"delete_template": t}) if templates.has(t) else ""
 
 
 ## The answer `text` that starts from template `t` (one of `templates`), with `char_name` if set; "" if unknown.

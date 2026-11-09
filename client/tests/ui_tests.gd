@@ -431,6 +431,9 @@ const CATALOG := {
 	"skill_pool": 2, "max_trait_points": 12, "min_stat": 4, "max_stat": 14, "high_stat": 12, "max_skill": 10,
 	"skill_costs": [0, 1, 1, 2, 4, 6, 9, 12, 16, 20, 25], "min_age": 16, "max_age": 55, "min_height": 145,
 	"max_height": 200, "max_name": 64, "default_scenario": "evacuee", "templates": ["Old hero", "../evil"],
+	"template_choices": {"Old hero": {"scenario": "evacuee", "profession": "cop", "backgrounds": ["hobby_x"],
+			"str": 12, "dex": 8, "int": 8, "per": 8, "traits": ["FAST", "SLOW", "NOPE"], "skills": {"gun": 3},
+			"name": "Hero", "male": false, "age": 40, "height": 160}},
 	"scenarios": [
 		{"id": "evacuee", "name": "Evacuee", "description": "You <color_red>ran</color>.", "points": 0,
 			"start_name": "Shelter", "default_background": true, "professions": ["unemployed", "cop"],
@@ -504,6 +507,17 @@ func _test_chargen() -> void:
 	var ta: Variant = JSON.parse_string(c.template_answer("Old hero"))
 	_check.call(ta is Dictionary and ta["template"] == "Old hero" and c.template_answer("../evil") == "",
 			"chargen: template answer")
+	var c2 := Chargen.parse(JSON.stringify(CATALOG))
+	var skipped := c2.load_template_choices("Old hero")
+	_check.call(c2.profession == "cop" and c2.stats["str"] == 12 and c2.picked_traits == (["FAST"] as Array[String])
+			and c2.skill_levels.get("gun") == 3 and c2.char_name == "Hero" and not c2.male and c2.age == 40
+			and c2.picked_backgrounds == (["hobby_x"] as Array[String]),
+			"chargen: template opened for editing")
+	_check.call(skipped.size() == 2, "chargen: template's forbidden and unknown traits reported (%s)" % skipped)
+	_check.call(c2.load_template_choices("../evil").size() == 1, "chargen: unlisted template not opened")
+	var da: Variant = JSON.parse_string(c2.delete_answer("Old hero"))
+	_check.call(da is Dictionary and da["delete_template"] == "Old hero" and c2.delete_answer("x") == "",
+			"chargen: delete answer")
 	c.save_template = "bad/name"
 	_check.call(not c.problem().is_empty(), "chargen: bad save-template name caught")
 	c.save_template = "My char"
@@ -527,6 +541,13 @@ func _test_chargen() -> void:
 	ui.handle_input(e)
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["text"].contains("\"cop\""),
 			"chargen widget: Ctrl+Enter sends %s" % [answers])
+	_show(_req("chargen", {"text": JSON.stringify(CATALOG)}))
+	w = ui.widget as ChargenRequestWidget
+	_check.call(w.edit_template(0) and w.model.profession == "cop" and answers.is_empty(),
+			"chargen widget: edit a template sends nothing")
+	_check.call(not w.delete_template(0) and answers.is_empty(), "chargen widget: first Delete only asks")
+	_check.call(w.delete_template(0) and answers.size() == 1 and answers[0]["text"].contains("delete_template"),
+			"chargen widget: second Delete sends")
 	_show(_req("chargen", {"text": JSON.stringify(CATALOG)}))
 	w = ui.widget as ChargenRequestWidget
 	_check.call(w.start_template(0) and answers.size() == 1 and answers[0]["text"].contains("Old hero"),
