@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-08 — Fixed: firing a gun crashed the game (target_ui's aim modes were never set up headless; `fp3d_init_aim` in ranged.cpp); sim test shoots a zombie (aim, fire, aim again, cancel); sim and live tests pass.
 - 2026-11-08 — VR tester asks: in-headset settings menu (left menu button; vignette off, turn off/snap/smooth, blink, move toward hand, swap sticks, speeds, saved to user://vr.json), controller layout auto/quest/vive with Vive/Index/WMR bindings added to the OpenXR action map, low-poly finger-tracked hands (OpenXR hand tracking, else fingers from trigger/grip/thumb); 41 new checks, client tests pass; hands and menu checked in a render; not tried in a headset.
 - 2026-11-08 — Context actions, second slice: E refuels a vehicle from a held can and fills a held container from water, a keg or a puddle; off-hand mark forgets items that left you; hold lists one-handed items only (message, no popup); off-hand strike uses the held item; VR controllers show held items + level gauge; sim test, client tests, live test pass.
 - 2026-11-08 — Context actions, first slice: off hand (H / Shift+H, item var), E = use what you hold on what you face (hose + container + vehicle = siphon, no menus; else examine), fills paced 1 turn/s, `CddaSim.get_held()`, hands panel with fill gauge; sim test siphon checks + UI tests pass.
