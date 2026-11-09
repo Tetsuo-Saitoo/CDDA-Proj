@@ -26,6 +26,8 @@ var _gender: OptionButton
 var _age: SpinBox
 var _height: SpinBox
 var _summary: RichTextLabel
+var _templates: OptionButton
+var _save_edit: LineEdit
 var _rng := RandomNumberGenerator.new()
 
 
@@ -43,6 +45,18 @@ func setup(req: Dictionary) -> void:
 		add_child(bar)
 		add_button("Cancel (Esc)", cancel, bar)
 		return
+	if not model.templates.is_empty():
+		var trow := HBoxContainer.new()
+		add_child(trow)
+		var tl := Label.new()
+		tl.text = "Template:"
+		trow.add_child(tl)
+		_templates = OptionButton.new()
+		_templates.focus_mode = Control.FOCUS_NONE
+		for t in model.templates:
+			_templates.add_item(t)
+		trow.add_child(_templates)
+		add_button("Start from template", func() -> void: start_template(_templates.selected), trow)
 	tabs = TabContainer.new()
 	tabs.custom_minimum_size.y = PANE_HEIGHT
 	tabs.focus_mode = Control.FOCUS_NONE
@@ -181,6 +195,14 @@ func _build_description_tab() -> void:
 	_age = _spin(grid, model.min_age, model.max_age, func(v: float) -> void: model.set_age(int(v)))
 	_label(grid, "Height (cm)")
 	_height = _spin(grid, model.min_height, model.max_height, func(v: float) -> void: model.set_height(int(v)))
+	_label(grid, "Save as template")
+	_save_edit = LineEdit.new()
+	_save_edit.max_length = 64
+	_save_edit.placeholder_text = "(don't save)"
+	_save_edit.text_changed.connect(func(t: String) -> void:
+		model.save_template = t.strip_edges()
+		refresh_points())
+	grid.add_child(_save_edit)
 	_summary = RichTextLabel.new()
 	_summary.bbcode_enabled = true
 	_summary.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -253,6 +275,17 @@ func start() -> bool:
 		why = "too many choices to send"
 	if not why.is_empty():
 		status_label.text = why
+		return false
+	send({"text": text})
+	return true
+
+
+## Starts with template number `i` (name from the Name field, if any); true if sent.
+func start_template(i: int) -> bool:
+	if i < 0 or i >= model.templates.size():
+		return false
+	var text := model.template_answer(model.templates[i])
+	if text.is_empty():
 		return false
 	send({"text": text})
 	return true

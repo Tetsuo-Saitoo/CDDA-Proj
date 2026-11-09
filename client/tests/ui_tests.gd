@@ -430,7 +430,7 @@ const CATALOG := {
 	"version": 1, "pool": "multi_pool", "enforce_points": true, "stat_pool": 38, "trait_pool": 0,
 	"skill_pool": 2, "max_trait_points": 12, "min_stat": 4, "max_stat": 14, "high_stat": 12, "max_skill": 10,
 	"skill_costs": [0, 1, 1, 2, 4, 6, 9, 12, 16, 20, 25], "min_age": 16, "max_age": 55, "min_height": 145,
-	"max_height": 200, "max_name": 64, "default_scenario": "evacuee",
+	"max_height": 200, "max_name": 64, "default_scenario": "evacuee", "templates": ["Old hero", "../evil"],
 	"scenarios": [
 		{"id": "evacuee", "name": "Evacuee", "description": "You <color_red>ran</color>.", "points": 0,
 			"start_name": "Shelter", "default_background": true, "professions": ["unemployed", "cop"],
@@ -500,6 +500,15 @@ func _test_chargen() -> void:
 			and c.picked_traits.is_empty(), "chargen: scenario change resets")
 	_check.call(c.listed_traits().size() == 4 and c.locked_traits().has("SCIENCE"),
 			"chargen: scenario extra and locked traits")
+	_check.call(c.templates == (["Old hero"] as Array[String]), "chargen: bad template names dropped")
+	var ta: Variant = JSON.parse_string(c.template_answer("Old hero"))
+	_check.call(ta is Dictionary and ta["template"] == "Old hero" and c.template_answer("../evil") == "",
+			"chargen: template answer")
+	c.save_template = "bad/name"
+	_check.call(not c.problem().is_empty(), "chargen: bad save-template name caught")
+	c.save_template = "My char"
+	_check.call(c.problem().is_empty() and JSON.parse_string(c.answer_json())["save_template"] == "My char",
+			"chargen: save_template sent")
 	_check.call(not Chargen.parse("[1]").ok and not Chargen.parse("{}").ok, "chargen: bad catalogs refused")
 
 	# The widget, through RequestUI.
@@ -518,6 +527,10 @@ func _test_chargen() -> void:
 	ui.handle_input(e)
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["text"].contains("\"cop\""),
 			"chargen widget: Ctrl+Enter sends %s" % [answers])
+	_show(_req("chargen", {"text": JSON.stringify(CATALOG)}))
+	w = ui.widget as ChargenRequestWidget
+	_check.call(w.start_template(0) and answers.size() == 1 and answers[0]["text"].contains("Old hero"),
+			"chargen widget: start from template")
 	_show(_req("chargen", {"text": "not json"}))
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "chargen widget: bad catalog can still cancel")

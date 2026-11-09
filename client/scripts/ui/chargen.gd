@@ -37,6 +37,7 @@ var backgrounds := {}
 var traits := {}
 var skills: Array[Dictionary] = []
 var default_scenario := ""
+var templates: Array[String] = []
 # Choices.
 var scenario := ""
 var profession := ""
@@ -48,6 +49,8 @@ var char_name := ""
 var male := true
 var age := 25
 var height := 175
+## Saves the character as a CDDA template under this name too ("" = don't).
+var save_template := ""
 
 
 static func parse(catalog_json: String) -> Chargen:
@@ -116,6 +119,9 @@ func _read(d: Dictionary) -> void:
 		if not e.is_empty():
 			skills.append(e)
 	default_scenario = _str(d, "default_scenario", MAX_ID)
+	for t: String in _ids(d, "templates"):
+		if template_name_ok(t) and templates.size() < 256:
+			templates.append(t)
 	if scenarios.is_empty():
 		error = "the catalog has no scenarios"
 		return
@@ -372,7 +378,26 @@ func problem() -> String:
 			return "not enough points"
 	if char_name.begins_with("#"):
 		return "the name can't start with #"
+	if not save_template.is_empty() and not template_name_ok(save_template):
+		return "template names are letters, digits, spaces, _ or -"
 	return ""
+
+
+## Like the sim's rule: 1-64 of letters, digits, space, _ -, no space at either end.
+static func template_name_ok(n: String) -> bool:
+	if n.is_empty() or n.length() > 64 or n.strip_edges() != n:
+		return false
+	for c in n:
+		if not (c >= "a" and c <= "z" or c >= "A" and c <= "Z" or c >= "0" and c <= "9" or c in [" ", "_", "-"]):
+			return false
+	return true
+
+
+## The answer `text` that starts from template `t` (one of `templates`), with `char_name` if set; "" if unknown.
+func template_answer(t: String) -> String:
+	if not templates.has(t):
+		return ""
+	return JSON.stringify({"template": t, "name": char_name})
 
 
 ## The answer `text` for the sim, or "" if it would be too long.
@@ -386,6 +411,8 @@ func answer_json() -> String:
 		"traits": picked_traits.duplicate(), "skills": sk, "name": char_name, "male": male,
 		"age": age, "height": height,
 	}
+	if not save_template.is_empty():
+		d["save_template"] = save_template
 	var s := JSON.stringify(d)
 	return s if s.to_utf8_buffer().size() <= MAX_ANSWER_BYTES else ""
 
