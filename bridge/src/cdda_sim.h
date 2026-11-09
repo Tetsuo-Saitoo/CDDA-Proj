@@ -49,6 +49,9 @@ class CddaSim : public godot::RefCounted
         void set_timescale( double scale );
         void set_paused( bool on );
         void interrupt();
+
+        bool save_game( bool only_if_changed );
+        godot::Dictionary get_save_status() const;
 };
 
 #endif // FP3D_BRIDGE_CDDA_SIM_H

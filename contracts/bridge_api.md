@@ -29,13 +29,15 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `get_events_dropped()` | `int` | Events lost to overflow since start. |
 | `get_clock()` | `Dictionary` | `real_time`, `timescale`, `paused`, `pause_reason`. |
 | `set_real_time(on)` / `set_timescale(s)` / `set_paused(on)` / `interrupt()` | | The clock (`ui_requests.md`); timescale clamps to 0.25-16. |
+| `save_game(only_if_changed = false)` | `bool` | Saves the game where it stands and plays on (CDDA's quicksave, no popup). The sim saves at the main loop's next request, even while paused; in another prompt or a long activity it waits for that. `only_if_changed` (autosave) skips it when nothing happened since the last save. False unless the game is `running`. |
+| `get_save_status()` | `Dictionary` | `pending` (asked, not finished), `done` (saves finished since start, skipped ones too), `ok` (the last one). The message log also gets "Game saved." or "The game could not be saved." |
 
 Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the snapshot.
 
 ## Behaviour to know
 
 - Boot takes ~30 s (data load, new game). The first snapshot arrives with the first request.
-- Saving: queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
+- Saving: `save_game()`, then watch `get_save_status().done` go up. Or queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process
   resumes it: the first request has the saved turn and the player stands where they were.
 - A loaded save's world uses its own options and mods; mods CDDA can't find come up as popup requests.

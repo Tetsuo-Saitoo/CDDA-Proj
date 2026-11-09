@@ -4,6 +4,7 @@
 #include <atomic>
 #include <climits>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <iterator>
 #include <optional>
@@ -163,6 +164,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "set_timescale", "scale" ), &CddaSim::set_timescale );
     ClassDB::bind_method( D_METHOD( "set_paused", "on" ), &CddaSim::set_paused );
     ClassDB::bind_method( D_METHOD( "interrupt" ), &CddaSim::interrupt );
+    ClassDB::bind_method( D_METHOD( "save_game", "only_if_changed" ), &CddaSim::save_game, DEFVAL( false ) );
+    ClassDB::bind_method( D_METHOD( "get_save_status" ), &CddaSim::get_save_status );
 }
 
 void CddaSim::stop_session()
@@ -403,4 +406,20 @@ void CddaSim::set_paused( bool on )
 void CddaSim::interrupt()
 {
     fp3d::interrupt();
+}
+
+bool CddaSim::save_game( bool only_if_changed )
+{
+    // Only while a game runs: the sim takes it at the main loop.
+    return fp3d_session::get_state() == fp3d_session::state::running && fp3d::request_save( only_if_changed );
+}
+
+Dictionary CddaSim::get_save_status() const
+{
+    const fp3d::save_status s = fp3d::get_save_status();
+    Dictionary d;
+    d["pending"] = s.pending;
+    d["done"] = static_cast<int64_t>( std::min<uint64_t>( s.done, INT64_MAX ) );
+    d["ok"] = s.ok;
+    return d;
 }

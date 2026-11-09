@@ -43,13 +43,18 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    `fp3d_cdda.windows.x86_64.dll` (~40 MB, imports only Windows DLLs) to `client/bin/`. Close Godot first: it
    locks the DLL.
    - Live test, ~2 min: `Godot_v4.7.2-stable_win64_console.exe --headless --path client --script res://tests/live_test.gd`
-     prints `live tests: all passed`. It plays a new game, saves it, then starts a second Godot run
-     (`-- --load`, output prefixed `|`) that loads the save and checks turn and position. It plays in
+     prints `live tests: all passed`. It plays a new game, saves it while paused (`save_game`), plays a turn
+     more and stops, then starts a second Godot run (`-- --load`, output prefixed `|`) that loads the save and
+     checks turn and position. It plays in
      `%APPDATA%\Godot\app_userdata\CDDA-3D\cdda-test\` (listing checks in `...\cdda-list-test\`).
-   - Play: `Godot_v4.7.2-stable_win64.exe --path client -- --live` (new game each start, world `fp3d-live` under
-     `...\CDDA-3D\cdda\`; keys in the HUD). Load a save instead with `--live --world=<world> [--save=<character>]`
-     (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this never deletes anything,
-     but plain `--live` replaces `fp3d-live` with its saves, so resume those with `--live --world=fp3d-live`.
+   - Play: `Godot_v4.7.2-stable_win64.exe --path client -- --live`: continues your game in world `fp3d-live`
+     (under `...\CDDA-3D\cdda\`), or starts one there when it has no save; `--live --new` starts over and
+     **replaces** `fp3d-live` with its saves. **F5** saves and plays on (also while paused; in a prompt or a long
+     activity it waits for the game to get back to its main loop), closing the window saves first (gives up after
+     20 s, e.g. asleep), and it autosaves every 5 minutes of play when something changed. A death removes the
+     character's save (CDDA), so the next `--live` starts a new game. Another world: `--live --world=<world>
+     [--save=<character>]` (first save of the world if no `--save`; `--save` alone looks in `fp3d-live`); this
+     never deletes anything.
      Vanilla CDDA 0.I worlds work when copied into `...\CDDA-3D\cdda\save\`.
    - Views (with or without `--live`): first person by default, eyes 1.6 m up; **V** switches to the outside
      (fly) camera and back; `--view=outside` starts outside (so does `--camera=`, unless `--view=first`). First
@@ -113,7 +118,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    export templates (1.3 GB, only the Linux release template is kept) and the AppImage runtime into `~/tools`,
    both checked against pinned SHA-256; it needs Godot 4.7.2's Linux editor (`$GODOT`, else
    `~/tools/godot-4.7.2/`). Playing: `chmod +x CDDA-3D-x86_64.AppImage`, then `./CDDA-3D-x86_64.AppImage`
-   starts a new live game on the desktop, `--vr` in VR (the system's OpenXR runtime; SteamVR is preferred and
+   continues the live game (`--new` starts over; F5 saves, closing saves) on the desktop, `--vr` in VR (the system's OpenXR runtime; SteamVR is preferred and
    started when installed, like `tools/vr/play_vr.sh`), `--town` the mock town; other step 5/6 options pass
    through. Saves, keys and logs stay in `~/.local/share/godot/app_userdata/CDDA-3D/`; no VR runtime is inside.
    Needs FUSE 3 (`fusermount3`; Arch: `fuse3`), else run it with `--appimage-extract-and-run`.

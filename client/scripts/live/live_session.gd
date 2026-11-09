@@ -11,10 +11,14 @@ signal snapshot_ready(snap: Snapshot)
 ## {} when nothing is pending. Timed requests (the main game loop) come through here too.
 signal request_changed(request: Dictionary)
 signal events_arrived(events: Array)
+## A save finished (save(), autosave): ok or not. Skipped autosaves (nothing changed) count as ok.
+signal saved(ok: bool)
 
 ## Levels sent around the player's z (the whole bubble is 21 levels, ~6 MB of JSON).
 const Z_BELOW := 1
 const Z_ABOVE := 1
+## Real seconds of play between autosaves (skipped while nothing happens).
+const AUTOSAVE_S := 300.0
 
 var state := "idle"
 var error := ""
@@ -22,6 +26,8 @@ var request := {}
 var snapshot_seq := 0
 var ids_generation := -1
 var _sim: RefCounted
+var _saves_done := 0
+var _since_save := 0.0
 
 
 static func available() -> bool:
@@ -58,9 +64,19 @@ static func list_saves(user_dir: String, world: String) -> PackedStringArray:
 	return ClassDB.instantiate("CddaSim").list_saves(user_dir, world)
 
 
-## CDDA's "save and quit" (it asks to confirm with a popup request). The game then ends with state "ended".
-func save() -> bool:
-	return queue_action("save")
+## Saves the game where it stands and plays on; `saved` follows. The sim saves at the main loop's next
+## request (also while paused), so a prompt or a long activity holds it up. False without a running game or
+## with a bridge that can't (older than this client).
+func save(only_if_changed := false) -> bool:
+	if _sim == null or state != "running" or not _sim.has_method("save_game"):
+		return false
+	_since_save = 0.0
+	return _sim.save_game(only_if_changed)
+
+
+## A save asked for and not finished.
+func save_pending() -> bool:
+	return _sim != null and _sim.has_method("get_save_status") and _sim.get_save_status().get("pending", false)
 
 
 func _make_sim() -> bool:
@@ -93,7 +109,7 @@ func sim() -> RefCounted:
 	return _sim
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _sim == null:
 		return
 	var s: String = _sim.get_state()
@@ -102,6 +118,15 @@ func _process(_delta: float) -> void:
 		if s == "ended" or s == "failed":
 			error = _sim.get_error()
 		state_changed.emit(s)
+	if state == "running" and _sim.has_method("get_save_status"):
+		var st: Dictionary = _sim.get_save_status()
+		var done: int = st.get("done", 0)
+		if done != _saves_done:
+			_saves_done = done
+			saved.emit(bool(st.get("ok", false)))
+		_since_save += delta
+		if _since_save >= AUTOSAVE_S:
+			save(true)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
 		events_arrived.emit(events)

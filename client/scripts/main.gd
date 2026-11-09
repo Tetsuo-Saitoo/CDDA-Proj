@@ -42,6 +42,9 @@ var live: LiveSession
 var vr: VrRig
 var vr_perf: VrPerf
 var _quitting := false
+var _saving_to_quit := false
+var _save_asked := false   # the player's save (F5, closing the window), not an autosave
+const SAVE_ON_QUIT_MS := 20000
 var snapshot_path := ""
 var status := ""
 var _args := {}
@@ -219,7 +222,7 @@ func _start_vr() -> void:
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
 	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
-		xr.connect("session_stopping", _quit)
+		xr.connect("session_stopping", _save_and_quit)
 	for sig in ["session_begun", "session_visible", "session_focussed", "session_stopping", "session_loss_pending"]:
 		if xr.has_signal(sig):
 			xr.connect(sig, func() -> void: print("VR: " + sig))
@@ -249,7 +252,10 @@ func _start_live() -> void:
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
 		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
-	# --live alone: a new game in LIVE_WORLD (replaced each time). --world=<name> and/or --save=<character>
+	live.saved.connect(_on_live_saved)
+	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
+	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
+	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD. Saves live under user://cdda/save/<world>/ (copy CDDA worlds there).
 	var user_dir := OS.get_user_data_dir().path_join("cdda")
@@ -264,12 +270,57 @@ func _start_live() -> void:
 		else:
 			ok = live.start_load(data_dir, user_dir, w, s)
 	else:
-		ok = live.start(data_dir, user_dir, LIVE_WORLD)
+		var saves := LiveSession.list_saves(user_dir, LIVE_WORLD)
+		if saves.is_empty() or _args.has("new"):
+			ok = live.start(data_dir, user_dir, LIVE_WORLD)
+		else:
+			print("live: continuing %s in %s (--new starts over)" % [saves[0], LIVE_WORLD])
+			ok = live.start_load(data_dir, user_dir, LIVE_WORLD, saves[0])
 	if ok:
 		status = "game booting (~30 s)"
 	else:
 		status = "live mode failed: " + live.error
 		push_error(status)
+
+
+## F5: saves and plays on. Autosaves (LiveSession) only show in the message log.
+func _save_game() -> void:
+	if live.save():
+		_save_asked = true
+		status = "saving..."
+	else:
+		status = "can't save now (no running game)"
+
+
+func _on_live_saved(ok: bool) -> void:
+	if _save_asked:
+		_save_asked = false
+		status = "game saved" if ok else "saving failed (see the message log)"
+		print("live: " + status)
+
+
+## Closing the window during a live game saves it first, then quits. A prompt still open is cancelled so the sim
+## gets back to the main loop; a long activity (sleep, reading) can hold the save up, so it gives up after
+## SAVE_ON_QUIT_MS and quits anyway (autosave keeps at most a few minutes of play from being lost).
+func _save_and_quit() -> void:
+	if _quitting or _saving_to_quit:
+		return
+	if live == null or not live.save():
+		_quit()
+		return
+	_saving_to_quit = true
+	_save_asked = true
+	status = "saving before quitting..."
+	print("live: " + status)
+	var deadline := Time.get_ticks_msec() + SAVE_ON_QUIT_MS
+	while live.save_pending() and live.state == "running" and Time.get_ticks_msec() < deadline:
+		var r := live.request
+		if not r.is_empty() and not r.get("timed", false):
+			live.answer({"id": r["id"], "cancel": true})
+		await get_tree().process_frame
+	if live.save_pending():
+		push_warning("live: quitting without saving (the game didn't get back to its main loop)")
+	_quit()
 
 
 func _on_live_snapshot(snap: Snapshot) -> void:
@@ -643,6 +694,7 @@ func _act_help() -> String:
 	for a: StringName in InputActions.CDDA:
 		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
+	parts.append("%s save" % InputActions.key_of(&"save_game"))
 	return "  ".join(parts)
 
 
@@ -681,6 +733,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				var ok := fp.change_level(dz)
 				status = ("level %d" % fp.z) if ok else ("nowhere to stand on level %d" % (fp.z + dz))
 				return
+	if live != null and InputActions.pressed(event, &"save_game"):
+		_save_game()
+		return
 	if live != null and _live_action(event):
 		return
 	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
@@ -727,8 +782,8 @@ func _screenshot_and_quit(path: String) -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST and vr != null:
-		_quit()
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and (vr != null or live != null):
+		_save_and_quit()
 
 
 ## VR quits through here. Once a session has drawn frames, the engine's teardown crashes inside SteamVR on
