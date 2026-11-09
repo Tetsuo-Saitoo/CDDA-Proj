@@ -628,6 +628,10 @@ func _setup_hud() -> void:
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.answered.connect(_on_request_answered)
+	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
+		for a in acts:
+			if live != null:
+				live.queue_action(a))
 	layer.add_child(request_ui)
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)

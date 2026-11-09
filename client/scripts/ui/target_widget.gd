@@ -5,6 +5,7 @@ extends RequestWidget
 ## previous creature, Enter = the main action (FIRE, else CONFIRM or SELECT, else the first), Space checks
 ## the square (CDDA asks again with a new status), 1-9 press an action, Esc cancels. Mouse: click a creature,
 ## then an action. `set_cursor` lets the 3D view pick a square (block E2).
+## R (fire mode): quick reload = leave aiming, reload the wielded gun, aim again.
 ## Answer: `pos` (absolute square) with or without `action`.
 
 const REACH := 132          # the cursor stays within a bubble's width of the origin
@@ -12,6 +13,7 @@ const MAX_ROWS := 64
 const MAX_CANDIDATES := 256
 const COORD_LIMIT := (1 << 28) - REACH - 1
 const PRIMARY := ["FIRE", "CONFIRM", "SELECT"]
+const RELOAD_THEN := ["reload_weapon", "fire"]
 const STATUS_TEXT := {
 	"bad_target": "No valid target there", "out_of_ammo": "Out of ammo", "out_of_range": "Out of range",
 }
@@ -77,6 +79,8 @@ func setup(req: Dictionary) -> void:
 		if i < 9:
 			label = "%d  %s" % [i + 1, label]
 		action_buttons.append(add_button(label, press.bind(i), bar))
+	if mode == "fire":
+		add_button("Reload (R)", reload, bar)
 	add_button("Check square (Space)", check, bar)
 	if allow_cancel:
 		add_button("Cancel (Esc)", cancel, bar)
@@ -121,6 +125,13 @@ func fire() -> void:
 		press(p)
 	else:
 		check()
+
+
+## Quick reload (fire mode): cancels aiming; RequestUI then queues reload_weapon and fire, so CDDA reloads
+## (asking which ammo if it must) and opens aiming again.
+func reload() -> void:
+	if mode == "fire" and not done:
+		send({"cancel": true, "then": PackedStringArray(RELOAD_THEN)})
 
 
 ## True for modes that shoot or throw at something (the crosshair follows the view in these).
@@ -169,6 +180,9 @@ func handle_input(event: InputEvent) -> bool:
 	elif key == KEY_ENTER or key == KEY_KP_ENTER:
 		if not k.echo:
 			fire()
+	elif key == KEY_R and mode == "fire":
+		if not k.echo:
+			reload()
 	elif key == KEY_SPACE:
 		if not k.echo:
 			check()

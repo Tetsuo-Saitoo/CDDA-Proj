@@ -14,6 +14,7 @@ const FURNITURE_CATEGORIES := [["FLOWER", "flower"], ["SIGN", "sign"], ["CAN_SIT
 const ITEM_MIN_M := 0.06
 const ITEM_MAX_M := 0.45
 const ITEM_GROW := 1.4
+const CORPSE_M := 1.0
 
 
 class Prop:
@@ -142,7 +143,8 @@ func _make(table: String, index: int) -> Prop:
 			p.main = CddaPalette.material(e.material)
 	if table == "itype":
 		var edge := pow(maxf(d.volume_ml if d != null else 250, 1), 1.0 / 3.0) / 100.0 * ITEM_GROW
-		p.scale *= clampf(edge, ITEM_MIN_M, ITEM_MAX_M)
+		# CDDA's corpse item is 0 ml (the body's size comes from the monster at run time): body-sized.
+		p.scale *= CORPSE_M if d != null and d.category == "corpses" else clampf(edge, ITEM_MIN_M, ITEM_MAX_M)
 	return p
 
 

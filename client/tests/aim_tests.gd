@@ -11,6 +11,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check = check
 	print("aim")
 	var world := WorldView.new()
+	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
 	root.add_child(world)
 	world.set_id_tables(tables)
 	var d: Dictionary = (data as Dictionary).duplicate(true)
@@ -66,6 +67,21 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(TargetRequestWidget.is_attack_mode("throw") and not TargetRequestWidget.is_attack_mode("look"),
 			"aim: throw is an attack mode, look isn't")
 	_check.call(InputActions.info(&"aim_fire").size() == 4, "aim: aim_fire is a bindable action")
+	var queued: Array = []
+	ui.queue_after.connect(func(acts: PackedStringArray) -> void: queued.append_array(acts))
+	ui.show_request(req)
+	answers.clear()
+	ui.handle_input(_key(KEY_R))
+	_check.call(answers == [{"id": 9, "cancel": true}] and queued == ["reload_weapon", "fire"],
+			"aim: R cancels aiming, then reload_weapon and fire are queued (%s %s)" % [answers, queued])
+	ui.show_request(look)
+	answers.clear()
+	ui.handle_input(_key(KEY_R))
+	_check.call(answers.is_empty(), "aim: no reload while looking")
+	ui.clear()
+	var corpse: PropCatalog.Prop = world.props.item(tables.index_of("itype", "corpse"))
+	_check.call(corpse.shape == "item_corpse" and corpse.scale >= 0.9,
+			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
 	_test_viewmodel(root, tables)
 	aim.crosshair.free()
@@ -101,3 +117,11 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm._process(0.016)
 	_check.call(vm.rotation.x > 0.0, "viewmodel: a shot kicks it up")
 	vm.free()
+
+
+func _key(code: Key) -> InputEventKey:
+	var e := InputEventKey.new()
+	e.pressed = true
+	e.keycode = code
+	e.physical_keycode = code
+	return e

@@ -8,6 +8,8 @@ extends Control
 ## doesn't use fall through (WASD still flies the camera). Native UIs (block G) can later take over kinds.
 
 signal answered(answer: Dictionary)
+## Main-loop actions to queue once the answer has gone (e.g. quick reload: reload_weapon, then fire again).
+signal queue_after(actions: PackedStringArray)
 
 const PANEL_WIDTH := 580.0
 ## Kinds shown low on the screen, so the world they point into stays visible.
@@ -136,4 +138,8 @@ func _input(event: InputEvent) -> void:
 
 func _on_answered(a: Dictionary) -> void:
 	clear()
+	var then: Variant = a.get("then")
+	a.erase("then")
 	answered.emit(a)
+	if then is PackedStringArray and not (then as PackedStringArray).is_empty():
+		queue_after.emit(then)

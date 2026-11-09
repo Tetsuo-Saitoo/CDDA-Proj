@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Aiming tried live by the user (works): quick reload (R / button in the fire prompt -> cancel, `reload_weapon`, `fire`), corpses drawn body-sized instead of 6 cm; client tests pass. VR reload by hand motion noted for L2.
 - 2026-11-08 — FPS aiming: target requests get a 3D cursor ring, click-to-pick creatures/squares (second click fires), hold RMB for a centre crosshair that drags the cursor in fire/throw modes, LMB / F / pad R1 (`aim_fire`) fires; low-poly weapon viewmodel with recoil; fork id tables send itype `gun` (not built yet); `aim_tests.gd` 15 checks, client tests pass; not tried live.
 - 2026-11-09 — Character templates in chargen: list, start from one, save the built character as one; checked names only; fp3d-chargen-test and ui_tests pass.
 - 2026-11-08 — Main menu + character creation: `--live` opens MainMenu (new/load/world pick), chargen via a new `chargen` ui_request (fork `fp3d/chargen.cpp`, branch `fp3d-chargen`), `CddaSim.start_new_game`; client `Chargen` + `ChargenRequestWidget`; fp3d-chargen-test, ui_tests, chargen_live_test and live_test pass.
