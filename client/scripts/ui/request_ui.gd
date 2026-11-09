@@ -64,6 +64,7 @@ func show_request(req: Dictionary) -> bool:
 	widget.answered.connect(_on_answered)
 	_panel.add_child(widget)
 	widget.setup(req)
+	_panel.custom_minimum_size.x = maxf(PANEL_WIDTH, widget.custom_minimum_size.x)
 	var low: bool = kind in LOW_KINDS
 	_bottom.size_flags_vertical = Control.SIZE_FILL if low else Control.SIZE_EXPAND_FILL
 	_bottom.custom_minimum_size.y = 40.0 if low else 0.0
@@ -83,6 +84,8 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 			return DirectionRequestWidget.new()
 		"target":
 			return TargetRequestWidget.new()
+		"chargen":
+			return ChargenRequestWidget.new()
 	return PopupRequestWidget.new()   # popup; unknown kinds get their text and Cancel
 
 

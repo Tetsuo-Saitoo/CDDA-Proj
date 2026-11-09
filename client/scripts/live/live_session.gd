@@ -36,6 +36,16 @@ func start(data_dir: String, user_dir: String, world: String) -> bool:
 	return error.is_empty()
 
 
+## A new game: `fresh_world` makes world `world` (it must not exist: the bridge would replace it), otherwise
+## the character joins that existing world; `chargen` asks for the character with a `chargen` request
+## (character creation) instead of a random one.
+func start_new_game(data_dir: String, user_dir: String, world: String, fresh_world: bool, chargen: bool) -> bool:
+	if not _make_sim():
+		return false
+	error = _sim.start_new_game(data_dir, user_dir, world, fresh_world, chargen)
+	return error.is_empty()
+
+
 ## Loads the character `save` from the existing `world` under `user_dir` (names from list_saves). Deletes nothing.
 func start_load(data_dir: String, user_dir: String, world: String, save: String) -> bool:
 	if not _make_sim():

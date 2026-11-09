@@ -142,6 +142,8 @@ void CddaSim::_bind_methods()
     using godot::ClassDB;
     using godot::D_METHOD;
     ClassDB::bind_method( D_METHOD( "start", "data_dir", "user_dir", "world" ), &CddaSim::start );
+    ClassDB::bind_method( D_METHOD( "start_new_game", "data_dir", "user_dir", "world", "fresh_world", "chargen" ),
+                          &CddaSim::start_new_game );
     ClassDB::bind_method( D_METHOD( "start_load", "data_dir", "user_dir", "world", "save" ), &CddaSim::start_load );
     ClassDB::bind_method( D_METHOD( "list_worlds", "user_dir" ), &CddaSim::list_worlds );
     ClassDB::bind_method( D_METHOD( "list_saves", "user_dir", "world" ), &CddaSim::list_saves );
@@ -174,6 +176,17 @@ String CddaSim::start( const String &data_dir, const String &user_dir, const Str
 {
     try {
         return to_godot( fp3d_session::start( to_std( data_dir ), to_std( user_dir ), to_std( world ) ) );
+    } catch( const std::exception &e ) {
+        return to_godot( std::string( "start failed: " ) + e.what() );
+    }
+}
+
+String CddaSim::start_new_game( const String &data_dir, const String &user_dir, const String &world,
+                                bool fresh_world, bool chargen )
+{
+    try {
+        return to_godot( fp3d_session::start_new_game( to_std( data_dir ), to_std( user_dir ), to_std( world ),
+                         fresh_world, chargen ) );
     } catch( const std::exception &e ) {
         return to_godot( std::string( "start failed: " ) + e.what() );
     }
@@ -279,7 +292,8 @@ bool CddaSim::answer( const Dictionary &d )
         return false;
     }
     if( d.has( "text" ) ) {
-        a.text = fp3d::sanitize_text( to_std( v ), fp3d::max_answer_text );
+        // The sim caps it again by request kind (only chargen takes the larger cap).
+        a.text = fp3d::sanitize_text( to_std( v ), fp3d::max_answer_json );
     }
     if( !field( d, "picks", Variant::ARRAY, v ) ) {
         return false;

@@ -28,6 +28,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    - `src/fp3d/RelWithDebInfo/fp3d-sim-test.exe`: B2 test, plays 8 goals through the bridge (door, pickup, eat, look, throw, wait, real time + auto-pause, save/reload) and publishes a snapshot before each request and drains events; run from `cdda/`, ~1.5 min, prints `8/8 goals passed`, `snapshots: ok`, `events: ok` and `queue: ok`
    - `src/fp3d/RelWithDebInfo/fp3d-snapshot-test.exe`: B3 test, checks snapshots against CDDA's submap buffer, sharing, revisions, uids and a map shift; run from `cdda/`, ~40 s, prints `all checks passed`
    - `src/fp3d/RelWithDebInfo/fp3d-ids-test.exe`: B6 test, checks the id tables against CDDA's data, stable indices, snapshot ids resolving, the JSON; run from `cdda/`, ~40 s, prints `all checks passed`
+   - `src/fp3d/RelWithDebInfo/fp3d-chargen-test.exe`: character creation: catalog, valid choices applied, bad ones refused; run from `cdda/`, ~40 s, prints `all checks passed`. Client side live: `godot --headless --path client --script res://tests/chargen_live_test.gd` (~1 min)
    - `src/fp3d/RelWithDebInfo/fp3d-events-test.exe`: B4 test, makes each kind of event happen next to the player and checks what the bus queues (and leaves out); run from `cdda/`, ~40 s, prints `all checks passed`
 5. **Godot bridge** (GDExtension, API in `contracts/bridge_api.md`). No compiler? Take
    `fp3d_cdda.windows.x86_64.dll` (Windows) or `fp3d_cdda.linux.x86_64.so` (Linux, needs the system's SDL2,

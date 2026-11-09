@@ -23,6 +23,8 @@ func run(root: Node, check: Callable) -> void:
 	_test_direction()
 	_test_target()
 	_test_hostile()
+	_test_chargen()
+	_test_main_menu()
 	ui.free()
 
 
@@ -79,7 +81,7 @@ static func well_formed(a: Dictionary) -> bool:
 				if not v is bool:
 					return false
 			"action", "text":
-				if not v is String or (v as String).to_utf8_buffer().size() > (64 if k == "action" else 1024):
+				if not v is String or (v as String).to_utf8_buffer().size() > (64 if k == "action" else 16384):
 					return false
 			"entry":
 				if not v is int:
@@ -420,3 +422,126 @@ func _test_hostile() -> void:
 	_expect({"id": 8, "action": "CONFIRM"}, "a new request replaces the old one")
 	ui.clear()
 	_check.call(not ui.visible and not _key(KEY_ENTER), "clear hides and ignores keys")
+
+
+# --- Character creation and main menu ------------------------------------------------------------------
+
+const CATALOG := {
+	"version": 1, "pool": "multi_pool", "enforce_points": true, "stat_pool": 38, "trait_pool": 0,
+	"skill_pool": 2, "max_trait_points": 12, "min_stat": 4, "max_stat": 14, "high_stat": 12, "max_skill": 10,
+	"skill_costs": [0, 1, 1, 2, 4, 6, 9, 12, 16, 20, 25], "min_age": 16, "max_age": 55, "min_height": 145,
+	"max_height": 200, "max_name": 64, "default_scenario": "evacuee",
+	"scenarios": [
+		{"id": "evacuee", "name": "Evacuee", "description": "You <color_red>ran</color>.", "points": 0,
+			"start_name": "Shelter", "default_background": true, "professions": ["unemployed", "cop"],
+			"backgrounds": ["adult_basic_background", "hobby_x"], "extra_traits": [],
+			"forbidden_traits": ["SLOW"], "locked_traits": []},
+		{"id": "lab", "name": "Lab", "description": "", "points": -1, "start_name": "Lab",
+			"default_background": false, "professions": ["cop"], "backgrounds": [],
+			"extra_traits": ["MUTANT"], "forbidden_traits": [], "locked_traits": ["SCIENCE"]},
+	],
+	"professions": [
+		{"id": "unemployed", "name": "Unemployed", "name_female": "Unemployed", "description": "", "points": 0,
+			"locked_traits": [], "skills": {}},
+		{"id": "cop", "name": "Policeman", "name_female": "Policewoman", "description": "", "points": 2,
+			"locked_traits": ["TOUGH"], "skills": {"gun": 2}},
+	],
+	"backgrounds": [
+		{"id": "adult_basic_background", "name": "Basic", "name_female": "", "description": "", "points": 0,
+			"locked_traits": [], "skills": {}},
+		{"id": "hobby_x", "name": "Hobby", "name_female": "", "description": "", "points": 1,
+			"locked_traits": [], "skills": {}},
+	],
+	"traits": [
+		{"id": "FAST", "name": "Fast", "description": "", "points": 2, "starting": true, "cancels": ["SLOW"],
+			"types": []},
+		{"id": "SLOW", "name": "Slow", "description": "", "points": -2, "starting": true, "cancels": ["FAST"],
+			"types": []},
+		{"id": "TOUGH", "name": "Tough", "description": "", "points": 3, "starting": true, "cancels": [],
+			"types": []},
+		{"id": "MUTANT", "name": "Mutant", "description": "", "points": 1, "starting": false, "cancels": [],
+			"types": []},
+		{"id": "SCIENCE", "name": "Science", "description": "", "points": 0, "starting": false, "cancels": [],
+			"types": []},
+		"junk", {"id": 5}, {"id": ""},
+	],
+	"skills": [{"id": "gun", "name": "Gun", "description": ""}, {"id": "melee", "name": "Melee",
+			"description": ""}],
+}
+
+
+func _test_chargen() -> void:
+	var c := Chargen.parse(JSON.stringify(CATALOG))
+	_check.call(c.ok, "chargen: catalog parses")
+	_check.call(c.scenario == "evacuee" and c.profession == "unemployed",
+			"chargen: default scenario and its cheapest profession")
+	_check.call(c.picked_backgrounds == (["adult_basic_background"] as Array[String]), "chargen: default background")
+	_check.call(c.traits.size() == 5, "chargen: bad trait entries skipped")
+	_check.call(c.listed_traits().size() == 3, "chargen: only starting traits outside the lab")
+	_check.call(not c.trait_blocker("SLOW").is_empty(), "chargen: forbidden trait blocked")
+	_check.call(c.toggle_trait("FAST") and c.trait_points_used() == 2, "chargen: trait costs points")
+	_check.call(c.points_left() == 38 + 2 - 32 - 2, "chargen: points left")
+	_check.call(not c.set_profession("nobody") and c.set_profession("cop"), "chargen: profession checked")
+	_check.call(c.locked_traits() == (["TOUGH"] as Array[String]) and c.trait_points_used() == 2,
+			"chargen: profession trait locked and free")
+	_check.call(not c.set_stat("str", 15) and c.set_stat("str", 14), "chargen: stat range")
+	_check.call(c.stat_points_used() == 14 + 2 + 24, "chargen: high stats cost double")
+	_check.call(c.problem() == "not enough points", "chargen: overspending caught")
+	c.set_stat("str", 8)
+	_check.call(c.set_skill("melee", 1) and not c.set_skill("nope", 1) and not c.set_skill("gun", 11),
+			"chargen: skills checked")
+	_check.call(c.problem().is_empty(), "chargen: valid now: " + c.problem())
+	c.set_name("  Ann  ")
+	var a: Variant = JSON.parse_string(c.answer_json())
+	_check.call(a is Dictionary and a["scenario"] == "evacuee" and a["profession"] == "cop"
+			and a["traits"] == ["FAST"] and int(a["skills"]["melee"]) == 1 and a["name"] == "Ann",
+			"chargen: answer JSON %s" % a)
+	_check.call(c.set_scenario("lab") and c.profession == "cop" and c.picked_backgrounds.is_empty()
+			and c.picked_traits.is_empty(), "chargen: scenario change resets")
+	_check.call(c.listed_traits().size() == 4 and c.locked_traits().has("SCIENCE"),
+			"chargen: scenario extra and locked traits")
+	_check.call(not Chargen.parse("[1]").ok and not Chargen.parse("{}").ok, "chargen: bad catalogs refused")
+
+	# The widget, through RequestUI.
+	_check.call(_show(_req("chargen", {"text": JSON.stringify(CATALOG), "status": "bad name"})),
+			"chargen widget: shows")
+	var w := ui.widget as ChargenRequestWidget
+	_check.call(w != null and w.status_label.text.contains("bad name"), "chargen widget: sim status shown")
+	_check.call(w.pick("Profession", 1) and w.model.profession == "cop", "chargen widget: pick profession")
+	_check.call(not w.pick("Traits", 99), "chargen widget: bad index ignored")
+	w.change_stat("int", 1)
+	_check.call(w.model.stats["int"] == 9, "chargen widget: stat button")
+	var e := InputEventKey.new()
+	e.keycode = KEY_ENTER
+	e.pressed = true
+	e.ctrl_pressed = true
+	ui.handle_input(e)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["text"].contains("\"cop\""),
+			"chargen widget: Ctrl+Enter sends %s" % [answers])
+	_show(_req("chargen", {"text": "not json"}))
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "chargen widget: bad catalog can still cancel")
+
+
+func _test_main_menu() -> void:
+	var m := MainMenu.new()
+	ui.add_child(m)
+	var got := []
+	m.new_game.connect(func(w: String, f: bool, c: bool) -> void: got.append(["new", w, f, c]))
+	m.load_game.connect(func(w: String, s: String) -> void: got.append(["load", w, s]))
+	m.setup(PackedStringArray(["World", "bad/name", "Other"]),
+			func(w: String) -> PackedStringArray: return PackedStringArray(["Ann"]) if w == "Other" else PackedStringArray())
+	_check.call(m.worlds == PackedStringArray(["World", "Other"]), "menu: path-like world names dropped")
+	_check.call(m.suggested_world() == "World2", "menu: suggests a free world name")
+	_check.call(MainMenu.world_name_ok("a_b-1") and not MainMenu.world_name_ok("../x")
+			and not MainMenu.world_name_ok(""), "menu: world name rule")
+	m.show_page("new")
+	m._world_edit.text = "World"
+	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
+	m._world_edit.text = "Fresh"
+	_check.call(m.start_new() and got[-1] == ["new", "Fresh", true, true], "menu: new world with chargen")
+	m.show_page("load")
+	_check.call(m.select_world("Other") and m.start_load() and got[-1] == ["load", "Other", "Ann"],
+			"menu: load a save")
+	_check.call(m.select_world("World") and not m.start_load(), "menu: world without saves can't load")
+	m.free()
