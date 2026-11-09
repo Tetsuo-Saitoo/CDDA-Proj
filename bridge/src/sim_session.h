@@ -29,6 +29,11 @@ const char *state_name( state s );
 // Once per process: CDDA's state is global. Returns "" when started, otherwise why not.
 std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                    const std::string &save = "" );
+// A new game, like start() with no save, but: `fresh_world` false puts a new character into the existing world
+// `world` (one list_worlds() gives; nothing is deleted), and `chargen` asks the client for the character with a
+// `chargen` request (contracts/ui_requests.md) instead of a random one. Cancelling it ends the session (failed).
+std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
+                            bool fresh_world, bool chargen );
 // Shuts the bridge down and waits for the game thread. While booting that wait lasts until loading finishes.
 void stop();
 state get_state();

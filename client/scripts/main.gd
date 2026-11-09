@@ -8,7 +8,9 @@ extends Node3D
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
 ## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
 ## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
-## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda): the
+## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
+## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
+## fresh world fp3d-live), --world=/--save= load directly. In the game the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
 ## (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
@@ -32,6 +34,7 @@ var first_person := true
 var sun: DirectionalLight3D
 var hud: Label
 var request_ui: RequestUI
+var main_menu: MainMenu
 var key_menu: KeyMenu
 var compass: Compass
 var look_panel: Label
@@ -284,13 +287,42 @@ func _start_live() -> void:
 			live.error = "no saves in world %s (worlds: %s)" % [w, ", ".join(LiveSession.list_worlds(user_dir))]
 		else:
 			ok = live.start_load(data_dir, user_dir, w, s)
+	elif _args.has("quick"):
+		ok = live.start(data_dir, user_dir, LIVE_WORLD)
 	else:
-		var saves := LiveSession.list_saves(user_dir, LIVE_WORLD)
-		if saves.is_empty() or _args.has("new"):
-			ok = live.start(data_dir, user_dir, LIVE_WORLD)
-		else:
-			print("live: continuing %s in %s (--new starts over)" % [saves[0], LIVE_WORLD])
-			ok = live.start_load(data_dir, user_dir, LIVE_WORLD, saves[0])
+		_show_main_menu(data_dir, user_dir)
+		return
+	_after_live_start(ok)
+
+
+## --live without --world/--save/--quick: CDDA's main menu (MainMenu), then a new game (character creation
+## through a `chargen` request, ChargenRequestWidget) or a load.
+func _show_main_menu(data_dir: String, user_dir: String) -> void:
+	main_menu = MainMenu.new()
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.add_child(main_menu)
+	request_ui.get_parent().add_child(center)
+	main_menu.setup(LiveSession.list_worlds(user_dir),
+			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
+	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool) -> void:
+		_menu_started(center, live.start_new_game(data_dir, user_dir, w, fresh, chargen)))
+	main_menu.load_game.connect(func(w: String, sv: String) -> void:
+		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
+	main_menu.quit_requested.connect(_quit)
+	status = "main menu"
+
+
+func _menu_started(center: Control, ok: bool) -> void:
+	if not ok:
+		main_menu.set_message(live.error)
+		return
+	center.queue_free()
+	main_menu = null
+	_after_live_start(true)
+
+
+func _after_live_start(ok: bool) -> void:
 	if ok:
 		status = "game booting (~30 s)"
 	else:
