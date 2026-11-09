@@ -38,6 +38,8 @@ var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
+var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
 var _demo_step := 0
 var live: LiveSession
@@ -78,6 +80,13 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(fp.shift)
 	world.coords.origin_shifted.connect(creature_view.shift)
 	_setup_hud()
+	aim = AimController.new(world, request_ui)
+	add_child(aim)
+	request_ui.get_parent().add_child(aim.crosshair)
+	request_ui.get_parent().move_child(aim.crosshair, request_ui.get_index())
+	viewmodel = WeaponViewmodel.new()
+	fp.add_child(viewmodel)
+	aim.fired.connect(viewmodel.kick)
 	var view := FirstPersonCamera.view_from_args(_args)
 	if _args.has("view") and _args["view"] != view:
 		push_warning("--view= takes first or outside; starting in %s" % view)
@@ -501,6 +510,15 @@ func _wielded_name() -> String:
 	return CddaText.plain(d.name).left(60) if d != null and d.name != "" else "item #%d" % idx
 
 
+func _update_aim() -> void:
+	aim.first_person = _fp_active()
+	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	var t := request_ui.target_widget()
+	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
+	viewmodel.visible = _fp_active()
+	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
+
+
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
@@ -659,6 +677,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
+	_update_aim()
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
@@ -732,6 +751,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
+		return
+	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
 		var mb := event as InputEventMouseButton

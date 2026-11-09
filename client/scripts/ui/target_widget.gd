@@ -113,6 +113,21 @@ func press(i: int) -> void:
 		send({"pos": cursor, "action": actions[i]})
 
 
+## Shoots (or throws, casts...) at the cursor square: the primary action, else checks the square. The 3D view's
+## crosshair and fire key use it (AimController).
+func fire() -> void:
+	var p := primary_index()
+	if p >= 0:
+		press(p)
+	else:
+		check()
+
+
+## True for modes that shoot or throw at something (the crosshair follows the view in these).
+static func is_attack_mode(m: String) -> bool:
+	return m in ["fire", "throw", "throw_blind", "turret_manual", "reach", "spell"]
+
+
 ## Sends the cursor square without an action; CDDA moves its cursor there and asks again.
 func check() -> void:
 	send({"pos": cursor})
@@ -153,11 +168,7 @@ func handle_input(event: InputEvent) -> bool:
 			next_candidate(-1 if k.shift_pressed else 1)
 	elif key == KEY_ENTER or key == KEY_KP_ENTER:
 		if not k.echo:
-			var p := primary_index()
-			if p >= 0:
-				press(p)
-			else:
-				check()
+			fire()
 	elif key == KEY_SPACE:
 		if not k.echo:
 			check()

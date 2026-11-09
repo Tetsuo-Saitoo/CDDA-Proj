@@ -41,6 +41,7 @@ class Def:
 	var close := ""          # id of the closed state
 	var roof := ""           # ter: what is built on top of it
 	var category := ""       # itype
+	var gun := ""            # itype: the skill a gun uses (pistol, rifle, archery, ...), "" if not a gun
 	var volume_ml := 0
 	var weight_g := 0
 	var size := 0           # mtype: CDDA's creature_size, 1 tiny .. 5 huge
@@ -204,6 +205,8 @@ func _read_table(table: String, v: Variant) -> void:
 			def.roof = _str(r.get("roof"), MAX_ID, what + ".roof")
 		elif table == "itype":
 			def.category = _str(r.get("category"), MAX_FLAG_LEN, what + ".category")
+			if r.has("gun"):
+				def.gun = _str(r.get("gun"), MAX_FLAG_LEN, what + ".gun")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
 		elif table == "mtype":

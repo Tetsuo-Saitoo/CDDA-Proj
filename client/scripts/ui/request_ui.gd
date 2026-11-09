@@ -120,6 +120,12 @@ func set_target_cursor(pos: Vector3i) -> bool:
 	return true
 
 
+## The showing target request's widget, or null.
+func target_widget() -> TargetRequestWidget:
+	var t := widget as TargetRequestWidget
+	return t if t != null and not t.done else null
+
+
 func _input(event: InputEvent) -> void:
 	if visible and handle_input(event):
 		get_viewport().set_input_as_handled()

@@ -19,7 +19,7 @@ and mods) gives the same indices every session, so a client or tool can cache by
 | `ter`, `furn` | CDDA int id (0 = t_null / f_null) | id, name, symbol, color, looks_like, move_cost (ter: 0 = impassable; furn: modifier, -1 = impassable), coverage, light_emitted, transparent, flags, connect_groups, connects_to, rotates_to, open, close, roof (ter only) |
 | `trap` | CDDA int id (0 = tr_null) | id, name, symbol, color |
 | `field` | CDDA int id (0 = fd_null) | id, looks_like, priority, level_names, level_colors (per intensity, 1 = index 0) |
-| `itype` | session index (0 = none, empty) | id, name, symbol, color, looks_like, category, volume_ml, weight_g |
+| `itype` | session index (0 = none, empty) | id, name, symbol, color, looks_like, category, volume_ml, weight_g, gun (guns only: the skill it uses, e.g. pistol, rifle, shotgun, smg, archery, launcher) |
 | `mtype` | session index | id, name, symbol, color, looks_like, size (CDDA's creature_size: 1 tiny, 2 small, 3 medium, 4 large, 5 huge), hp, speed (100 = human), volume_ml, weight_g, species, bodytype (CDDA's body type: human, dog, insect, snake, bird, fish, blob, ...; may be empty) |
 | `vpart` | session index | id, name, color, looks_like, location, flags |
 

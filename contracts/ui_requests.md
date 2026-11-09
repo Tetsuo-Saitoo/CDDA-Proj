@@ -34,6 +34,11 @@ Target requests carry `origin`, `cursor`, `range`, `status` ("" or bad_target / 
 and `candidates` (absolute squares of visible creatures; hostiles only when aiming; capped at 256). Peeking's
 blind throw/fire isn't offered yet.
 
+Client aiming (AimController): the 3D view picks `pos` with a camera ray (click a creature or square, a
+second click or F / pad R1 fires); holding RMB in first person aims with a centre crosshair like an FPS (attack
+modes only) and LMB fires with the primary action (FIRE, else CONFIRM / SELECT). CDDA still checks range and
+line of fire.
+
 Every request carries `turn` (game turns since the cataclysm), `paused` and `pause_reason`. The main game loop's
 request (`game::get_player_input`) is `timed`; every other input loop that polls with a timeout gets `TIMEOUT`
 without asking (`fp3d::poll_report()` counts them). While the bridge is active, `ui_manager::redraw`,
