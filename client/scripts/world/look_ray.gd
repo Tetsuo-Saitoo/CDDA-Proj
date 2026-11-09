@@ -75,7 +75,7 @@ func describe(p: Vector3i) -> PackedStringArray:
 	var pile: PackedInt32Array = c["pile"]
 	if not pile.is_empty():
 		var names := PackedStringArray()
-		for k in range(2, Snapshot.PILE_STRIDE):
+		for k in range(2, Snapshot.PILE_TOP_END):
 			if pile[k] > 0 and names.size() < MAX_ITEM_LINES:
 				names.append(_name("itype", pile[k], {}))
 		out.append("items (%d): %s" % [pile[1], ", ".join(names)])

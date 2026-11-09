@@ -41,6 +41,7 @@ var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
@@ -83,6 +84,10 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(fp.shift)
 	world.coords.origin_shifted.connect(creature_view.shift)
 	_setup_hud()
+	explosions = ExplosionView.new(world)
+	add_child(explosions)
+	world.coords.origin_shifted.connect(explosions.shift)
+	request_ui.get_parent().add_child(explosions.flash_rect)
 	aim = AimController.new(world, request_ui)
 	add_child(aim)
 	request_ui.get_parent().add_child(aim.crosshair)
@@ -403,6 +408,7 @@ func _on_request_answered(a: Dictionary) -> void:
 
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
+	explosions.on_events(events)
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))

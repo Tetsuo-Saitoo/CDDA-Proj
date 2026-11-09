@@ -184,6 +184,19 @@ func hurt() -> void:
 	_set_overlay(_hurt_material())
 
 
+## A body on the ground (a corpse in an item pile): lying as after the death fall, darker, no animation.
+func lie_dead() -> void:
+	_body.rotation.x = PI / 2.0
+	dying = false
+	_die_t = -1.0
+	for m in _parts:
+		var mat := m.material_override as StandardMaterial3D
+		if mat != null:
+			mat = mat.duplicate() as StandardMaterial3D
+			mat.albedo_color = mat.albedo_color.darkened(0.35)
+			m.material_override = mat
+
+
 func die() -> void:
 	dying = true
 	_die_t = 0.0

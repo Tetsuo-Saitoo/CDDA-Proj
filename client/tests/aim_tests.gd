@@ -67,6 +67,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(TargetRequestWidget.is_attack_mode("throw") and not TargetRequestWidget.is_attack_mode("look"),
 			"aim: throw is an attack mode, look isn't")
 	_check.call(InputActions.info(&"aim_fire").size() == 4, "aim: aim_fire is a bindable action")
+	_check.call(InputActions.CDDA.get(&"cdda_reload") == "reload_weapon" and InputActions.key_of(&"cdda_reload") == "R",
+			"aim: R reloads outside aiming too (%s)" % InputActions.key_of(&"cdda_reload"))
 	var queued: Array = []
 	ui.queue_after.connect(func(acts: PackedStringArray) -> void: queued.append_array(acts))
 	ui.show_request(req)
@@ -84,6 +86,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
 	_test_viewmodel(root, tables)
+	_test_corpses(root, world, d, tables)
+	_test_explosions(root, world, tables, me)
 	aim.crosshair.free()
 	for n: Node in [cam, aim, ui, world]:
 		n.free()
@@ -125,3 +129,43 @@ func _key(code: Key) -> InputEventKey:
 	e.keycode = code
 	e.physical_keycode = code
 	return e
+
+
+func _test_corpses(root: Node, world: WorldView, d: Dictionary, tables: IdTables) -> void:
+	var zi := tables.index_of("mtype", "mon_zombie")
+	var dd: Dictionary = d.duplicate(true)
+	var sm0: Dictionary = dd["submaps"][0]
+	sm0["items"] = [[5, 1, [maxi(tables.index_of("itype", "corpse"), 1)], zi]]
+	var snap := Snapshot.from_data(dd)
+	_check.call(snap.is_valid(), "corpses: a pile with a corpse mtype reads (%s)" % snap.error)
+	world.apply_snapshot(snap)
+	var cv := CreatureView.new()
+	root.add_child(cv)
+	cv.apply(snap, world)
+	_check.call(cv.corpse_count() == 1, "corpses: the zombie's body lies on its square")
+	sm0["items"] = [[5, 1, [maxi(tables.index_of("itype", "corpse"), 1)]]]
+	cv.apply(Snapshot.from_data(dd), world)
+	_check.call(cv.corpse_count() == 0, "corpses: gone when the pile no longer has it (old 3-field piles still read)")
+	sm0["items"] = [[5, 1, [], 7, 9]]
+	_check.call(not Snapshot.from_data(dd).is_valid(), "corpses: a 5-field pile is refused")
+	cv.free()
+
+
+func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector3i) -> void:
+	var P := ExplosionView
+	_check.call(P.profile_for("flashbang", "")["flash"] == 1.0 and P.profile_for("weird", "")["kind"] == "blast"
+			and P.profile_for("blast", "c4_armed")["size"] > 1.0 and P.profile_for("blast", "")["size"] == 1.0,
+			"explosions: looks by kind and item (flashbang flashes, C4 bigger, unknown kind = blast)")
+	var ev := ExplosionView.new(world)
+	root.add_child(ev)
+	var gi := tables.index_of("itype", "grenade_act")
+	ev.on_events([{"kind": "explosion", "pos": me, "amount": 3, "text": "blast", "detail": maxi(gi, 0),
+			"path": [me, me + Vector3i(1, 0, 0)]}, {"kind": "explosion", "pos": "junk"}, "junk"])
+	_check.call(ev.live_count() == 1, "explosions: a blast starts, junk is skipped")
+	ev.on_events([{"kind": "explosion", "pos": me, "amount": 8, "text": "flashbang", "detail": 0, "path": []}])
+	_check.call(ev.flash_strength() > 0.0, "explosions: a flashbang next to the camera whites the screen")
+	for i in 40:
+		ev.tick(0.05)
+	_check.call(ev.live_count() == 0 and ev.flash_strength() == 0.0, "explosions: effects end and the flash fades")
+	ev.flash_rect.free()
+	ev.free()

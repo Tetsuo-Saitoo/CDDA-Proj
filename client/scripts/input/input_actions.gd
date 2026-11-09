@@ -43,7 +43,7 @@ const ACTIONS := [
 	[&"fly_down", "View", "fly down (outside)", ["Q", "Ctrl"]],
 	[&"cutaway_up", "View", "show a level more", ["PageUp"]],
 	[&"cutaway_down", "View", "show a level less", ["PageDown"]],
-	[&"roofs_toggle", "View", "roofs on / off", ["R"]],
+	[&"roofs_toggle", "View", "roofs on / off", ["Y"]],
 	[&"frame_player", "View", "back to the player", ["Home"]],
 	[&"reload", "View", "reload the snapshot (mock)", ["F9"]],
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
@@ -62,6 +62,7 @@ const ACTIONS := [
 	[&"cdda_smash", "Act", "smash", ["Z"]],
 	[&"cdda_throw", "Act", "throw", ["T"]],
 	[&"cdda_fire", "Act", "fire; aiming: fire at the target", ["F"]],
+	[&"cdda_reload", "Act", "reload the wielded gun", ["R"]],
 	[&"aim_fire", "Act", "aiming: fire at the crosshair / target", ["pad:10"]],
 	[&"cdda_eat", "Act", "eat", ["Shift+E"]],
 	[&"cdda_wear", "Act", "wear", ["Shift+W"]],
@@ -79,7 +80,7 @@ const ACTIONS := [
 const CDDA := {
 	&"cdda_examine": "examine", &"cdda_pickup": "pickup", &"cdda_inventory": "inventory", &"cdda_open": "open",
 	&"cdda_close": "close", &"cdda_wield": "wield", &"cdda_apply": "apply", &"cdda_smash": "smash",
-	&"cdda_throw": "throw", &"cdda_fire": "fire", &"cdda_eat": "eat", &"cdda_wear": "wear",
+	&"cdda_throw": "throw", &"cdda_fire": "fire", &"cdda_reload": "reload_weapon", &"cdda_eat": "eat", &"cdda_wear": "wear",
 	&"cdda_take_off": "take_off", &"cdda_read": "read", &"cdda_drop": "drop", &"cdda_unload": "unload",
 	&"cdda_butcher": "butcher", &"cdda_grab": "grab", &"cdda_safemode": "safemode",
 }
