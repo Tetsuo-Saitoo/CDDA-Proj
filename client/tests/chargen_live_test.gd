@@ -25,8 +25,22 @@ func _run() -> void:
 	var user_dir := OS.get_user_data_dir().path_join("cdda-chargen-test")
 	_check(not String(_sim.start_new_game(data_dir, user_dir, "no-such-world", false, true)).is_empty(),
 			"refuses an existing-world start in a world that isn't there")
-	var why: String = _sim.start_new_game(data_dir, user_dir, WORLD, true, true)
+	var why: String = _sim.start_new_game(data_dir, user_dir, WORLD, true, true, true)
 	_check(why.is_empty(), "starts (%s)" % why)
+	var wreq := await _wait(func(r: Dictionary) -> bool: return r.get("kind") == "world_setup")
+	_check(not wreq.is_empty(), "world_setup request arrives (%s %s)" % [_sim.get_state(), _sim.get_error()])
+	if wreq.is_empty():
+		_finish()
+		return
+	var ws := WorldSetup.parse(wreq["text"])
+	_check(ws.ok and ws.sliders.size() >= 3 and ws.mods.size() > 5 and ws.problem().is_empty(),
+			"client reads the world catalog (%s; %d sliders, %d mods, %s)" % [ws.error, ws.sliders.size(), ws.mods.size(), ws.problem()])
+	_sim.answer({"id": wreq["id"], "text": "{\"mods\":[\"no_such_mod\"]}"})
+	var wagain := await _wait(func(r: Dictionary) -> bool: return r.get("kind") == "world_setup" and r["id"] != wreq["id"])
+	_check(not wagain.is_empty() and String(wagain["status"]) != "", "bad world answer re-asked (%s)"
+			% wagain.get("status", ""))
+	ws.set_level(ws.sliders[0]["id"], 0)
+	_sim.answer({"id": wagain["id"], "text": ws.answer_json()})
 	var req := await _wait(func(r: Dictionary) -> bool: return r.get("kind") == "chargen")
 	_check(not req.is_empty(), "chargen request arrives (%s %s)" % [_sim.get_state(), _sim.get_error()])
 	if req.is_empty():
@@ -46,6 +60,7 @@ func _run() -> void:
 			% [_sim.get_state(), _sim.get_error()])
 	var snap := Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
 	_check(snap.is_valid(), "snapshot valid")
+	_check(FileAccess.file_exists(user_dir.path_join("save/%s/worldoptions.json" % WORLD)), "world saved with its settings")
 	_sim.stop()
 	_finish()
 
@@ -65,7 +80,7 @@ func _wait(want: Callable) -> Dictionary:
 			continue
 		if want.call(r):
 			return r
-		if r["timed"] or r["kind"] == "chargen":
+		if r["timed"] or r["kind"] == "chargen" or r["kind"] == "world_setup":
 			continue
 		var a := {"id": r["id"], "cancel": true}
 		if r["context"] == "RAW_KEY":

@@ -284,8 +284,8 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	request_ui.get_parent().add_child(center)
 	main_menu.setup(LiveSession.list_worlds(user_dir),
 			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
-	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool) -> void:
-		_menu_started(center, live.start_new_game(data_dir, user_dir, w, fresh, chargen)))
+	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool, setup: bool) -> void:
+		_menu_started(center, live.start_new_game(data_dir, user_dir, w, fresh, chargen, setup)))
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)

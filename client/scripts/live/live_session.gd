@@ -39,10 +39,12 @@ func start(data_dir: String, user_dir: String, world: String) -> bool:
 ## A new game: `fresh_world` makes world `world` (it must not exist: the bridge would replace it), otherwise
 ## the character joins that existing world; `chargen` asks for the character with a `chargen` request
 ## (character creation) instead of a random one.
-func start_new_game(data_dir: String, user_dir: String, world: String, fresh_world: bool, chargen: bool) -> bool:
+## `world_setup` (fresh worlds) asks for the world's settings and mods first (a `world_setup` request).
+func start_new_game(data_dir: String, user_dir: String, world: String, fresh_world: bool, chargen: bool,
+		world_setup := false) -> bool:
 	if not _make_sim():
 		return false
-	error = _sim.start_new_game(data_dir, user_dir, world, fresh_world, chargen)
+	error = _sim.start_new_game(data_dir, user_dir, world, fresh_world, chargen, world_setup)
 	return error.is_empty()
 
 

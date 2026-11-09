@@ -31,9 +31,10 @@ std::string start( const std::string &data_dir, const std::string &user_dir, con
                    const std::string &save = "" );
 // A new game, like start() with no save, but: `fresh_world` false puts a new character into the existing world
 // `world` (one list_worlds() gives; nothing is deleted), and `chargen` asks the client for the character with a
-// `chargen` request (contracts/ui_requests.md) instead of a random one. Cancelling it ends the session (failed).
+// `chargen` request (contracts/ui_requests.md) instead of a random one; `world_setup` (fresh worlds) asks
+// for the world's settings and mods with a `world_setup` request first. Cancelling it ends the session (failed).
 std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                            bool fresh_world, bool chargen );
+                            bool fresh_world, bool chargen, bool world_setup = false );
 // Shuts the bridge down and waits for the game thread. While booting that wait lasts until loading finishes.
 void stop();
 state get_state();

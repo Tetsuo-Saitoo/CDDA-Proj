@@ -55,6 +55,7 @@ std::string boot_save;
 // New games: false = a new character in an existing world; true = CDDA's character creation through the client.
 bool boot_fresh_world = true;
 bool boot_chargen = false;
+bool boot_world_setup = false;
 #if defined(_WIN32)
 HANDLE sim_thread = nullptr;
 #else
@@ -90,8 +91,8 @@ void sim_main()
         setupDebug( DebugOutput::file );
         rng_set_engine_seed( std::random_device{}() );
         if( boot_save.empty() ) {
-            if( boot_chargen || !boot_fresh_world ) {
-                fp3d::boot_new_game_data( boot_world, boot_fresh_world, true );
+            if( boot_chargen || boot_world_setup || !boot_fresh_world ) {
+                fp3d::boot_new_game_data( boot_world, boot_fresh_world, true, boot_world_setup );
                 if( boot_chargen ) {
                     if( !fp3d::run_chargen() ) {
                         throw std::runtime_error( "character creation cancelled" );
@@ -382,25 +383,25 @@ const char *state_name( state s )
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen );
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup );
 } // namespace
 
 std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                    const std::string &save )
 {
-    return start_impl( data_dir, user_dir, world, save, true, false );
+    return start_impl( data_dir, user_dir, world, save, true, false, false );
 }
 
 std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                            bool fresh_world, bool chargen )
+                            bool fresh_world, bool chargen, bool world_setup )
 {
-    return start_impl( data_dir, user_dir, world, "", fresh_world, chargen );
+    return start_impl( data_dir, user_dir, world, "", fresh_world, chargen, world_setup && fresh_world );
 }
 
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen )
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup )
 {
     if( get_state() != state::idle ) {
         return "already started (CDDA runs once per process)";
@@ -451,6 +452,7 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     boot_save = save;
     boot_fresh_world = fresh_world;
     boot_chargen = chargen;
+    boot_world_setup = world_setup;
     fp3d::set_active( true );
     fp3d::set_events_enabled( true );
     set_state( state::booting );

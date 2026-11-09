@@ -25,7 +25,8 @@ class CddaSim : public godot::RefCounted
         godot::String start( const godot::String &data_dir, const godot::String &user_dir,
                              const godot::String &world );
         godot::String start_new_game( const godot::String &data_dir, const godot::String &user_dir,
-                                      const godot::String &world, bool fresh_world, bool chargen );
+                                      const godot::String &world, bool fresh_world, bool chargen,
+                                      bool world_setup );
         godot::String start_load( const godot::String &data_dir, const godot::String &user_dir,
                                   const godot::String &world, const godot::String &save );
         godot::PackedStringArray list_worlds( const godot::String &user_dir ) const;

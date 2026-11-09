@@ -6,7 +6,7 @@ extends PanelContainer
 ## under the user dir), so they are shown as plain text and a new world may not reuse an existing name (the
 ## bridge would replace that world). Plain Controls, so it can later sit on a world-space panel in VR.
 
-signal new_game(world: String, fresh_world: bool, chargen: bool)
+signal new_game(world: String, fresh_world: bool, chargen: bool, world_setup: bool)
 signal load_game(world: String, save: String)
 signal quit_requested
 
@@ -25,6 +25,7 @@ var _save_list: ItemList
 var _world_edit: LineEdit
 var _use_existing: CheckBox
 var _custom: CheckBox
+var _setup: CheckBox
 
 
 func _init() -> void:
@@ -100,9 +101,14 @@ func show_page(p: String) -> void:
 			_world_edit.text = suggested_world()
 			_world_edit.max_length = WORLD_NAME_MAX
 			_box.add_child(_world_edit)
+			_setup = CheckBox.new()
+			_setup.text = "Choose the world's settings and mods"
+			_setup.button_pressed = true
+			_box.add_child(_setup)
 			_use_existing.toggled.connect(func(on: bool) -> void:
 				_world_list.visible = on
-				_world_edit.visible = not on)
+				_world_edit.visible = not on
+				_setup.visible = not on)
 			_world_list.visible = false
 			_custom = CheckBox.new()
 			_custom.text = "Create the character (off: a random one)"
@@ -151,7 +157,8 @@ func start_new() -> bool:
 			set_message("A world named %s exists: pick another name or add the character to it." % world)
 			return false
 	set_message("")
-	new_game.emit(world, not existing, _custom == null or _custom.button_pressed)
+	new_game.emit(world, not existing, _custom == null or _custom.button_pressed,
+			not existing and (_setup == null or _setup.button_pressed))
 	return true
 
 

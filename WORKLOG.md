@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — World settings and mods when making a new world: `world_setup` request (sliders, world options, mods with dependencies), client screen; core data now loads before the world; all chargen/ui/live tests pass.
 - 2026-11-09 — Templates: edit (open a template in the chargen tabs) and delete (confirm, then the sim removes it and re-asks); tests pass.
 - 2026-11-09 — Character templates in chargen: list, start from one, save the built character as one; checked names only; fp3d-chargen-test and ui_tests pass.
 - 2026-11-08 — Main menu + character creation: `--live` opens MainMenu (new/load/world pick), chargen via a new `chargen` ui_request (fork `fp3d/chargen.cpp`, branch `fp3d-chargen`), `CddaSim.start_new_game`; client `Chargen` + `ChargenRequestWidget`; fp3d-chargen-test, ui_tests, chargen_live_test and live_test pass.
