@@ -16,6 +16,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_settings()
 	_test_walk(world)
 	_test_rig(root, world)
+	preload("res://tests/vr_comfort_tests.gd").new().run(root, check, world)
 	world.free()
 
 

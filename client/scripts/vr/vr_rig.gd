@@ -1,11 +1,18 @@
 class_name VrRig
 extends XROrigin3D
 ## Block L1: the VR ghost-walk rig. A head (XRCamera3D) and two controllers on an origin that stands on the
-## floor of level `z`. Left stick moves relative to the head and slides along walls; right stick turns (snap
-## or smooth) and, pushed forward, aims a teleport arc that jumps on release. Right B / A: level up / down.
-## Left Y: back to the player. A tunnel vignette darkens the edges while moving or turning smoothly.
+## floor of level `z`. Controller layouts (setting `layout`, auto = from the runtime's interaction profile):
+## - quest (sticks + A/B/X/Y: Quest, Index, Pico, WMR): left stick moves relative to the head (or the hand)
+##   and slides along walls; right stick turns (snap or smooth) and, pushed forward, aims a teleport arc that
+##   jumps on release. Right B / A: level up / down. Left Y: back to the player. WMR / Index trackpad click:
+##   right up / down half = level up / down, left = back to the player.
+## - vive (trackpad wands): left pad touched moves; right pad clicked: left / right half snap turns, up half
+##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
+## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
+## `save_path`). Hands (VrHand) show finger tracking when the runtime gives it, else fingers from the buttons.
+## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
-## rig is separate from the body). Options come from the command line, see `settings_from_args`.
+## rig is separate from the body).
 
 signal level_changed(z: int)
 
@@ -18,8 +25,8 @@ const FADE_S := 0.12      # blink after a teleport or level change
 const VIGNETTE_DIST := 0.2
 const VIGNETTE_OPEN := 0.3    # hole radius at VIGNETTE_DIST with strength 0 (about 56 deg, the view's edge)
 const VIGNETTE_SHUT := 0.07   # ... and with strength 1
-const DEFAULTS := {"move": "smooth", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0, "speed": 2.0,
-		"vignette": 0.6}
+const DEFAULTS := VrSettings.DEFAULTS
+const HAND_TRACKERS := [&"/user/hand_tracker/left", &"/user/hand_tracker/right"]
 
 var world: WorldView
 var walk: VrWalk
@@ -42,22 +49,46 @@ var _marker: MeshInstance3D
 var left_held: VrHeld      # live game: what each hand holds, on its controller (show_held)
 var right_held: VrHeld
 var _was_filling := false
+var save_path := ""       # where the menu saves the settings ("" = don't, e.g. in tests)
+var menu: VrMenu          # created on first open
+var left_hand: VrHand
+var right_hand: VrHand
+var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
 
 
-## Options after `--`: --vr-move=smooth|teleport --vr-turn=snap|smooth --vr-snap=<deg 10-90>
-## --vr-speed=<m/s 0.5-5> --vr-vignette=<0-1>. Bad values keep the default.
+## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
 static func settings_from_args(args: Dictionary) -> Dictionary:
-	var s := DEFAULTS.duplicate()
-	if args.get("vr-move", "") in ["smooth", "teleport"]:
-		s["move"] = args["vr-move"]
-	if args.get("vr-turn", "") in ["snap", "smooth"]:
-		s["turn"] = args["vr-turn"]
-	for pair: Array in [["vr-snap", "snap_deg", 10.0, 90.0], ["vr-speed", "speed", 0.5, 5.0],
-			["vr-vignette", "vignette", 0.0, 1.0]]:
-		var v := String(args.get(pair[0], ""))
-		if v.is_valid_float() and is_finite(v.to_float()):
-			s[pair[1]] = clampf(v.to_float(), pair[2], pair[3])
-	return s
+	return VrSettings.from_args(args)
+
+
+## Layout for an OpenXR interaction profile path: trackpad wands get "vive", everything else "quest".
+static func layout_for(profile: String) -> String:
+	return "vive" if profile.contains("htc/vive_controller") else "quest"
+
+
+func current_layout() -> String:
+	if settings["layout"] != "auto":
+		return settings["layout"]
+	var t := XRServer.get_tracker(&"left_hand") as XRPositionalTracker
+	return layout_for(t.profile if t != null else "")
+
+
+## The Vive wand's turn pad as a stick: only while clicked (up = aim the teleport, left / right = snap turn;
+## down is level down, a button); smooth turning follows a touched pad's x.
+static func wand_turn(pad: Vector2, click: bool, smooth: bool) -> Vector2:
+	if click:
+		if pad.length() < 0.3 or (pad.y < -0.5 and absf(pad.y) > absf(pad.x)):
+			return Vector2.ZERO
+		return pad.normalized()
+	return Vector2(pad.x, 0.0) if smooth else Vector2.ZERO
+
+
+func _move_ctrl() -> XRController3D:
+	return right if settings["swap_sticks"] else left
+
+
+func _turn_ctrl() -> XRController3D:
+	return left if settings["swap_sticks"] else right
 
 
 func _init(w: WorldView, s := {}) -> void:
@@ -80,8 +111,12 @@ func _build() -> void:
 	add_child(camera)
 	left = _controller("LeftHand", &"left_hand", Color(0.35, 0.6, 1.0))
 	right = _controller("RightHand", &"right_hand", Color(1.0, 0.6, 0.25))
-	left.button_pressed.connect(_on_left_button)
-	right.button_pressed.connect(_on_right_button)
+	left.button_pressed.connect(func(n: String) -> void: press(left, n))
+	right.button_pressed.connect(func(n: String) -> void: press(right, n))
+	left_hand = VrHand.new(true)
+	right_hand = VrHand.new(false)
+	add_child(left_hand)
+	add_child(right_hand)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -119,6 +154,8 @@ func _controller(n: String, tracker: StringName, col: Color) -> XRController3D:
 	box.material = m
 	var hand := MeshInstance3D.new()
 	hand.mesh = box
+	hand.visible = false
+	_boxes.append(hand)
 	hand.position = Vector3(0, 0, 0.06)   # the aim pose points along -Z; the hand sits behind it
 	c.add_child(hand)
 	add_child(c)
@@ -126,7 +163,36 @@ func _controller(n: String, tracker: StringName, col: Color) -> XRController3D:
 
 
 func _process(delta: float) -> void:
-	step(delta, {"move": _stick(left), "turn": _stick(right)})
+	var tc := _turn_ctrl()
+	var inp := {"move": _stick(_move_ctrl()), "turn": _stick(tc)}
+	if current_layout() == "vive":
+		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
+				settings["turn"] == "smooth")
+	step(delta, inp)
+	pose_hands()
+
+
+## Hands from the runtime's hand tracking, else from each controller's buttons, else hidden; or the simple
+## boxes (setting hands).
+func pose_hands() -> void:
+	var mode: String = settings["hands"]
+	var i := 0
+	for c: XRController3D in [left, right]:
+		var h: VrHand = left_hand if c == left else right_hand
+		_boxes[i].visible = mode == "boxes"
+		if mode == "boxes":
+			h.visible = false
+		elif mode == "auto" and h.pose_from_tracker(XRServer.get_tracker(HAND_TRACKERS[i]) as XRHandTracker):
+			pass
+		elif c.get_is_active():
+			var thumb := false
+			for b: StringName in [&"primary_touch", &"primary_click", &"ax_touch", &"by_touch", &"secondary_touch"]:
+				thumb = thumb or c.is_button_pressed(b)
+			h.pose_from_controller(c.transform, VrHand.curls_from_buttons(c.get_float(&"trigger"),
+					c.is_button_pressed(&"trigger_touch"), c.get_float(&"grip"), thumb))
+		else:
+			h.visible = false
+		i += 1
 
 
 static func _stick(c: XRController3D) -> Vector2:
@@ -137,7 +203,9 @@ static func _stick(c: XRController3D) -> Vector2:
 ## with x right and y forward, -1..1.
 func step(delta: float, inp: Dictionary) -> void:
 	var moving := false
-	if world.snapshot != null:
+	if menu_open():
+		menu.nav(inp.get("move", Vector2.ZERO))
+	elif world.snapshot != null:
 		var mv := _dead(inp.get("move", Vector2.ZERO))
 		if settings["move"] == "smooth" and mv != Vector2.ZERO:
 			_move(mv, delta)
@@ -159,10 +227,11 @@ static func _dead(v: Vector2) -> Vector2:
 
 
 func _move(mv: Vector2, delta: float) -> void:
-	var fwd := -camera.global_basis.z
+	var src: Node3D = camera if settings["move_dir"] == "head" else _move_ctrl()
+	var fwd := -src.global_basis.z
 	fwd.y = 0.0
 	if fwd.length() < 0.01:
-		fwd = camera.global_basis.y   # looking straight down: the top of the view is forward
+		fwd = src.global_basis.y   # looking (or pointing) straight down: the top is forward
 		fwd.y = 0.0
 	fwd = fwd.normalized()
 	var rgt := Vector3(-fwd.z, 0.0, fwd.x)
@@ -173,7 +242,7 @@ func _move(mv: Vector2, delta: float) -> void:
 
 ## True while turning smoothly (the vignette shows).
 func _turn(tv: Vector2, delta: float) -> bool:
-	if aiming:
+	if aiming or settings["turn"] == "off":
 		return false
 	var x := tv.x
 	if settings["turn"] == "smooth":
@@ -214,7 +283,8 @@ func turn_by(angle: float) -> void:
 func teleport_to(pos: Vector3) -> void:
 	var head := camera.global_position
 	global_position += Vector3(pos.x - head.x, 0.0, pos.z - head.z)
-	_fade = 1.0
+	if settings["blink"]:
+		_fade = 1.0
 
 
 ## Up (+1) or down (-1) a level, to the nearest standable square; false (and a buzz) when there is none.
@@ -246,18 +316,63 @@ func go_to_player(p: Vector3i) -> void:
 		turn_by(fwd.signed_angle_to(to, Vector3.UP))
 
 
-func _on_left_button(n: String) -> void:
-	if n == "by_button" and world.snapshot != null:
-		go_to_player(world.snapshot.player_pos)
+func menu_open() -> bool:
+	return menu != null and menu.visible
 
 
-func _on_right_button(n: String) -> void:
+## Opens the settings menu in front of the head, or closes it and saves the settings.
+func toggle_menu() -> void:
+	if menu == null:
+		menu = VrMenu.new(settings)
+		add_child(menu)
+		menu.visible = false
+	menu.visible = not menu.visible
+	aiming = false
+	arc = {}
+	if menu.visible:
+		menu.place(camera.transform)
+		menu.refresh()
+	elif not save_path.is_empty() and not VrSettings.save_file(settings, save_path):
+		push_warning("VR settings: couldn't save " + save_path)
+
+
+## A controller button (signal, or tests). `pad`: the Vive trackpad position, read from the controller when
+## not given.
+func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
+	if c == left and n == "menu_button":
+		toggle_menu()
+		return
+	if menu_open():
+		if n == "trigger_click":
+			menu.click()
+		return
 	if world.snapshot == null:
 		return
-	if n == "by_button":
-		change_level(1)
-	elif n == "ax_button":
-		change_level(-1)
+	if current_layout() == "vive":
+		if c == right and n == "menu_button":
+			change_level(1)
+		elif n == "primary_click" and c == _move_ctrl():
+			go_to_player(world.snapshot.player_pos)
+		elif n == "primary_click":
+			var v := _stick(c) if pad == Vector2.INF else pad
+			if v.y < -0.5 and absf(v.y) > absf(v.x):
+				change_level(-1)
+		return
+	match n:
+		"by_button":
+			if c == left:
+				go_to_player(world.snapshot.player_pos)
+			else:
+				change_level(1)
+		"ax_button":
+			if c == right:
+				change_level(-1)
+		"secondary_click":   # WMR / Index trackpads
+			if c == left:
+				go_to_player(world.snapshot.player_pos)
+			else:
+				var v := c.get_vector2(&"secondary") if pad == Vector2.INF else pad
+				change_level(1 if v.y >= 0.0 else -1)
 
 
 ## Live game: what the hands hold (CddaSim.get_held) on the controllers, left = off hand, right = main hand.

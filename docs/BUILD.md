@@ -103,12 +103,21 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    `.so` built). Without the bridge, Godot prints once that `fp3d_cdda.gdextension` has no library for this
    platform; the mock town still runs.
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
-   Controls: left stick walks where you look (walls stop you, doors don't); right stick left/right turns 45°;
-   right stick forward aims a teleport (green = OK) and jumps on release; right B / A: level up / down; left
-   Y: back to the player. Options after `--`: `--vr-move=teleport` (no stick walking), `--vr-turn=smooth`,
-   `--vr-snap=<deg>`, `--vr-speed=<m/s>`, `--vr-vignette=<0-1>` (0 = off). Every 10 s frame times go to the
+   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls stop you, doors
+   don't); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
+   release; right B / A: level up / down; left Y: back to the player (WMR / Index: trackpad click, right up /
+   down half = level up / down, left = back to the player). Vive wands ("vive" layout): left pad touched walks;
+   right pad click left/right turns, held up aims the teleport, down = level down; right menu = level up; left
+   pad click = back to the player. **Left menu button** (Index: left stick click) opens the settings in the
+   headset: stick up/down picks, left/right or trigger changes, menu closes and saves them to `vr.json` in
+   Godot's user folder. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
+   angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
+   layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
+   from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=
+   --vr-speed= --vr-turn= --vr-snap= --vr-turn-speed= --vr-vignette= --vr-blink=on|off --vr-swap-sticks=on|off
+   --vr-layout=auto|quest|vive --vr-hands=auto|buttons|boxes`. Every 10 s frame times go to the
    console and to `vr_perf.log` in Godot's user folder (Windows `%APPDATA%\Godot\app_userdata\CDDA-3D\`,
-   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; numbers and the GPU name only; testers can send it). Controller bindings: `client/openxr_action_map.tres` (Godot's defaults for now).
+   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; numbers and the GPU name only; testers can send it). Controller bindings: `client/openxr_action_map.tres` (Godot's defaults plus Vive, Index and WMR profiles from `tools/vr/add_controller_profiles.gd`).
    The console also logs the live game's state, its prompts and the VR session's states.
    Without a headset or runtime the normal view starts and the HUD says why. A live game's prompts still show
    only on the desktop window (L4 brings them into VR).

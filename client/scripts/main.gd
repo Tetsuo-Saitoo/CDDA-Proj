@@ -13,7 +13,8 @@ extends Node3D
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
 ## (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
 ## --vr shows it in a PC VR headset (block L1, scripts/vr/); Godot itself must run with --xr-mode on (before
-## `--`). Options --vr-move= --vr-turn= --vr-snap= --vr-speed= --vr-vignette= (VrRig.settings_from_args).
+## `--`). Settings: the in-headset menu (left menu button) saves them to user://vr.json; options --vr-move=
+## --vr-turn= --vr-snap= --vr-speed= --vr-vignette= --vr-layout= --vr-hands= ... win over it (VrSettings.ARGS).
 
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
@@ -214,7 +215,8 @@ func _start_vr() -> void:
 		return
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
-	vr = VrRig.new(world, VrRig.settings_from_args(_args))
+	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	vr.save_path = VrSettings.FILE
 	add_child(vr)
 	vr.camera.make_current()
 	camera.set_process_unhandled_input(false)
@@ -666,7 +668,8 @@ func _process(_delta: float) -> void:
 			view, tile, world.view_z_max, "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
 	if vr != null:
-		lines.append("VR level %d  %s" % [vr.z, vr_perf.last_line])
+		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
+				vr_perf.last_line])
 	if live != null:
 		lines.append(_act_help())
 		lines.append("in hands: " + _wielded_name())
