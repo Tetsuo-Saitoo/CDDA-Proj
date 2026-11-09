@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Butchery and gore: corpse state from the bridge (dressed, skinned, quartered, pulped, gibbed, bled) shown on the body figure with viscera and blood pools; blood / bile / gibs fields drawn on the ground; snapshot, sim and client tests pass.
 - 2026-11-09 — Bodies lie where they fell as the dead monster's figure (snapshot piles send the corpse mtype); explosions drawn by kind and item (fireball, smoke, light, area glow, shockwave ring, flashbang white-out; events send the exploding itype); R reloads outside aiming (roofs on Y); client tests pass, CDDA tests below.
 - 2026-11-09 — Aiming tried live by the user (works): quick reload (R / button in the fire prompt -> cancel, `reload_weapon`, `fire`), corpses drawn body-sized instead of 6 cm; client tests pass. VR reload by hand motion noted for L2.
 - 2026-11-08 — FPS aiming: target requests get a 3D cursor ring, click-to-pick creatures/squares (second click fires), hold RMB for a centre crosshair that drags the cursor in fire/throw modes, LMB / F / pad R1 (`aim_fire`) fires; low-poly weapon viewmodel with recoil; fork id tables send itype `gun` (not built yet); `aim_tests.gd` 15 checks, client tests pass; not tried live.

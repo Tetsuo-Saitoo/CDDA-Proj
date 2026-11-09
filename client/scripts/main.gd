@@ -41,6 +41,7 @@ var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var gore: GoreView               # blood, gibs and bile fields on the ground
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -84,6 +85,9 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(fp.shift)
 	world.coords.origin_shifted.connect(creature_view.shift)
 	_setup_hud()
+	gore = GoreView.new()
+	add_child(gore)
+	world.coords.origin_shifted.connect(gore.shift)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -168,6 +172,8 @@ func _show(snap: Snapshot) -> void:
 	var n := world.apply_snapshot(snap)
 	creature_view.show_player = not _fp_active()   # in first person you are the player
 	creature_view.apply(snap, world)
+	gore.view_z_max = world.view_z_max
+	gore.apply(snap, world)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]

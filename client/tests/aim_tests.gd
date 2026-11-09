@@ -143,11 +143,33 @@ func _test_corpses(root: Node, world: WorldView, d: Dictionary, tables: IdTables
 	root.add_child(cv)
 	cv.apply(snap, world)
 	_check.call(cv.corpse_count() == 1, "corpses: the zombie's body lies on its square")
+	var states := [Snapshot.CORPSE_FIELD_DRESSED, Snapshot.CORPSE_SKINNED | Snapshot.CORPSE_QUARTERED,
+			Snapshot.CORPSE_PULPED, Snapshot.CORPSE_GIBBED]
+	for st: int in states:
+		sm0["items"] = [[5, 1, [maxi(tables.index_of("itype", "corpse"), 1)], zi, st]]
+		cv.apply(Snapshot.from_data(dd), world)
+		var f: CreatureFigure = cv.get_node_or_null(NodePath(cv.get_child(cv.get_child_count() - 1).name))
+		_check.call(cv.corpse_count() == 1 and f != null and f.corpse_state == st and f.get_node_or_null("gore") != null,
+				"corpses: state %d rebuilds the body with its gore" % st)
+	var gv := GoreView.new()
+	root.add_child(gv)
+	sm0["fields"] = []
+	gv.apply(Snapshot.from_data(dd), world)
+	var before := gv.count()
+	sm0["fields"] = [[5, tables.index_of("field", "fd_blood"), 2, 0], [6, tables.index_of("field", "fd_gibs_flesh"), 3, 0],
+			[7, tables.index_of("field", "fd_smoke"), 1, 0]]
+	var gs := Snapshot.from_data(dd)
+	gv.apply(gs, world)
+	_check.call(gs.is_valid() and gv.count() == before + 1 + 4, "gore: a blood splat and 4 gib chunks, smoke left out (%d %s)" % [gv.count(), gs.error])
+	sm0["fields"] = [[5, 1, 2]]
+	_check.call(not Snapshot.from_data(dd).is_valid(), "gore: a malformed field is refused")
+	sm0.erase("fields")
+	gv.free()
 	sm0["items"] = [[5, 1, [maxi(tables.index_of("itype", "corpse"), 1)]]]
 	cv.apply(Snapshot.from_data(dd), world)
 	_check.call(cv.corpse_count() == 0, "corpses: gone when the pile no longer has it (old 3-field piles still read)")
-	sm0["items"] = [[5, 1, [], 7, 9]]
-	_check.call(not Snapshot.from_data(dd).is_valid(), "corpses: a 5-field pile is refused")
+	sm0["items"] = [[5, 1, [], 7, 9, 1]]
+	_check.call(not Snapshot.from_data(dd).is_valid(), "corpses: a 6-field pile is refused")
 	cv.free()
 
 

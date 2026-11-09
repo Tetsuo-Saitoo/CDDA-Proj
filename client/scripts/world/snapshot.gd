@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
-## Fields the client doesn't use yet (fields, vehicles) are ignored, not trusted; whoever
+## Fields the client doesn't use yet (vehicles) are ignored, not trusted; whoever
 ## starts using them adds their checks here. A submap without `trap` or `items` has none.
 
 const CONTRACT_VERSION := 0
@@ -20,9 +20,19 @@ const MAX_NAME_LEN := 128
 const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
 const MAX_CREATURES := 1024               # the contract's cap
 const MAX_UID := 1 << 53                  # JSON numbers are doubles
-const PILE_STRIDE := 7                    # items: tile, count, top[4], corpse
+const PILE_STRIDE := 8                    # items: tile, count, top[4], corpse, corpse state
 const PILE_TOP_END := 6                   # top[4] is at [2, PILE_TOP_END)
 const PILE_CORPSE := 6                    # mtype index of the largest corpse on the tile, 0 = none
+const PILE_CORPSE_STATE := 7              # its butchery state, CORPSE_* bits
+const CORPSE_BLED := 1
+const CORPSE_FIELD_DRESSED := 2
+const CORPSE_DRESS_FAILED := 4
+const CORPSE_SKINNED := 8
+const CORPSE_QUARTERED := 16
+const CORPSE_PULPED := 32
+const CORPSE_GIBBED := 64
+const FIELD_STRIDE := 4                   # fields: tile, type (CDDA field id), intensity, age turns
+const MAX_FIELDS_PER_TILE := 4
 
 const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
@@ -38,6 +48,7 @@ class Submap:
 	var furn: PackedInt32Array
 	var trap: PackedInt32Array    # CDDA trap ids, 0 = none (only traps the player knows)
 	var items: PackedInt32Array   # piles, PILE_STRIDE ints each: tile, count, top[4] (itype indices, 0 = none), corpse (mtype index, 0 = none)
+	var fields: PackedInt32Array  # FIELD_STRIDE ints each (seen tiles only)
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -247,6 +258,7 @@ func _read_submaps(v: Variant) -> void:
 		sm.furn = _ids(s.get("furn"), what + ".furn")
 		sm.trap = _ids(s["trap"], what + ".trap") if s.has("trap") else _zeros()
 		sm.items = _piles(s.get("items"), what + ".items")
+		sm.fields = _fields(s.get("fields"), what + ".fields")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -343,9 +355,9 @@ func _piles(v: Variant, what: String) -> PackedInt32Array:
 	for i in (v as Array).size():
 		var p: Variant = v[i]
 		var w := "%s[%d]" % [what, i]
-		if (not p is Array or (p as Array).size() < 3 or (p as Array).size() > 4 or not p[2] is Array
+		if (not p is Array or (p as Array).size() < 3 or (p as Array).size() > 5 or not p[2] is Array
 				or (p[2] as Array).size() > 4):
-			_fail(w + ": expected [tile, count, [up to 4 itypes], corpse mtype (optional)]")
+			_fail(w + ": expected [tile, count, [up to 4 itypes], corpse mtype, corpse state (both optional)]")
 			return out
 		var tile := _int(p[0], 0, TILES - 1, w + ".tile")
 		var count := _int(p[1], 0, MAX_ITEM_COUNT, w + ".count")
@@ -358,6 +370,30 @@ func _piles(v: Variant, what: String) -> PackedInt32Array:
 		for k in 4:
 			out.append(_int(top[k], 0, MAX_ID, w + ".top") if k < top.size() else 0)
 		out.append(_int(p[3], 0, MAX_ID, w + ".corpse") if (p as Array).size() > 3 else 0)
+		out.append(_int(p[4], 0, 0xffff, w + ".corpse_state") if (p as Array).size() > 4 else 0)
+		if not is_valid():
+			return out
+	return out
+
+
+## [[tile, type, intensity, age], ...]: at most MAX_FIELDS_PER_TILE per tile.
+func _fields(v: Variant, what: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > TILES * MAX_FIELDS_PER_TILE:
+		_fail("%s: expected a list of at most %d fields" % [what, TILES * MAX_FIELDS_PER_TILE])
+		return out
+	for i in (v as Array).size():
+		var f: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not f is Array or (f as Array).size() != 4:
+			_fail(w + ": expected [tile, type, intensity, age]")
+			return out
+		out.append(_int(f[0], 0, TILES - 1, w + ".tile"))
+		out.append(_int(f[1], 0, MAX_ID, w + ".type"))
+		out.append(_int(f[2], 0, 255, w + ".intensity"))
+		out.append(_int(f[3], 0, 0xffff, w + ".age"))
 		if not is_valid():
 			return out
 	return out

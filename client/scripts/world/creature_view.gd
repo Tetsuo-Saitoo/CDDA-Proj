@@ -90,22 +90,25 @@ func _apply_corpses(snap: Snapshot, world: WorldView) -> void:
 			if m == 0 or want.size() >= MAX_CORPSES:
 				continue
 			var t := sm.items[j]
-			want[base + Vector3i(t % CddaCoords.SEEX, t / CddaCoords.SEEX, 0)] = m
+			want[base + Vector3i(t % CddaCoords.SEEX, t / CddaCoords.SEEX, 0)] = "%d:%d" % [m,
+					sm.items[j + Snapshot.PILE_CORPSE_STATE]]
 	for sq: Vector3i in _corpses.keys():
 		var f: CreatureFigure = _corpses[sq]
-		if want.get(sq, -1) != int(f.key.get_slice(":", 1)):
+		if "corpse:" + str(want.get(sq, "")) != f.key:
 			f.free()
 			_corpses.erase(sq)
 	for sq: Vector3i in want:
 		if _corpses.has(sq) or _falling_near(world.coords.ms_center_to_world(sq)):
 			continue
-		var d: IdTables.Def = world.tables.def_at("mtype", want[sq]) if world.tables != null else null
-		var f := CreatureFigure.make(Snapshot.Creature.MONSTER, d, "corpse:%d" % want[sq])
+		var mt := int(String(want[sq]).get_slice(":", 0))
+		var d: IdTables.Def = world.tables.def_at("mtype", mt) if world.tables != null else null
+		var f := CreatureFigure.make(Snapshot.Creature.MONSTER, d, "corpse:" + String(want[sq]))
 		f.name = "corpse_%d_%d_%d" % [sq.x, sq.y, sq.z]
 		add_child(f)
 		f.place(world.coords.ms_center_to_world(sq))
 		f.rotation.y = float(hash(sq) % 628) / 100.0
 		f.lie_dead()
+		f.show_corpse_state(int(String(want[sq]).get_slice(":", 1)))
 		f.z_level = sq.z
 		f.visible = sq.z <= view_z_max
 		_corpses[sq] = f
