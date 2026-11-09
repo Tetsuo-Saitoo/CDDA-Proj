@@ -1,5 +1,8 @@
 # WORKLOG
 
+- 2026-11-09 — Fork sends each creature's `attitude` to the player in snapshots (0 hostile, 1 neutral, 2 friendly; `attitude_to`), so the compass shows only real hostiles; contract updated; snapshot_test checks zombie/tame dog/player; snapshot, sim and client tests pass.
+- 2026-11-09 — Compass: small green/pale dots for friendly/neutral creatures; edge arrows moved clear of the degree readout.
+- 2026-11-09 — Compass: red arrows for perceived hostile creatures at their bearing (nearer = bigger/brighter, off-strip ones at the ends), optional snapshot `attitude` (monsters hostile without it), compass opacity slider in F1 saved to user://hud.cfg; compass_tests.gd (30 checks), client tests pass.
 - 2026-11-08 — Fixed: firing a gun crashed the game (target_ui's aim modes were never set up headless; `fp3d_init_aim` in ranged.cpp); sim test shoots a zombie (aim, fire, aim again, cancel); sim and live tests pass.
 - 2026-11-08 — VR tester asks: in-headset settings menu (left menu button; vignette off, turn off/snap/smooth, blink, move toward hand, swap sticks, speeds, saved to user://vr.json), controller layout auto/quest/vive with Vive/Index/WMR bindings added to the OpenXR action map, low-poly finger-tracked hands (OpenXR hand tracking, else fingers from trigger/grip/thumb); 41 new checks, client tests pass; hands and menu checked in a render; not tried in a headset.
 - 2026-11-08 — Context actions, second slice: E refuels a vehicle from a held can and fills a held container from water, a keg or a puddle; off-hand mark forgets items that left you; hold lists one-handed items only (message, no popup); off-hand strike uses the held item; VR controllers show held items + level gauge; sim test, client tests, live test pass.

@@ -1,15 +1,34 @@
 class_name Compass
 extends Control
 ## Heading strip at the top of the screen. CDDA's north is -z in Godot space (CDDA y points south).
+## Creatures the player perceives show under the strip at their bearing from the view, nearer = bigger and
+## brighter: hostiles as red arrows (ones behind the shown span point out from the strip's ends), others as
+## small dots, green when friendly, pale when neutral or unknown.
 
 const SPAN_DEG := 180.0   # degrees shown across the strip
 const LETTERS := {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
 const FONT_SIZE := 14
+const MAX_BLIPS := 64        # nearest hostiles drawn; the rest are left out
+const MAX_OTHER_BLIPS := 32  # nearest non-hostiles drawn
+const FAR_M := 40.0          # at this distance or more a marker is at its smallest and dimmest
+const HOSTILE_COLOR := Color(1.0, 0.18, 0.12)
+const FRIENDLY_COLOR := Color(0.3, 0.95, 0.4)
+const NEUTRAL_COLOR := Color(0.9, 0.9, 0.8)
 
 var heading_deg := 0.0:
 	set(v):
 		heading_deg = fposmod(v, 360.0)
 		queue_redraw()
+
+## 0 (invisible) .. 1 (opaque), the HUD setting (HudSettings.compass_opacity).
+var opacity := 1.0:
+	set(v):
+		opacity = HudSettings.clamp_opacity(v)
+		modulate.a = opacity
+
+## Vector3(bearing in degrees, distance in metres, Snapshot.Creature attitude HOSTILE/NEUTRAL/FRIENDLY) per
+## creature: hostiles nearest first, then the others nearest first (set_blips).
+var blips: Array[Vector3] = []
 
 
 ## Compass heading of a view (0 north, 90 east); looking straight down, up on screen counts as forward.
@@ -18,6 +37,62 @@ static func heading_of(b: Basis) -> float:
 	if Vector2(f.x, f.z).length() < 0.01:
 		f = b.y
 	return fposmod(rad_to_deg(atan2(f.x, -f.z)), 360.0)
+
+
+## Compass bearing (0 north, 90 east) from one Godot-space point to another; height doesn't count.
+static func bearing_deg(from: Vector3, to: Vector3) -> float:
+	return fposmod(rad_to_deg(atan2(to.x - from.x, from.z - to.z)), 360.0)
+
+
+## Where a bearing falls on the strip for a heading: -1 left end, 0 centre, 1 right end; beyond is off it.
+static func strip_pos(bearing: float, heading: float) -> float:
+	return wrapf(bearing - heading, -180.0, 180.0) / (SPAN_DEG / 2.0)
+
+
+## 1 for a creature next to you, falling to 0 at FAR_M.
+static func nearness(dist_m: float) -> float:
+	return clampf(1.0 - dist_m / FAR_M, 0.0, 1.0)
+
+
+## How a creature is marked: HOSTILE, FRIENDLY, or NEUTRAL (also when the bridge doesn't say); -1 for the player.
+static func marker_kind(c: Snapshot.Creature) -> int:
+	if c.kind == Snapshot.Creature.PLAYER:
+		return -1
+	if c.is_hostile():
+		return Snapshot.Creature.HOSTILE
+	return Snapshot.Creature.FRIENDLY if c.attitude == Snapshot.Creature.FRIENDLY else Snapshot.Creature.NEUTRAL
+
+
+## Blips for the snapshot's creatures as seen from `from` (Godot space); `to_world` maps an absolute square to
+## Godot space (CddaCoords.ms_center_to_world). The snapshot holds only creatures the player perceives.
+static func creature_blips(snap: Snapshot, from: Vector3, to_world: Callable) -> Array[Vector3]:
+	var hostile: Array[Vector3] = []
+	var others: Array[Vector3] = []
+	if snap == null:
+		return hostile
+	for c in snap.creatures:
+		var k := marker_kind(c)
+		if k < 0:
+			continue
+		var at: Vector3 = to_world.call(c.pos)
+		var b := Vector3(bearing_deg(from, at), Vector2(at.x - from.x, at.z - from.z).length(), k)
+		(hostile if k == Snapshot.Creature.HOSTILE else others).append(b)
+	var nearer := func(a: Vector3, b: Vector3) -> bool: return a.y < b.y
+	hostile.sort_custom(nearer)
+	others.sort_custom(nearer)
+	if hostile.size() > MAX_BLIPS:
+		hostile.resize(MAX_BLIPS)
+	if others.size() > MAX_OTHER_BLIPS:
+		others.resize(MAX_OTHER_BLIPS)
+	hostile.append_array(others)
+	return hostile
+
+
+func set_blips(list: Array[Vector3]) -> void:
+	if list == blips:
+		return
+	blips = list
+	queue_redraw()
 
 
 func _draw() -> void:
@@ -41,3 +116,45 @@ func _draw() -> void:
 	draw_line(Vector2(w / 2.0, 0), Vector2(w / 2.0, h), Color(1.0, 0.85, 0.2), 2.0)
 	var deg_text := "%d°" % (roundi(heading_deg) % 360)
 	draw_string(font, Vector2(w + 6, h - 5), deg_text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color.WHITE)
+	var readout := font.get_string_size("360°", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
+	_draw_blips(w, h, w + 6.0 + readout + 4.0)
+
+
+## Others under hostiles, farthest first, so the nearest is on top; one arrow per end for hostiles off the strip
+## (the nearest's, left of the strip and right of the degree readout, which ends at `right_x`); others off the
+## strip aren't shown.
+func _draw_blips(w: float, h: float, right_x: float) -> void:
+	for i in range(blips.size() - 1, -1, -1):
+		var b := blips[i]
+		var s := strip_pos(b.x, heading_deg)
+		if b.z == Snapshot.Creature.HOSTILE or absf(s) > 1.0:
+			continue
+		var t := nearness(b.y)
+		var r := lerpf(2.0, 3.5, t)
+		var col := FRIENDLY_COLOR if b.z == Snapshot.Creature.FRIENDLY else NEUTRAL_COLOR
+		draw_circle(Vector2(w / 2.0 + s * w / 2.0, h + 2.0 + r), r, Color(col, lerpf(0.4, 0.9, t)))
+	var edge := {-1: -1.0, 1: -1.0}   # side -> nearness of the nearest off-strip hostile there
+	for i in range(blips.size() - 1, -1, -1):
+		var b := blips[i]
+		if b.z != Snapshot.Creature.HOSTILE:
+			continue
+		var t := nearness(b.y)
+		var s := strip_pos(b.x, heading_deg)
+		if absf(s) > 1.0:
+			var side := 1 if s > 0.0 else -1
+			edge[side] = maxf(edge[side], t)
+			continue
+		var x := w / 2.0 + s * w / 2.0
+		var r := lerpf(4.0, 8.0, t)
+		var col := Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t))
+		var tip := Vector2(x, h + 1.0)   # points up at its bearing on the strip
+		draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(r, r * 1.6), tip + Vector2(-r, r * 1.6)]), col)
+	for side: int in edge:
+		var t: float = edge[side]
+		if t < 0.0:
+			continue
+		var r := lerpf(4.0, 8.0, t)
+		var back := -4.0 if side < 0 else right_x
+		var tip := Vector2(back + side * r * 1.6, h / 2.0)
+		draw_colored_polygon(PackedVector2Array([tip, Vector2(back, tip.y - r), Vector2(back, tip.y + r)]),
+				Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t)))

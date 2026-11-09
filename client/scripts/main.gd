@@ -34,6 +34,7 @@ var hud: Label
 var request_ui: RequestUI
 var key_menu: KeyMenu
 var compass: Compass
+var hud_settings := HudSettings.new()   # compass opacity (F1 menu, user://hud.cfg)
 var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
@@ -551,7 +552,7 @@ func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	hud = Label.new()
-	hud.position = Vector2(10, 40)
+	hud.position = Vector2(10, 50)   # under the compass's hostile markers
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
 	hud.add_theme_constant_override("outline_size", 4)
 	layer.add_child(hud)
@@ -563,6 +564,10 @@ func _setup_hud() -> void:
 	compass.offset_bottom = 32
 	compass.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(compass)
+	var why := hud_settings.load_file()
+	if why != "":
+		push_warning("HUD settings: " + why)
+	compass.opacity = hud_settings.compass_opacity
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -581,6 +586,8 @@ func _setup_hud() -> void:
 	layer.add_child(request_ui)
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
+	key_menu.add_hud_settings(hud_settings)
+	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
 	layer.add_child(key_menu)
 
 
@@ -661,6 +668,9 @@ func _process(_delta: float) -> void:
 	compass.visible = vr == null
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
+	if compass.visible:   # creatures the player perceives, by bearing from the view
+		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()
@@ -701,7 +711,7 @@ func _help() -> String:
 		out += "%s move  %s/%s up/down  %s fast  wheel speed  %s level  %s roofs  %s reload  %s player  %s first person" % [
 				walk, k.call(&"fly_up"), k.call(&"fly_down"), k.call(&"move_fast"), cut, k.call(&"roofs_toggle"),
 				k.call(&"reload"), k.call(&"frame_player"), k.call(&"view_toggle")]
-	return out + "  F1 keys"
+	return out + "  F1 keys, HUD"
 
 
 ## Live game: the CDDA action keys and the hands, from the current bindings.

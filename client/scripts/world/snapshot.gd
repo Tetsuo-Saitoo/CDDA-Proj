@@ -63,11 +63,22 @@ class Creature:
 	const PLAYER := 0
 	const NPC := 1
 	const MONSTER := 2
+	const UNKNOWN := -1   # attitudes: CDDA's Attitude (to the player) order; UNKNOWN when the bridge doesn't say
+	const HOSTILE := 0
+	const NEUTRAL := 1
+	const FRIENDLY := 2
 	var uid := 0
 	var kind := MONSTER
 	var type := 0        # mtype index (monsters), 0 otherwise
 	var pos := Vector3i.ZERO
 	var hp_frac := 255   # 0..255
+	var attitude := UNKNOWN
+
+	## Hostile to the player. Without an attitude from the bridge, monsters count as hostile and people don't.
+	func is_hostile() -> bool:
+		if kind == PLAYER:
+			return false
+		return attitude == HOSTILE or (attitude == UNKNOWN and kind == MONSTER)
 
 
 func is_valid() -> bool:
@@ -166,6 +177,8 @@ func _read_creatures(v: Variant) -> void:
 		c.type = _int(r.get("type", 0), 0, MAX_ID, what + ".type")
 		c.pos = _vec3i(r.get("pos"), MAX_ABS_SM * CddaCoords.SEEX, what + ".pos")
 		c.hp_frac = _int(r.get("hp_frac", 255), 0, 255, what + ".hp_frac")
+		if r.has("attitude"):
+			c.attitude = _int(r["attitude"], Creature.HOSTILE, Creature.FRIENDLY, what + ".attitude")
 		if not is_valid():
 			return
 		creatures.append(c)
