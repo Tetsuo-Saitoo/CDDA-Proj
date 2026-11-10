@@ -354,6 +354,18 @@ func _test_compass(root: Node, world: WorldView) -> void:
 	_check.call(wr.visible and not rig.compass.belt.visible and wr.arrow_count() == 2 and wr.dot_count() == 2
 			and wr.global_position.distance_to(rig.left.global_position) < 0.25 and wr.global_basis.y.x < -0.9,
 			"vr compass: on the back of the left wrist (box hand), creatures shown")
+	var lv: Array[Vector4] = [Vector4(90, 2, Snapshot.Creature.HOSTILE, 0), Vector4(270, 35, Snapshot.Creature.HOSTILE, 1),
+			Vector4(180, 50, Snapshot.Creature.NEUTRAL, -3), Vector4(0, 5, Snapshot.Creature.FRIENDLY, 0)]
+	var lay2 := VrCompass.layout(list, 1.0, PackedInt32Array([0, 1, -3, 0]))
+	rig.compass.set_level_blips(lv)
+	_check.call(lay2[1][0] == "ring" and lay2[2][0] == "ring" and lay2[0][0] == "arrow"
+			and is_equal_approx((lay2[1][3] as Color).a, (lay[1][3] as Color).a * Compass.OTHER_LEVEL_FADE)
+			and wr.arrow_count() == 1 and wr.dot_count() == 1 and wr.ring_count() == 2
+			and wr.chevron_counts() == Vector2i(1, 2) and rig.compass.blip_levels.size() == 4,
+			"vr compass: creatures on other levels are faint rings with up / down chevrons (two for 2+ levels)")
+	rig.compass.set_blips(list)
+	_check.call(wr.ring_count() == 0 and wr.arrow_count() == 2 and rig.compass.blip_levels.is_empty(),
+			"vr compass: plain blips clear the levels")
 	rig.settings["compass"] = "belt"
 	rig.place_compass()
 	var head := rig.camera.global_position

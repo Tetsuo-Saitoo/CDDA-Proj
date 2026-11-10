@@ -948,7 +948,7 @@ func _process(_delta: float) -> void:
 		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
-		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed

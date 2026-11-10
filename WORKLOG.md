@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR compass: creatures on other levels show as fainter rings with up / down chevrons (two for 2+ levels), from Compass.level_blips, like the flat compass.
 - 2026-11-10 — L2 VR items by hand: VR grip goes through the shared Hands layer (take into the gripping hand at once, put / drop where the hand lets go, over the shoulder into the worn bag, adopt what CDDA holds), grip hold / toggle setting, refusal buzz + note, weight lag and two-handed hold; old VR door-grab code removed; mock VR reaches from the headset.
 - 2026-11-10 — Furniture faces the room and multi-tile pieces join (user reports): rows face across the run, chairs their table, beds along themselves with the head at the wall (2x2 = one double bed), one table/bench/counter/sofa piece instead of one per tile; client tests pass; seen in mock renders, not live, not VR.
 - 2026-11-10 — Stairs rise toward the floor above; ramps are sloped wedges from their low end (L-shaped ditch creases cleanly); the look ray meets steps and slopes; client tests pass; seen in mock renders.
