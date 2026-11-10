@@ -4,8 +4,10 @@ extends PanelContainer
 ## count: Shift+E is its own key; a modifier alone binds when let go). Esc cancels, Backspace clears the
 ## slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
 ## kept on both and named in the status line. While open the menu takes every key, so nothing reaches the game.
+## With add_hud_settings() it also has the HUD row (compass opacity slider), saved in user://hud.cfg.
 
 signal closed
+signal hud_changed   # a HudSettings value changed (and was saved)
 
 const SLOTS := 2
 const WARN := Color(1.0, 0.75, 0.3)
@@ -15,6 +17,11 @@ var _buttons := {}            # action -> [Button, Button]
 var _status: Label
 var _capture: Array = []      # [action, slot] while waiting for a key
 var _pending_mod := KEY_NONE  # a modifier pressed while capturing, bound alone if let go first
+var _box: VBoxContainer
+var hud: HudSettings          # set by add_hud_settings
+var hud_path := HudSettings.FILE
+var compass_slider: HSlider
+var _compass_value: Label
 
 
 func _init() -> void:
@@ -29,6 +36,7 @@ func _init() -> void:
 	bg.set_content_margin_all(12)
 	add_theme_stylebox_override("panel", bg)
 	var box := VBoxContainer.new()
+	_box = box
 	add_child(box)
 	var title := Label.new()
 	title.text = "Keys: click a slot, then press a key or mouse button.  Esc cancels  Backspace clears  F1 / Esc closes"
@@ -77,8 +85,49 @@ func _init() -> void:
 		bar.add_child(b)
 
 
+## Adds the HUD row under the title: compass opacity 0..100 %.
+func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
+	hud = settings
+	hud_path = path
+	var row := HBoxContainer.new()
+	var l := Label.new()
+	l.text = "HUD   compass opacity"
+	row.add_child(l)
+	compass_slider = HSlider.new()
+	compass_slider.min_value = HudSettings.MIN_COMPASS_OPACITY
+	compass_slider.max_value = 1.0
+	compass_slider.step = 0.05
+	compass_slider.custom_minimum_size = Vector2(220, 0)
+	compass_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	compass_slider.focus_mode = Control.FOCUS_NONE   # keys stay with the menu
+	compass_slider.value = settings.compass_opacity
+	compass_slider.value_changed.connect(_on_compass_opacity)
+	row.add_child(compass_slider)
+	_compass_value = Label.new()
+	row.add_child(_compass_value)
+	_box.add_child(row)
+	_box.move_child(row, 1)
+	_show_compass_value()
+
+
+func _on_compass_opacity(v: float) -> void:
+	hud.compass_opacity = HudSettings.clamp_opacity(v)
+	_show_compass_value()
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Compass opacity not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _show_compass_value() -> void:
+	_compass_value.text = "%d %%" % roundi(hud.compass_opacity * 100.0)
+
+
 func open() -> void:
 	visible = true
+	if compass_slider != null:
+		compass_slider.set_value_no_signal(hud.compass_opacity)
+		_show_compass_value()
 	_capture = []
 	_status.text = "Saved in %s" % ProjectSettings.globalize_path(save_path)
 	refresh()

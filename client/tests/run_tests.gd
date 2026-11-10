@@ -29,6 +29,7 @@ func _initialize() -> void:
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 

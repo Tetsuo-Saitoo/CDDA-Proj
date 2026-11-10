@@ -56,6 +56,9 @@ struct creature_view {
     uint32 move_mode;             // move_mode index (characters) or 0
     uint8  hp_frac;               // 0..255
     uint32 wielded;               // itype index (characters) or 0
+    uint8  attitude;              // CDDA's Attitude to the player (attitude_to): 0 hostile, 1 neutral, 2 friendly
+                                  // (ANY and the player itself: 1). Sent since 2026-11-09; optional for older
+                                  // bridges: without it the client counts monsters as hostile, people not.
 };
 
 struct vehicle_view {
