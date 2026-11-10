@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.
 - 2026-11-10 — Test folders: `TestDir.clean()` no longer deletes other runs' folders (it asked `OS.is_process_running`, which only knows Godot's own children, so parallel runs in other worktrees wiped each other); a run's folder is stale only when its start stamp (else the folder's own time) is over 12 h old.
 - 2026-11-10 — Furniture faces the room and multi-tile pieces join (user reports): rows face across the run, chairs their table, beds along themselves with the head at the wall (2x2 = one double bed), one table/bench/counter/sofa piece instead of one per tile; client tests pass; seen in mock renders, not live, not VR.
 - 2026-11-10 — Stairs rise toward the floor above; ramps are sloped wedges from their low end (L-shaped ditch creases cleanly); the look ray meets steps and slopes; client tests pass; seen in mock renders.
