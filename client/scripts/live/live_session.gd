@@ -16,6 +16,12 @@ signal saved(ok: bool)
 ## What the hands hold (CddaSim.get_held): {seq, turn, main, off, activity}; on every change, also each turn
 ## while a fill runs.
 signal held_changed(held: Dictionary)
+## The character's testing cheats changed (CddaSim.get_cheats): {name: bool} for every name in CHEATS.
+signal cheats_changed(cheats: Dictionary)
+
+## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
+const CHEATS: PackedStringArray = ["invincible", "no_needs", "no_weight_limit", "unlimited_ammo", "stamina",
+		"no_temperature", "night_vision"]
 
 ## Levels sent around the player's z (the whole bubble is 21 levels, ~6 MB of JSON).
 const Z_BELOW := 1
@@ -32,6 +38,10 @@ var _sim: RefCounted
 var _saves_done := 0
 var _since_save := 0.0
 var _held_seq := 0
+var _cheats_seq := -1
+var _cheats := {}
+## The running game was started new (not loaded): --test gives its test kit only then.
+var new_game := false
 ## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
 var _snap_task := -1
 var _snap_job: SnapJob
@@ -47,6 +57,7 @@ static func available() -> bool:
 func start(data_dir: String, user_dir: String, world: String) -> bool:
 	if not _make_sim():
 		return false
+	new_game = true
 	error = _sim.start(data_dir, user_dir, world)
 	return error.is_empty()
 
@@ -59,6 +70,7 @@ func start_new_game(data_dir: String, user_dir: String, world: String, fresh_wor
 		world_setup := false) -> bool:
 	if not _make_sim():
 		return false
+	new_game = true
 	error = _sim.start_new_game(data_dir, user_dir, world, fresh_world, chargen, world_setup)
 	return error.is_empty()
 
@@ -67,6 +79,7 @@ func start_new_game(data_dir: String, user_dir: String, world: String, fresh_wor
 func start_load(data_dir: String, user_dir: String, world: String, save: String) -> bool:
 	if not _make_sim():
 		return false
+	new_game = false
 	error = _sim.start_load(data_dir, user_dir, world, save)
 	return error.is_empty()
 
@@ -98,6 +111,66 @@ func save(only_if_changed := false) -> bool:
 ## A save asked for and not finished.
 func save_pending() -> bool:
 	return _sim != null and _sim.has_method("get_save_status") and _sim.get_save_status().get("pending", false)
+
+
+## Turns a testing cheat on or off (applied at the sim's next request; cheats_changed follows). False for a name
+## not in CHEATS, without a running game or with a bridge that can't.
+func set_cheat(cheat: String, on: bool) -> bool:
+	if not cheat in CHEATS or not _can("set_cheat"):
+		return false
+	return bool(_sim.set_cheat(cheat, on))
+
+
+## The cheats as the sim has them now ({name: bool} for each of CHEATS; {} without a game). Asked each time, never
+## kept: the save and other callers change them.
+func cheats() -> Dictionary:
+	if not _can("get_cheats"):
+		return {}
+	return clean_cheats(_sim.get_cheats())
+
+
+## Only known names, only bools: the reply is the sim's, but a wrong one must not reach the UI as anything else.
+static func clean_cheats(d: Variant) -> Dictionary:
+	var out := {}
+	if not d is Dictionary or not d.get("cheats") is Dictionary:
+		return out
+	var c: Dictionary = d["cheats"]
+	for n in CHEATS:
+		var v: Variant = c.get(n, false)
+		out[n] = v if v is bool else false
+	return out
+
+
+## Test kits handed out since the sim started (0 without a game).
+func kits_given() -> int:
+	if not _can("get_cheats"):
+		return 0
+	var v: Variant = _sim.get_cheats().get("kits_given", 0)
+	return clampi(int(v), 0, 1 << 30) if (v is int or v is float) else 0
+
+
+## The test loadout (bridge give_test_kit) at the sim's next request. One per call: callers decide how often.
+func give_test_kit() -> bool:
+	return _can("give_test_kit") and bool(_sim.give_test_kit())
+
+
+## Real time pauses itself when a new hostile comes into view (on by default).
+func set_auto_pause(on: bool) -> bool:
+	if not _can("set_auto_pause"):
+		return false
+	_sim.set_auto_pause(on)
+	return true
+
+
+func auto_pause() -> bool:
+	if not _can("get_clock"):
+		return false
+	var v: Variant = _sim.get_clock().get("auto_pause", false)
+	return v if v is bool else false
+
+
+func _can(method: String) -> bool:
+	return _sim != null and state == "running" and _sim.has_method(method)
 
 
 func _make_sim() -> bool:
@@ -192,6 +265,7 @@ func _poll(delta: float) -> void:
 		if hs != _held_seq:
 			_held_seq = hs
 			held_changed.emit(held)
+	_poll_cheats()
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
 		events_arrived.emit(events)
@@ -203,6 +277,27 @@ func _poll(delta: float) -> void:
 	if r.get("id", 0) != request.get("id", 0):
 		request = r
 		request_changed.emit(r)
+
+
+## get_cheats' seq bumps every turn: cheats_changed only goes out when a value changed.
+func _poll_cheats() -> void:
+	if state != "running" or not _sim.has_method("get_cheats"):
+		if not _cheats.is_empty():   # the game ended: no cheats on screen any more
+			_cheats = {}
+			_cheats_seq = -1
+			cheats_changed.emit({})
+		return
+	var d: Variant = _sim.get_cheats()
+	if not d is Dictionary:
+		return
+	var seq: Variant = d.get("seq", 0)
+	if not (seq is int or seq is float) or int(seq) == _cheats_seq:
+		return
+	_cheats_seq = int(seq)
+	var c := clean_cheats(d)
+	if c != _cheats:
+		_cheats = c
+		cheats_changed.emit(c.duplicate())
 
 
 ## Starts or finishes the snapshot worker; true when no snapshot newer than the one shown is waiting.

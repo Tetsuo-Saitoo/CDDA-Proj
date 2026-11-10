@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Cheats page in the F1 menu (behind a debug setting, off by default, or --test / --cheats=): toggles for the bridge cheats, test kit, auto-pause; HUD marker while any cheat is on; --test gives the kit once per new game; client tests pass (1321); not tried live.
 - 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.
 - 2026-11-10 — Test folders: `TestDir.clean()` no longer deletes other runs' folders (it asked `OS.is_process_running`, which only knows Godot's own children, so parallel runs in other worktrees wiped each other); a run's folder is stale only when its start stamp (else the folder's own time) is over 12 h old.
 - 2026-11-10 — Item pointing fixes from lead-world's review: hit ball capped at 0.15 m, nothing pointable behind a closed model's doors, past the glyph cap or on a degenerate surface; Hands forgets freed door leaves, adds hovered() / set_proxy_pose() for VR; ItemActions doesn't read "not in the 256 carried shown" as moved; client tests pass (1290).

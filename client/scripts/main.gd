@@ -55,6 +55,8 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
+var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
@@ -392,6 +394,10 @@ func _start_live() -> void:
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
+	live.cheats_changed.connect(hud_data.set_cheats)
+	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
+	live.state_changed.connect(_apply_test_args)
+	cheat_panel.backend = live
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
@@ -444,6 +450,34 @@ func _menu_started(center: Control, ok: bool) -> void:
 	center.queue_free()
 	main_menu = null
 	_after_live_start(true)
+
+
+## --test: the test kit, once, and only for a new game (never on a load: the save already has it).
+## --cheats=a,b: those cheats on (names from LiveSession.CHEATS; others are named and skipped). Both also make
+## the F1 menu's Cheats page available this session. Applied when the game first runs (after character creation).
+func _apply_test_args(s: String) -> void:
+	if s != "running" or _test_args_done:
+		return
+	_test_args_done = true
+	if _args.has("test") and live.new_game:
+		print("live: test kit " + ("asked for" if live.give_test_kit() else "refused"))
+	if _args.has("cheats"):
+		for n in cheat_names(String(_args["cheats"])):
+			if n in LiveSession.CHEATS:
+				if not live.set_cheat(n, true):
+					push_warning("--cheats: %s refused" % n)
+			else:
+				push_warning("--cheats: unknown cheat \"%s\" (known: %s)" % [n, ", ".join(LiveSession.CHEATS)])
+
+
+## The names in a --cheats= value: comma-separated, trimmed, at most 16, each cut to 32 characters.
+static func cheat_names(v: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	for n in v.left(1024).split(",", false):
+		n = n.strip_edges().left(32)
+		if not n.is_empty() and not n in out and out.size() < 16:
+			out.append(n)
+	return out
 
 
 func _after_live_start(ok: bool) -> void:
@@ -881,6 +915,9 @@ func _setup_hud() -> void:
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
 	key_menu.add_hud_settings(hud_settings)
+	cheat_panel = CheatPanel.new()
+	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
+	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
 	layer.add_child(key_menu)
 
