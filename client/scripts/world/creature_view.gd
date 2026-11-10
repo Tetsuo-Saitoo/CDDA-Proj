@@ -8,6 +8,7 @@ extends Node3D
 
 const SNAP_DIST_M := 2.6      # a jump longer than this (teleport, first sight) isn't animated
 const LINGER_S := 0.6
+const MAX_CORPSES := 256
 const MIN_MOVE_S := 0.12
 const MAX_MOVE_S := 0.7
 const NAME_RANGE_M := 25.0
@@ -27,8 +28,11 @@ var view_z_max := CddaCoords.Z_MAX:
 		view_z_max = z
 		for f: CreatureFigure in _figs.values():
 			f.visible = f.z_level <= z
+		for f: CreatureFigure in _corpses.values():
+			f.visible = f.z_level <= z
 
 var _figs := {}        # uid -> CreatureFigure
+var _corpses := {}     # square -> CreatureFigure lying there (bodies in item piles, by monster type)
 var _gone := {}        # uid -> [CreatureFigure, seconds left]
 var _dying: Array[CreatureFigure] = []
 var _snap: Snapshot
@@ -72,6 +76,54 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		if not seen.has(uid):
 			_gone[uid] = [_figs[uid], LINGER_S]
 			_figs.erase(uid)
+	_apply_corpses(snap, world)
+
+
+## Bodies: a pile whose largest corpse is a known monster gets that monster's figure lying on the square.
+## Kept while the pile says so; a square where a creature is still falling waits for the next snapshot.
+func _apply_corpses(snap: Snapshot, world: WorldView) -> void:
+	var want := {}
+	for sm: Snapshot.Submap in snap.submaps.values():
+		var base := CddaCoords.sm_to_ms(sm.pos)
+		for j in range(0, sm.items.size() - Snapshot.PILE_STRIDE + 1, Snapshot.PILE_STRIDE):
+			var m := sm.items[j + Snapshot.PILE_CORPSE]
+			if m == 0 or want.size() >= MAX_CORPSES:
+				continue
+			var t := sm.items[j]
+			want[base + Vector3i(t % CddaCoords.SEEX, t / CddaCoords.SEEX, 0)] = "%d:%d" % [m,
+					sm.items[j + Snapshot.PILE_CORPSE_STATE]]
+	for sq: Vector3i in _corpses.keys():
+		var f: CreatureFigure = _corpses[sq]
+		if "corpse:" + str(want.get(sq, "")) != f.key:
+			f.free()
+			_corpses.erase(sq)
+	for sq: Vector3i in want:
+		if _corpses.has(sq) or _falling_near(world.coords.ms_center_to_world(sq)):
+			continue
+		var mt := int(String(want[sq]).get_slice(":", 0))
+		var d: IdTables.Def = world.tables.def_at("mtype", mt) if world.tables != null else null
+		var f := CreatureFigure.make(Snapshot.Creature.MONSTER, d, "corpse:" + String(want[sq]))
+		f.name = "corpse_%d_%d_%d" % [sq.x, sq.y, sq.z]
+		add_child(f)
+		f.place(world.coords.ms_center_to_world(sq))
+		f.rotation.y = float(hash(sq) % 628) / 100.0
+		f.lie_dead()
+		f.show_corpse_state(int(String(want[sq]).get_slice(":", 1)))
+		f.z_level = sq.z
+		f.visible = sq.z <= view_z_max
+		_corpses[sq] = f
+
+
+func _falling_near(at: Vector3) -> bool:
+	for f: CreatureFigure in _dying:
+		if not f.done and f.position.distance_to(at) < 0.6:
+			return true
+	return false
+
+
+## Bodies lying on the ground (tests).
+func corpse_count() -> int:
+	return _corpses.size()
 
 
 ## Events from the bridge (contracts/events.md); anything malformed is skipped.
@@ -131,6 +183,8 @@ func shift(d: Vector3) -> void:
 	for g: Array in _gone.values():
 		(g[0] as CreatureFigure).shift(d)
 	for f in _dying:
+		f.shift(d)
+	for f: CreatureFigure in _corpses.values():
 		f.shift(d)
 
 

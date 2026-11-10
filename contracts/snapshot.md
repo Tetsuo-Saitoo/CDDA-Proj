@@ -43,7 +43,7 @@ struct submap_view {              // parallel arrays, index = y * 12 + x
     std::vector<item_pile_view> items;   // tiles with vis == 2 only (cap 144)
     std::vector<field_view>     fields;  // tiles with vis == 2 only (cap 4 per tile)
 };
-struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; };   // itype indices, largest volume first
+struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state; };   // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
 struct field_view     { uint8 tile; uint32 type; uint8 intensity; uint16 age_turns; };   // type = CDDA int id
 
 struct creature_view {
@@ -101,7 +101,7 @@ temperature, map memory contents (the client keeps what it last saw on remembere
 ## JSON (mock data)
 
 `fp3d-headless <out.json> [z_below] [z_above]` writes a snapshot of a town with the same field names, submaps
-limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]`, fields as
+limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` or `[tile, count, [top4], corpse_mtype, corpse_state]`, fields as
 `[tile, type, intensity, age]`, vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
 `ids_generation` and `ids`: the names of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`). Session tables and
 all definitions are in the id tables JSON (4th argument). Mock: `mock/snapshot_town.json` with

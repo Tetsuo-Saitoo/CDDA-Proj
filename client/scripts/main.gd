@@ -8,7 +8,9 @@ extends Node3D
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
 ## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
 ## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
-## --live plays a new CDDA game through the bridge instead (--cdda=<absolute dir> overrides ../cdda): the
+## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
+## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
+## fresh world fp3d-live), --world=/--save= load directly. In the game the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
 ## (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
@@ -32,12 +34,17 @@ var first_person := true
 var sun: DirectionalLight3D
 var hud: Label
 var request_ui: RequestUI
+var main_menu: MainMenu
 var key_menu: KeyMenu
 var compass: Compass
 var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var gore: GoreView               # blood, gibs and bile fields on the ground
+var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
+var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
+var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
 var _demo_step := 0
 var live: LiveSession
@@ -78,6 +85,20 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(fp.shift)
 	world.coords.origin_shifted.connect(creature_view.shift)
 	_setup_hud()
+	gore = GoreView.new()
+	add_child(gore)
+	world.coords.origin_shifted.connect(gore.shift)
+	explosions = ExplosionView.new(world)
+	add_child(explosions)
+	world.coords.origin_shifted.connect(explosions.shift)
+	request_ui.get_parent().add_child(explosions.flash_rect)
+	aim = AimController.new(world, request_ui)
+	add_child(aim)
+	request_ui.get_parent().add_child(aim.crosshair)
+	request_ui.get_parent().move_child(aim.crosshair, request_ui.get_index())
+	viewmodel = WeaponViewmodel.new()
+	fp.add_child(viewmodel)
+	aim.fired.connect(viewmodel.kick)
 	var view := FirstPersonCamera.view_from_args(_args)
 	if _args.has("view") and _args["view"] != view:
 		push_warning("--view= takes first or outside; starting in %s" % view)
@@ -151,6 +172,8 @@ func _show(snap: Snapshot) -> void:
 	var n := world.apply_snapshot(snap)
 	creature_view.show_player = not _fp_active()   # in first person you are the player
 	creature_view.apply(snap, world)
+	gore.view_z_max = world.view_z_max
+	gore.apply(snap, world)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -275,13 +298,42 @@ func _start_live() -> void:
 			live.error = "no saves in world %s (worlds: %s)" % [w, ", ".join(LiveSession.list_worlds(user_dir))]
 		else:
 			ok = live.start_load(data_dir, user_dir, w, s)
+	elif _args.has("quick"):
+		ok = live.start(data_dir, user_dir, LIVE_WORLD)
 	else:
-		var saves := LiveSession.list_saves(user_dir, LIVE_WORLD)
-		if saves.is_empty() or _args.has("new"):
-			ok = live.start(data_dir, user_dir, LIVE_WORLD)
-		else:
-			print("live: continuing %s in %s (--new starts over)" % [saves[0], LIVE_WORLD])
-			ok = live.start_load(data_dir, user_dir, LIVE_WORLD, saves[0])
+		_show_main_menu(data_dir, user_dir)
+		return
+	_after_live_start(ok)
+
+
+## --live without --world/--save/--quick: CDDA's main menu (MainMenu), then a new game (character creation
+## through a `chargen` request, ChargenRequestWidget) or a load.
+func _show_main_menu(data_dir: String, user_dir: String) -> void:
+	main_menu = MainMenu.new()
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.add_child(main_menu)
+	request_ui.get_parent().add_child(center)
+	main_menu.setup(LiveSession.list_worlds(user_dir),
+			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
+	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool) -> void:
+		_menu_started(center, live.start_new_game(data_dir, user_dir, w, fresh, chargen)))
+	main_menu.load_game.connect(func(w: String, sv: String) -> void:
+		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
+	main_menu.quit_requested.connect(_quit)
+	status = "main menu"
+
+
+func _menu_started(center: Control, ok: bool) -> void:
+	if not ok:
+		main_menu.set_message(live.error)
+		return
+	center.queue_free()
+	main_menu = null
+	_after_live_start(true)
+
+
+func _after_live_start(ok: bool) -> void:
 	if ok:
 		status = "game booting (~30 s)"
 	else:
@@ -362,6 +414,7 @@ func _on_request_answered(a: Dictionary) -> void:
 
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
+	explosions.on_events(events)
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
@@ -501,6 +554,15 @@ func _wielded_name() -> String:
 	return CddaText.plain(d.name).left(60) if d != null and d.name != "" else "item #%d" % idx
 
 
+func _update_aim() -> void:
+	aim.first_person = _fp_active()
+	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	var t := request_ui.target_widget()
+	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
+	viewmodel.visible = _fp_active()
+	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
+
+
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
@@ -578,6 +640,10 @@ func _setup_hud() -> void:
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.answered.connect(_on_request_answered)
+	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
+		for a in acts:
+			if live != null:
+				live.queue_action(a))
 	layer.add_child(request_ui)
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
@@ -659,6 +725,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
+	_update_aim()
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
@@ -732,6 +799,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
+		return
+	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
 		var mb := event as InputEventMouseButton

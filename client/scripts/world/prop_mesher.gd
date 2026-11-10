@@ -176,6 +176,8 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		var xf: Transform3D = placed[k][0]
 		var itype: int = placed[k][1]
 		var prop := _cat.item(itype)
+		if prop.shape == "item_corpse" and pile[Snapshot.PILE_CORPSE] != 0:
+			continue   # CreatureView lays the body there
 		if prop.shape.is_empty():
 			if r.glyphs.size() < MAX_GLYPHS:
 				r.glyphs.append([xf.origin + Vector3(0, 0.3, 0), prop.symbol, prop.accent])

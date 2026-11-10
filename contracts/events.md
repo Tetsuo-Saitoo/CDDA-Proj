@@ -31,7 +31,7 @@ struct event {
 | `attack` | attacker | target | target's square | | | `itype` weapon (0 unarmed / monster) | 1 hit, 0 miss | | the player sees either | `Character::melee_attack_abstract`, `monster::melee_attack` |
 | `damage` | target | | target's square | HP lost | | `damage_type` (largest share) | `body_part` | | the player sees the target | `Creature::deal_damage` |
 | `projectile` | shooter | creature hit | where it stopped | | | `itype` thrown item / arrow (0 bullets) | | path from the shooter's square (cap 256) | the player sees any square of it, the shooter or the hit | `projectile_attack` (ballistics.cpp) |
-| `explosion` | | | centre | radius | | `explosion`: blast, fire_blast, flashbang, shockwave | | blast area (cap 1024) | the player sees the centre or any square | `do_blast`, `flashbang`, `shockwave` |
+| `explosion` | | | centre | radius | | `explosion`: blast, fire_blast, flashbang, shockwave | `itype` of what exploded (grenade, C4, rocket ammo; 0 unknown) | text = the kind name; path = blast area (cap 1024) | the player sees the centre or any square | `do_blast`, `flashbang`, `shockwave` |
 | `death` | the dead | | where | | | `mtype` (monsters) | | | the player sees it | `monster::die`, `Character::die` |
 | `anim` | busy character | | where | | | `activity` (e.g. ACT_WAIT) | | | the player sees them | `Character::assign_activity` |
 | `turn_end` | | | | | | | | | every turn | `do_turn` |

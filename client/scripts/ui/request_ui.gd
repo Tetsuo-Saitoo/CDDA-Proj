@@ -8,6 +8,8 @@ extends Control
 ## doesn't use fall through (WASD still flies the camera). Native UIs (block G) can later take over kinds.
 
 signal answered(answer: Dictionary)
+## Main-loop actions to queue once the answer has gone (e.g. quick reload: reload_weapon, then fire again).
+signal queue_after(actions: PackedStringArray)
 
 const PANEL_WIDTH := 580.0
 ## Kinds shown low on the screen, so the world they point into stays visible.
@@ -64,6 +66,7 @@ func show_request(req: Dictionary) -> bool:
 	widget.answered.connect(_on_answered)
 	_panel.add_child(widget)
 	widget.setup(req)
+	_panel.custom_minimum_size.x = maxf(PANEL_WIDTH, widget.custom_minimum_size.x)
 	var low: bool = kind in LOW_KINDS
 	_bottom.size_flags_vertical = Control.SIZE_FILL if low else Control.SIZE_EXPAND_FILL
 	_bottom.custom_minimum_size.y = 40.0 if low else 0.0
@@ -83,6 +86,8 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 			return DirectionRequestWidget.new()
 		"target":
 			return TargetRequestWidget.new()
+		"chargen":
+			return ChargenRequestWidget.new()
 	return PopupRequestWidget.new()   # popup; unknown kinds get their text and Cancel
 
 
@@ -120,6 +125,12 @@ func set_target_cursor(pos: Vector3i) -> bool:
 	return true
 
 
+## The showing target request's widget, or null.
+func target_widget() -> TargetRequestWidget:
+	var t := widget as TargetRequestWidget
+	return t if t != null and not t.done else null
+
+
 func _input(event: InputEvent) -> void:
 	if visible and handle_input(event):
 		get_viewport().set_input_as_handled()
@@ -127,4 +138,8 @@ func _input(event: InputEvent) -> void:
 
 func _on_answered(a: Dictionary) -> void:
 	clear()
+	var then: Variant = a.get("then")
+	a.erase("then")
 	answered.emit(a)
+	if then is PackedStringArray and not (then as PackedStringArray).is_empty():
+		queue_after.emit(then)

@@ -184,6 +184,104 @@ func hurt() -> void:
 	_set_overlay(_hurt_material())
 
 
+## A body on the ground (a corpse in an item pile): lying as after the death fall, darker, no animation.
+func lie_dead() -> void:
+	_body.rotation.x = PI / 2.0
+	dying = false
+	_die_t = -1.0
+	for m in _parts:
+		var mat := m.material_override as StandardMaterial3D
+		if mat != null:
+			mat = mat.duplicate() as StandardMaterial3D
+			mat.albedo_color = mat.albedo_color.darkened(0.35)
+			m.material_override = mat
+
+
+const RAW := Color(0.62, 0.2, 0.2)          # skinned flesh
+const GUTS := [Color(0.45, 0.08, 0.1), Color(0.55, 0.25, 0.35), Color(0.35, 0.05, 0.08)]
+const BLOOD_POOL := Color(0.28, 0.02, 0.03, 0.85)
+
+var corpse_state := 0       # Snapshot.CORPSE_* bits shown (lie_dead figures)
+
+
+## A body's butchery state (Snapshot.CORPSE_* bits) on a lie_dead figure: a blood pool unless bled,
+## raw flesh when skinned, opened with viscera beside it when field dressed (more, darker when it failed),
+## limbs and head pulled apart when quartered, flattened when pulped, only scattered chunks when gibbed.
+## Built once per state; deterministic (no random), so rebuilding gives the same look.
+func show_corpse_state(bits: int) -> void:
+	corpse_state = bits
+	var s := scale_f
+	var gore := Node3D.new()
+	gore.name = "gore"
+	add_child(gore)
+	if bits & Snapshot.CORPSE_GIBBED:
+		_body.visible = false
+		for i in 7:
+			var a := i * 2.4
+			var r := (0.15 + 0.1 * (i % 3)) * s
+			_gore_part(gore, _sphere((0.05 + 0.02 * (i % 2)) * s), Vector3(cos(a) * r * 2.0, 0.04 * s, sin(a) * r * 2.0),
+					GUTS[i % GUTS.size()] if i % 3 else _tint_of_parts())
+		_pool(gore, 0.7 * s)
+		return
+	if not (bits & Snapshot.CORPSE_BLED):
+		_pool(gore, 0.55 * s)
+	if bits & Snapshot.CORPSE_SKINNED:
+		_recolour(RAW)
+	if bits & (Snapshot.CORPSE_FIELD_DRESSED | Snapshot.CORPSE_DRESS_FAILED):
+		var failed := (bits & Snapshot.CORPSE_DRESS_FAILED) != 0
+		for i in (6 if failed else 4):
+			var at := Vector3((0.28 + 0.07 * (i % 3)) * s, 0.05 * s, 0.35 * top + 0.09 * i * s)
+			var g := _gore_part(gore, _sphere((0.06 + 0.015 * (i % 2)) * s), at, GUTS[i % GUTS.size()].darkened(0.3 if failed else 0.0))
+			g.scale = Vector3(1.4, 0.6, 1.0)
+		_gore_part(gore, _box(Vector3(0.12, 0.02, 0.3) * s), Vector3(0, 0.16 * s, 0.6 * top), GUTS[0])   # opened belly
+	if bits & Snapshot.CORPSE_QUARTERED:
+		for i in _limbs.size():
+			var l := _limbs[i]
+			# body-local x is sideways on the ground (the lying body is turned about x)
+			var out := Vector3(signf(l.position.x) if absf(l.position.x) > 0.001 else (1.0 if i % 2 else -1.0), 0, 0)
+			l.position += out * 0.3 * s
+		if _head != null and _head != _spine:
+			_head.position += _head.position.normalized() * 0.25 * s
+	if bits & Snapshot.CORPSE_PULPED:
+		_body.scale = Vector3(1.15, 1.15, 0.35)   # the body lies on its back: local z is up
+		_recolour(RAW.darkened(0.3))
+
+
+func _tint_of_parts() -> Color:
+	var m := _parts[0].material_override as StandardMaterial3D if not _parts.is_empty() else null
+	return m.albedo_color if m != null else RAW
+
+
+func _recolour(c: Color) -> void:
+	for m in _parts:
+		var mat := m.material_override as StandardMaterial3D
+		if mat != null:
+			mat = mat.duplicate() as StandardMaterial3D
+			mat.albedo_color = c.lerp(mat.albedo_color, 0.25)
+			m.material_override = mat
+
+
+func _gore_part(parent: Node3D, mesh: Mesh, at: Vector3, c: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = at
+	mi.material_override = _material(c)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	return mi
+
+
+func _pool(parent: Node3D, r: float) -> void:
+	var c := CylinderMesh.new()
+	c.top_radius = r
+	c.bottom_radius = r
+	c.height = 0.01
+	c.radial_segments = 20
+	var mi := _gore_part(parent, c, Vector3(0, 0.012, 0), BLOOD_POOL)
+	(mi.material_override as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mi.scale = Vector3(1.0, 1.0, 0.7)
+
+
 func die() -> void:
 	dying = true
 	_die_t = 0.0

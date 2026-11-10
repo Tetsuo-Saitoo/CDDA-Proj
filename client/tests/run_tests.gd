@@ -27,6 +27,7 @@ func _initialize() -> void:
 	await process_frame   # the root is in the tree from here on: the VR rig needs global transforms
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 
@@ -417,7 +418,7 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	var sm: Snapshot.Submap = null
 	for p: Vector3i in snap.submaps:
 		var s: Snapshot.Submap = snap.submaps[p]
-		if s.items.size() == 18 and s.furn[at.call(5, 5)] == tables.index_of("furn", "f_table"):
+		if s.items.size() == 3 * Snapshot.PILE_STRIDE and s.furn[at.call(5, 5)] == tables.index_of("furn", "f_table"):
 			sm = s
 	terrain.set_snapshot(snap)
 	cat.set_snapshot(snap)
@@ -430,7 +431,7 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	_check(r2.vertices == r.vertices and r2.props.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == r.props.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
 			"rebuilding gives the same mesh")
 
-	var pile := func(k: int) -> Array: return pm.pile_transforms(sm, base, sm.items.slice(k * 6, k * 6 + 6), {})
+	var pile := func(k: int) -> Array: return pm.pile_transforms(sm, base, sm.items.slice(k * Snapshot.PILE_STRIDE, (k + 1) * Snapshot.PILE_STRIDE), {})
 	var on_table: Array = pile.call(0)
 	_check(on_table.size() == 3 and on_table.all(func(e: Array) -> bool: return absf((e[0] as Transform3D).origin.y - 0.77) < 0.001),
 			"items rest on the table top")
