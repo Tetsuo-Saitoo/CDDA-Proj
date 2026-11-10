@@ -75,9 +75,14 @@ made.
 
 ## Placement (client, block C3)
 
-Props stand at the tile centre plus `offset`, scaled by `scale`. Facing in 90° steps: toward a neighbour in
-the prop's `rotates_to` groups, seats with ALIGN_WORKBENCH toward a FLAT_SURF neighbour, anything else with
-its back to a wall; `random_yaw` turns it freely (hash of the square, so it never changes between rebuilds).
+Props stand at the tile centre plus `offset`, scaled by `scale`. Facing in 90° steps, from the neighbours
+(CDDA sends no per-tile rotation): joined tiles (same id or connect groups) face together. A straight run of
+row furniture (counters, shelves, benches, sofas...) faces across the run; a bed or bathtub block faces along
+itself with the head at the wall, split into beds 2 long and 1-2 wide; other blocks share one facing. The
+score favours the prop's `rotates_to` groups, seats toward a FLAT_SURF neighbour, the front onto walkable floor
+and the back to a wall; ties go by a hash of the piece. Runs past 12 tiles and blocks past 24 face tile by tile.
+Placeholder shapes draw joined tiles as one piece; models are still one per tile. `random_yaw` turns a prop
+freely (hash of the square, so it never changes between rebuilds) and never joins.
 Item piles show up to 8 items (the snapshot's top 4 by volume, then small clutter) on 4 × 4 sub-tile slots
 picked by a hash of the square, sized by volume (models keep their real size), on the surfaces of the tile's
 furniture (tables, shelves; a furniture model's `surface_N` planes when it has them, with the slots spread
