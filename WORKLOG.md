@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Bridge: item actions `throw` and `pour` through `queue_item_action` (pour goes to exactly one place: a square or a container); `range_rebuild_zone(zone)` for lead-qa's rebuild op; wielded_gun lists every fault the gun has; main, fp3d and QA's range slice 2 merged into the bridge branches.
 - 2026-11-10 — Snapshot `player.effects` {id, name, body_part, intensity, rating, seconds_left} for the HUD; id tables: item types' container `pockets` {name, volume_ml, max_weight_g, max_item_ml, flags}; sim test's real-time check tolerates a loaded machine. Snapshot and id-table test checks.
 - 2026-11-10 — Jams apply to the wielded gun only (turret guns and jams that can't be cleared keep CDDA's behaviour); sim check fires a jammed gun nobody holds.
 - 2026-11-10 — lead-qa review fixes (UI): the F1 menu's text fields keep their keys (CDDA prompts wait while it is open); shoulder and top views aim, grab and look from in front of the player and fly bullets from the eyes, top-down mouse-look aims along the facing; range info read once a second unless ops wait, at most 16 ops waiting; B backs out of a key slot set from the pad; the jam hint names the bound reload key. Client tests pass.
