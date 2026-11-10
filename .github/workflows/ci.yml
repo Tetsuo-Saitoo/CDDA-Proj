@@ -1,0 +1,70 @@
+# CI (PLAN.md A3): Linux. The steps live in tools/build/ci_linux.sh, so a WSL or Linux checkout runs the same
+# thing (docs/BUILD.md "CI"). No secrets: the token is read-only and both repos are public.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GODOT_CPP_COMMIT: e103d348c4b2d8df7b819126d855e19381cb9a87   # docs/BUILD.md step 5
+
+jobs:
+  client:
+    name: Client tests (mock town)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Godot 4.7.2 (pinned SHA-256)
+        run: echo "GODOT=$(bash tools/build/ci_godot.sh "$RUNNER_TEMP/godot")" >>"$GITHUB_ENV"
+      - name: run_tests.gd
+        run: bash tools/build/ci_linux.sh client-tests
+      - name: Perf budget (mock town)
+        run: PERF_SCALE=3 bash tools/build/ci_linux.sh perf
+
+  linux:
+    name: Fork, bridge, fork tests, live test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends ninja-build pkg-config ccache \
+            libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libfreetype-dev zlib1g-dev libbz2-dev
+      - name: godot-cpp
+        run: |
+          git init -q bridge/godot-cpp
+          git -C bridge/godot-cpp fetch -q --depth 1 https://github.com/godotengine/godot-cpp "$GODOT_CPP_COMMIT"
+          git -C bridge/godot-cpp checkout -q FETCH_HEAD
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - name: Godot 4.7.2 (pinned SHA-256)
+        run: echo "GODOT=$(bash tools/build/ci_godot.sh "$RUNNER_TEMP/godot")" >>"$GITHUB_ENV"
+      - name: Build (fp3d tests, bridge)
+        run: bash tools/build/ci_linux.sh build && ccache -s
+      - name: Fork tests
+        run: bash tools/build/ci_linux.sh fork-tests
+      - name: Live test
+        run: bash tools/build/ci_linux.sh live-test
+      - name: Perf budget (live game)
+        run: PERF_SCALE=3 bash tools/build/ci_linux.sh perf-live

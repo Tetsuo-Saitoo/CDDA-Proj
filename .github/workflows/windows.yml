@@ -1,0 +1,58 @@
+# Windows CI (PLAN.md A3), by hand only: a cold MSVC build of CDDA plus vcpkg's SDL2 takes hours on a hosted
+# runner. Builds the fork's fp3d tests and the bridge DLL with preset fp3d-msvc-ci (tools/build/
+# CMakeUserPresets.json) and runs the fork tests. The client and live tests run in the Linux workflow.
+name: Windows
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GODOT_CPP_COMMIT: e103d348c4b2d8df7b819126d855e19381cb9a87   # docs/BUILD.md step 5
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-cache,readwrite
+
+jobs:
+  windows:
+    name: Fork, bridge, fork tests (MSVC)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: godot-cpp
+        run: |
+          git init -q bridge/godot-cpp
+          git -C bridge/godot-cpp fetch -q --depth 1 https://github.com/godotengine/godot-cpp $env:GODOT_CPP_COMMIT
+          git -C bridge/godot-cpp checkout -q FETCH_HEAD
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ hashFiles('cdda/msvc-full-features/vcpkg.json') }}
+      - name: Configure
+        run: |
+          New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
+          Copy-Item tools/build/CMakeUserPresets.json cdda/
+          cd cdda
+          cmake --preset fp3d-msvc-ci
+      - name: Build
+        run: |
+          cd cdda
+          cmake --build out/build/fp3d-msvc-ci --config RelWithDebInfo --parallel 4 --target `
+            fp3d-sim-test fp3d-snapshot-test fp3d-events-test fp3d-ids-test fp3d-chargen-test fp3d-cdda
+      - name: Fork tests
+        run: |
+          cd cdda
+          $failed = @()
+          foreach ($t in 'fp3d-sim-test','fp3d-snapshot-test','fp3d-events-test','fp3d-ids-test','fp3d-chargen-test') {
+            Write-Host "== $t"
+            & "out/build/fp3d-msvc-ci/src/fp3d/RelWithDebInfo/$t.exe"
+            if ($LASTEXITCODE -ne 0) { $failed += $t }
+          }
+          if ($failed.Count -gt 0) { throw "FAILED: $($failed -join ', ')" }
