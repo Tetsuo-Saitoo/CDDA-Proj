@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Look line follows the player (user bug): its start is redrawn from the chest every frame (`_update_look_line`), its end stays on the looked-at point; was left floating where you clicked.
 - 2026-11-10 — Planned the test range (PLAN.md K7, user): a generated world with every weapon, item, vehicle, monster (AI frozen), furniture and terrain, toggleable cheats, tests default there; owner QA lead.
 - 2026-11-10 — VR comfort leftovers: settings menu laser pointer, left-handed mode (`main_hand`), seated height + "Calibrate height" (`height`, `--vr-height`, `--vr-main-hand`); compass on the off wrist; client tests pass; not tried in a headset.
 - 2026-11-10 — VR compass: rose on the left wrist (turned to north, red hostile arrows, creature dots, head tick) and an optional belt ring, from Compass's logic and blips; VR setting `compass` (wrist/belt/both/off), HUD opacity; client tests pass (756); not seen in a headset.

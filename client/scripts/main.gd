@@ -42,6 +42,7 @@ var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows the player (_update_look_line)
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
@@ -565,10 +566,7 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
 		return r
-	# From the chest: in first person a line from the eyes would run straight away from the view.
-	var from := world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
-	if _fp_active():
-		from = fp.global_position - Vector3(0, 0.6, 0)
+	var from := _look_from()
 	var me := world.coords.world_to_ms(from)
 	var sq: Vector3i = r["square"]
 	var d := sq - me
@@ -579,9 +577,30 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	lines.append_array(look_ray.describe(sq))
 	look_panel.text = "
 ".join(lines)
-	_look_line = _line_mesh(from, r["point"])
+	_look_end = r["point"]
+	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
 	return r
+
+
+## Where the look line starts: the chest (in first person a line from the eyes would run straight away from the view).
+func _look_from() -> Vector3:
+	if _fp_active():
+		return fp.global_position - Vector3(0, 0.6, 0)
+	return world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
+
+
+## Keeps the look line's start on the player as they move; the end stays on the looked-at point.
+func _update_look_line() -> void:
+	if _look_line == null or world.snapshot == null:
+		return
+	var im := _look_line.mesh as ImmediateMesh
+	var mat := im.surface_get_material(0)
+	im.clear_surfaces()
+	im.surface_begin(Mesh.PRIMITIVE_LINES, mat)
+	im.surface_add_vertex(_look_from())
+	im.surface_add_vertex(_look_end)
+	im.surface_end()
 
 
 ## The level stairs are used from: the player's in a live game, else the viewer's.
@@ -872,6 +891,7 @@ func _process(_delta: float) -> void:
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	creature_view.view_z_max = world.view_z_max
 	_place_player_body()
+	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
