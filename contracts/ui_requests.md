@@ -54,7 +54,7 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   NPCs never use it. Aiming that ends without a shot (cancelled, interrupted, aborted) drops it. Without `fly`,
   its outcome applies to the trigger pull's first projectile only, on the game turn of the answer (an aimed shot
   that fires on a later turn drops it).
-- With `fly`, each projectile (each round of a burst; a shotgun shell is one, its pellets spread around it) sends
+- With `fly`, each projectile (each round of a burst; a shotgun shell is one, see Pellets) sends
   one `shot` request with the error CDDA rolled (at most 1800 arcmin); the client turns its sight line by it,
   flies that bullet against the figures it already shows (a `shot` request comes with no new snapshot, held update or range operations: the next other request brings them) and
   answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A trigger
@@ -79,6 +79,20 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   cursor); `end` is only checked. After a shot request, CDDA's wild miss turns to the side that request's angle
   showed instead of its coin flip. Other creatures on the path get CDDA's rolls, the aimed one no better than
   CDDA's own (a CDDA miss stays a miss). The client can make a shot worse, never better.
+- Pellets: a shotgun shell's `shot` request also carries `pellets` (Array of floats, at most 32): each pellet's
+  turn off the shot's line, arcmin (+ = the shooter's right, at most 1800), CDDA's own spread roll for it. The
+  answer may carry `pellets` too: one `{end, hit_uid, part, quality}` per pellet in that order, `{}` for a pellet
+  not flown (the client flies each along the shot's line turned by its turn). Each pellet is then checked and
+  rolled as a projectile of its own along the deviated line turned by its spread (the aimed square's creature:
+  CDDA's roll plus the pellet's spread over the distance, as CDDA rolls pellets); a pellet without a usable answer
+  takes CDDA's own path. Without `pellets` in the answer the whole shell spreads around the answer's one outcome.
+- Bullet paths (FP3D games, any shooter's single bullet; `cdda/src/fp3d/bullet_paths.h`): a bullet goes on through
+  a body it hit with its damage less what the body stops by size (tiny 5, small 10, medium 20, large 35, huge 55),
+  when 5 or more is left; a bullet a wall stops may glance off its face below 25 degrees (chance 0.8 at 0 falling
+  to 0 at 25), keeping half its damage, for up to 20 squares; the `projectile` event's path shows the bounce. A
+  client hit no longer ends the path at its creature: it overshoots as CDDA's shot at a creature does. Soft cover
+  is CDDA's own (map::shoot: furniture and terrain with `shoot` data let a bullet through, losing damage); the
+  client's bullet flies through furniture and claims what is behind it, and CDDA's path decides.
 - Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
   only weights CDDA's pick: CDDA picks first, then the client's part replaces it on a roll against its own hit
   chance (weak point: `weakpoint::hit_chance` / 100; body part: its share of the body's hit size) times
