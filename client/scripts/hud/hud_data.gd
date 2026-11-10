@@ -235,10 +235,10 @@ func _needs_from(snap: Snapshot) -> Dictionary:
 			if v is int or v is float:
 				var x := _int(v, -32768, 32767)
 				out[k] = {"value": x, "word": word(k, x), "level": need_level(k, x) if k != "hunger" else UNKNOWN}
-	if "player_stamina" in snap and "player_stamina_max" in snap:
-		var st := _int(snap.get("player_stamina"), 0, 1 << 30)
-		var mx := _int(snap.get("player_stamina_max"), 0, 1 << 30)
-		if mx > 0:
+	if "player_stamina" in snap and "player_stamina_max" in snap:   # -1: not sent
+		var st := _int(snap.get("player_stamina"), -1, 1 << 30)
+		var mx := _int(snap.get("player_stamina_max"), -1, 1 << 30)
+		if st >= 0 and mx > 0:
 			var pct := clampi(roundi(100.0 * st / mx), 0, 100)
 			out["stamina"] = {"value": pct, "word": "", "level": need_level("stamina", pct)}
 	return out
