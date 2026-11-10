@@ -30,6 +30,20 @@ case "$dst" in
     /|"$HOME"|"$HOME"/|"$src"|"$src"/) echo "refusing to build in $dst" >&2; exit 1 ;;
 esac
 die() { echo "appimage.sh: $*" >&2; exit 1; }
+# git in a checkout, also in a Git worktree made on Windows: its .git file names its Git folder as D:/..., which
+# Linux can't open, so that is read as /mnt/d/... instead.
+git_in() {
+    local dir=$1
+    shift
+    git -c safe.directory='*' -C "$dir" "$@" 2>/dev/null && return
+    local gd
+    gd="$(sed -n 's/^gitdir: //p' "$dir/.git" 2>/dev/null | tr -d '\r')"
+    case "$gd" in
+        [A-Za-z]:/*) local drive="${gd:0:1}"
+                     git -c safe.directory='*' --git-dir="/mnt/${drive,,}/${gd:3}" "$@" ;;
+        *) return 1 ;;
+    esac
+}
 
 for c in mksquashfs rsync curl python3 objcopy objdump nm sha256sum dpkg-query ldconfig git; do
     command -v "$c" >/dev/null || die "missing $c (sudo apt install squashfs-tools rsync curl python3 binutils git)"
@@ -115,7 +129,9 @@ cp "$dst/cdda/LICENSE.txt" "$app/cdda/"
 # all of CDDA's JSON again. CDDA uses an entry only while its file keeps the modification time it was cached with,
 # to the millisecond, and squashfs keeps whole seconds, so the files get one whole-second time first. A stale or
 # missing entry is just parsed from the JSON (the bridge logs it, nothing is shown).
-stamp="$(date +%s)"
+# The time: SOURCE_DATE_EPOCH when set, else the fork commit's, so the same sources give the same files.
+stamp="${SOURCE_DATE_EPOCH:-$(git_in "$src/cdda" log -1 --format=%ct)}" || die "no commit time for $src/cdda"
+case "$stamp" in ''|*[!0-9]*) die "bad file time '$stamp'" ;; esac
 find "$app/cdda/data" "$app/cdda/gfx" -exec touch -h -m -d "@$stamp" {} +
 "$json_cache" "$app/cdda" >"$work/json-cache.log" 2>&1 || { tail -20 "$work/json-cache.log"; die "JSON cache failed"; }
 grep -o 'fp3d-json-cache: [0-9].*' "$work/json-cache.log" | tail -1
@@ -174,20 +190,8 @@ done
 doc="$work/AppDir/usr/share/doc/cdda-3d"
 mkdir -p "$doc"
 cp "$dst/LICENSE.md" "$work/THIRD_PARTY_LICENSES.txt" "$doc/"
-# The commit of a checkout. A Git worktree made on Windows names its Git folder as D:/..., which Linux can't open:
-# that is read as /mnt/d/... instead.
-rev() {
-    git -c safe.directory='*' -C "$1" rev-parse HEAD 2>/dev/null && return
-    local gd
-    gd="$(sed -n 's/^gitdir: //p' "$1/.git" 2>/dev/null | tr -d '\r')"
-    case "$gd" in
-        [A-Za-z]:/*) local drive="${gd:0:1}"
-                     git -c safe.directory='*' --git-dir="/mnt/${drive,,}/${gd:3}" rev-parse HEAD ;;
-        *) return 1 ;;
-    esac
-}
-proj="$(rev "$src")" || die "no commit for $src"
-code="$(rev "$src/cdda")" || die "no commit for $src/cdda"
+proj="$(git_in "$src" rev-parse HEAD)" || die "no commit for $src"
+code="$(git_in "$src/cdda" rev-parse HEAD)" || die "no commit for $src/cdda"
 cat >"$doc/BUILD_INFO.txt" <<EOF
 CDDA-3D AppImage, built $(date -u +%Y-%m-%d) on $(. /etc/os-release && echo "$PRETTY_NAME")
 CDDA-Proj $proj, CDDA-3D-code (cdda/) $code
