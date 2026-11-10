@@ -125,6 +125,7 @@ func set_hand(id: String, xform: Transform3D) -> void:
 ## its position (mouse: it keeps its own turn, see turn_held).
 func set_hand_pose(id: String, xform: Transform3D, turn: bool) -> void:
 	var h := hand(id)
+	_forget_freed(h)
 	h.xform = xform
 	if h.proxy == null or not is_instance_valid(h.proxy):
 		return
@@ -144,9 +145,26 @@ func turn_held(id: String, radians: float) -> void:
 		h.proxy.global_basis = Basis(Vector3.UP, radians) * h.proxy.global_basis
 
 
+## Places what a hand holds directly (VR's weight lag): `xform` without scale, the copy keeps its item's size.
+func set_proxy_pose(id: String, xform: Transform3D) -> void:
+	var h: Hand = _hands.get(id)
+	if h != null and h.proxy != null and is_instance_valid(h.proxy):
+		h.proxy.global_transform = Transform3D(xform.basis.orthonormalized().scaled(h.proxy.scale), xform.origin)
+
+
+## The target under a hand now ({} for none; a door leaf freed since is forgotten).
+func hovered(id: String) -> Dictionary:
+	if not _hands.has(id):
+		return {}
+	var h: Hand = _hands[id]
+	_forget_freed(h)
+	return h.hover
+
+
 ## The target under a hand changed: outline it (and drop the old outline).
 func hover(id: String, target: Dictionary) -> void:
 	var h := hand(id)
+	_forget_freed(h)
 	if same_target(h.hover, target):
 		if not target.is_empty() and target["kind"] == "item":
 			h.hover = target   # follow the newest point
@@ -182,11 +200,15 @@ func adopt(id: String, item: ItemRef) -> bool:
 
 func _grab(id: String, target: Dictionary) -> bool:
 	var h := hand(id)
+	_forget_freed(h)
 	if target.is_empty() or not h.held.is_empty():
 		return false
 	if target["kind"] == "door":
-		var g: Grabbable = target["node"]
-		if not is_instance_valid(g):
+		var n: Variant = target.get("node")
+		if not is_instance_valid(n):
+			return false
+		var g := n as Grabbable
+		if g == null:
 			return false
 		if id == "mouse":
 			g.begin_grab(target["point"])
@@ -261,10 +283,10 @@ func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
 	if t.is_empty():
 		return ""
 	if t["kind"] == "door":
-		var g: Grabbable = t["node"]
-		if is_instance_valid(g):
-			g.end_grab()
-			g.set_highlight(false)
+		var n: Variant = t.get("node")   # untyped: the leaf may have been freed with its submap
+		if is_instance_valid(n) and n is Grabbable:
+			(n as Grabbable).end_grab()
+			(n as Grabbable).set_highlight(false)
 		return ""
 	var it: ItemRef = t["item"]
 	_free_visuals(h, false)
@@ -278,14 +300,17 @@ func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
 
 
 ## Moves an item no hand holds (drag and drop in the Tab view) the way letting go would: `drop` as from
-## drop_on_ray / drop_at, or built by the caller ({kind: container, container: ItemRef} or {kind: surface,
-## square, spot}). Returns the action started, "" when none.
+## drop_on_ray / drop_at, or built by the caller ({kind: container, container: ItemRef, pocket: int (optional,
+## -1 = CDDA's pick)} or {kind: surface, square, spot}). Returns the action started, "" when none.
 func move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	if it == null or not _usable(it) or not (drop.get("kind", "none") in ["surface", "burner", "container"]):
 		return ""
 	if drop.get("kind") == "container" and not drop.get("container") is ItemRef:
 		return ""
 	if not drop.get("square", Vector3i.ZERO) is Vector3i or not drop.get("spot", Vector2.ZERO) is Vector2:
+		return ""
+	var pocket: Variant = drop.get("pocket", -1)
+	if not pocket is int or pocket < -1 or pocket > Snapshot.MAX_POCKET:
 		return ""
 	return _move(id, it, drop)
 
@@ -317,7 +342,7 @@ static func same_target(a: Dictionary, b: Dictionary) -> bool:
 	if a["kind"] != b["kind"]:
 		return false
 	if a["kind"] == "door":
-		return a["node"] == b["node"]
+		return is_same(a.get("node"), b.get("node"))
 	return (a["item"] as ItemRef).same(b["item"])
 
 
@@ -343,9 +368,10 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	var square: Vector3i = drop.get("square", it.square)
 	var spot: Vector2 = drop.get("spot", Vector2(-1, -1))
 	var container: ItemRef = drop.get("container")
+	var pocket: int = drop.get("pocket", -1)
 	var second := func(c: ItemRef) -> bool:
 		if kind == "container":
-			return actions.put(c, container)
+			return actions.put(c, container, pocket)
 		return actions.drop(c, square, spot)
 	_owner[it.uid] = id
 	if it.carried:
@@ -396,10 +422,12 @@ func _light(h: Hand, t: Dictionary, on: bool) -> void:
 	if t.is_empty():
 		return
 	if t["kind"] == "door":
-		var g: Grabbable = t["node"]
-		var held_door: bool = not h.held.is_empty() and h.held.get("node") == g
-		if is_instance_valid(g) and not held_door:
-			g.set_highlight(on)
+		var n: Variant = t.get("node")   # untyped: the leaf may have been freed with its submap
+		if not is_instance_valid(n) or not n is Grabbable:
+			return
+		var held_door: bool = not h.held.is_empty() and is_same(h.held.get("node"), n)
+		if not held_door:
+			(n as Grabbable).set_highlight(on)
 		return
 	if not on:
 		if h.outline != null and is_instance_valid(h.outline):
@@ -420,6 +448,14 @@ func _light(h: Hand, t: Dictionary, on: bool) -> void:
 	h.outline.global_transform = Transform3D(Basis(xf.basis.get_rotation_quaternion()).scaled(Vector3.ONE * size),
 			slot[3])   # around the middle of what is drawn
 	h.outline.visible = true
+
+
+## Door leaves freed since (their submap was dropped) leave the hand's hover and hold.
+func _forget_freed(h: Hand) -> void:
+	if not h.hover.is_empty() and h.hover.get("kind") == "door" and not is_instance_valid(h.hover.get("node")):
+		h.hover = {}
+	if not h.held.is_empty() and h.held.get("kind") == "door" and not is_instance_valid(h.held.get("node")):
+		h.held = {}
 
 
 func _free_visuals(h: Hand, outline := true) -> void:
