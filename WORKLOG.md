@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Main menu Credits page (CDDA by CleverRaven and contributors; Seglectic), by the main-menu session; ui_tests check it.
 - 2026-11-09 — README Credits section: Seglectic (3D models, VR ideas and feedback); in-game credits line asked of the main-menu session.
 - 2026-11-09 — World settings and mods when making a new world: `world_setup` request (sliders, world options, mods with dependencies), client screen; core data now loads before the world; all chargen/ui/live tests pass.
 - 2026-11-09 — Templates: edit (open a template in the chargen tabs) and delete (confirm, then the sim removes it and re-asks); tests pass.
