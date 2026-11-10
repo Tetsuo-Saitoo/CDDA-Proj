@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Jams: item action `clear` (bridge `queue_item_action` op, lead-bridge's request): clears the wielded gun's jam by handle, refuses anything else without spending; branches merged up with fp3d / main.
 - 2026-11-10 — Gun block 3, jams (fork fp3d-combat): a jammed gun isn't aimed (no random quick fix), a burst stops at a jam, R on a jammed gun clears it with CDDA's mend (10 s); viewmodel shows a jam from `player_gun.faults`; sim and client tests pass.
 - 2026-11-10 — Unload / reload in ItemActions (for VR mag release and insert) with LiveSession and MockItems support; the main menu refuses new fp3d- world names and --save alone also looks in fp3d-live-2, -3 ...; client tests pass.
 - 2026-11-10 — Cheats opt-in: LiveSession sends the bridge's `set_cheats_allowed` from the debug switch (or --test / --cheats / test range), again when a game starts; cheats page says the first cheat ends that game's achievements; client tests pass.

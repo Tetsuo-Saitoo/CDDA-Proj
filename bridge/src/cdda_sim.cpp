@@ -419,6 +419,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::unload;
     } else if( op == "reload" ) {
         a.op = fp3d::item_op::reload;
+    } else if( op == "clear" ) {
+        a.op = fp3d::item_op::clear;
     } else {
         return false;
     }
