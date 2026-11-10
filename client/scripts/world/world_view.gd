@@ -65,7 +65,7 @@ const ITEM_HIT_SCALE := 0.6
 const ITEM_HIT_MIN_M := 0.06
 var _slot_of := {}         # uid -> [submap, item slot] of each drawn item ("slots": tile -> [item slot, ...])
 var _hidden_rev := 0       # counts set_hidden_items changes
-var _hidden_wait := {}     # uids whose hiding changed while a worker meshed: rebuilt when it is done
+var _hidden_at := {}       # uid -> submap that drew it when it was hidden (where it shows again)
 
 
 ## Emitted on the main thread when a snapshot given to submit() is shown; `rebuilt` as apply_snapshot returns.
@@ -180,10 +180,6 @@ func _take_task() -> void:
 	_task = -1
 	_committing = _job
 	_job = null
-	if not _hidden_wait.is_empty():   # the job meshed with the old hidden set
-		var changed := _hidden_wait
-		_hidden_wait = {}
-		_rebuild_hidden(changed)
 
 
 ## Puts more of _committing into the scene, within `budget_us` (-1: all of it); emits `applied` when done.
@@ -293,6 +289,8 @@ func _commit(job: Job, budget_us: int) -> bool:
 				pr = _mesh_props(pos, snap)   # an item was hidden or shown since the worker started
 			_build_props(pos, pr, snap)
 	snapshot = snap
+	catalog.set_snapshot(snap)   # a hidden-item rebuild may have pointed them elsewhere meanwhile
+	props.set_snapshot(snap)
 	tables_mismatch = tables != null and snap.ids_generation >= 0 and snap.ids_generation != tables.generation
 	props_built = job.detail.size()
 	z_min_loaded = snap.z_max
@@ -554,8 +552,7 @@ func _set_slots(pos: Vector3i, slots: Array) -> void:
 
 ## Hides items (uid -> true; a copy is kept, MAX_HIDDEN at most) and shows the ones no longer listed: the
 ## props of the submaps that draw or hold a changed uid are rebuilt now, on this thread (only those), so a
-## grabbed item leaves its pile in the same frame. While a worker meshes a submitted snapshot (with the old
-## hidden set) the rebuild waits until it is done.
+## grabbed item leaves its pile in the same frame. A job meshed meanwhile with the old set is fixed as it commits.
 func set_hidden_items(uids: Dictionary) -> void:
 	var next := {}
 	for u: Variant in uids:
@@ -568,9 +565,6 @@ func set_hidden_items(uids: Dictionary) -> void:
 	if changed.is_empty():
 		return
 	_hidden_rev += 1
-	if _task >= 0:
-		_hidden_wait.merge(changed)
-		return
 	_rebuild_hidden(changed)
 
 
@@ -586,21 +580,42 @@ static func _changed(a: Dictionary, b: Dictionary) -> Dictionary:
 	return out
 
 
-## Rebuilds the props of the shown submaps that draw or hold one of `changed`; sets props_built.
+## Rebuilds the props of the shown submaps that draw or held one of `changed`; sets props_built. Only a uid
+## shown again whose submap isn't known (hidden while not drawn) makes it look through the piles.
 func _rebuild_hidden(changed: Dictionary) -> void:
+	var where := {}
+	var lost := {}
+	for u: Variant in changed:
+		var s: Array = _slot_of.get(u, [])
+		if not s.is_empty():
+			where[s[0]] = true
+			if hidden_items.has(u):
+				_hidden_at[u] = s[0]
+		elif _hidden_at.has(u):
+			where[_hidden_at[u]] = true
+		elif not hidden_items.has(u):
+			lost[u] = true
+		if not hidden_items.has(u):
+			_hidden_at.erase(u)
 	var swapped := {}   # submaps a committing job already shows: built from its snapshot
 	if _committing != null:
 		for k in maxi(_committing.next - _committing.dirty.size(), 0):
 			swapped[_committing.detail[k]] = true
+	if not lost.is_empty():
+		for pos: Vector3i in _built:
+			var sn := _committing.snap if swapped.has(pos) else snapshot
+			if sn != null and _holds_any(pos, sn, lost):
+				where[pos] = true
 	var n := 0
-	for pos: Vector3i in _built.keys():
+	for pos: Vector3i in where:
 		var snap := _committing.snap if swapped.has(pos) else snapshot
-		if snap != null and snap.submaps.has(pos) and _holds_any(pos, snap, changed):
+		if _built.has(pos) and snap != null and snap.submaps.has(pos):
 			_build_props(pos, _mesh_props(pos, snap), snap)
 			n += 1
-	if snapshot != null:
-		catalog.set_snapshot(snapshot)   # the main-thread catalogs follow the shown snapshot again
-		props.set_snapshot(snapshot)
+	var shown := _committing.snap if _committing != null else snapshot
+	if shown != null:
+		catalog.set_snapshot(shown)   # the main-thread catalogs follow the snapshot being shown again
+		props.set_snapshot(shown)
 	props_built = n
 
 
