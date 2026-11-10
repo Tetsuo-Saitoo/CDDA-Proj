@@ -13,13 +13,17 @@ func run(check: Callable, data: Variant, tables: IdTables, scene: Callable, repo
 	_dir = ProjectSettings.globalize_path("user://model_test")
 	_remove(_dir)
 	DirAccess.make_dir_recursive_absolute(_dir.path_join("models/furniture"))
+	DirAccess.make_dir_recursive_absolute(_dir.path_join("models/terrain"))
 	DirAccess.make_dir_recursive_absolute(_dir.path_join("registry"))
+	DirAccess.make_dir_recursive_absolute(_dir.path_join("registry_terrain"))
 	var glb := cupboard_glb()
 	_write("models/furniture/cupboard.glb", glb)
 	_test_markers()
+	_test_tint()
 	_test_caps(glb)
 	_test_hostile(glb)
 	_test_props(data, tables, scene, repo)
+	_test_terrain(glb, data, tables, scene, repo)
 	_remove(_dir)
 
 
@@ -133,6 +137,65 @@ func _test_markers() -> void:
 			"marker names: numbered 1-99 only")
 
 
+## Registry `material` tints a model: a cached variant with copied meshes and materials, the original untouched.
+func _test_tint() -> void:
+	var lib := _lib()
+	var path := "furniture/cupboard.glb"
+	var m := lib.get_model(path)
+	if m == null:
+		_check.call(false, "tint: the cupboard loads")
+		return
+	var before := []   # [material, albedo colour] of each part's surfaces before tinting
+	for p: Array in m.parts:
+		var mesh := p[0] as ArrayMesh
+		for s in mesh.get_surface_count():
+			var mat := mesh.surface_get_material(s)
+			before.append([mat, (mat as BaseMaterial3D).albedo_color if mat is BaseMaterial3D else Color()])
+	var t := lib.get_tinted(path, "brick")
+	_check.call(t != null and t != m and t.tint == "brick" and lib.get_tinted(path, "brick") == t
+			and lib.get_tinted(path, "wood_dark") != t, "a tinted variant is its own model, cached per path and material")
+	_check.call(lib.get_tinted(path, "") == m and lib.get_tinted(path, "no_such_material") == m
+			and lib.get_tinted("furniture/missing.glb", "brick") == null, "no or unknown material: the model as made; missing: null")
+	if t == null or t == m:
+		return
+	_check.call(t.parts.size() == m.parts.size() and t.markers == m.markers and t.surfaces == m.surfaces
+			and t.marker_parts == m.marker_parts and t.aabb == m.aabb, "the variant keeps the model's parts, markers and surfaces")
+	var factor := Color.WHITE.lerp(CddaPalette.material("brick"), ModelLibrary.TINT)
+	var k := 0
+	var same_data := true
+	var tinted_ok := true
+	var textured := false
+	for i in m.parts.size():
+		var om := m.parts[i][0] as ArrayMesh
+		var tm := t.parts[i][0] as ArrayMesh
+		same_data = same_data and tm != om and tm.get_surface_count() == om.get_surface_count() \
+				and (t.parts[i][1] as Transform3D) == (m.parts[i][1] as Transform3D)
+		for s in mini(om.get_surface_count(), tm.get_surface_count()):
+			same_data = same_data and tm.surface_get_array_len(s) == om.surface_get_array_len(s)
+			var a := om.surface_get_material(s) as BaseMaterial3D
+			var b := tm.surface_get_material(s) as BaseMaterial3D
+			tinted_ok = tinted_ok and a != null and b != null and a != b and b.albedo_texture == a.albedo_texture \
+					and b.albedo_color.is_equal_approx(a.albedo_color * factor)
+			textured = textured or b.albedo_texture != null
+	_check.call(same_data, "the variant's meshes are copies with the same surfaces and vertices")
+	_check.call(tinted_ok and textured, "its materials are copies, albedo * lerp(white, brick, %.1f), textures kept" % ModelLibrary.TINT)
+	var untouched := true
+	for p: Array in m.parts:
+		var mesh := p[0] as ArrayMesh
+		for s in mesh.get_surface_count():
+			var mat := mesh.surface_get_material(s)
+			untouched = untouched and k < before.size() and mat == before[k][0] \
+					and (not mat is BaseMaterial3D or (mat as BaseMaterial3D).albedo_color == before[k][1])
+			k += 1
+	_check.call(untouched and k == before.size(), "the original model's materials are untouched")
+	var capped := _lib()
+	capped.max_tinted = 1
+	var first := capped.get_tinted(path, "brick")
+	_check.call(first != null and first.tint == "brick" and capped.get_tinted(path, "wood").tint.is_empty()
+			and capped.get_tinted(path, "brick") == first and capped.warnings.size() == 1 and capped.warnings[0].contains("tinted"),
+			"tinted variants are capped: past the cap, the model as made, with one warning " + str(capped.warnings))
+
+
 func _test_caps(glb: PackedByteArray) -> void:
 	for c: Array in [["max_triangles", 50, "triangles"], ["max_markers", 4, "markers"], ["max_nodes", 5, "nodes"],
 			["max_file_bytes", 100, "larger than"]]:
@@ -191,6 +254,7 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 		{"type": "fp3d_model", "id": "f_dresser", "kind": "furniture", "model": "furniture/garbage.glb", "placeholder": "dresser"},
 		{"type": "fp3d_model", "id": "f_chair", "kind": "furniture", "model": "furniture/missing.glb"},
 		{"type": "fp3d_model", "id": "101_carpentry", "kind": "item", "model": "furniture/cupboard.glb", "scale": 0.25},
+		{"type": "fp3d_model", "id": "f_counter", "kind": "furniture", "model": "furniture/cupboard.glb", "material": "wood_dark"},
 	]
 	_write("registry/test.json", JSON.stringify(entries).to_utf8_buffer())
 	var reg := AssetRegistry.new()
@@ -214,6 +278,10 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 			"a model-only entry whose file is missing goes on down the chain (step %d, %s)" % [chair.step, chair.shape])
 	var book_i := tables.index_of("itype", "101_carpentry")
 	_check.call(cat.item(book_i).model != null and is_equal_approx(cat.item(book_i).scale, 0.25), "item models keep their real size (registry scale only)")
+	var counter: PropCatalog.Prop = furn.call("f_counter")
+	_check.call(cupboard.model == reg.models.get_model("furniture/cupboard.glb") and counter.model != null
+			and counter.model == reg.models.get_tinted("furniture/cupboard.glb", "wood_dark") and counter.model != cupboard.model,
+			"an entry with model and material draws the tinted variant; without material, the model as made")
 
 	var at := func(x: int, y: int) -> int: return y * 12 + x
 	var snap: Snapshot = scene.call(data, tables, {}, {at.call(5, 5): "f_cupboard", at.call(7, 5): "f_dresser"},
@@ -254,6 +322,132 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	_check.call(mms.size() == 3 and (mms[0] as MultiMeshInstance3D).multimesh.instance_count == 3 and world.prop_counts["models"] >= 3,
 			"the world draws one multimesh per model part, an instance per prop")
 	world.free()
+
+
+## Terrain models (assets/models/terrain/<id>.glb + a registry entry): they replace the procedural shape,
+## turned along wall runs and stair flights; a bad or missing model leaves the tile procedural.
+func _test_terrain(glb: PackedByteArray, data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
+	_write("models/terrain/t_wall.glb", glb)
+	_write("models/terrain/t_tree.glb", glb)
+	_write("models/terrain/garbage.glb", "not a model".to_utf8_buffer())
+	var entries := [
+		{"type": "fp3d_model", "id": "t_wall", "kind": "terrain", "mesher": "wall", "model": "terrain/t_wall.glb", "material": "plaster_white"},
+		{"type": "fp3d_model", "id": "t_stairs_up", "kind": "terrain", "mesher": "stairs_up", "model": "terrain/t_wall.glb"},
+		{"type": "fp3d_model", "id": "t_tree", "kind": "terrain", "model": "terrain/t_tree.glb", "random_yaw": true},
+		{"type": "fp3d_model", "id": "t_flat_roof", "kind": "terrain", "mesher": "roof", "model": "terrain/t_tree.glb"},
+		{"type": "fp3d_model", "id": "t_brick_wall", "kind": "terrain", "mesher": "wall", "material": "brick", "model": "terrain/garbage.glb"},
+		{"type": "fp3d_model", "id": "t_concrete_wall", "kind": "terrain", "model": "terrain/missing.glb"},
+	]
+	_write("registry_terrain/terrain.json", JSON.stringify(entries).to_utf8_buffer())
+	var reg := AssetRegistry.new()
+	reg.models.root = _dir.path_join("models")
+	reg.load_dir(repo.call("assets/registry"))
+	reg.load_dir(_dir.path_join("registry_terrain"))
+	var terrain := TerrainCatalog.new()
+	terrain.registry = reg
+	terrain.set_tables(tables)
+	var plain := TerrainCatalog.new()   # the repo registry only: everything procedural
+	plain.load_registry_dir(repo.call("assets/registry"))
+	plain.set_tables(tables)
+	var style := func(id: String) -> TerrainCatalog.Style: return terrain.style_for(tables.index_of("ter", id))
+	var wall_m := reg.models.get_tinted("terrain/t_wall.glb", "plaster_white")
+	var plain_wall_m := reg.models.get_model("terrain/t_wall.glb")
+	var tree_m := reg.models.get_model("terrain/t_tree.glb")
+	var wall: TerrainCatalog.Style = style.call("t_wall")
+	_check.call(wall.model != null and wall.model == wall_m and wall.kind == TerrainCatalog.Kind.WALL and wall.model.tint == "plaster_white",
+			"a terrain id with a model entry gets its model (tinted by its material)")
+	var pine: TerrainCatalog.Style = style.call("t_tree_pine")
+	_check.call(pine.model == tree_m and pine.random_yaw and pine.kind == TerrainCatalog.Kind.TREE,
+			"a tree without an entry takes t_tree's model through looks_like")
+	var brick: TerrainCatalog.Style = style.call("t_brick_wall")
+	var concrete: TerrainCatalog.Style = style.call("t_concrete_wall")
+	_check.call(brick.model == null and brick.kind == TerrainCatalog.Kind.WALL and brick.color == CddaPalette.material("brick")
+			and "\n".join(terrain.warnings).contains("garbage.glb"), "a bad terrain model falls back to the entry's mesher, with a warning")
+	_check.call(concrete.model == null and concrete.kind == TerrainCatalog.Kind.WALL and "\n".join(terrain.warnings).contains("missing.glb"),
+			"a model-only terrain entry whose file is missing: the procedural shape from the flags")
+
+	var at := func(x: int, y: int) -> int: return y * 12 + x
+	var ter := {at.call(4, 5): "t_wall", at.call(5, 5): "t_wall", at.call(6, 5): "t_wall",   # east-west run
+			at.call(9, 2): "t_wall", at.call(9, 3): "t_wall", at.call(9, 4): "t_wall",        # north-south run
+			at.call(2, 8): "t_stairs_up", at.call(3, 8): "t_wall",                            # rises east, to the wall
+			at.call(8, 9): "t_tree_pine", at.call(10, 7): "t_flat_roof",
+			at.call(2, 2): "t_brick_wall", at.call(2, 4): "t_concrete_wall"}
+	var snap: Snapshot = scene.call(data, tables, ter, {}, [])
+	var sm: Snapshot.Submap = null
+	for p: Vector3i in snap.submaps:
+		if (snap.submaps[p] as Snapshot.Submap).ter[at.call(5, 5)] == tables.index_of("ter", "t_wall"):
+			sm = snap.submaps[p]
+	if sm == null:
+		_check.call(false, "terrain model scene built")
+		return
+	terrain.set_snapshot(snap)
+	plain.set_snapshot(snap)
+	var r := TerrainMesher.new(snap, terrain).build(sm.pos)
+	var r0 := TerrainMesher.new(snap, plain).build(sm.pos)
+	var walls: Array = r.models.get(wall_m, [])
+	_check.call(walls.size() == 7 and (r.models.get(plain_wall_m, []) as Array).size() == 1 and (r.models.get(tree_m, []) as Array).size() == 1
+			and r0.models.is_empty(), "terrain models listed: 7 walls, the stairs, the pine (%d, %d)" % [walls.size(), r.models.size()])
+	var xf_at := func(xfs: Array, x: int, y: int) -> Variant:
+		for xf: Transform3D in xfs:
+			if xf.origin.is_equal_approx(Vector3(x + 0.5, xf.origin.y, y + 0.5)):
+				return xf
+		return null
+	var ew: Variant = xf_at.call(walls, 5, 5)
+	var ns: Variant = xf_at.call(walls, 9, 3)
+	_check.call(ew != null and is_zero_approx((ew as Transform3D).origin.y) and (ew as Transform3D).basis.is_equal_approx(Basis.IDENTITY),
+			"a wall model in an east-west run: tile centre on its floor, unturned (x along the run, front south)")
+	_check.call(ns != null and ((ns as Transform3D).basis * Vector3.RIGHT).is_equal_approx(Vector3(0, 0, -1))
+			and ((ns as Transform3D).basis * Vector3.BACK).is_equal_approx(Vector3.RIGHT),
+			"a wall model in a north-south run turns its x along the run (front east)")
+	var stairs: Variant = xf_at.call(r.models.get(plain_wall_m, []), 2, 8)
+	_check.call(stairs != null and ((stairs as Transform3D).basis * Vector3.BACK).is_equal_approx(Vector3.LEFT),
+			"a stairs model: bottom step at the front (west), rising east toward the wall")
+	_check.call(_solid_in(r, 5, 5) == 0 and _solid_in(r0, 5, 5) > 0 and _solid_in(r, 2, 8) == 0 and _solid_in(r0, 2, 8) > 0
+			and r.vertices < r0.vertices, "no procedural geometry on model tiles (%d vs %d vertices)" % [r.vertices, r0.vertices])
+	_check.call(_solid_in(r, 8, 9) > 0 and _solid_in(r, 8, 9, 0.05) == 0 and _solid_in(r0, 8, 9, 0.05) > 0,
+			"a tree model keeps the ground slab under it, without the procedural trunk")
+	var roof: Variant = xf_at.call(r.roof_models.get(tree_m, []), 10, 7)
+	_check.call(roof != null and is_equal_approx((roof as Transform3D).origin.y, TerrainMesher.ROOF_LIFT) and _tris_in(r.roof, 10, 7) == 0 and _tris_in(r0.roof, 10, 7) > 0,
+			"a roof model goes to roof_models, lifted like the roof slab, and replaces the slab")
+	_check.call(_solid_in(r, 2, 2) > 0 and _solid_in(r, 2, 4) > 0 and _solid_in(r, 2, 2) == _solid_in(r0, 2, 2),
+			"walls with a bad or missing model stay procedural")
+	var again := TerrainMesher.new(snap, terrain).build(sm.pos)
+	_check.call(again.models.get(tree_m, []) == r.models.get(tree_m, []), "a random-yaw terrain model turns the same every rebuild")
+
+	var world := WorldView.new()
+	world.catalog = terrain
+	world.props = PropCatalog.new(reg)
+	world.set_id_tables(tables)
+	world.apply_snapshot(snap)
+	var node := world.node_of(sm.pos)
+	var holder := node.get_node_or_null("terrain_models") if node else null
+	var roof_holder := node.get_node_or_null("terrain_roof_models") if node else null
+	_check.call(holder != null and holder.get_child_count() == 3 * wall_m.parts.size() and holder.get_child(0) is MultiMeshInstance3D
+			and roof_holder != null, "the world draws terrain models as multimeshes (one per model part)")
+	world.set_roofs_visible(false)
+	_check.call(roof_holder != null and not (roof_holder as Node3D).visible and (holder as Node3D).visible,
+			"terrain roof models hide with the roofs")
+	world.free()
+
+
+## Procedural triangles on tile (x, y): terrain and caps (wall tops under a loaded floor go to caps).
+static func _solid_in(r: TerrainMesher.Result, x: int, y: int, min_y := -INF) -> int:
+	return _tris_in(r.terrain, x, y, min_y) + _tris_in(r.caps, x, y, min_y)
+
+
+## Triangles of a mesh whose centre lies on tile (x, y) (submap-local, its edges included: a wall's sides),
+## at or above min_y. The test scenes keep these tiles' neighbours free of faces on the shared edges.
+static func _tris_in(mesh: ArrayMesh, x: int, y: int, min_y := -INF) -> int:
+	if mesh == null:
+		return 0
+	var n := 0
+	for s in mesh.get_surface_count():
+		var v: PackedVector3Array = mesh.surface_get_arrays(s)[Mesh.ARRAY_VERTEX]
+		for i in range(0, v.size() - 2, 3):
+			var c := (v[i] + v[i + 1] + v[i + 2]) / 3.0
+			if c.x >= x - 0.001 and c.x <= x + 1.001 and c.z >= y - 0.001 and c.z <= y + 1.001 and c.y >= min_y:
+				n += 1
+	return n
 
 
 func _write(rel: String, bytes: PackedByteArray) -> void:

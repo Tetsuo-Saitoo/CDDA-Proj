@@ -21,9 +21,9 @@ const MAX_SHOWN := 8
 const MAX_GLYPHS := 144
 const SUB := 4   # sub-tiles per tile side
 ## Facing (index into DIRS) -> yaw that turns a shape's front (-z) that way.
-const YAW: Array[float] = [0.0, -PI / 2, PI, PI / 2]
+const YAW: Array[float] = TerrainMesher.YAW
 ## Shapes face -z, models +z (Godot's model front): a half turn about y.
-const MODEL_TURN := Transform3D(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)), Vector3.ZERO)
+const MODEL_TURN := TerrainMesher.MODEL_TURN
 const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
 const CLUTTER: Array[Color] = [Color(0.7, 0.68, 0.62), Color(0.45, 0.5, 0.55), Color(0.62, 0.45, 0.3),
 		Color(0.8, 0.8, 0.78), Color(0.5, 0.36, 0.32)]
@@ -288,9 +288,7 @@ func _groups_at(p: Vector3i) -> int:
 
 ## Stable non-negative hash of an absolute square.
 static func _hash(p: Vector3i) -> int:
-	var h := (p.x * 73856093) ^ (p.y * 19349663) ^ (p.z * 83492791)
-	h = (h ^ (h >> 13)) * 0x5bd1e995
-	return (h ^ (h >> 15)) & 0x7fffffff
+	return TerrainMesher.square_hash(p)
 
 
 static func _mesh(solid: TerrainMesher.Buf, glass: TerrainMesher.Buf) -> ArrayMesh:

@@ -4,7 +4,8 @@ extends RefCounted
 ## an exact registry entry's `mesher` first (assets/registry, `kind: terrain`), then the terrain's flags,
 ## connect groups, open/close pair and `roof` links, then its `looks_like` chain, then a box, so nothing
 ## is invisible. Colour: the registry `material` of the id, else its CDDA colour, else the material of
-## the first registered id in its looks_like chain.
+## the first registered id in its looks_like chain. A registry `model` that loads (exact id, else the
+## looks_like chain) replaces the procedural shape; TerrainMesher places it.
 ##
 ## Without id tables (or with tables of another generation than the snapshot's) terrain is looked up by
 ## the snapshot's id names: registered ids still mesh, the rest are boxes.
@@ -20,6 +21,9 @@ const MESHERS := {
 ## Kinds that say how the tile behaves, not only how it looks: never taken from a looks_like chain
 ## (monkey bars look like a ladder but don't lead up).
 const STRUCTURAL := [Kind.NONE, Kind.STAIRS_UP, Kind.STAIRS_DOWN, Kind.LADDER_UP, Kind.LADDER_DOWN, Kind.RAMP_UP]
+## Kinds that stay procedural even with a registry model: open air and the holes stairs and ladders come up
+## through (nothing to draw), and doors (the leaf is a Grabbable that swings; models for it come later).
+const MODEL_LESS := [Kind.NONE, Kind.STAIRS_DOWN, Kind.LADDER_DOWN, Kind.DOOR]
 const FENCE_GROUPS := ["CHAINFENCE", "WOODFENCE", "RAILING"]
 const WATER_FLAGS := ["SWIMMABLE", "SHALLOW_WATER", "DEEP_WATER", "LIQUID"]
 const DOOR_FLAGS := ["DOOR", "LOCKED", "BARRICADABLE_DOOR", "BARRICADABLE_DOOR_DAMAGED", "BARRICADABLE_DOOR_REINFORCED"]
@@ -41,6 +45,12 @@ class Style:
 	var locked := false           # door with CDDA's LOCKED flag
 	var groups := 0               # connect groups (bits, IdTables.group_bit)
 	var connects_to := 0          # groups this tile joins; both 0 = join by kind (no id tables)
+	## Registry model drawn instead of the procedural shape (TerrainMesher); null = procedural. Never set
+	## for MODEL_LESS kinds. Placement from the same entry:
+	var model: ModelLibrary.Model
+	var scale := 1.0
+	var offset := Vector3.ZERO
+	var random_yaw := false
 
 
 var registry := AssetRegistry.new()
@@ -134,7 +144,48 @@ func make_style(def: IdTables.Def, name: String) -> Style:
 	_dress(def, name, s)
 	if reg != null and CddaPalette.MATERIALS.has(reg.material):
 		s.color = CddaPalette.material(reg.material)
+	if not s.kind in MODEL_LESS:
+		_take_model(def, reg, s)
 	return s
+
+
+## The tile's registry model, by the chain (contracts/assets.md) without generics: the exact entry when it has
+## art (a `mesher`-only entry, or one whose model doesn't load, keeps the tile procedural), else the first
+## terrain entry with art along the looks_like chain. Stairs, ladders and ramps take a looks_like model only
+## from an id of their own kind, so they never look like a floor. The entry's `material` tints the model.
+func _take_model(def: IdTables.Def, reg: AssetRegistry.Entry, s: Style) -> void:
+	var e := reg
+	if not registry.has_terrain_art(e):
+		e = null
+		var seen := {}
+		var link := def.looks_like if def != null and tables != null else ""
+		if def != null:
+			seen[def.id] = true
+		for i in AssetRegistry.MAX_CHAIN:
+			if link.is_empty() or seen.has(link):
+				break
+			seen[link] = true
+			var le := registry.entry(link, "terrain")
+			var ld := tables.def_named("ter", link)
+			if registry.has_terrain_art(le):
+				if not s.kind in STRUCTURAL or _link_kind(le, ld) == s.kind:
+					e = le
+				break
+			link = ld.looks_like if ld != null else ""
+	var m := registry.model_of(e)
+	if m == null:
+		return
+	s.model = m
+	s.scale = e.scale
+	s.offset = e.offset
+	s.random_yaw = e.random_yaw
+
+
+## Kind of a looks_like link: its entry's mesher, else its flags; -1 when neither says.
+func _link_kind(e: AssetRegistry.Entry, d: IdTables.Def) -> int:
+	if e != null and MESHERS.has(e.mesher):
+		return MESHERS[e.mesher]
+	return _kind(d) if d != null else -1
 
 
 ## Kind from the definition; its looks_like chain when the flags don't settle it.
