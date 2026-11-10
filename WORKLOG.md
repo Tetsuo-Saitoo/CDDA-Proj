@@ -1,6 +1,6 @@
 # WORKLOG
 
-- 2026-11-10 — AppImage `--vr`: the SteamVR wait before the game window is at most 30 s (was 65), ends after 5 s when SteamVR gives up, and is announced at once (console and desktop notification).
+- 2026-11-10 — AppImage `--vr`: the SteamVR wait before the game window is at most 30 s (was 65), ends after 10 s when SteamVR and Steam are gone, and is announced at once (console and desktop notification).
 - 2026-11-10 — Faster boot (lead-world): CDDA's data consistency check is skipped when the same version, program file, mods and data already passed (fork `fp3d-world`, approved by lead-bridge; sim checks); the AppImage ships CDDA's JSON cache built by the new `fp3d-json-cache` (squashfs stays at 1 MiB blocks: 128 KiB measured no faster); appimage.sh works from a Windows-made worktree. Loads 44-48 s -> 33-35 s on Windows; AppImage warm quick start 50 s -> 29 s in WSL.
 - 2026-11-10 — Boot time measured (Windows, lead-world): 25-30 s new game, 44-48 s load to the first frame; most of it is CDDA's data load (12-15 s) and data verification (6-9 s). main.gd prints `boot: <ms> <phase>` lines. Fixes proposed in TASKS "Boot time".
 - 2026-11-10 — Throw and pour gestures (mouse and keyboard): flick while letting go of a carried item throws it at the square under the pointer; hold E with a liquid in hand pours into the container under the pointer or onto the square you face (a tap still uses / examines). Client tests pass.

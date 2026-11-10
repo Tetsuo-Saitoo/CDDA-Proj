@@ -62,8 +62,10 @@ if [ "$vr" = 1 ]; then
                 up=0
                 while [ "$t" -lt "$steamvr_wait" ]; do
                     if pgrep -u "$(id -u)" -f vrcompositor >/dev/null; then up=1; break; fi
-                    # Nothing of SteamVR left running (it gave up or crashed): don't wait out the rest.
-                    if [ "$t" -ge 5 ] && ! pgrep -u "$(id -u)" -f 'vrstartup|vrmonitor|vrserver' >/dev/null; then
+                    # Nothing of SteamVR, nor the Steam client it may hand over to, left running (it gave up or
+                    # crashed): don't wait out the rest.
+                    if [ "$t" -ge 10 ] && ! pgrep -u "$(id -u)" -f 'vrstartup|vrmonitor|vrserver' >/dev/null &&
+                        ! pgrep -u "$(id -u)" -x steam >/dev/null; then
                         break
                     fi
                     sleep 1
