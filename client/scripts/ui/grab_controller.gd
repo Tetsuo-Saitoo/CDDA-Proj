@@ -115,6 +115,8 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 			if not item_hover.is_empty():
 				text = "%s\n%s take   hold %s carry" % [t["name"], InputActions.key_of(&"use_held"),
 						InputActions.key_of(&"look_at")]
+			else:   # a door leaf or furniture part (drawer, lid)
+				text = "%s\nhold %s and drag" % [t["name"], InputActions.key_of(&"look_at")]
 		else:
 			icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
 	else:

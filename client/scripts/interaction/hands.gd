@@ -223,13 +223,13 @@ func _grab(id: String, target: Dictionary) -> bool:
 	h.held = target
 	_light(h, h.hover, false)
 	h.hover = {}
+	var slot := world.item_slot(it.uid)   # before hiding it: item_slot gives nothing for hidden items
 	if not it.carried:
 		_held_hidden[it.uid] = true
 		_sync_hidden()
 	h.proxy = _make_proxy(it)
 	world.add_child(h.proxy)
 	var start := Transform3D(Basis.IDENTITY, it.point if it.is_drawn() else h.xform.origin)
-	var slot := world.item_slot(it.uid)
 	if not slot.is_empty():   # where the pile drew it, turned the same way (the proxy has its own scale)
 		var xf: Transform3D = slot[4]
 		start = Transform3D(Basis(xf.basis.get_rotation_quaternion()), xf.origin)
@@ -352,7 +352,9 @@ static func drop_hint(drop: Dictionary, tables: IdTables) -> String:
 		"container":
 			return "put it in the %s" % (drop["container"] as ItemRef).display_name(tables)
 		"burner":
-			return "put it on the heat"
+			var heat: Variant = drop.get("heat", {})
+			var cold: bool = heat is Dictionary and (heat as Dictionary).get("lit", true) == false
+			return "put it on the heat (not lit)" if cold else "put it on the heat"
 		"surface":
 			return "put it here"
 	return "can't put it there"
@@ -410,7 +412,42 @@ func _usable(it: ItemRef) -> bool:
 
 
 func _door_target(g: Grabbable, point: Vector3, dist: float) -> Dictionary:
-	return {"kind": "door", "node": g, "item": null, "square": g.square, "point": point, "dist": dist, "name": "door"}
+	return {"kind": "door", "node": g, "item": null, "square": g.square, "point": point, "dist": dist,
+			"name": door_name(g)}
+
+
+## What a door leaf or furniture part is called under the pointer: a terrain door by its terrain ("wooden
+## door"), a part by its kind and furniture ("drawer (dresser)", "lid (chest)"), ", locked" when CDDA says so.
+## Names are game data: cleaned and capped.
+func door_name(g: Grabbable) -> String:
+	if g == null or not is_instance_valid(g):
+		return ""
+	var s := ""
+	if g.mech.is_empty():
+		s = _name_at("ter", g.square)
+		if s.is_empty():
+			s = "door"
+	else:
+		var furn := _name_at("furn", g.square)
+		s = g.kind if furn.is_empty() else "%s (%s)" % [g.kind, furn]
+	return s + (", locked" if g.locked else "")
+
+
+## The id table name of the terrain or furniture ("ter" / "furn") on square `sq`, "" when unknown.
+func _name_at(table: String, sq: Vector3i) -> String:
+	var snap := world.snapshot if world != null else null
+	if snap == null or world.tables == null:
+		return ""
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return ""
+	var l := CddaCoords.ms_to_local(sq)
+	var i := l.y * CddaCoords.SEEX + l.x
+	var arr: PackedInt32Array = sm.ter if table == "ter" else sm.furn
+	if i < 0 or i >= arr.size() or (table == "furn" and arr[i] == 0):
+		return ""
+	var d := world.tables.def_at(table, arr[i])
+	return HudData.clean(d.name if d != null and not d.name.is_empty() else (d.id if d != null else ""), HudData.MAX_NAME)
 
 
 func _item_target(it: ItemRef, dist: float) -> Dictionary:

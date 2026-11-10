@@ -1,10 +1,14 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
 ## say. While a take is in flight the world hides the item (hidden_changed), so a hand can show it held.
+## Unload and reload change what is inside an item, which the snapshot shows only for carried items and not as
+## round counts: they finish when the carried rows around the item change, are refused on CDDA's message, and
+## otherwise (rounds topped up in place, an unload into the pack still running as an activity) finish at the
+## timeout once the sim has had them for two snapshots without a refusal.
 ##
 ## Wiring: LiveSession.snapshot_ready -> on_snapshot, LiveSession.events_arrived -> on_events (mock mode:
 ## MockItems.changed -> on_snapshot, MockItems.message -> on_events([MockItems.message_event(text)])).
@@ -26,18 +30,21 @@ const HANDS := ["pack", "main", "off"]
 const SPOT_MAX := 0.999
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
+## Ops whose result the snapshot may not show (see above): no message after two looks is no refusal.
+const CONTENT_OPS := ["unload", "reload"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
-## Anything with take_item / put_item / drop_item (-> bool) and queued_actions() (-> int): a LiveSession or a
-## MockItems.
+## Anything with take_item / put_item / drop_item / unload_item / reload_item (-> bool) and queued_actions()
+## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
 var clock := Callable()
 
-## uid -> {op, item (ItemRef copy), target, spot, sent_ms, seq, messages, info, looks}
+## uid -> {op, item (ItemRef copy), target, spot, sent_ms, seq, messages, info, looks, before}
 var _pending := {}
 var _seq := 0   # seq of the newest snapshot seen
+var _snap: Snapshot   # the newest snapshot seen (unload / reload compare against it)
 
 
 ## Takes `item` (lying on its square) into hand "pack", "main" or "off". False when refused here (nothing sent).
@@ -69,7 +76,26 @@ func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1)) -> bool:
 	return _send("drop", item, square, spot, "drop_item", [float(item.uid), float(item.type), square, spot])
 
 
-## The op in flight for `uid` ("take", "put", "drop"), "" when none.
+## Unloads `item` (carried, or lying in reach on its square): a gun gives its magazine whole, a magazine its
+## rounds, to hand "pack", "main" or "off"; a loaded gunmod comes after the item itself, one per call.
+func unload(item: ItemRef, hand := "pack") -> bool:
+	if not _ok_ref(item) or not (hand in HANDS) or not ok_square(item.square):
+		return false
+	return _send("unload", item, hand, Vector2(-1, -1), "unload_item",
+			[float(item.uid), float(item.type), item.square, hand])
+
+
+## Reloads a carried `item` (gun or magazine) with `ammo` (a magazine or rounds, carried or lying in reach), as
+## much as fits, into the first part CDDA's reload menu would offer (the item, the magazine in it, gunmods).
+func reload(item: ItemRef, ammo: ItemRef) -> bool:
+	if not _ok_ref(item) or not item.carried or not _ok_ref(ammo) or ammo.uid == item.uid \
+			or not ok_square(ammo.square):
+		return false
+	return _send("reload", item, ammo.duplicate_ref(), Vector2(-1, -1), "reload_item",
+			[float(item.uid), float(item.type), float(ammo.uid), float(ammo.type), ammo.square])
+
+
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload"), "" when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -83,11 +109,12 @@ func messages(uid: int) -> PackedStringArray:
 	return PackedStringArray((_pending[uid] as Dictionary)["messages"]) if _pending.has(uid) else PackedStringArray()
 
 
-## Uids (-> true) of pending items that lie in the world.
+## Uids (-> true) of items being taken from the world (an unload off the floor leaves its item shown).
 func hidden() -> Dictionary:
 	var out := {}
 	for uid: int in _pending:
-		if not ((_pending[uid] as Dictionary)["item"] as ItemRef).carried:
+		var e: Dictionary = _pending[uid]
+		if e["op"] == "take" and not (e["item"] as ItemRef).carried:
 			out[uid] = true
 	return out
 
@@ -96,6 +123,7 @@ func hidden() -> Dictionary:
 func clear() -> void:
 	_pending.clear()
 	_seq = 0
+	_snap = null
 	hidden_changed.emit({})
 	changed.emit()
 
@@ -108,6 +136,7 @@ func on_snapshot(snap: Snapshot) -> void:
 	if snap == null or not snap.is_valid():
 		return
 	_seq = snap.seq
+	_snap = snap
 	if _pending.is_empty() or _queued() > 0:
 		return
 	var done: Array = []   # [entry, reason ("" = finished)]
@@ -121,7 +150,7 @@ func on_snapshot(snap: Snapshot) -> void:
 			Where.STILL:
 				e["looks"] += 1
 				e["seq"] = snap.seq   # a second look needs a newer snapshot
-				if not (e["info"] as String).is_empty() or e["looks"] >= 2:
+				if not (e["info"] as String).is_empty() or (e["looks"] >= 2 and not (e["op"] in CONTENT_OPS)):
 					done.append([e, _reason(e)])
 	_resolve(done)
 
@@ -161,8 +190,11 @@ func check_timeouts() -> void:
 	for uid: int in _pending:
 		var e: Dictionary = _pending[uid]
 		if now - int(e["sent_ms"]) >= TIMEOUT_MS:
-			var said: bool = e["looks"] > 0 or not (e["info"] as String).is_empty()
-			done.append([e, _reason(e) if said else NO_ANSWER])
+			var quiet: bool = (e["info"] as String).is_empty()
+			if e["op"] in CONTENT_OPS and quiet and e["looks"] >= 2:
+				done.append([e, ""])   # taken without a refusal; the change didn't show
+				continue
+			done.append([e, _reason(e) if e["looks"] > 0 or not quiet else NO_ANSWER])
 	_resolve(done)
 
 
@@ -190,6 +222,25 @@ static func handle_index(sm: Snapshot.Submap, tile: int, uid: int, type: int) ->
 	return -1
 
 
+## What `snap` shows around an unload / reload as (uid, parent, pocket) per carried row: everything inside
+## `item` when it is carried (rows are depth first, contents after their container), else every carried row
+## (an unload off the floor lands there); plus the row of `other` (a reload's ammo) when it is carried.
+static func contents_sig(snap: Snapshot, item: ItemRef, other: ItemRef = null) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	if snap == null or item == null:
+		return out
+	var c := snap.carried
+	var whole := carried_row(snap, item.uid, item.type) < 0
+	var inside := {item.uid: true}
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		var within := inside.has(c[i + 2]) and c[i] != item.uid
+		if within:
+			inside[c[i]] = true
+		if whole or within or (other != null and c[i] == other.uid and c[i + 1] == other.type):
+			out.append_array(PackedInt64Array([c[i], c[i + 2], c[i + 3]]))
+	return out
+
+
 ## Index of square p within its submap (y * 12 + x).
 static func tile_of(p: Vector3i) -> int:
 	var l := CddaCoords.ms_to_local(p)
@@ -202,6 +253,8 @@ func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: St
 		return false
 	var e := {"op": op, "item": item.duplicate_ref(), "target": target, "spot": spot, "sent_ms": _now(),
 			"seq": _seq, "messages": [], "info": "", "looks": 0}
+	if op in CONTENT_OPS:
+		e["before"] = contents_sig(_snap, item, target if target is ItemRef else null)
 	# Recorded before the call: a backend that answers inside the call (MockItems) has it judged right there.
 	_pending[item.uid] = e
 	var ok: Variant = backend.callv(method, args)
@@ -255,6 +308,9 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			var i := row * Snapshot.CARRIED_STRIDE
 			var same: bool = snap.carried[i + 2] == item.parent and snap.carried[i + 3] == item.pocket
 			return Where.STILL if same else Where.MOVED
+		"unload", "reload":
+			var other: ItemRef = e["target"] if e["target"] is ItemRef else null
+			return Where.MOVED if contents_sig(snap, item, other) != e["before"] else Where.STILL
 	return Where.UNKNOWN
 
 

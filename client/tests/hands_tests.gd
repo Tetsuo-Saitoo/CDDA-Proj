@@ -5,6 +5,7 @@ extends RefCounted
 
 const P := Vector3i(192, 384, 0)       # the mock town's player
 const E := P + Vector3i(1, 0, 0)       # pile: rock, hammer
+const NO_SQ := Vector3i(-1073741824, 0, 0)
 const SE := P + Vector3i(1, 1, 0)      # pile: canvas bag
 const S := P + Vector3i(0, 1, 0)       # bare floor
 const FAR := P + Vector3i(5, 0, 0)     # pile: rock, out of reach
@@ -33,6 +34,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_cancel()
 	_test_mouse(root)
 	_test_move()
+	_test_door_names()
 	_test_freed_leaf()
 	_hands.free()
 	_actions.free()
@@ -137,9 +139,15 @@ func _test_targets() -> void:
 func _test_carry_to_floor() -> void:
 	var rock := _handle(E, _it["rock"])
 	var t := _hands.find_near(_mid(rock), 0.05)
+	var drawn := _world.item_slot(rock)
 	_check.call(_uid(t) == rock and _hands.grab("mouse", t), "hands: grab an item")
 	_check.call(_hands.proxy("mouse") != null and _hands.proxy("mouse").is_inside_tree() and _world.hidden_items.has(rock),
 			"hands: it leaves its pile and a copy follows the hand")
+	var px := _hands.proxy("mouse")
+	var want := Basis((drawn[4] as Transform3D).basis.get_rotation_quaternion()) if not drawn.is_empty() else Basis()
+	_check.call(not drawn.is_empty() and px != null and px.global_position.is_equal_approx((drawn[4] as Transform3D).origin)
+			and px.global_basis.orthonormalized().is_equal_approx(want.orthonormalized()),
+			"hands: the copy starts where the pile drew the item, turned the same way")
 	_check.call(not _hands.grab("vr_l", t) and _uid(_hands.find_near(_mid(rock), 0.01)) != rock,
 			"hands: another hand can't grab or find what one holds")
 	var o := _world.coords.ms_center_to_world(S) + Vector3(0.2, 1.5, -0.1)
@@ -318,3 +326,36 @@ func _test_move() -> void:
 	_seen.clear()
 	_check.call(rock != null and bag != null and _hands.move("mouse", rock, {"kind": "container", "container": bag}) == "put"
 			and _seen == [["confirmed", "mouse", rock.uid, ""]] and not _carried(rock.uid), "hands: move puts a carried item in a bag")
+
+
+## Under the pointer a terrain door is named by its terrain, a furniture part by its kind and furniture
+## ("drawer (dresser)"), locked ones say so; a freed leaf has no name.
+func _test_door_names() -> void:
+	var w := _hands.world
+	var door_sq := NO_SQ
+	var furn_sq := NO_SQ
+	for pos: Vector3i in w.snapshot.submaps:
+		var sm: Snapshot.Submap = w.snapshot.submaps[pos]
+		for i in sm.ter.size():
+			var sq := CddaCoords.sm_to_ms(pos) + Vector3i(i % CddaCoords.SEEX, i / CddaCoords.SEEX, 0)
+			if door_sq == NO_SQ and w.tables.def_at("ter", sm.ter[i]).id.begins_with("t_door"):
+				door_sq = sq
+			if furn_sq == NO_SQ and i < sm.furn.size() and sm.furn[i] != 0:
+				furn_sq = sq
+	var g := Grabbable.new()
+	g.square = door_sq
+	var ter := _hands._name_at("ter", door_sq)
+	var door_ok := door_sq != NO_SQ and not ter.is_empty() and _hands.door_name(g) == ter
+	g.locked = true
+	door_ok = door_ok and _hands.door_name(g) == ter + ", locked"
+	g.locked = false
+	g.mech = "slide"
+	g.kind = "drawer"
+	g.square = furn_sq
+	var furn := _hands._name_at("furn", furn_sq)
+	var part_ok := furn_sq != NO_SQ and not furn.is_empty() and _hands.door_name(g) == "drawer (%s)" % furn
+	g.square = P + Vector3i(0, 0, 40)   # nothing known there
+	part_ok = part_ok and _hands.door_name(g) == "drawer"
+	g.free()
+	_check.call(door_ok and part_ok and _hands.door_name(null) == "",
+			"hands: doors named by terrain, parts by kind and furniture (%s, %s)" % [ter, furn])

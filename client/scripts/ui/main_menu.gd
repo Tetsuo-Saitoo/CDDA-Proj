@@ -9,6 +9,8 @@ extends PanelContainer
 signal new_game(world: String, fresh_world: bool, chargen: bool, world_setup: bool)
 signal load_game(world: String, save: String)
 signal quit_requested
+## "Test range" (PLAN.md K7): lead-qa's generated world with everything in it, cheats allowed.
+signal test_range_requested
 
 const MAX_LISTED := 256
 const MAX_KNOWN := 65536   # names kept for the "already exists" check
@@ -23,6 +25,8 @@ var _taken := {}   # lower-case name -> true, every existing world
 ## world -> PackedStringArray of saves; Callable(world) -> PackedStringArray.
 var saves_of := Callable()
 var page := ""
+## Shows the "Test range" entry (main.gd: only when the bridge has start_test_range).
+var test_range := false
 var message := ""
 var _box: VBoxContainer
 var _msg: Label
@@ -77,6 +81,14 @@ static func world_name_ok(n: String) -> bool:
 	return true
 
 
+## The bridge makes no new world whose name starts with this, in any case (quick starts and tests use it).
+const RESERVED_PREFIX := "fp3d-"
+
+
+static func world_reserved(n: String) -> bool:
+	return n.to_lower().begins_with(RESERVED_PREFIX)
+
+
 ## A fresh world name that isn't taken ("World", "World2", ...).
 func suggested_world() -> String:
 	var n := "World"
@@ -103,6 +115,9 @@ func show_page(p: String) -> void:
 			_button("New game", func() -> void: show_page("new"))
 			var load := _button("Load game", func() -> void: show_page("load"))
 			load.disabled = worlds.is_empty()
+			if test_range:
+				var r := _button("Test range", func() -> void: test_range_requested.emit())
+				r.tooltip_text = "A fresh test world with every item, vehicle and monster in zones; cheats on the F1 menu."
 			_button("Credits", func() -> void: show_page("credits"))
 			_button("Quit", func() -> void: quit_requested.emit())
 		"credits":
@@ -176,6 +191,9 @@ func start_new() -> bool:
 		world = _world_edit.text.strip_edges()
 		if not world_name_ok(world):
 			set_message("World names are 1-32 letters, digits, _ or -.")
+			return false
+		if world_reserved(world):
+			set_message("World names starting with %s are kept for quick starts and tests." % RESERVED_PREFIX)
 			return false
 		if world_taken(world):
 			set_message("A world named %s exists: pick another name or add the character to it." % world)

@@ -10,6 +10,8 @@ const DEFAULT_COMPASS_OPACITY := 0.85
 const MIN_COMPASS_OPACITY := 0.0   # 0 hides the compass; the F1 slider brings it back
 
 var compass_opacity := DEFAULT_COMPASS_OPACITY
+## The F1 menu's Cheats page (testing). Off unless turned on; only a real bool in the file turns it on.
+var debug_cheats := false
 
 
 static func clamp_opacity(v: float) -> float:
@@ -33,14 +35,17 @@ func load_file(path := FILE) -> String:
 	var cfg := ConfigFile.new()
 	if cfg.parse(text) != OK:
 		return "%s doesn't parse" % path
+	var d: Variant = cfg.get_value("debug", "cheats", false)
+	debug_cheats = d if d is bool else false
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
-		return ""
+		return "" if d is bool else "%s: debug cheats is not true or false" % path
 	return "%s: compass opacity is not a number" % path
 
 
 func save_file(path := FILE) -> Error:
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
+	cfg.set_value("debug", "cheats", debug_cheats)
 	return cfg.save(path)

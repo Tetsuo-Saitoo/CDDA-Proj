@@ -11,7 +11,8 @@ extends Node3D
 ## --no-light: no darkening by CDDA's light and night (WorldLighting, block C6).
 ## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
 ## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
-## fresh world fp3d-live), --world=/--save= load directly. In the game the
+## fresh world fp3d-live, or fp3d-live-2 ... if a world it didn't make has that name), --world=/--save= load
+## directly. In the game the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
 ## (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
@@ -55,6 +56,8 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
+var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
@@ -73,6 +76,7 @@ var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
+var _shot_refused := false   # a shot answer was refused (warned once)
 
 
 func _ready() -> void:
@@ -341,10 +345,11 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
+	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
+	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
+	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
+	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	add_child(vr)
-	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
-		var p: Variant = _reach_square()
-		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
@@ -361,7 +366,10 @@ func _start_vr() -> void:
 	vr_perf = VrPerf.new(xr)
 	add_child(vr_perf)
 	vr.live_stairs = live != null
-	vr.stair_used.connect(func(st: Dictionary) -> void: use_stair(st, true))
+	vr.stair_used.connect(func(st: Dictionary) -> void:
+		status = "stairs: not now"   # use_stair says why when it knows
+		if not use_stair(st, true):
+			vr.refused_here(status))   # a buzz and the reason by the main hand (no status line in the headset)
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
@@ -392,6 +400,11 @@ func _start_live() -> void:
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
+	live.cheats_changed.connect(hud_data.set_cheats)
+	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
+	live.state_changed.connect(_apply_test_args)
+	cheat_panel.backend = live
+	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
@@ -399,12 +412,16 @@ func _start_live() -> void:
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
-	# looks in LIVE_WORLD. Saves live under user://cdda/save/<world>/ (copy CDDA worlds there).
+	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
+	# user://cdda/save/<world>/ (copy CDDA worlds there).
 	var user_dir := OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if _args.has("world") or _args.has("save"):
-		var w: String = _args.get("world", LIVE_WORLD)
+		var w: String = _args.get("world", "")
+		if w.is_empty():
+			w = world_for_save(LiveSession.list_worlds(user_dir), _args.get("save", ""),
+					func(n: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, n))
 		var saves := LiveSession.list_saves(user_dir, w)
 		var s: String = _args.get("save", saves[0] if not saves.is_empty() else "")
 		if s.is_empty():
@@ -419,10 +436,31 @@ func _start_live() -> void:
 	_after_live_start(ok)
 
 
+## --save without --world: quick starts play in LIVE_WORLD, or in LIVE_WORLD-2, -3, ... when the bridge found
+## LIVE_WORLD it didn't make (a player's or an older build's). The first of those (in that order) holding
+## `save`, else LIVE_WORLD (the bridge then says the save isn't there).
+static func world_for_save(worlds: PackedStringArray, save: String, saves: Callable) -> String:
+	var nums: Array[int] = []
+	for w in worlds:
+		var tail := w.substr(LIVE_WORLD.length() + 1)
+		if w.begins_with(LIVE_WORLD + "-") and tail.length() <= 4 and tail.is_valid_int() and tail[0] != "+" \
+				and tail[0] != "-" and tail.to_int() >= 2:
+			nums.append(tail.to_int())
+	nums.sort()
+	var order := PackedStringArray([LIVE_WORLD])
+	for n in nums:
+		order.append("%s-%d" % [LIVE_WORLD, n])
+	for w in order:
+		if not save.is_empty() and w in worlds and save in (saves.call(w) as PackedStringArray):
+			return w
+	return LIVE_WORLD
+
+
 ## --live without --world/--save/--quick: CDDA's main menu (MainMenu), then a new game (character creation
 ## through a `chargen` request, ChargenRequestWidget) or a load.
 func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu = MainMenu.new()
+	main_menu.test_range = LiveSession.test_range_available()   # set before setup() draws the page
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
@@ -434,6 +472,10 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.test_range_requested.connect(func() -> void:
+		key_menu.cheats_forced = true   # cheats are always allowed in the range
+		_sync_cheats_allowed()
+		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
 
 
@@ -444,6 +486,41 @@ func _menu_started(center: Control, ok: bool) -> void:
 	center.queue_free()
 	main_menu = null
 	_after_live_start(true)
+
+
+## The bridge lets cheats work only while the player allowed them: the F1 debug switch, --test / --cheats, or a
+## test-range game (KeyMenu.cheats_allowed).
+func _sync_cheats_allowed() -> void:
+	if live != null:
+		live.set_cheats_allowed(key_menu.cheats_allowed())
+
+
+## --test: the test kit, once, and only for a new game (never on a load: the save already has it).
+## --cheats=a,b: those cheats on (names from LiveSession.CHEATS; others are named and skipped). Both also make
+## the F1 menu's Cheats page available this session. Applied when the game first runs (after character creation).
+func _apply_test_args(s: String) -> void:
+	if s != "running" or _test_args_done:
+		return
+	_test_args_done = true
+	if _args.has("test") and live.new_game:
+		print("live: test kit " + ("asked for" if live.give_test_kit() else "refused"))
+	if _args.has("cheats"):
+		for n in cheat_names(String(_args["cheats"])):
+			if n in LiveSession.CHEATS:
+				if not live.set_cheat(n, true):
+					push_warning("--cheats: %s refused" % n)
+			else:
+				push_warning("--cheats: unknown cheat \"%s\" (known: %s)" % [n, ", ".join(LiveSession.CHEATS)])
+
+
+## The names in a --cheats= value: comma-separated, trimmed, at most 16, each cut to 32 characters.
+static func cheat_names(v: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	for n in v.left(1024).split(",", false):
+		n = n.strip_edges().left(32)
+		if not n.is_empty() and not n in out and out.size() < 16:
+			out.append(n)
+	return out
 
 
 func _after_live_start(ok: bool) -> void:
@@ -518,6 +595,16 @@ func _on_live_request(req: Dictionary) -> void:
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
+	var shot := aim.on_request(req)   # a projectile's shot request: answered at once, no UI
+	if not shot.is_empty():
+		# no UI and no time limit: a refused answer is replaced by a cancel, so CDDA never waits on it
+		var sent := AimController.send_shot(shot, live.answer)
+		if sent.is_empty():
+			push_warning("live: bridge refused the shot answer %s and its cancel: the game may wait" % [shot])
+		elif sent != shot and not _shot_refused:
+			_shot_refused = true   # warned once
+			push_warning("live: bridge refused the shot answer %s, cancelled it" % [shot])
+		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
 	if not door.is_empty():   # the "Open where?" of a door you dragged: its direction
@@ -543,6 +630,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	aim.hits.on_events(events)   # CDDA's hit confirmations: the crosshair's hit marker
 	hud_data.on_events(events)
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
@@ -673,14 +761,18 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 	if s.is_empty():
 		return false
 	if live != null:
+		if not _in_main_loop():
+			return false
+		var used := StairUse.use_live(live.sim(), s)
+		if used >= 0:
+			status = ("stairs " + ("up" if s["dz"] > 0 else "down")) if used == 1 else "stairs: can't queue that now"
+			return used == 1
 		if not stairs_settled(live.queued_actions(), world.busy(), live.snapshot_seq, world.snapshot.seq):
 			status = "stairs: wait for the last move to finish"
 			return false
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
-			return false
-		if not _in_main_loop():
 			return false
 		for a in acts:
 			live.queue_action(a)
@@ -748,8 +840,10 @@ func _update_aim() -> void:
 	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
+	viewmodel.sway_arcmin = aim.shown_dispersion
 	viewmodel.visible = _fp_active()
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
+	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 
 
 func _in_main_loop() -> bool:
@@ -767,6 +861,9 @@ func _can_inspect() -> bool:
 func _reach_square() -> Variant:
 	if world.snapshot == null:
 		return null
+	if live == null and vr != null:   # mock VR: the hands reach from where the headset stands
+		var at := world.coords.world_to_ms(vr.camera.global_position)
+		return Vector3i(at.x, at.y, vr.z)
 	if live == null and _fp_active():
 		var sq := world.coords.world_to_ms(fp.position)
 		return Vector3i(sq.x, sq.y, fp.z)
@@ -881,7 +978,11 @@ func _setup_hud() -> void:
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
 	key_menu.add_hud_settings(hud_settings)
+	cheat_panel = CheatPanel.new()
+	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
+	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
+	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 
 
@@ -976,8 +1077,10 @@ func _process(_delta: float) -> void:
 		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
-		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
+	if vr != null:   # the VR Cheats page follows the F1 menu's gate (debug switch, --test / --cheats, test range)
+		vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()

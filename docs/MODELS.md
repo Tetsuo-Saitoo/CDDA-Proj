@@ -52,14 +52,15 @@ owner before making many models, and keep one style across a set.
   that fine).
 
 **Hard limits** (the game refuses the file above these): 32 MB per file, 512 nodes, 60,000 triangles,
-65,536 vertices per mesh primitive (one material of one mesh) and 250,000 in all, 128 markers, 32 drawn
-meshes, 20 m on any side, 16 images of at most 4096 px a side and at most two 2048 x 2048 images' worth
+65,536 vertices per mesh primitive (one material of one mesh) and 250,000 in all, 32 primitives per mesh and
+128 drawn in all (each is a draw call), 128 markers, 32 drawn meshes, 20 m on any side, 16 images of at most 4096 px a side and at most two 2048 x 2048 images' worth
 of pixels in all (PNG or JPEG, embedded), 32 materials. Triangle meshes only; no animations, skins,
 cameras or morph targets; extensions: KHR_texture_transform, KHR_materials_unlit,
 KHR_materials_emissive_strength, KHR_mesh_quantization (and GODOT_single_root from Godot's exporter)
 only. No external files: buffers and textures must
-be inside the `.glb`, and the models folder must not contain links or junctions. All loaded models
-together get 512 MB of decoded textures; past that, further textured models aren't loaded (warning).
+be inside the `.glb`, and the models folder must not contain links or junctions. Names and other text in the
+file must be plain ASCII; images need their mimeType, textures a source, rotations unit quaternions, and 1-, 2-, 3- or 6-byte vertex attributes a byteStride. All loaded models together get 512 MB of decoded textures and 6 million triangles
+(tinted copies included); past that, further models aren't loaded or tinted (warning).
 
 ## Named points (markers)
 
@@ -91,6 +92,30 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 - `surface_1`, …: flat planes where items lie, such as shelves, a drawer's floor or a table top. The plane's
   size is the usable area, and the game hides it. Items on the tile are spread over these planes in turn
   (item 1 on surface_1, item 2 on surface_2, ...); without any, they lie on the placeholder's surfaces.
+
+**Doors, drawers and lids that open (furniture)**
+
+On a furniture model, each `lid`, `door_N` and `drawer_N` is a part the player opens by dragging it (mouse or
+VR hand). The game reads them like this:
+- Everything under the marker moves with it: its own mesh, its child meshes (a door can be an empty on the
+  hinge with the leaf as a child mesh), its `handle_N`, and any `surface_N` under it (a drawer's floor, the
+  shelves on a fridge door), so items lying there move too. A door, drawer or lid inside another one moves
+  with the outer one and doesn't open by itself.
+- A door turns about the model's vertical line through the marker's origin, out toward the model's front:
+  the game picks the direction that swings the middle of the door forward, so put the origin on the hinge
+  edge (left or right) and the door opens the right way. Up to 110°.
+- A lid turns about the marker's own X axis through its origin, lifting the side away from the hinge, up to
+  100°. A door or lid whose middle is on its hinge line (origin in the middle) has no clear side: it opens
+  as if hinged on the left (doors) or at the back (lids). Lift-off lids don't work on furniture yet.
+- A drawer slides toward the model's front (Blender −Y), out by 80 % of its depth along that direction
+  (at least 5 cm).
+- The hand or mouse takes hold at the first `handle_N` inside it; without one, at the middle of the edge
+  farthest from the hinge (doors, lids) or of the front face (drawers).
+- At most 16 per model. Extra ones, and any whose meshes or handle reach more than 4 m from its origin,
+  stay put with the rest of the model (warning in the console). Furniture on a roof doesn't open them.
+- When CDDA has open and closed versions of the furniture (its `open` / `close` fields, e.g. `f_safe_c` and
+  `f_safe_o`), dragging one far enough asks the game to open or close it; give both ids the same model.
+  Other furniture's doors and drawers move in the client only.
 
 **Cooking**
 - `burner_1`, …: stove, hotplate and woodstove spots where a pot or pan sits.
