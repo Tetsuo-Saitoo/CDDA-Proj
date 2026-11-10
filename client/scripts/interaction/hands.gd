@@ -352,7 +352,9 @@ static func drop_hint(drop: Dictionary, tables: IdTables) -> String:
 		"container":
 			return "put it in the %s" % (drop["container"] as ItemRef).display_name(tables)
 		"burner":
-			return "put it on the heat"
+			var heat: Variant = drop.get("heat", {})
+			var cold: bool = heat is Dictionary and (heat as Dictionary).get("lit", true) == false
+			return "put it on the heat (not lit)" if cold else "put it on the heat"
 		"surface":
 			return "put it here"
 	return "can't put it there"

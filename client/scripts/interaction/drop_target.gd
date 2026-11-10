@@ -5,7 +5,7 @@ extends RefCounted
 ## show and send: CDDA still decides (ItemActions sends it, the sim refuses or not).
 
 ## CDDA furniture that holds a fire or heats what is put in or on it (ids checked against the 0.I id tables).
-## A stand-in until the bridge says which furniture is a heat source.
+## Only for snapshots without the bridge's `heat` squares (mock, older bridges): Snapshot.heat_at decides first.
 const HEAT_SOURCES := {
 	"f_fireplace": true, "f_fireplace_stone": true, "f_woodstove": true, "f_brazier": true,
 	"f_makeshift_brazier": true, "f_hobo_stove": true, "f_portable_stove": true, "f_55gal_firebarrel": true,
@@ -17,10 +17,13 @@ const SPOT_MAX := 0.999
 
 ## `hit`: a LookRay.cast() result; `under`: the item under the pointer or hand (null for none); `held`: what is
 ## let go; `in_reach(square) -> bool`. Returns {kind: "container" / "burner" / "surface" / "none", square,
-## spot (Vector2 each 0..0.999 across the square, x east, y south; -1 none), container (ItemRef or null)}.
+## spot (Vector2 each 0..0.999 across the square, x east, y south; -1 none), container (ItemRef or null),
+## heat (Snapshot.heat_at of a burner square: source, tool, fire, charges, lit; {} none or unknown)}.
+## A burner is a square the snapshot says heats (a fire on the floor too, lit or not), else furniture in
+## HEAT_SOURCES.
 static func resolve(coords: CddaCoords, hit: Dictionary, under: ItemRef, held: ItemRef, tables: IdTables,
 		snap: Snapshot, in_reach: Callable) -> Dictionary:
-	var out := {"kind": "none", "square": Vector3i.ZERO, "spot": Vector2(-1, -1), "container": null}
+	var out := {"kind": "none", "square": Vector3i.ZERO, "spot": Vector2(-1, -1), "container": null, "heat": {}}
 	if held == null:
 		return out
 	if under != null and under.uid > 0 and under.uid != held.uid and MockItems.is_container(under.type, tables) \
@@ -40,8 +43,10 @@ static func resolve(coords: CddaCoords, hit: Dictionary, under: ItemRef, held: I
 	if (what != "furniture" and what != "floor") or not _reach(in_reach, sq):
 		return out
 	out["spot"] = _spot(coords, sq, pt)
-	var burner: bool = what == "furniture" and is_heat_source(furniture_id(sq, snap, tables))
+	var heat := snap.heat_at(sq) if snap != null else {}
+	var burner: bool = not heat.is_empty() or (what == "furniture" and is_heat_source(furniture_id(sq, snap, tables)))
 	out["kind"] = "burner" if burner else "surface"
+	out["heat"] = heat
 	return out
 
 
