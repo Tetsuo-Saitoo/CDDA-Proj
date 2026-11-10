@@ -306,6 +306,8 @@ func _start_vr() -> void:
 		xr.connect("pose_recentered", func() -> void: XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true))
 	vr_perf = VrPerf.new(xr)
 	add_child(vr_perf)
+	vr.live_stairs = live != null
+	vr.stair_used.connect(func(st: Dictionary) -> void: use_stair(st, true))
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
@@ -544,9 +546,9 @@ func _live_action(event: InputEvent) -> bool:
 
 ## Left click: what is under the mouse (the screen centre while the mouse looks around), with a line from
 ## the player to it, its distance and what the snapshot says is there.
-func _look_at_screen(pos: Vector2) -> void:
+func _look_at_screen(pos: Vector2) -> Dictionary:
 	if world.snapshot == null:
-		return
+		return {}
 	if look_ray == null:
 		look_ray = LookRay.new(world)
 	var cam := get_viewport().get_camera_3d()
@@ -556,7 +558,7 @@ func _look_at_screen(pos: Vector2) -> void:
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
-		return
+		return r
 	# From the chest: in first person a line from the eyes would run straight away from the view.
 	var from := world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
 	if _fp_active():
@@ -573,6 +575,38 @@ func _look_at_screen(pos: Vector2) -> void:
 ".join(lines)
 	_look_line = _line_mesh(from, r["point"])
 	add_child(_look_line)
+	return r
+
+
+## The level stairs are used from: the player's in a live game, else the viewer's.
+func _stair_z() -> int:
+	if live != null:
+		return world.snapshot.player_pos.z
+	return vr.z if vr != null else fp.z
+
+
+## Takes stair s (StairUse.find; {} = not a stair, ignored). Live: CDDA's own actions (a step onto it when next to
+## it, then < or >); mock: the first-person camera goes there (the VR rig moves itself). True when something
+## happened.
+func use_stair(s: Dictionary, from_vr := false) -> bool:
+	if s.is_empty():
+		return false
+	if live != null:
+		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
+		if acts.is_empty():
+			status = "stairs: walk next to them first"
+			return false
+		if not _in_main_loop():
+			return false
+		for a in acts:
+			live.queue_action(a)
+		status = "stairs " + ("up" if s["dz"] > 0 else "down")
+		return true
+	if not from_vr and not fp.use_stair(s):
+		status = "nowhere to stand on level %d" % (fp.z + s["dz"])
+		return false
+	status = "level %d" % (vr.z if from_vr else fp.z)
+	return true
 
 
 func _clear_look() -> void:
@@ -914,7 +948,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
 		var mb := event as InputEventMouseButton
-		_look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		var hit := _look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		if _fp_active() and hit.get("hit", false):   # clicking stairs in first person takes them
+			use_stair(StairUse.find(world, hit["square"], _stair_z()))
 		return
 	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()

@@ -84,6 +84,15 @@ func change_level(dz: int) -> bool:
 	return true
 
 
+## Free walk: takes stair s (StairUse.find) to the nearest standable square where it leads; false when none.
+func use_stair(s: Dictionary) -> bool:
+	var to: Variant = walk.nearest_standable(s["to"]) if not s.is_empty() else null
+	if to == null:
+		return false
+	go_to_square(to)
+	return true
+
+
 ## Live: the CDDA player's square. The camera glides there (jumps the first time and when far).
 func follow_square(sq: Vector3i) -> void:
 	follow = true

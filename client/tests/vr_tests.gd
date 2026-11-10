@@ -16,6 +16,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_settings()
 	_test_walk(world)
 	_test_rig(root, world)
+	_test_stair_point(root, world)
 	preload("res://tests/vr_comfort_tests.gd").new().run(root, check, world)
 	world.free()
 
@@ -149,4 +150,33 @@ func _test_rig(root: Node, world: WorldView) -> void:
 				and rig.walk.can_stand(rig.walk.square_at(rig.camera.global_position, rig.z)), "vr: level up lands on a free square")
 	else:
 		_check.call(rig.z == z0, "vr: level up refused keeps the level")
+	rig.free()
+
+
+## The right trigger pointed at stairs takes the rig up them (mock); pointing at a floor does nothing.
+func _test_stair_point(root: Node, world: WorldView) -> void:
+	var w := VrWalk.new(world)
+	var up: Variant = _find(world, w, 0, TerrainCatalog.Kind.STAIRS_UP)
+	_check.call(up != null, "vr stairs: the mock town has stairs up on level 0")
+	if up == null:
+		return
+	var rig := VrRig.new(world, {})
+	root.add_child(rig)
+	rig.go_to_square(world.snapshot.player_pos)
+	var used := []
+	rig.stair_used.connect(func(s: Dictionary) -> void: used.append(s))
+	var aim := func(sq: Vector3i) -> void:
+		var at := world.coords.ms_center_to_world(sq)
+		rig.right.global_position = at + Vector3(0.6, 1.2, 0.0)
+		rig.right.look_at(at, Vector3.UP)
+	aim.call(world.snapshot.player_pos)
+	rig.press(rig.right, "trigger_click")
+	_check.call(used.is_empty() and rig.z == 0, "vr stairs: pointing at a floor does nothing")
+	aim.call(up)
+	rig.press(rig.right, "trigger_click")
+	_check.call(used.size() == 1 and used[0]["dz"] == 1 and rig.z == 1, "vr stairs: trigger on stairs goes up (z %d)" % rig.z)
+	rig.live_stairs = true
+	aim.call(up)
+	rig.press(rig.right, "trigger_click")
+	_check.call(used.size() == 2 and used[1]["dz"] == -1 and rig.z == 1, "vr stairs: live leaves the move to the game")
 	rig.free()
