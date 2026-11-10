@@ -343,6 +343,9 @@ func _start_vr() -> void:
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
+	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
+	# The debug setting (lead-ui's HudSettings) joins this when it lands.
+	vr.cheats_allowed = _args.has("test") or _args.has("cheats")
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0

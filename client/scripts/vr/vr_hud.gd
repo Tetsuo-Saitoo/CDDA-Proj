@@ -4,7 +4,8 @@ extends Node3D
 ## on the inside of the off-hand forearm (left, right when left-handed: VrSettings `main_hand`; the compass is on
 ## the back of the same wrist). It shows when you turn the inner wrist toward your eyes (`facing`) and fades in
 ## and out. Content: the body as a doll (your left on the left) coloured by level, broken parts crossed, bleeding
-## ones dotted red; the needs CDDA has words for; the warnings, worst first; the last messages. Text is plain
+## ones dotted red; the needs CDDA has words for; the warnings, worst first; the last messages; an amber
+## "CHEATS: a, b" line while testing cheats are on (K7: HudData `cheats`, read duck-typed). Text is plain
 ## Label text, capped per line.
 ## Drawn by Controls in a SubViewport onto a quad, and the viewport renders only after HudData's `changed` named a
 ## group it shows, once, when the panel is turned to the eyes (VR runs at 90 fps). A new bad warning (level BAD or
@@ -29,6 +30,7 @@ const MSG_LINES := 4
 const WARN_CHARS := 30   # per line, so a line fits its label
 const NEED_CHARS := 16
 const MSG_CHARS := 52
+const CHEAT_CHARS := 36
 const BG := Color(0.04, 0.05, 0.07, 0.72)
 const NO_DATA := Color(0.6, 0.6, 0.6, 0.3)   # a doll part the snapshot says nothing about
 ## The doll: slot -> rectangle (px, doll space), drawn in this order (eyes and mouth over the head).
@@ -47,7 +49,7 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_show(PackedStringArray(["body", "needs", "warnings", "messages"]), true)
+		_show(PackedStringArray(["body", "needs", "warnings", "messages", "cheats"]), true)
 ## VrSettings `wrist_hud` (VrRig.place_hud): off hides it and silences the buzz.
 var enabled := true:
 	set(v):
@@ -67,6 +69,7 @@ var doll := {}            # slot -> ColorRect, with "Broken" (Label) and "Bleed"
 var warn_labels: Array[Label] = []
 var need_labels: Array[Label] = []
 var msg_labels: Array[Label] = []
+var cheat_label: Label    # "CHEATS: ..." while any testing cheat is on
 var _quad: MeshInstance3D
 var _mat: StandardMaterial3D
 var _dirty := true        # the labels changed since the viewport last rendered
@@ -102,7 +105,7 @@ func _init() -> void:
 	_quad.mesh = q
 	_quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_quad)
-	_show(PackedStringArray(["body", "needs", "warnings", "messages"]), true)
+	_show(PackedStringArray(["body", "needs", "warnings", "messages", "cheats"]), true)
 
 
 func _ready() -> void:
@@ -278,6 +281,12 @@ func _show(parts: PackedStringArray, seeding: bool) -> void:
 			l.text = fit(t, MSG_CHARS) if l.visible else ""
 			l.modulate.a = lerpf(0.55, 1.0, float(i + 1) / MSG_LINES)
 		any = true
+	if "cheats" in parts:
+		# HudData gets `cheats` with lead-ui's K7 work: until then get() is null and the line stays hidden.
+		var t := VrCheats.marker(data.get("cheats") if data != null else null)
+		cheat_label.visible = not t.is_empty()
+		cheat_label.text = fit(t, CHEAT_CHARS)
+		any = true
 	if any:
 		_dirty = true
 
@@ -413,6 +422,10 @@ func _build_panel() -> Control:
 		l.position = Vector2(col + (i % 2) * (PX.x - col - 10) / 2.0, 100 + (i >> 1) * 25)
 		root.add_child(l)
 		need_labels.append(l)
+	cheat_label = _label("Cheats", 18, Vector2(PX.x - col - 10, 24))   # under the needs, right of the doll
+	cheat_label.position = Vector2(col, 180)
+	cheat_label.add_theme_color_override("font_color", VrCheats.WARN)
+	root.add_child(cheat_label)
 	for i in MSG_LINES:
 		var l := _label("Message%d" % i, 18, Vector2(PX.x - 24, 24))
 		l.position = Vector2(12, 214 + i * 24)

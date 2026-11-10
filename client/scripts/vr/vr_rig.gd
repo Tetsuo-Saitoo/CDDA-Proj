@@ -9,7 +9,8 @@ extends XROrigin3D
 ## - vive (trackpad wands): left pad touched moves; right pad clicked: left / right half snap turns, up half
 ##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
 ## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
-## `save_path`), with a laser pointer from the main hand. Hands (VrHand) show finger tracking when the runtime
+## `save_path`), with a laser pointer from the main hand, and its Cheats page (K7: `cheats_backend`,
+## `cheats_allowed`; a refused cheat buzzes the main hand). Hands (VrHand) show finger tracking when the runtime
 ## gives it, else fingers from the buttons; they are the only hands: the player's body hides its own and
 ## reaches its arms for their wrists (drive_body).
 ## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs, it aims the
@@ -83,6 +84,19 @@ var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.g
 var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
 var pointer_dot: MeshInstance3D   # ... and its dot on the panel
 var _held := {}                   # the last show_held, shown again when the main hand changes
+## K7: the menu's Cheats page talks to this (main.gd: the LiveSession; null in the mock) ...
+var cheats_backend: Object:
+	set(b):
+		cheats_backend = b
+		if menu != null:
+			menu.cheats_backend = b
+## ... and shows only when this is on (main.gd: --test / --cheats).
+var cheats_allowed := false:
+	set(v):
+		cheats_allowed = v
+		if menu != null:
+			menu.cheats_allowed = v
+			menu.refresh()
 
 const HAND_IDS := ["vr_l", "vr_r"]   # Hands ids of the left / right controller
 const GRAB_REACH := 0.12   # metres from a hand to a door leaf or an item it can grip
@@ -868,6 +882,9 @@ func toggle_menu() -> void:
 		add_child(menu)
 		menu.visible = false
 		menu.action.connect(_menu_action)
+		menu.cheats_backend = cheats_backend
+		menu.cheats_allowed = cheats_allowed
+		menu.cheat_refused.connect(func(_why: String) -> void: _feel(main_ctrl()))   # the reason shows on the page
 	menu.visible = not menu.visible
 	aiming = false
 	arc = {}
@@ -930,7 +947,7 @@ func update_pointer(all_hands := false) -> void:
 			menu.hover(null)
 		return
 	var p: Variant = pointer_at(c)
-	var hit := p is Vector3 and VrMenu.on_panel(p)
+	var hit := menu.covers(p)
 	menu.hover(p if hit else null)
 	var from := c.global_position
 	var to: Vector3 = menu.global_transform * (p as Vector3) if hit else from - c.global_basis.z.normalized() * POINTER_LEN
@@ -964,7 +981,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			# The main hand's trigger presses where its pointer meets the panel; off the panel (or the other
 			# trigger) it changes the row the stick picked.
 			var p: Variant = pointer_at(c) if c == main_ctrl() else null
-			var changed := menu.click_at(p) if p is Vector3 and VrMenu.on_panel(p) else menu.click()
+			var changed := menu.click_at(p) if menu.covers(p) else menu.click()
 			if changed:
 				_settings_changed()
 		return

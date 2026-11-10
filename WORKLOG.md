@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — K7 VR cheats page: VrMenu "Cheats >" row (only with --test / --cheats and a backend that has cheats()) opens a page of VrCheats rows (the 7 cheats, auto-pause, test kit; CheatModel's API and order), read fresh from the backend, status line, refused = main-hand buzz; wrist HUD "CHEATS: ..." line. Dormant until lead-ui's LiveSession cheat methods land.
 - 2026-11-10 — VR: a refused stair use (last move still going, not next to the stairs) buzzes the main hand and shows why by it (`VrRig.refused_here`).
 - 2026-11-10 — L4 VR wrist HUD (VrHud, `vr/vr_hud.gd`): HudData on a panel inside the off forearm (doll by level, broken / bleeding marked, need words, warnings worst first, last 4 messages), SubViewport rendered only after a change, shows when the inner wrist turns to the eyes, buzz on a new bad warning, setting `wrist_hud` (`--vr-hud`); `vr_hud_tests.gd`. Not tried in a headset.
 - 2026-11-10 — VR compass: creatures on other levels show as fainter rings with up / down chevrons (two for 2+ levels), from Compass.level_blips, like the flat compass.
