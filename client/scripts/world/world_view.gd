@@ -413,6 +413,44 @@ func _node(pos: Vector3i, make: bool) -> Node3D:
 	return node
 
 
+## World y of what one stands on at point p (x, z used) on level z: the floor, or the stair flight or ramp
+## surface drawn on that square (TerrainMesher.surface_heights), so cameras and figures climb them. Squares
+## are looked up once per shown snapshot (at most MAX_GROUND kept).
+func ground_y(p: Vector3, z: int) -> float:
+	var sq := coords.world_to_ms(p)
+	sq.z = z
+	var base := coords.ms_to_world(sq)
+	var hs := _ground_heights(sq)
+	if hs.size() != 4:
+		return base.y
+	var h := TerrainMesher.height_at(hs, clampf((p.x - base.x) / CddaCoords.TILE_M, 0.0, 1.0),
+			clampf((p.z - base.z) / CddaCoords.TILE_M, 0.0, 1.0))
+	return base.y + (clampf(h, -CddaCoords.LEVEL_M, CddaCoords.LEVEL_M) if is_finite(h) else 0.0)
+
+
+const MAX_GROUND := 4096
+var _ground := {}        # square -> its surface heights (empty: flat floor), for _ground_of
+var _ground_ramps := {}
+var _ground_of: Array = []   # [snapshot, tables] the cache was filled from
+
+
+func _ground_heights(sq: Vector3i) -> PackedFloat32Array:
+	if snapshot == null:
+		return PackedFloat32Array()
+	if _ground_of.size() != 2 or _ground_of[0] != snapshot or _ground_of[1] != tables or _ground.size() >= MAX_GROUND:
+		_ground = {}
+		_ground_ramps = {}
+		_ground_of = [snapshot, tables]
+	if not _ground.has(sq):
+		var hs := PackedFloat32Array()
+		var st := TerrainMesher.style_in(snapshot, catalog, sq)
+		if st != null and (st.kind in [TerrainCatalog.Kind.STAIRS_UP, TerrainCatalog.Kind.RAMP_UP] or st.ramp_low):
+			hs = TerrainMesher.surface_heights(sq, TerrainMesher.kind_lookup(snapshot, catalog),
+					TerrainMesher.low_lookup(snapshot, catalog), _ground_ramps)
+		_ground[sq] = hs
+	return _ground[sq]
+
+
 ## How many submaps have a node (something drawn).
 func node_count() -> int:
 	return _nodes.size()

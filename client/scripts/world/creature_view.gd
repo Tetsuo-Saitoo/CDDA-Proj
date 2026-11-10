@@ -61,6 +61,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			f = _gone[c.uid][0]
 			_gone.erase(c.uid)
 		var target := world.coords.ms_center_to_world(c.pos)
+		target.y = world.ground_y(target, c.pos.z)   # on a stair flight or ramp, on its slope
 		if f == null or f.key != key:
 			if f != null:
 				f.free()
