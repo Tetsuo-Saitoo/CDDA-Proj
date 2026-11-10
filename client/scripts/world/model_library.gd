@@ -564,9 +564,9 @@ static func _check_images(g: Dictionary, views: Array, bytes: PackedByteArray, b
 		var at: int = bin_at + views[vi][0]
 		var n: int = views[vi][1]
 		var mime := _image_mime(bytes, at, n)
-		var said: Variant = img.get("mimeType", mime)
+		var said: Variant = img.get("mimeType")
 		if mime.is_empty() or not said is String or said != mime:
-			return "images must be PNG or JPEG"
+			return "images must be PNG or JPEG, with their mimeType"
 		var size := _image_size(bytes, at, n)
 		if size.x <= 0 or size.y <= 0:
 			return "bad image"
@@ -632,10 +632,12 @@ static func _check_materials(g: Dictionary) -> String:
 			if s.has(k) and not (_int(s[k], 0, 0xFFFF) in SAMPLER_VALUES[k]):
 				return "bad texture sampler"
 	for t: Variant in _list(g, "textures"):
-		if not t is Dictionary or (t.has("source") and _int(t["source"], 0, n_images - 1) < 0):
+		if not t is Dictionary:
 			return "bad texture image"
 		if t.has("sampler") and _int(t["sampler"], 0, n_samplers - 1) < 0:
 			return "bad texture sampler"
+		if _int(t.get("source"), 0, n_images - 1) < 0:
+			return "bad texture image"
 	for mat: Variant in _list(g, "materials"):
 		if not mat is Dictionary:
 			return "bad material"
@@ -699,6 +701,10 @@ func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: Pack
 				var ai := _int(attrs[k], 0, acc.size() - 1)
 				if not k is String or ai < 0 or not _attribute_type_ok(k, acc[ai][2]):
 					return "bad mesh attribute"
+				var shape: Vector2i = TYPE_SHAPE[acc[ai][2]]
+				var elem: int = COMPONENT_BYTES[acc[ai][1]] * shape.x * shape.y
+				if elem % 4 != 0 and not acc[ai][4]:
+					return "a %d-byte vertex attribute needs a byteStride" % elem
 				if acc[ai][0] != nv:
 					return "mesh attributes differ in count"
 			var corner_n := nv
@@ -748,6 +754,16 @@ func _check_nodes(g: Dictionary, tris: PackedInt32Array, prims: PackedInt32Array
 		for k: String in NODE_TRS:
 			if n.has(k) and not _finite_list(n[k], NODE_TRS[k]):
 				return "bad node transform"
+		if n.has("rotation"):
+			var q: Array = n["rotation"]
+			var len2 := float(q[0]) * float(q[0]) + float(q[1]) * float(q[1]) + float(q[2]) * float(q[2]) + float(q[3]) * float(q[3])
+			if absf(len2 - 1.0) > 0.01:
+				return "bad node transform (rotation is not a unit quaternion)"
+		if n.has("matrix"):
+			var mm: Array = n["matrix"]
+			var b := Basis(Vector3(mm[0], mm[1], mm[2]), Vector3(mm[4], mm[5], mm[6]), Vector3(mm[8], mm[9], mm[10]))
+			if absf(b.determinant()) < 1e-9:
+				return "bad node transform (flat matrix)"
 		if n.has("mesh"):
 			var mi := _int(n["mesh"], 0, tris.size() - 1)
 			if mi < 0:
@@ -775,7 +791,7 @@ func _check_nodes(g: Dictionary, tris: PackedInt32Array, prims: PackedInt32Array
 	if g.has("scene") and _int(g["scene"], 0, scenes.size() - 1) < 0:
 		return "bad scene index"
 	for s: Variant in scenes:
-		if not s is Dictionary or (s.has("nodes") and not s["nodes"] is Array):
+		if not s is Dictionary or not s.get("nodes") is Array:
 			return "bad scene"
 		var seen := {}
 		for r: Variant in s.get("nodes", []):

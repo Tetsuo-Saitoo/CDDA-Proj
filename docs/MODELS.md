@@ -59,7 +59,7 @@ cameras or morph targets; extensions: KHR_texture_transform, KHR_materials_unlit
 KHR_materials_emissive_strength, KHR_mesh_quantization (and GODOT_single_root from Godot's exporter)
 only. No external files: buffers and textures must
 be inside the `.glb`, and the models folder must not contain links or junctions. Names and other text in the
-file must be plain ASCII. All loaded models together get 512 MB of decoded textures and 6 million triangles
+file must be plain ASCII; images need their mimeType, textures a source, rotations unit quaternions, and 1-, 2-, 3- or 6-byte vertex attributes a byteStride. All loaded models together get 512 MB of decoded textures and 6 million triangles
 (tinted copies included); past that, further models aren't loaded or tinted (warning).
 
 ## Named points (markers)

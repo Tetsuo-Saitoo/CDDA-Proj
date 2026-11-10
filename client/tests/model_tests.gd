@@ -327,6 +327,8 @@ func _test_hostile(glb: PackedByteArray) -> void:
 		walk_ok = walk_ok and ModelLibrary._image_size(bad, 0, bad.size()) == Vector2i(-1, -1)
 	_check.call(walk_ok, "JPEG size: read from the first frame of a plain header; odd marker sequences are unreadable")
 	var cases := [
+		["image without mimeType", glb_of({"asset": asset, "buffers": [{"byteLength": png.size()}],
+				"bufferViews": [{"buffer": 0, "byteLength": png.size()}], "images": [{"bufferView": 0}]}, png), "mimeType"],
 		["JPEG stuffed byte before the frame", img.call(stuffed, "image/jpeg"), "bad image"],
 		["JPEG scan before the frame", img.call(scan_first, "image/jpeg"), "bad image"],
 		["JPEG segment length under 2", img.call(short_len, "image/jpeg"), "bad image"],
@@ -456,6 +458,13 @@ func _test_strict() -> void:
 		["node transform size", tri_glb({"nodes/0/translation": [1, 2]}), "node transform"],
 		["node transform number", not_finite, "node transform"],
 		["model size", scene_glb(big), "20 m"],
+		["rotation not a unit quaternion", tri_glb({"nodes/0/rotation": [0, 0, 0, 0]}), "rotation"],
+		["rotation scaled", tri_glb({"nodes/0/rotation": [0, 0, 0, 2]}), "rotation"],
+		["flat matrix", tri_glb({"nodes/0/matrix": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]}), "flat matrix"],
+		["scene without nodes", tri_glb({"scenes/0/nodes": null}), "scene"],
+		["texture without a source", tri_glb({"textures": [{}]}), "texture image"],
+		["2-byte attribute without a stride", tri_glb({"accessors/2": {"bufferView": 0, "componentType": 5121, "normalized": true,
+				"count": 3, "type": "VEC2"}, "meshes/0/primitives/0/attributes/TEXCOORD_0": 2}), "byteStride"],
 		["primitives in a mesh", tri_glb({}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES + 1), "primitives"],
 		["surfaces drawn", tri_glb({"nodes/1": {"mesh": 0}, "nodes/2": {"mesh": 0}, "nodes/3": {"mesh": 0},
 				"nodes/4": {"mesh": 0}}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES), "surfaces drawn"],
