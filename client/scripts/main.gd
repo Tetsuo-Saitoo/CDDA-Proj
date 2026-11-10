@@ -711,14 +711,18 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 	if s.is_empty():
 		return false
 	if live != null:
+		if not _in_main_loop():
+			return false
+		var used := StairUse.use_live(live.sim(), s)
+		if used >= 0:
+			status = ("stairs " + ("up" if s["dz"] > 0 else "down")) if used == 1 else "stairs: can't queue that now"
+			return used == 1
 		if not stairs_settled(live.queued_actions(), world.busy(), live.snapshot_seq, world.snapshot.seq):
 			status = "stairs: wait for the last move to finish"
 			return false
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
-			return false
-		if not _in_main_loop():
 			return false
 		for a in acts:
 			live.queue_action(a)

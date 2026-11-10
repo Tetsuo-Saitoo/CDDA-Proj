@@ -239,6 +239,23 @@ func _stairs_settled() -> void:
 	_check.call(m.stairs_settled(0, false, 5, 5) and not m.stairs_settled(1, false, 5, 5)
 			and not m.stairs_settled(0, true, 5, 5) and not m.stairs_settled(0, false, 6, 5),
 			"stairs: live steps only when nothing is queued and the newest snapshot is shown")
+	var sim := _FakeStairs.new()
+	var s := {"dz": -1, "stand": Vector3i(3, 4, 0), "to": Vector3i(3, 4, -1)}
+	var ok := StairUse.use_live(sim, s) == 1 and sim.calls == [[Vector3i(3, 4, 0), -1]]
+	sim.answer = false
+	ok = ok and StairUse.use_live(sim, s) == 0
+	ok = ok and StairUse.use_live(sim, {}) == 0 and StairUse.use_live(sim, {"dz": 2, "stand": Vector3i.ZERO}) == 0 			and StairUse.use_live(sim, {"dz": 1.0, "stand": Vector3i.ZERO}) == 0 and sim.calls.size() == 2
+	ok = ok and StairUse.use_live(RefCounted.new(), s) == -1 and StairUse.use_live(null, s) == -1
+	_check.call(ok, "stairs: the bridge's stairs action gets the stair square and direction; older bridges fall back")
+
+
+class _FakeStairs extends RefCounted:
+	var calls: Array = []
+	var answer := true
+
+	func use_stairs(pos: Vector3i, dir: int) -> bool:
+		calls.append([pos, dir])
+		return answer
 
 
 ## Stamina and needs for the HUD: optional, clamped, wrong types rejected.

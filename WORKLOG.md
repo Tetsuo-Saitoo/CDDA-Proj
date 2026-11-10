@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Live stairs go through the bridge's own stairs action when the build has it (step + `<`/`>` stand-in otherwise); client tests pass; not tried live.
 - 2026-11-10 — Furniture doors, drawers and lids open (L8 world side): model markers become Grabbable parts, items on their surfaces move with them; door angles are checked as numbers; main merged; client tests pass; not live, not VR.
 - 2026-11-10 — "Test range" entry in the main menu, shown once the bridge has lead-qa's start_test_range (not built yet); starting it allows the Cheats page. CheatModel (hud/) gives the cheat rows to both the F1 page and lead-vr's VR page.
 - 2026-11-10 — Cheats page in the F1 menu (behind a debug setting, off by default, or --test / --cheats=): toggles for the bridge cheats, test kit, auto-pause; HUD marker while any cheat is on; --test gives the kit once per new game; client tests pass (1321); not tried live.
