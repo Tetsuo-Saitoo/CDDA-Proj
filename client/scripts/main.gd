@@ -253,7 +253,7 @@ func _place_player_body() -> void:
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
-		VrHands.drive(player_body, vr)
+		# the rig poses the hands and the arms after this (VrRig.drive_body)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
 	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
@@ -294,6 +294,8 @@ func _start_vr() -> void:
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
 	vr.save_path = VrSettings.FILE
+	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
+	vr.compass.opacity = hud_settings.compass_opacity
 	add_child(vr)
 	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
 		var p: Variant = _reach_square()
@@ -334,6 +336,7 @@ func _start_live() -> void:
 	add_child(live)
 	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
+	live.busy = world.busy   # no new snapshot fetch while the last one is still being put on screen
 	world.applied.connect(_on_world_applied)
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)
@@ -459,12 +462,14 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
+	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
+	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
+		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
-	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if not door.is_empty():   # the "Open where?" of a door you dragged: its direction
 		grab.ask = {}
 		request_ui.clear()
@@ -546,6 +551,7 @@ func _live_action(event: InputEvent) -> bool:
 	if act == "":
 		return false
 	if _in_main_loop():
+		grab.ask = {}   # a key's own action: its prompts are the player's to answer
 		live.queue_action(act)
 	return true
 
@@ -687,8 +693,8 @@ func _on_door_wants(square: Vector3i, open: bool) -> void:
 	if live == null or world.snapshot == null or not _in_main_loop():
 		return
 	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
-	if act != "":
-		live.queue_action(act)
+	if act != "" and not live.queue_action(act):
+		grab.ask = {}
 
 
 ## The mouse point grabbing and looking use: the screen centre while the mouse looks around.
@@ -875,6 +881,9 @@ func _process(_delta: float) -> void:
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+				world.coords.ms_center_to_world))
+	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
+		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed

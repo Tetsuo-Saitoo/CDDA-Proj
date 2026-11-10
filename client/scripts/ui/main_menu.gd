@@ -11,6 +11,7 @@ signal load_game(world: String, save: String)
 signal quit_requested
 
 const MAX_LISTED := 256
+const MAX_KNOWN := 65536   # names kept for the "already exists" check
 const WORLD_NAME_MAX := 32
 const CREDITS := [
 	"Cataclysm: Dark Days Ahead by CleverRaven and contributors (CC BY-SA 3.0)",
@@ -18,6 +19,7 @@ const CREDITS := [
 ]
 
 var worlds := PackedStringArray()
+var _taken := {}   # lower-case name -> true, every existing world
 ## world -> PackedStringArray of saves; Callable(world) -> PackedStringArray.
 var saves_of := Callable()
 var page := ""
@@ -49,11 +51,20 @@ func _init() -> void:
 ## Fills the menu: `world_names` from list_worlds, `saves` a Callable(world) -> PackedStringArray.
 func setup(world_names: PackedStringArray, saves: Callable) -> void:
 	worlds = PackedStringArray()
+	_taken = {}
 	for w in world_names:
 		if worlds.size() < MAX_LISTED and world_name_ok(w):
 			worlds.append(w)
+		if _taken.size() < MAX_KNOWN:
+			_taken[w.to_lower()] = true
 	saves_of = saves
 	show_page("main")
+
+
+## A world of this name exists, in any case ("world" is taken when "World" exists: folders may not tell them
+## apart), among every name given to setup(), not only the listed ones.
+func world_taken(n: String) -> bool:
+	return _taken.has(n.to_lower())
 
 
 ## A name the bridge accepts for a new world: 1-32 of A-Z a-z 0-9 _ -.
@@ -70,7 +81,7 @@ static func world_name_ok(n: String) -> bool:
 func suggested_world() -> String:
 	var n := "World"
 	var i := 1
-	while worlds.has(n):
+	while world_taken(n):
 		i += 1
 		n = "World%d" % i
 	return n
@@ -166,7 +177,7 @@ func start_new() -> bool:
 		if not world_name_ok(world):
 			set_message("World names are 1-32 letters, digits, _ or -.")
 			return false
-		if worlds.has(world):
+		if world_taken(world):
 			set_message("A world named %s exists: pick another name or add the character to it." % world)
 			return false
 	set_message("")

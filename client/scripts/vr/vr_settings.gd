@@ -7,23 +7,25 @@ extends RefCounted
 const FILE := "user://vr.json"
 const MAX_FILE_BYTES := 4096
 const DEFAULTS := {"move": "smooth", "move_dir": "head", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0,
-		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false}
+		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false,
+		"compass": "wrist"}
 ## Key -> allowed words, or [min, max, menu step] for numbers. Bools are on/off.
 const SPEC := {
 	"move": ["smooth", "teleport"], "move_dir": ["head", "hand"], "turn": ["snap", "smooth", "off"],
 	"layout": ["auto", "quest", "vive"], "hands": ["auto", "buttons", "boxes"],
+	"compass": ["wrist", "belt", "both", "off"],
 	"snap_deg": [15.0, 90.0, 15.0], "turn_speed": [30.0, 360.0, 30.0], "speed": [0.5, 5.0, 0.5],
 	"vignette": [0.0, 1.0, 0.2], "blink": [], "swap_sticks": [],
 }
 ## Command-line option (after `--`) -> key.
 const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", "vr-snap": "snap_deg",
 		"vr-turn-speed": "turn_speed", "vr-speed": "speed", "vr-vignette": "vignette", "vr-blink": "blink",
-		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks"}
+		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass"}
 ## Menu rows: key, label.
 const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move speed"], ["turn", "Turn"],
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["layout", "Controllers"],
-		["hands", "Hands"]]
+		["hands", "Hands"], ["compass", "Compass"]]
 
 
 ## `value` checked against SPEC: the cleaned value, or null when it isn't allowed. Strings from the command
@@ -123,4 +125,7 @@ static func label(key: String, v: Variant) -> String:
 					"vive": "trackpads (Vive wands, WMR)"}[v]
 		"hands":
 			return {"auto": "finger tracking, else from buttons", "buttons": "fingers from buttons", "boxes": "simple boxes"}[v]
+		"compass":
+			return {"wrist": "on the left wrist", "belt": "belt ring (look down)", "both": "wrist and belt",
+					"off": "off"}[v]
 	return str(v)
