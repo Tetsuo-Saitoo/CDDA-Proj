@@ -25,6 +25,10 @@ const PARTS := {
 	"foot_l": [Vector3(-0.1, 0.04, -0.04), Vector3(0.11, 0.08, 0.26)],
 	"foot_r": [Vector3(0.1, 0.04, -0.04), Vector3(0.11, 0.08, 0.26)],
 }
+const SHOULDER_Y := 1.45
+const ARM_REACH := 0.62         # shoulder to hand centre, metres
+const HIP_SLACK := 0.6          # radians the head may turn before the hips follow
+const HIP_RATE := 6.0           # rad/s the hips catch up with
 const BLOOD := Color(0.55, 0.02, 0.02)
 const BANDAGE := Color(0.95, 0.95, 0.9)
 const BITE := Color(0.3, 0.1, 0.3)
@@ -39,6 +43,7 @@ var show_head := true:
 var key := ""                   # what it was last built from
 var pieces: Array[Dictionary] = []   # the last plan (tests read it)
 
+var hip_yaw := 0.0              # set by follow_head (VR)
 var _head_nodes: Array[Node3D] = []
 static var _mats := {}
 
@@ -51,6 +56,55 @@ func apply(snap: Snapshot, tables: IdTables) -> void:
 	key = k
 	pieces = plan(snap, tables)
 	_build()
+
+
+## VR: the hips turn only when the head has looked HIP_SLACK away, then catch up smoothly.
+static func next_hip_yaw(hips: float, head: float, delta: float) -> float:
+	var d := angle_difference(hips, head)
+	if absf(d) <= HIP_SLACK:
+		return hips
+	var step := signf(d) * minf(absf(d) - HIP_SLACK * 0.5, HIP_RATE * delta)
+	return wrapf(hips + step, -PI, PI)
+
+
+func follow_head(head_yaw: float, delta: float) -> void:
+	hip_yaw = next_hip_yaw(hip_yaw, head_yaw, delta)
+	rotation = Vector3(0, hip_yaw, 0)
+
+
+## VR: points each arm at its controller (global positions; null = the arm hangs). Call after placing the body.
+func reach(left_hand: Variant, right_hand: Variant) -> void:
+	_reach("arm_l", "hand_l", -1.0, left_hand)
+	_reach("arm_r", "hand_r", 1.0, right_hand)
+
+
+## Where the hand centre goes (body-local) for a target, and the arm's turn from hanging down.
+static func arm_pose(side: float, target_local: Vector3) -> Array:
+	var shoulder := Vector3(0.25 * side, SHOULDER_Y, 0)
+	var to := target_local - shoulder
+	if to.length() < 0.05:
+		return [shoulder + Vector3.DOWN * ARM_REACH, Quaternion.IDENTITY]
+	var dir := to.normalized()
+	return [shoulder + dir * minf(to.length(), ARM_REACH), Quaternion(Vector3.DOWN, dir)]
+
+
+func _reach(arm_name: String, hand_name: String, side: float, target: Variant) -> void:
+	var arm := get_node_or_null(arm_name) as Node3D
+	var hand := get_node_or_null(hand_name) as Node3D
+	if target == null:
+		if arm != null:
+			arm.transform = Transform3D.IDENTITY
+		if hand != null:
+			hand.transform = Transform3D.IDENTITY
+		return
+	var pose := arm_pose(side, to_local(target))
+	var shoulder := Vector3(0.25 * side, SHOULDER_Y, 0)
+	if arm != null:
+		var b := Basis(pose[1] as Quaternion)
+		arm.transform = Transform3D(b, shoulder - b * shoulder)
+	if hand != null:
+		var rest: Vector3 = PARTS[hand_name][0]
+		hand.transform = Transform3D(Basis.IDENTITY, (pose[0] as Vector3) - rest)
 
 
 static func key_of(snap: Snapshot) -> String:

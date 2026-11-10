@@ -513,6 +513,26 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	var arm := pb.get_node_or_null("arm_l") as Node3D
 	_check.call(built == 12 and head != null and not head.visible and arm.visible,
 			"body: one node per part; own camera hides the head, not the arms")
+	var hips := PlayerBody.next_hip_yaw(0.0, 0.3, 0.1)
+	var turned := PlayerBody.next_hip_yaw(0.0, 1.5, 0.1)
+	var caught := 0.0
+	for i in 60:
+		caught = PlayerBody.next_hip_yaw(caught, 1.5, 1.0 / 60.0)
+	_check.call(hips == 0.0 and turned > 0.0 and turned < 1.5 and absf(1.5 - caught) <= PlayerBody.HIP_SLACK,
+			"body: hips stay for a small head turn, follow a big one (%.2f, %.2f)" % [turned, caught])
+	var far := PlayerBody.arm_pose(-1.0, Vector3(-0.25, 1.45, -2.0))
+	var near := PlayerBody.arm_pose(1.0, Vector3(0.25, 1.2, -0.3))
+	_check.call(absf((far[0] as Vector3).distance_to(Vector3(-0.25, 1.45, 0)) - PlayerBody.ARM_REACH) < 0.001
+			and (far[0] as Vector3).z < -0.6 and (near[0] as Vector3).is_equal_approx(Vector3(0.25, 1.2, -0.3)),
+			"body: hands reach for the controllers, arms don't stretch")
+	pb.position = Vector3.ZERO
+	pb.rotation = Vector3.ZERO
+	pb.reach(pb.to_global(Vector3(-0.25, 1.45, -2.0)), null)
+	var hl := pb.get_node("hand_l") as Node3D
+	var hr := pb.get_node("hand_r") as Node3D
+	_check.call(hl.position.z < -0.5 and hr.transform == Transform3D.IDENTITY
+			and not (pb.get_node("arm_l") as Node3D).transform.basis.is_equal_approx(Basis.IDENTITY),
+			"body: left arm points forward, right arm hangs")
 	var k := pb.key
 	pb.apply(snap, tables)
 	_check.call(pb.key == k and pb.get_child_count() == 12, "body: same snapshot, no rebuild")
