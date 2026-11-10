@@ -12,6 +12,28 @@ func run(check: Callable, tables: IdTables) -> void:
 	_test_body_and_held(tables)
 	_test_needs()
 	_test_messages()
+	_test_view(tables)
+
+
+## HudView draws what HudData decided: body rows, the feed (newest 6), warnings, need words.
+func _test_view(tables: IdTables) -> void:
+	var h := HudData.new()
+	var v := HudView.new()
+	v.data = h
+	var s := Snapshot.new()
+	var parts: Array[Snapshot.BodyPart] = [_part(tables.body_parts.find("head"), 60, 60), _part(tables.body_parts.find("leg_r"), 0, 60)]
+	s.player_parts = parts
+	h.update(s, tables)
+	var ev: Array = []
+	for i in 8:
+		ev.append({"kind": "message", "text": "line %d" % i})
+	h.on_events(ev)
+	_check.call(v.body_rows() == [["head", 1.0, HudData.OK], ["right leg", 0.0, HudData.BROKEN]]
+			and v.feed.text == "line 2\nline 3\nline 4\nline 5\nline 6\nline 7" and v.warn.text == "Right Leg broken"
+			and v.need_lines().is_empty(), "hud view: body rows, newest messages, warnings; unknown needs hidden (%s)" % [v.body_rows()])
+	v.data = null
+	_check.call(v.feed.text == "" and v.warn.text == "" and v.body_rows().is_empty(), "hud view: no data, nothing shown")
+	v.free()
 
 
 func _part(id: int, hp: int, hp_max: int, bleed := 0, infected := 0) -> Snapshot.BodyPart:
