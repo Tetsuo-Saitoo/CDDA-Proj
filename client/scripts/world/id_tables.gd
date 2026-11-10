@@ -58,6 +58,7 @@ var furn: Array[Def] = []
 var trap: Array[Def] = []
 var field: Array[Def] = []
 var itype: Array[Def] = []
+var body_parts := PackedStringArray()   # body_part index -> id (tables.body_part), empty if missing
 var mtype: Array[Def] = []
 var group_bits := {}     # connect group name -> bit index
 var _by_name := {}       # table -> {id -> index}
@@ -150,6 +151,7 @@ func _clear() -> void:
 	group_bits.clear()
 	_treetops.clear()
 	_roofs.clear()
+	body_parts.clear()
 
 
 func _read(data: Variant) -> void:
@@ -164,7 +166,26 @@ func _read(data: Variant) -> void:
 		_read_table(t, d.get(t))
 		if not is_valid():
 			return
+	_read_body_parts(d.get("tables"))
 	_index_roofs()
+
+
+func _read_body_parts(v: Variant) -> void:
+	if not v is Dictionary:
+		return
+	var a: Variant = (v as Dictionary).get("body_part")
+	if a == null:
+		return
+	if not a is Array or (a as Array).size() > MAX_ROWS:
+		_fail("tables.body_part is not a list")
+		return
+	for i in (a as Array).size():
+		body_parts.append(_str(a[i], MAX_ID, "tables.body_part[%d]" % i))
+
+
+## The body_part id at an index ("" if unknown).
+func body_part_name(index: int) -> String:
+	return body_parts[index] if index >= 0 and index < body_parts.size() else ""
 
 
 func _read_table(table: String, v: Variant) -> void:

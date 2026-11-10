@@ -26,6 +26,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_cdda_keys()
 	_test_rebinding(root)
 	_test_creatures(root, world, data, tables)
+	_test_player_body(root, data, tables)
 	world.free()
 
 
@@ -472,3 +473,59 @@ func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTabl
 	many.fill(me)
 	d["creatures"] = many
 	_check.call(not Snapshot.from_data(d).is_valid(), "creatures: more than %d refused" % Snapshot.MAX_CREATURES)
+
+
+## The player's body: parts from the snapshot, worn items inner to outer each a layer larger, wounds on top,
+## head hidden for the own camera, hostile player data rejected.
+func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
+	var snap := Snapshot.from_data(data)
+	_check.call(snap.is_valid() and snap.player_parts.size() == 12 and snap.player_worn.size() == 9,
+			"body: mock player has 12 parts and 9 worn items (%s)" % snap.error)
+	_check.call(tables.body_part_name(35) == "torso", "body: id tables name body parts")
+	var plan := PlayerBody.plan(snap, tables)
+	var torso: Array = plan.filter(func(p: Dictionary) -> bool: return p["part"] == "torso" and p["kind"] in ["skin", "worn"])
+	var grows := torso.size() == 4
+	for i in range(1, torso.size()):
+		grows = grows and torso[i]["size"].x > torso[i - 1]["size"].x
+	_check.call(grows and torso[1]["item"] == 8696 and torso[3]["item"] == 4771,
+			"body: torso skin < t-shirt < hoodie < leather jacket")
+	var kinds := {}
+	for p: Dictionary in plan:
+		kinds[p["kind"] + ":" + p["part"]] = true
+	_check.call(kinds.has("bandage:arm_l") and kinds.has("blood:leg_r") and kinds.has("tear:leg_l")
+			and kinds.has("worn:head") and not kinds.has("bandage:arm_r"),
+			"body: bandage on the left arm, blood on the right leg, torn jeans, a cap")
+	var leg_r: Snapshot.BodyPart = snap.player_parts[9]
+	var leg_l: Snapshot.BodyPart = snap.player_parts[8]
+	_check.call(PlayerBody.skin_color(leg_r).b < PlayerBody.skin_color(leg_l).b
+			and PlayerBody.skin_color(leg_r).g < PlayerBody.skin_color(leg_l).g, "body: hurt leg is redder")
+	var gloves := snap.player_worn[8]
+	var fresh := Snapshot.Worn.new()
+	fresh.type = gloves.type
+	_check.call(PlayerBody.worn_color(null, gloves).s < PlayerBody.worn_color(null, fresh).s,
+			"body: worn-out gloves are paler")
+	var pb := PlayerBody.new()
+	root.add_child(pb)
+	pb.apply(snap, tables)
+	var built := pb.get_child_count()
+	pb.show_head = false
+	var head := pb.get_node_or_null("head") as Node3D
+	var arm := pb.get_node_or_null("arm_l") as Node3D
+	_check.call(built == 12 and head != null and not head.visible and arm.visible,
+			"body: one node per part; own camera hides the head, not the arms")
+	var k := pb.key
+	pb.apply(snap, tables)
+	_check.call(pb.key == k and pb.get_child_count() == 12, "body: same snapshot, no rebuild")
+	pb.free()
+	var bad: Dictionary = (data as Dictionary).duplicate(true)
+	bad["player"]["bleed"] = [1, 2]
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: wound list of the wrong length rejected")
+	bad = (data as Dictionary).duplicate(true)
+	var many := []
+	for i in 65:
+		many.append({"type": 1, "covers": [35]})
+	bad["player"]["worn"] = many
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: more than 64 worn items rejected")
+	bad = (data as Dictionary).duplicate(true)
+	bad["player"]["worn"] = [{"type": 1, "covers": "torso"}]
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: covers must be a list")

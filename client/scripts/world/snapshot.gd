@@ -20,6 +20,8 @@ const MAX_NAME_LEN := 128
 const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
 const MAX_CREATURES := 1024               # the contract's cap
 const MAX_UID := 1 << 53                  # JSON numbers are doubles
+const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
+const MAX_WORN := 64                      # the contract's cap
 const PILE_STRIDE := 6                    # items: tile, count, top[4]
 
 const FLAG_ROOF := 1        # not outside
@@ -48,6 +50,8 @@ var ids_generation := -1   # -1: the snapshot doesn't say
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
+var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
+var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -56,6 +60,27 @@ var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
 var trap_names := {}    # int -> String
+
+
+## One of the player's body parts (contracts/snapshot.md player_view arrays).
+class BodyPart:
+	var id := 0            # body_part index (IdTables.body_parts names it)
+	var hp := 0
+	var hp_max := 0
+	var bleed := 0         # effect intensities, 0 = none
+	var bandaged := 0
+	var disinfected := 0
+	var bite := 0
+	var infected := 0
+
+
+## A worn item (contracts/snapshot.md worn_view).
+class Worn:
+	var type := 0          # itype index
+	var layer := 0         # CDDA layer_level, 0 personal .. 5 aux
+	var damage := 0        # 0 fine .. 5 nearly destroyed
+	var degradation := 0   # 0..255
+	var covers := PackedInt32Array()   # body_part indices
 
 
 ## A creature the player perceives (contracts/snapshot.md creature_view).
@@ -146,6 +171,66 @@ func _read_player(v: Variant) -> void:
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
+	_read_body((v as Dictionary))
+	_read_worn((v as Dictionary).get("worn"))
+
+
+func _read_body(d: Dictionary) -> void:
+	var ids: Variant = d.get("body_parts")
+	if ids == null or not is_valid():
+		return
+	if not ids is Array or (ids as Array).size() > MAX_BODY_PARTS:
+		_fail("player.body_parts: expected a list of at most %d" % MAX_BODY_PARTS)
+		return
+	var n := (ids as Array).size()
+	var cols := {}
+	for key: String in ["hp", "hp_max", "bleed", "bandaged", "disinfected", "bite", "infected"]:
+		var a: Variant = d.get(key)
+		if a == null:
+			continue   # older bridges: no wounds
+		if not a is Array or (a as Array).size() != n:
+			_fail("player.%s: expected %d values" % [key, n])
+			return
+		cols[key] = a
+	for i in n:
+		var b := BodyPart.new()
+		b.id = _int(ids[i], 0, MAX_ID, "player.body_parts[%d]" % i)
+		b.hp = _int(cols["hp"][i], -32768, 32767, "player.hp") if cols.has("hp") else 1
+		b.hp_max = _int(cols["hp_max"][i], -32768, 32767, "player.hp_max") if cols.has("hp_max") else 1
+		for key: String in ["bleed", "bandaged", "disinfected", "bite", "infected"]:
+			if cols.has(key):
+				b.set(key, _int(cols[key][i], 0, 255, "player." + key))
+		if not is_valid():
+			return
+		player_parts.append(b)
+
+
+func _read_worn(v: Variant) -> void:
+	if v == null or not is_valid():
+		return
+	if not v is Array or (v as Array).size() > MAX_WORN:
+		_fail("player.worn: expected a list of at most %d" % MAX_WORN)
+		return
+	for i in (v as Array).size():
+		var what := "player.worn[%d]" % i
+		var r: Variant = v[i]
+		if not r is Dictionary:
+			_fail(what + " is not an object")
+			return
+		var w := Worn.new()
+		w.type = _int(r.get("type"), 0, MAX_ID, what + ".type")
+		w.layer = _int(r.get("layer", 2), 0, 255, what + ".layer")
+		w.damage = _int(r.get("damage", 0), 0, 255, what + ".damage")
+		w.degradation = _int(r.get("degradation", 0), 0, 255, what + ".degradation")
+		var c: Variant = r.get("covers")
+		if not c is Array or (c as Array).size() > MAX_BODY_PARTS:
+			_fail(what + ".covers: expected a list of at most %d" % MAX_BODY_PARTS)
+			return
+		for x: Variant in c:
+			w.covers.append(_int(x, 0, MAX_ID, what + ".covers"))
+		if not is_valid():
+			return
+		player_worn.append(w)
 
 
 func _read_creatures(v: Variant) -> void:

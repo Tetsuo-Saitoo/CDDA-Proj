@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-08 — Player body and clothes: snapshot sends worn items and wounds; client PlayerBody draws parts, layered clothes, damage, bandages, blood; head hidden in first person/VR.
 - 2026-11-08 — Linux AppImage: `tools/build/appimage.sh` builds one `CDDA-3D-x86_64.AppImage` in WSL (exported client, stripped bridge with RPATH `$ORIGIN/libs`, CDDA data + tilesets, bundled SDL2 closure, licences); desktop live game by default, `--vr`, `--town`; tested in WSL (town, live game, VR fallback); release `v0.4.0`.
 - 2026-11-08 — C4 first slice: creature figures by CDDA body type (humanoid, four-legged, crawler, snake, flyer, fish, blob), smooth walking between squares with facing, lunge/flinch/fall from attack/damage/death events, player figure in the outside view; fork id tables send `bodytype` (ids test checks zombie = human, zombie police dog = dog), mock patched; `--demo-creatures`, `--creatures=snap`; client tests pass, screenshots checked.
 - 2026-11-07 — `cdda/` (CDDA-3D-code) is now a git submodule of CDDA-Proj, pinned at 024eba3 (`branch = fp3d`): `git clone --recursive` gets both; README, BUILD.md step 2 and TASKS say how to clone, take over a hand-made `cdda/` clone, and move the pin.
