@@ -2,6 +2,8 @@ extends RefCounted
 ## FPS aiming checks, run by run_tests.gd: a camera ray picks a zombie for a `fire` target request, the
 ## crosshair (captured mouse) follows the view and fires, a free mouse picks first and fires on the second
 ## click, keys fire straight away, and the weapon viewmodel picks a shape from the id tables.
+## Combat too: client-flown bullets (hordes, weapon_wielded, VR fire_from / live_aim), CDDA's shot requests,
+## hit feedback from events, the gun model's named parts and grime, player.wielded_gun in snapshots.
 
 var _check: Callable
 var answers: Array = []
@@ -86,7 +88,11 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
 	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
+	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
+	_test_grime(root, tables)
+	_test_gun_parts()
+	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
 	aim.crosshair.free()
@@ -121,7 +127,329 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	vm._process(0.016)
 	_check.call(vm.rotation.x > 0.0, "viewmodel: a shot kicks it up")
+	var sway_of := func(arcmin: Variant) -> Array:   # [max |yaw|, max offset from the rest point] over 4 s
+		vm.sway_arcmin = arcmin
+		var most := [0.0, 0.0]
+		for f in 200:
+			vm._process(0.02)
+			most = [maxf(most[0], absf(vm.rotation.y)), maxf(most[1], vm.position.distance_to(vm._base))]
+		return most
+	var mild: Array = sway_of.call(300.0)
+	var wild: Array = sway_of.call(1e9)
+	_check.call(mild[0] > 0.002 and wild[0] > mild[0] and wild[0] <= WeaponViewmodel.SWAY_ROT + 1e-4
+			and wild[1] <= 0.012 and vm.sway_arcmin == WeaponViewmodel.SWAY_FULL_ARCMIN,
+			"viewmodel: sways more with more dispersion, capped (%s %s)" % [mild, wild])
+	vm.sway_arcmin = NAN
+	var nan_ok := vm.sway_arcmin == 0.0
+	var still: Array = sway_of.call(0.0)
+	vm._process(0.02)
+	_check.call(nan_ok and absf(vm.rotation.y) < 1e-4 and vm.position.distance_to(vm._base) < 1e-4,
+			"viewmodel: no sway without dispersion, NaN is none (%s)" % [still])
 	vm.free()
+
+
+## Gun fouling on the viewmodel: CDDA's `dirt` (0..10000) as grime on a gun's parts (grime.gdshader).
+func _test_grime(root: Node, tables: IdTables) -> void:
+	var VM := WeaponViewmodel
+	var sh: Shader = load("res://scripts/combat/grime.gdshader")
+	var names := []
+	for u: Dictionary in sh.get_shader_uniform_list() if sh != null else []:
+		names.append(u.get("name"))
+	_check.call(sh != null and sh.get_mode() == Shader.MODE_SPATIAL
+			and ["albedo", "metallic", "roughness", "specular", "grime", "half_extents"].all(func(x: String) -> bool: return x in names),
+			"grime: the shader loads as spatial with its uniforms (%s)" % [names])
+	var probe := ShaderMaterial.new()
+	probe.shader = sh
+	probe.set_shader_parameter("grime", 0.5)
+	_check.call(probe.shader == sh and probe.get_shader_parameter("grime") == 0.5, "grime: a ShaderMaterial takes it")
+
+	# parts: guns wear the shader with their plain look; bows, blades and other items keep plain materials
+	var looks := func(model: Node3D) -> Array:   # [[material, mesh], ...]
+		var out := []
+		for n: Node in model.get_children():
+			var mi := n as MeshInstance3D
+			if mi != null:
+				out.append([(mi.mesh as PrimitiveMesh).material, mi.mesh])
+		return out
+	var plain := {}   # colour -> the plain material it had (melee: metal and wood)
+	for s: String in ["melee", "bow", "item"]:
+		var model := VM.build(s, 0.7)
+		var ps: Array = looks.call(model)
+		_check.call(not ps.is_empty() and ps.all(func(x: Array) -> bool: return x[0] is StandardMaterial3D)
+				and VM.grime_materials(model).is_empty(), "grime: a %s keeps its plain materials" % s)
+		for x: Array in ps:
+			plain[(x[0] as StandardMaterial3D).albedo_color] = x[0]
+		model.free()
+	for s: String in ["pistol", "long", "launcher"]:
+		var model := VM.build(s)
+		var ps: Array = looks.call(model)
+		var same := not ps.is_empty()
+		var parts := []
+		for x: Array in ps:
+			var m := x[0] as ShaderMaterial
+			var c: Variant = m.get_shader_parameter("albedo") if m != null else null
+			var p: StandardMaterial3D = plain.get(c, VM._mat(VM.OLIVE) if c == VM.OLIVE else null)
+			same = (same and m != null and m.shader == sh and m.get_shader_parameter("grime") == 0.0 and p != null
+					and m.get_shader_parameter("metallic") == p.metallic and m.get_shader_parameter("roughness") == p.roughness
+					and m.get_shader_parameter("specular") == p.metallic_specular)
+			parts.append(c)
+		var halves: Array = ps.map(func(x: Array) -> Variant: return (x[0] as ShaderMaterial).get_shader_parameter("half_extents") if x[0] is ShaderMaterial else null)
+		_check.call(same and VM.grime_materials(model).size() == ps.size()
+				and ps.all(func(x: Array) -> bool: return ps.filter(func(y: Array) -> bool: return y[0] == x[0]).size() == 1),
+				"grime: a %s's parts each wear the shader, at 0 with the plain look (%s)" % [s, parts])
+		_check.call(halves.all(func(h: Variant) -> bool: return h is Vector3 and (h as Vector3).x > 0.0 and (h as Vector3).y > 0.0),
+				"grime: each %s part knows its half size (%s)" % [s, halves])
+		model.free()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.04, 0.06, 0.34)
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.012
+	cyl.bottom_radius = 0.012
+	cyl.height = 0.36
+	_check.call(VM._half_size(box).is_equal_approx(Vector3(0.02, 0.03, 0.17)) and VM._half_size(cyl).is_equal_approx(Vector3(0.012, 0.18, 0.012)),
+			"grime: half sizes of a box and a barrel (along y)")
+
+	# set_dirt: CDDA's stages, junk clamped, kept across rebuilds, uniforms touched only on change
+	var stages := []
+	for dd: int in [0, 2000, 4000, 6000, 8000, 10000]:
+		stages.append(VM.grime_for(dd))
+	_check.call(stages == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] and VM.grime_for(-1) == 0.0 and VM.grime_for(-99999) == 0.0
+			and VM.grime_for(99999) == 1.0 and VM.grime_for(1000) == 0.1, "grime: dirt 0..10000 maps to 0..1 (%s)" % [stages])
+	var rifle := tables.index_of("itype", "remington_870")
+	var pistol := tables.index_of("itype", "glock_19")
+	var knife := tables.index_of("itype", "knife_combat")
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	var grimes := func() -> Array:
+		return vm._grime_mats.map(func(m: ShaderMaterial) -> Variant: return m.get_shader_parameter("grime"))
+	vm.set_dirt(6000)
+	var before_gun := vm.grime == 0.6 and vm.dirt == 6000
+	vm.set_item(rifle, tables)
+	var on_rifle: Array = grimes.call()
+	_check.call(rifle > 0 and vm.shape == "long" and before_gun and on_rifle.size() == 6 and on_rifle.all(func(g: Variant) -> bool: return g == 0.6),
+			"grime: dirt set before the gun shows on it once it's held (%s)" % [on_rifle])
+	vm.set_dirt(2000)
+	var light: Array = grimes.call()
+	vm.set_item(pistol, tables)
+	var on_pistol: Array = grimes.call()
+	_check.call(light.all(func(g: Variant) -> bool: return g == 0.2) and vm.shape == "pistol" and on_pistol.size() == 3
+			and on_pistol.all(func(g: Variant) -> bool: return g == 0.2), "grime: a rebuilt gun keeps the grime (%s %s)" % [light, on_pistol])
+	vm.set_item(knife, tables)
+	_check.call(vm.shape == "melee" and vm._grime_mats.is_empty() and vm.grime == 0.2, "grime: a knife shows none, the dirt is kept")
+	vm.set_item(rifle, tables)
+	vm.set_dirt(-500)
+	var none_ok := vm.dirt == -1 and vm.grime == 0.0 and (grimes.call() as Array).all(func(g: Variant) -> bool: return g == 0.0)
+	vm.set_dirt(123456)
+	var max_ok := vm.dirt == 10000 and vm.grime == 1.0 and (grimes.call() as Array).all(func(g: Variant) -> bool: return g == 1.0)
+	vm.set_dirt(-1)
+	_check.call(none_ok and max_ok and vm.grime == 0.0, "grime: negative dirt (NON-FOULING) is clean, over 10000 is 10000")
+	vm.set_dirt(8000)
+	var m0: ShaderMaterial = vm._grime_mats[0]
+	m0.set_shader_parameter("grime", 0.123)   # a marker: set_dirt with the same value leaves it
+	vm.set_dirt(8000)
+	var kept: Variant = m0.get_shader_parameter("grime")
+	vm.set_dirt(8001)
+	_check.call(kept == 0.123 and is_equal_approx(m0.get_shader_parameter("grime"), 0.8001),
+			"grime: the uniform is set only when the dirt changes (%s)" % [kept])
+	vm.free()
+
+
+## CDDA's dispersion roll as angular error: ShotError, target requests' `dispersion`, `shot` requests answered
+## from the aim kept by the FIRE just before (the camera looks at the zombie's head, a rifle in hand).
+func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: Dictionary, me: Vector3i,
+		zp: Vector3i) -> void:
+	var S := ShotError
+	var fwd := Vector3.FORWARD
+	var up := S.apply(fwd, 120.0, 0.0)
+	var right := S.apply(fwd, 120.0, 90.0)
+	_check.call(absf(rad_to_deg(up.angle_to(fwd)) - 2.0) < 0.001 and up.y > 0.0 and absf(up.x) < 1e-5
+			and absf(rad_to_deg(right.angle_to(fwd)) - 2.0) < 0.001 and right.x > 0.0 and absf(right.y) < 1e-5
+			and is_equal_approx(right.length(), 1.0), "shots: 120' of error turns a level sight 2° up (0) or right (90) (%s %s)" % [up, right])
+	var diag := Vector3(0.6, 0.0, -0.8)
+	var vert := S.apply(Vector3.DOWN, 60.0, 0.0)
+	_check.call(absf(rad_to_deg(S.apply(diag, 300.0, 45.0).angle_to(diag)) - 5.0) < 0.001 and vert.is_finite()
+			and absf(rad_to_deg(vert.angle_to(Vector3.DOWN)) - 1.0) < 0.001, "shots: any sight turns by the error, straight down too")
+	var wild := S.apply(fwd, 1e9, 180.0)
+	_check.call(absf(rad_to_deg(wild.angle_to(fwd)) - 30.0) < 0.001 and wild.y < 0.0, "shots: error capped at 30°, 180 goes down (%s)" % wild)
+	_check.call(S.apply(fwd, NAN, 0.0) == fwd and S.apply(fwd, -50.0, 0.0) == fwd and S.apply(fwd, 60.0, NAN).y > 0.0
+			and S.apply(fwd, 60.0, INF).y > 0.0 and S.apply(Vector3.ZERO, 60.0, 0.0) == Vector3.ZERO
+			and S.apply(Vector3(NAN, 0, 0), 60.0, 0.0) == Vector3.ZERO, "shots: NaN / negative error is none, NaN angle is up, no sight stays none")
+	var px := S.spread_pixels(75.0, 1000.0, 60.0)
+	_check.call(px > 10.0 and px < 13.0 and S.spread_pixels(75.0, 1000.0, 120.0) > px
+			and S.spread_pixels(75.0, 1000.0, 10800.0) == 450.0 and S.spread_pixels(75.0, 1000.0, NAN) == 0.0
+			and S.spread_pixels(NAN, 1000.0, 60.0) == 0.0 and S.spread_pixels(0.0, 1000.0, 60.0) == 0.0
+			and S.spread_pixels(75.0, 1000.0, -5.0) == 0.0 and S.spread_pixels(75.0, INF, 60.0) == 0.0,
+			"shots: spread circle radius from fov and dispersion, capped, junk is 0 (%.2f)" % px)
+
+	# target requests: dispersion remembered, junk ignored
+	var fire_req := req.duplicate()
+	var junk_ok := true
+	for bad: Variant in ["240", NAN, INF, -1.0, 1e9, null, [240], 10801]:
+		fire_req["dispersion"] = bad
+		junk_ok = junk_ok and aim.on_request(fire_req).is_empty() and aim.dispersion == 0.0
+	fire_req["dispersion"] = 300
+	var int_ok := aim.dispersion == 0.0 and aim.on_request(fire_req).is_empty() and aim.dispersion == 300.0
+	fire_req["dispersion"] = 240.0
+	_check.call(junk_ok and int_ok and aim.on_request(fire_req).is_empty() and aim.dispersion == 240.0,
+			"shots: a target request's dispersion is kept, junk is 0 (%s)" % aim.dispersion)
+	ui.show_request(fire_req)
+	aim.first_person = true
+	aim.update(cam, true)
+	var ring := aim.crosshair.spread_px
+	_check.call(aim.shown_dispersion == 240.0 and ring > 1.0, "shots: the crosshair rings the dispersion (%.1f px)" % ring)
+	var look := req.duplicate()
+	look["mode"] = "look"
+	ui.show_request(look)
+	aim.update(cam, true)
+	_check.call(aim.shown_dispersion == 0.0 and aim.crosshair.spread_px == 0.0, "shots: no ring while looking")
+
+	# a newer bridge: FIRE draws no tracer, the shot requests do
+	ui.show_request(fire_req)
+	answers.clear()
+	var tracers := aim._tracers
+	aim.on_fire(cam, Vector2.ZERO, true)
+	var a: Dictionary = answers[0] if not answers.is_empty() else {}
+	_check.call(a.get("action") == "FIRE" and a.get("shot", {}).get("fly") == true and aim._tracers == tracers,
+			"shots: FIRE says fly, its tracer waits for the shot requests (%s)" % [a])
+	var sreq := {"id": 31, "kind": "shot", "shot_error": 0.0, "shot_angle": 0.0, "dispersion": 240.0, "origin": me,
+			"cursor": zp, "range": 10}
+	var r := aim.on_request(sreq)
+	var s: Dictionary = r.get("shot", {})
+	_check.call(r.get("id") == 31 and s.get("hit_uid") == 8589934593 and s.get("part") == "head" and s.get("end") == zp
+			and not s.has("fly") and aim._tracers == tracers + 1 and aim.last_shot["answer"] == s,
+			"shots: no error, the bullet goes along the sight into the head (%s)" % [r])
+	sreq["shot_error"] = 600.0
+	r = aim.on_request(sreq)
+	_check.call(r.get("id") == 31 and r.has("shot") and r["shot"].get("hit_uid") == 0,
+			"shots: 10° high misses the zombie (%s)" % [r])
+	sreq["shot_error"] = 1800.0
+	sreq["shot_angle"] = 135.0
+	r = aim.on_request(sreq)
+	var low: Vector3i = r.get("shot", {}).get("end", Vector3i(0, 0, -99))
+	_check.call(r.get("shot", {}).get("hit_uid") == 0 and low.z == me.z and low != me,
+			"shots: 30° low right hits the floor on our level, not the one below (%s)" % [r])
+	sreq["shot_angle"] = 0.0
+	sreq["shot_error"] = "600"
+	sreq["shot_angle"] = NAN
+	sreq["id"] = 32.0
+	r = aim.on_request(sreq)
+	_check.call(r.get("id") == 32 and r.get("shot", {}).get("hit_uid") == 8589934593,
+			"shots: a string error and a NaN angle count as 0 (%s)" % [r])
+	_check.call(typeof(r.get("id")) == TYPE_INT and r.size() == 2 and _bridge_typed(r.get("shot", {}))
+			and _bridge_typed(a.get("shot", {}), true) and _bridge_typed(aim.last_shot.get("answer", {})),
+			"shots: answers hold exactly the bridge's types, a float id becomes an int (%s %s)" % [r, a])
+	var mreq := sreq.duplicate()
+	mreq["shot_error"] = 600.0
+	mreq["shot_angle"] = 0.0
+	var miss := aim.on_request(mreq)
+	_check.call(_bridge_typed(miss.get("shot", {})) and miss["shot"]["hit_uid"] == 0, "shots: a miss's answer is typed too (%s)" % [miss])
+	var bad_ids := []
+	for id: Variant in ["31", -3, 0, 1.5, null]:
+		sreq["id"] = id
+		bad_ids.append(aim.on_request(sreq))
+	_check.call(bad_ids.all(func(x: Dictionary) -> bool: return x.is_empty()), "shots: no usable id, no answer (%s)" % [bad_ids])
+	sreq["id"] = 33
+	var cancel := {"id": 33, "cancel": true}
+	var kept := aim.shot_aim.duplicate()
+	var cancels := []
+	aim.shot_aim = {}
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["time"] = Time.get_ticks_msec() - AimController.AIM_KEEP_MS - 1000
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["sight"] = "junk"
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["sight"] = Vector3.DOWN   # into the floor of our own square
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	var cv := aim.creature_view
+	aim.creature_view = null
+	cancels.append(aim.on_request(sreq))
+	aim.creature_view = cv
+	_check.call(cancels.all(func(x: Dictionary) -> bool: return x == cancel),
+			"shots: no aim, an old aim, a bad aim, a shot into our own square, no figures: cancel (%s)" % [cancels])
+	_check.call(aim.on_request({"id": 5, "kind": "menu"}).is_empty() and aim.on_request({"id": 5, "kind": 7}).is_empty()
+			and aim.on_request({}).is_empty(), "shots: other requests aren't answered here")
+	_test_shot_answers()
+
+	# an older bridge (no dispersion): FIRE draws its own tracer
+	aim.on_request(req)
+	ui.show_request(req)
+	tracers = aim._tracers
+	aim.on_fire(cam, Vector2.ZERO, true)
+	_check.call(aim.dispersion == 0.0 and aim._tracers == tracers + 1, "shots: without dispersion FIRE draws its tracer as before")
+	ui.clear()
+
+
+## A `shot` answer of exactly the bridge's types (contracts/bridge_api.md `answer`): end, hit_uid, part, quality
+## and, for a FIRE (`fire`), fly.
+static func _bridge_typed(s: Variant, fire := false) -> bool:
+	if not s is Dictionary:
+		return false
+	var d: Dictionary = s
+	var keys := ["end", "hit_uid", "part", "quality"]
+	if fire:
+		keys.append("fly")
+	if d.size() != keys.size() or not d.has_all(keys):
+		return false
+	if fire and typeof(d["fly"]) != TYPE_BOOL:
+		return false
+	return typeof(d["end"]) == TYPE_VECTOR3I and typeof(d["hit_uid"]) == TYPE_INT and d["hit_uid"] >= 0 \
+			and typeof(d["part"]) == TYPE_STRING and (d["part"] as String).to_utf8_buffer().size() <= 64 \
+			and typeof(d["quality"]) == TYPE_FLOAT and d["quality"] >= 0.0 and d["quality"] <= 0.99
+
+
+## shot_answer() keeps the bridge's types and ranges; send_shot() cancels a shot whose answer the bridge refuses,
+## so CDDA never waits on it.
+func _test_shot_answers() -> void:
+	var A := AimController
+	var end := Vector3i(4, -2, 1)
+	var ok := A.shot_answer(end, 7, "head", 0.5)
+	var junk := A.shot_answer(end, -5, "x".repeat(65), NAN)
+	var wide := A.shot_answer(end, 7, "é".repeat(33), 3.0)
+	_check.call(ok == {"end": end, "hit_uid": 7, "part": "head", "quality": 0.5} and _bridge_typed(ok)
+			and junk == {"end": end, "hit_uid": 0, "part": "", "quality": 0.0} and _bridge_typed(junk)
+			and wide["part"] == "" and wide["quality"] == 0.99 and A.shot_answer(end, 1, "eyes", -1.0)["quality"] == 0.0
+			and A.shot_answer(end, 1, "e".repeat(64), INF)["part"].length() == 64,
+			"shot answers: a negative uid is 0, a part over 64 bytes is \"\", quality clamped to 0..0.99, NaN 0 (%s %s %s)" % [ok, junk, wide])
+	var fb_ok := A.fallback_answer(31) == {"id": 31, "cancel": true} and typeof(A.fallback_answer(31.0)["id"]) == TYPE_INT
+	for bad: Variant in ["31", -1, 0, 1.5, null, NAN, INF, [31], 1e12]:
+		fb_ok = fb_ok and A.fallback_answer(bad).is_empty()
+	_check.call(fb_ok, "shot answers: the fallback is a cancel with the int id, none for a bad id")
+
+	var sent := []
+	var refuse := [0]   # 0 none, 1 everything but a cancel, 2 everything
+	var send := func(d: Dictionary) -> bool:
+		sent.append(d)
+		return refuse[0] == 0 or (refuse[0] == 1 and d.has("cancel"))
+	var shot := {"id": 31, "shot": ok}
+	var cancel := {"id": 31, "cancel": true}
+	var taken := A.send_shot(shot, send)
+	var took_ok := taken == shot and sent == [shot]
+	refuse[0] = 1
+	sent.clear()
+	taken = A.send_shot(shot, send)
+	var fell_back := taken == cancel and sent == [shot, cancel]
+	refuse[0] = 2
+	sent.clear()
+	taken = A.send_shot(shot, send)
+	var both := taken.is_empty() and sent == [shot, cancel]
+	sent.clear()
+	taken = A.send_shot(cancel, send)
+	var no_resend := taken.is_empty() and sent == [cancel]
+	sent.clear()
+	taken = A.send_shot({"id": "31", "shot": ok}, send)
+	var bad_id := taken.is_empty() and sent.size() == 1
+	var odd := [0]
+	var not_bool := func(_d: Dictionary) -> Variant:
+		odd[0] += 1
+		return 1
+	var odd_ok: bool = A.send_shot(shot, not_bool).is_empty() and odd[0] == 2 and A.send_shot(shot, Callable()).is_empty()
+	_check.call(took_ok and fell_back and both and no_resend and bad_id and odd_ok,
+			"shot answers: a refused shot answer is followed by a cancel, once; a refused cancel isn't resent (%s)"
+			% [[took_ok, fell_back, both, no_resend, bad_id, odd_ok]])
 
 
 func _key(code: Key) -> InputEventKey:
@@ -257,7 +585,294 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	var shot: Dictionary = a.get("shot", {})
 	_check.call(a.get("action") == "FIRE" and shot.get("hit_uid") == 8589934593 and shot.get("part") == "head"
 			and a.get("pos") == zp and shot.get("quality") is float, "bullets: FIRE carries the client's shot (%s)" % [a])
+	_check.call(shot.get("fly") == true and aim.shot_aim.get("sight") is Vector3 and aim.shot_aim.get("ammo") == "223",
+			"shots: a client-flown FIRE says fly and keeps the aim (%s)" % [aim.shot_aim])
+	_test_shot_requests(aim, ui, cam, req, me, zp)
+	_test_horde(root, aim, cv, eye, head)
+	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
 	cv.free()
+
+
+const ZUID := 8589934593   # the test zombie
+
+
+## Hordes: a flight tests only the figures near its line (at most 64, the nearest along it) and still hits one on it.
+func _test_horde(root: Node, aim: AimController, cv: CreatureView, eye: Vector3, head: Vector3) -> void:
+	var B := BulletPhysics
+	var speed: float = B.ammo_profile("223")[0]
+	var dir := B.launch_dir(eye.direction_to(head), speed)
+	var side := dir.cross(Vector3.UP).normalized()
+	var figs := cv.figures()
+	var extra: Array[int] = []
+	var add := func(uid: int, at: Vector3) -> void:   # a blob figure standing at `at`
+		var f := CreatureFigure.make(Snapshot.Creature.MONSTER, null)
+		root.add_child(f)
+		f.global_position = at
+		figs[uid] = f
+		extra.append(uid)
+	for i in 400:   # 20 wide, 20 deep, 30-50 m off to the side
+		add.call((1 << 40) + i, eye + side * (30.0 + float(i % 20)) + dir * floorf(i / 20.0) * 2.0 - Vector3(0, 1.6, 0))
+	var near := B.figures_near_line(figs, eye, dir, speed)
+	var r := aim.fly_from(eye, eye.direction_to(head), "223", false)
+	_check.call(figs.size() >= 401 and near.size() == 1 and near.has(ZUID) and r.get("answer", {}).get("hit_uid") == ZUID,
+			"horde: 400 figures off to the side aren't tested, the zombie on the line is hit (%d of %d)" % [near.size(), figs.size()])
+	for i in 100:   # behind the zombie along the line, and one behind the shooter
+		add.call((1 << 41) + i, eye + dir * (6.0 + i) - Vector3(0, 1.6, 0))
+	add.call(1 << 42, eye - dir * 5.0 - Vector3(0, 1.6, 0))
+	near = B.figures_near_line(figs, eye, dir, speed)
+	r = aim.fly_from(eye, eye.direction_to(head), "223", false)
+	_check.call(near.size() == B.NEAR_MAX and near.has(ZUID) and near.has((1 << 41)) and not near.has(1 << 42)
+			and not near.has((1 << 41) + 99) and r.get("answer", {}).get("hit_uid") == ZUID,
+			"horde: at most %d on the line, the nearest, none behind the shooter (%d)" % [B.NEAR_MAX, near.size()])
+	var slow := B.figures_near_line(figs, eye, dir, 1.0)   # a crawling projectile: the drop margin is capped
+	_check.call(B.figures_near_line(figs, Vector3(NAN, 0, 0), dir, speed).is_empty()
+			and B.figures_near_line(figs, eye, Vector3.ZERO, speed).is_empty() and slow.size() == B.NEAR_MAX
+			and B.figures_near_line({"x": 1, 5: null, 6: "junk"}, eye, dir, speed).is_empty(),
+			"horde: bad lines and junk entries give none, a slow projectile's margin is capped")
+	for uid in extra:
+		(figs[uid] as Node).free()
+		figs.erase(uid)
+
+
+## Only the wielded gun flies (`weapon_wielded`); VR's fire_from() and live_aim.
+func _test_wielded_and_vr(aim: AimController, ui: RequestUI, cam: Camera3D, req: Dictionary, eye: Vector3,
+		head: Vector3) -> void:
+	var flown := []
+	for v: Array in [[false], [true], ["yes"], [1], [null], []]:   # [] = no field (an old bridge)
+		var r := req.duplicate()
+		if not v.is_empty():
+			r["weapon_wielded"] = v[0]
+		aim.on_request(r)
+		ui.show_request(r)
+		answers.clear()
+		aim.on_fire(cam, Vector2.ZERO, true)
+		var a: Dictionary = answers[0] if not answers.is_empty() else {}
+		flown.append(a.get("action") == "FIRE" and a.has("shot"))
+	_check.call(flown == [false, true, false, false, false, true],
+			"wielded: only weapon_wielded true (or no field) flies, else plain FIRE (%s)" % [flown])
+
+	# fire_from: a barrel pose, no camera
+	var barrel := eye + Vector3(0.15, -0.3, 0.0)
+	var to_head := barrel.direction_to(head)
+	ui.clear()
+	var none_ok := not aim.fire_from(barrel, to_head)
+	var look := req.duplicate()
+	look["mode"] = "look"
+	ui.show_request(look)
+	var look_ok := not aim.fire_from(barrel, to_head)
+	var other := req.duplicate()
+	other["weapon_wielded"] = false
+	aim.on_request(other)
+	ui.show_request(other)
+	answers.clear()
+	var other_ok := not aim.fire_from(barrel, to_head) and answers.is_empty()
+	aim.on_request(req)
+	ui.show_request(req)
+	var kicks := [0]
+	var kick := func() -> void: kicks[0] += 1
+	aim.fired.connect(kick)
+	var bad_ok: bool = not aim.fire_from(barrel, Vector3.ZERO) and not aim.fire_from(Vector3(NAN, 0, 0), to_head) \
+			and not aim.fire_from(barrel, Vector3(INF, 0, 0)) and answers.is_empty() and kicks[0] == 0
+	var gun: Callable = aim.wielded_gun
+	aim.wielded_gun = func() -> IdTables.Def: return null
+	var nogun_ok := not aim.fire_from(barrel, to_head) and answers.is_empty()
+	aim.wielded_gun = gun
+	_check.call(none_ok and look_ok and other_ok and bad_ok and nogun_ok,
+			"fire_from: no request, look mode, another gun firing, a bad pose, no gun: false, nothing sent (%s)"
+			% [[none_ok, look_ok, other_ok, bad_ok, nogun_ok]])
+	var ok := aim.fire_from(barrel, to_head)
+	var a: Dictionary = answers[0] if not answers.is_empty() else {}
+	var shot: Dictionary = a.get("shot", {})
+	_check.call(ok and answers.size() == 1 and a.get("action") == "FIRE" and shot.get("fly") == true
+			and shot.get("hit_uid") == ZUID and aim.shot_aim.get("origin") == barrel and kicks[0] == 1,
+			"fire_from: flies from the barrel, FIRE says fly, the aim is kept, it kicks (%s)" % [a])
+	aim.fired.disconnect(kick)
+
+	# live_aim: each shot request flies from the hand's pose now; junk poses fall back to the kept aim
+	aim.shot_aim["sight"] = to_head.rotated(Vector3.UP, 0.5)   # the kept aim now misses
+	aim.shot_aim["time"] = Time.get_ticks_msec()
+	var pose: Array = [{}]
+	aim.live_aim = func() -> Variant: return pose[0]
+	var sreq := {"id": 41, "kind": "shot", "shot_error": 0.0, "shot_angle": 0.0}
+	var hit_of := func() -> Variant:
+		var res := aim.on_request(sreq)
+		return res.get("shot", {}).get("hit_uid", -1) if res.get("id") == 41 else null
+	var kept: Variant = hit_of.call()
+	pose[0] = {"origin": eye, "sight": eye.direction_to(head) * 3.0}
+	var live: Variant = hit_of.call()
+	var junk := [{}, "x", null, [eye, to_head], {"origin": eye}, {"origin": Vector3(NAN, 0, 0), "sight": to_head},
+			{"origin": eye, "sight": Vector3.ZERO}, {"origin": eye, "sight": Vector3(INF, 0, 0)},
+			{"origin": eye + Vector3(10, 0, 0), "sight": (eye + Vector3(10, 0, 0)).direction_to(head)},
+			{"origin": [1, 2, 3], "sight": to_head}, {"origin": eye, "sight": "up"}]
+	var junk_hits := []
+	for p: Variant in junk:
+		pose[0] = p
+		junk_hits.append(hit_of.call())
+	aim.live_aim = Callable()
+	_check.call(kept != null and kept != ZUID and live == ZUID,
+			"live_aim: a burst's shot flies from the live pose, not the kept aim (%s %s)" % [kept, live])
+	_check.call(junk_hits.all(func(x: Variant) -> bool: return x != null and x != ZUID),
+			"live_aim: junk poses are ignored, the kept aim flies (%s)" % [junk_hits])
+	ui.clear()
+
+
+## Hit feedback: only CDDA's events confirm hits: the player's projectile event confirms the damage / death on the
+## creature it names that came before it in the same batch.
+func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTables) -> void:
+	var hf := aim.hits
+	var got := []
+	hf.hit_confirmed.connect(func(uid: int, part: String, amount: int, killed: bool) -> void:
+		got.append([uid, part, amount, killed]))
+	var me := hf.player_uid()
+	var head := tables.body_parts.find("head")
+	var torso := tables.body_parts.find("torso")
+	var z := ZUID
+	var shot_by := func(shooter: Variant, hit: Variant) -> Dictionary:
+		return {"kind": "projectile", "uid": shooter, "other": hit, "pos": Vector3i.ZERO, "path": []}
+	var dmg := func(uid: Variant, amount: Variant, part: Variant) -> Dictionary:
+		return {"kind": "damage", "uid": uid, "amount": amount, "detail": part, "pos": Vector3i.ZERO}
+	_check.call(me == 1 and head >= 0 and torso >= 0, "hits: the player is uid 1, the tables name head and torso")
+	var death := func(uid: Variant) -> Dictionary:
+		return {"kind": "death", "uid": uid, "pos": Vector3i.ZERO}
+	# CDDA's order: the shot's damage, then its projectile event, in one batch
+	hf.on_events([dmg.call(z, 7, torso), shot_by.call(me, z)])
+	var cross := aim.crosshair
+	_check.call(got == [[z, "torso", 7, false]] and cross.marking() and cross.hit_color == AimController.Crosshair.HIT_WHITE
+			and cross.hit_scale == 1.0 and hf.ticks == 1, "hits: damage then the player's projectile in one batch confirms a hit (%s)" % [got])
+	aim.first_person = true
+	ui.clear()
+	aim.update(cam, false)
+	var shows := aim.crosshair.visible and not aim.crosshair.show_cross
+	hf.on_events([dmg.call(z, 20.0, head), shot_by.call(me, z)])
+	_check.call(got.size() == 2 and got[1] == [z, "head", 20, false] and cross.hit_scale == AimController.Crosshair.HEAD_SCALE and shows,
+			"hits: a head hit is a bigger marker, shown without aiming (%s)" % [got])
+	hf.on_events([dmg.call(z, 12, head), death.call(z), shot_by.call(me, z)])
+	_check.call(got.size() == 4 and got[2] == [z, "head", 12, false] and got[3] == [z, "head", 12, true]
+			and cross.hit_color == AimController.Crosshair.HIT_RED, "hits: damage and death before the projectile: hit, then a red kill (%s)" % [got])
+	cross.tick_hit(0.31)
+	aim.update(cam, false)
+	_check.call(not cross.marking() and not cross.visible, "hits: the marker fades in 0.3 s")
+
+	# a burst: each projectile event claims only the damage since the one before
+	got.clear()
+	hf.on_events([dmg.call(z + 1, 3, torso), shot_by.call(me, z + 1), dmg.call(z + 1, 4, head), shot_by.call(me, z + 1),
+			shot_by.call(me, z + 1)])
+	_check.call(got == [[z + 1, "torso", 3, false], [z + 1, "head", 4, false]],
+			"hits: a burst credits each shot's own damage once (%s)" % [got])
+	# a later batch, after the projectile, an earlier batch: nothing
+	got.clear()
+	hf.on_events([dmg.call(z + 1, 5, torso)])
+	var later := got.is_empty()
+	hf.on_events([shot_by.call(me, z + 1), dmg.call(z + 1, 5, torso), death.call(z + 1)])
+	var after := got.is_empty()
+	_check.call(later and after, "hits: damage in a later batch or after the projectile event isn't the player's (%s)" % [got])
+	# another creature, a miss in between, an ally's projectile
+	hf.on_events([dmg.call(z + 3, 5, torso), death.call(z + 3), shot_by.call(me, z + 2)])
+	var other := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 5, torso), shot_by.call(me, 0), shot_by.call(me, z + 2)])
+	var missed := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 5, torso), shot_by.call(z + 4, z + 2)])
+	var ally := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 6, torso), death.call(z + 2), shot_by.call(z + 4, z + 2), shot_by.call(me, z + 2)])
+	var ally_first := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 6, torso), shot_by.call(z + 2, me), shot_by.call(me, z + 2)])
+	var at_me := got.is_empty()
+	_check.call(other and missed and ally and ally_first and at_me,
+			"hits: damage on another creature, before the player's miss, an ally's or a monster's projectile: nothing (%s)"
+			% [[other, missed, ally, ally_first, at_me]])
+	hf.on_events([dmg.call(z + 3, 5, torso), dmg.call(z + 2, 8, torso), dmg.call(me, 9, torso), shot_by.call(me, z + 2)])
+	_check.call(got == [[z + 2, "torso", 8, false]], "hits: of several creatures hurt, only the one shot counts (%s)" % [got])
+	# junk
+	got.clear()
+	hf.on_events(["junk", 5, null, {"kind": 7, "uid": z + 5}, {"kind": "damage"}, dmg.call("x", 5, torso),
+			dmg.call(z + 5, -3, torso), dmg.call(z + 5, NAN, torso), dmg.call(z + 5, "5", torso), dmg.call(z + 5, 1e12, torso),
+			dmg.call(z + 5, 4.5, torso), dmg.call(z + 5, 5, -1), dmg.call(z + 5, 5, "head"), dmg.call(z + 5, 5, INF),
+			{"kind": "death", "uid": [z + 5]}, death.call(-1), shot_by.call(me, z + 5)])
+	hf.on_events([shot_by.call(me, -4), shot_by.call(1.5, z), shot_by.call(me, NAN), shot_by.call(me, 1e300), shot_by.call(me, me),
+			{"kind": "projectile", "uid": me, "other": "z"}, {"kind": "projectile"}])
+	var junk_ok := got.is_empty()
+	hf.on_events([dmg.call(z + 5, 9, 99999), {"kind": "damage", "uid": z + 5, "amount": 2}, shot_by.call(me, z + 5)])
+	_check.call(junk_ok and got == [[z + 5, "", 9, false], [z + 5, "", 2, false]],
+			"hits: junk events are skipped, an unknown or missing body part is \"\" (%s)" % [got])
+	var snd := HitFeedback.tick_stream()
+	_check.call(snd.data.size() == int(HitFeedback.TICK_RATE * HitFeedback.TICK_S) * 2 and HitFeedback.tick_stream() == snd
+			and hf.ticks >= 5, "hits: a short tick, made once, plays per confirmation (%d)" % hf.ticks)
+	aim.first_person = false
+
+
+## A gun model's named parts (later models carry the same names as markers).
+func _test_gun_parts() -> void:
+	var VM := WeaponViewmodel
+	var want := {"pistol": ["Muzzle", "Grip", "MagWell", "Magazine", "Slide"], "long": ["Muzzle", "Grip", "MagWell",
+			"Magazine", "Bolt"], "launcher": ["Muzzle", "Grip", "MagWell"]}
+	for s: String in want:
+		var m := VM.build(s, 0.5)
+		var names: Array = want[s]
+		var have := names.filter(func(n: String) -> bool: return m.get_node_or_null(NodePath(n)) != null)
+		var muzzle := m.get_node_or_null("Muzzle") as Marker3D
+		var front := INF
+		for n: Node in m.get_children():
+			var mi := n as MeshInstance3D
+			if mi != null:
+				var box := mi.transform * mi.get_aabb()
+				front = minf(front, box.position.z)
+		var markers_ok := m.get_node_or_null("Grip") is Marker3D and m.get_node_or_null("MagWell") is Marker3D
+		var mag := m.get_node_or_null("Magazine")
+		var mag_ok := mag == null if s == "launcher" else (mag is MeshInstance3D
+				and VM.grime_materials(m).has(((mag as MeshInstance3D).mesh as PrimitiveMesh).material))
+		_check.call(have.size() == names.size() and muzzle != null and markers_ok and mag_ok
+				and muzzle.position.z <= front + 1e-4 and muzzle.basis.z.is_equal_approx(Vector3.BACK),
+				"gun parts: a %s has %s, the muzzle at the front looking down -z (%s, %.3f vs %.3f)"
+				% [s, names, have, muzzle.position.z if muzzle != null else NAN, front])
+		m.free()
+	for s: String in ["bow", "melee", "item"]:
+		var m := VM.build(s)
+		_check.call(m.get_node_or_null("Muzzle") == null and m.get_children().all(func(n: Node) -> bool: return n is MeshInstance3D),
+				"gun parts: a %s has none" % s)
+		m.free()
+
+
+## player.wielded_gun in snapshots: parsed into player_gun, junk fails the snapshot.
+func _test_gun_state(d: Dictionary, tables: IdTables) -> void:
+	var dd: Dictionary = d.duplicate(true)
+	var gi := maxi(tables.index_of("itype", "glock_19"), 1)
+	var snap_with := func(g: Variant) -> Snapshot:
+		dd["player"]["wielded_gun"] = g
+		return Snapshot.from_data(dd)
+	var good: Snapshot = snap_with.call({"type": gi, "dirt": 4200, "faults": ["fault_gun_dirt", "fault_gun_blackpowder"], "rounds": 12})
+	_check.call(good.is_valid() and good.player_gun == {"type": gi, "dirt": 4200, "rounds": 12,
+			"faults": ["fault_gun_dirt", "fault_gun_blackpowder"]} and good.player_gun["faults"] is Array,
+			"gun state: a wielded gun's type, dirt, faults and rounds parse (%s %s)" % [good.error, good.player_gun])
+	var bare: Snapshot = snap_with.call({"type": gi})
+	_check.call(bare.is_valid() and bare.player_gun == {"type": gi, "dirt": -1, "rounds": -1, "faults": []},
+			"gun state: no dirt / rounds give -1, no faults none (%s)" % [bare.player_gun])
+	dd["player"].erase("wielded_gun")
+	var none := Snapshot.from_data(dd)
+	var null_gun: Snapshot = snap_with.call(null)
+	_check.call(none.is_valid() and none.player_gun == {} and null_gun.is_valid() and null_gun.player_gun == {},
+			"gun state: absent gives {}")
+	var long_fault := "f".repeat(65)
+	var bad := [[], "glock", 5, {"type": -1}, {"type": "x"}, {"type": gi, "dirt": 10001}, {"type": gi, "dirt": -1},
+			{"type": gi, "dirt": "4200"}, {"type": gi, "dirt": 4.5}, {"type": gi, "dirt": NAN}, {"type": gi, "rounds": -1},
+			{"type": gi, "rounds": 100001}, {"type": gi, "rounds": [1]}, {"type": gi, "faults": "fault_gun_dirt"},
+			{"type": gi, "faults": {}}, {"type": gi, "faults": [5]}, {"type": gi, "faults": [long_fault]},
+			{"type": gi, "faults": _strings(17)}, {"type": gi, "dirt": null}]
+	var passed := []
+	for g: Variant in bad:
+		var s: Snapshot = snap_with.call(g)
+		if s.is_valid():
+			passed.append(g)
+	var ok16: Snapshot = snap_with.call({"type": gi, "faults": _strings(16)})
+	var ok64: Snapshot = snap_with.call({"type": gi, "faults": ["f".repeat(64)]})
+	_check.call(passed.is_empty() and ok16.is_valid() and ok64.is_valid(),
+			"gun state: non-objects, bad types, out-of-range values, too many or too long faults fail the snapshot (%s)" % [passed])
+
+
+static func _strings(n: int) -> Array:
+	var out := []
+	for i in n:
+		out.append("fault_%d" % i)
+	return out
