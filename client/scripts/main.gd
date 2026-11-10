@@ -67,6 +67,9 @@ var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
+## Where CDDA keeps its saves and config; empty: user://cdda. Live scripts set it before adding main, so they
+## never touch the player's saves.
+var cdda_user_dir := ""
 var vr: VrRig
 var vr_perf: VrPerf
 var _quitting := false
@@ -474,7 +477,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if _args.has("world") or _args.has("save"):

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Test range smoke run through the UI: `tests/range_live_test.gd` (live script) presses main's "Test range" button and every range control headless; all done and shown in the world (zone list, time, an hour waited, items in the Tab list, the monster). The Cheats page names zones without "(not built yet)" in its status line.
 - 2026-11-10 — v0.5.0 pre-release published (Linux AppImage built by lead-qa in WSL from main b87a485 + fork 281b553) after the security re-review's HIGH items were fixed and re-checked; then merged the test range (bridge + UI controls), gun jams (combat block 3) and QA's hostile checks.
 - 2026-11-10 — C9 views: over the shoulder and top-down next to first person (V cycles first, shoulder, top, outside; saved in hud.cfg); client tests pass, not looked at on screen.
 - 2026-11-10 — Snapshot `player.wielded_gun` {type, dirt, rounds, faults} for the gun view; fp3d (combat) and main merged into the bridge branches; before-ask hook code uses `in_timed_hook()` (combat's sim hook too); ui_requests.md: `shot` requests bring no snapshot or held update.
