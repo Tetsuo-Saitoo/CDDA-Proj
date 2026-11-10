@@ -144,6 +144,17 @@ func _door_leaves(root: Node) -> void:
 	g = Grabbable.door(w, d)
 	_check.call(is_equal_approx(g.angle, 1.2), "doors: an angle that agrees is kept")
 	g.free()
+	var odd := []
+	for bad: float in [INF, -INF, 1e30]:
+		w.door_state[sq] = {"angle": bad}
+		g = Grabbable.door(w, d)
+		odd.append(is_finite(g.angle) and absf(g.angle) <= Grabbable.MAX_ANGLE)
+		g.set_angle(NAN)
+		g.begin_hand(Vector3(NAN, 0, 0))
+		g.drag_hand(Vector3(INF, 0, 0))
+		odd.append(is_finite(g.angle) and is_finite(float(w.door_state.get(sq, {}).get("angle", 0.0))))
+		g.free()
+	_check.call(not odd.has(false), "doors: angles that aren't finite numbers are ignored, kept ones clamped")
 	w.door_state.clear()
 	var pos := CddaCoords.ms_to_sm(sq)
 	var one: Array[Dictionary] = [d]

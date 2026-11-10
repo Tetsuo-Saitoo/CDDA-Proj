@@ -100,10 +100,14 @@ static func door(w: WorldView, d: Dictionary) -> Grabbable:
 	g.leaf.add_child(knob)
 	g.sync(d)
 	var st: Dictionary = w.door_state.get(g.square, {})
-	var a: float = st.get("angle", NAN)
-	if is_nan(a) or (absf(a) >= OPEN_AT) != g.cdda_open:   # a kept angle counts only while it agrees
+	var av: Variant = st.get("angle")
+	var a: float = av if typeof(av) == TYPE_FLOAT else NAN
+	if not is_finite(a) or (absf(a) >= OPEN_AT) != g.cdda_open:   # a kept angle counts only while it agrees
 		a = OPEN_REST if g.cdda_open else 0.0
+	a = clampf(a, -MAX_ANGLE, MAX_ANGLE)
 	g.angle = a
+	if st.has("angle"):
+		st["angle"] = a
 	g._apply()
 	g.set_process(false)
 	return g
@@ -366,6 +370,8 @@ func paired() -> bool:
 
 
 func set_angle(a: float) -> void:
+	if not is_finite(a):
+		return
 	var lim := LOCKED_PLAY if locked and not cdda_open else MAX_ANGLE
 	angle = clampf(a, -lim, lim)
 	_apply()
@@ -443,6 +449,8 @@ func begin_grab(point: Vector3) -> void:
 
 
 func begin_hand(hand: Vector3) -> void:
+	if not hand.is_finite():
+		return
 	begin_grab(hand)
 	if mech == "hinge":
 		_hand_offset = amount - _hinge_angle(hand)
@@ -510,7 +518,7 @@ func _drag_mouse_part(rel: Vector2, view: Basis) -> void:
 
 ## A VR hand at `hand` (world): the leaf turns with it around the hinge (parts: or slides along with it).
 func drag_hand(hand: Vector3) -> void:
-	if not grabbed:
+	if not grabbed or not hand.is_finite():
 		return
 	if mech == "hinge":
 		var h := _hinge_angle(hand)
