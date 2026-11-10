@@ -12,6 +12,10 @@ signal quit_requested
 
 const MAX_LISTED := 256
 const WORLD_NAME_MAX := 32
+const CREDITS := [
+	"Cataclysm: Dark Days Ahead by CleverRaven and contributors (CC BY-SA 3.0)",
+	"Seglectic (github.com/Seglectic): 3D models, VR ideas and feedback",
+]
 
 var worlds := PackedStringArray()
 ## world -> PackedStringArray of saves; Callable(world) -> PackedStringArray.
@@ -88,7 +92,16 @@ func show_page(p: String) -> void:
 			_button("New game", func() -> void: show_page("new"))
 			var load := _button("Load game", func() -> void: show_page("load"))
 			load.disabled = worlds.is_empty()
+			_button("Credits", func() -> void: show_page("credits"))
 			_button("Quit", func() -> void: quit_requested.emit())
+		"credits":
+			title.text = "Credits"
+			for line in CREDITS:
+				var l := Label.new()
+				l.text = line
+				l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				_box.add_child(l)
+			_button("Back", func() -> void: show_page("main"))
 		"new":
 			title.text = "New game"
 			_use_existing = CheckBox.new()

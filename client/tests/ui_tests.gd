@@ -602,6 +602,8 @@ func _test_main_menu() -> void:
 	_check.call(m.suggested_world() == "World2", "menu: suggests a free world name")
 	_check.call(MainMenu.world_name_ok("a_b-1") and not MainMenu.world_name_ok("../x")
 			and not MainMenu.world_name_ok(""), "menu: world name rule")
+	m.show_page("credits")
+	_check.call(m.page == "credits" and m._box.get_child_count() >= 4, "menu: credits page")
 	m.show_page("new")
 	m._world_edit.text = "World"
 	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
