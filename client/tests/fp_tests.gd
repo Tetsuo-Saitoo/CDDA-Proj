@@ -266,7 +266,7 @@ func _test_cdda_keys() -> void:
 
 ## Rebinding: hostile key files, save/load, and the key menu.
 func _test_rebinding(root: Node) -> void:
-	var path := "user://keys_test.json"
+	var path := preload("res://tests/test_dir.gd").path("keys_test.json")
 	InputActions.reset_all()
 	for t: String in ["", "Nope", "mouse:0", "mouse:99", "pad:-1", "pad:x", "axis:9+", "axis:1*", "Shift+",
 			"Shift+Nope", "w", "A".repeat(50)]:

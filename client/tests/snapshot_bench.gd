@@ -132,7 +132,7 @@ func _live() -> void:
 	live.snapshot_ready.connect(view.submit)
 	var shown := []
 	view.applied.connect(func(s: Snapshot, n: int) -> void: shown.append([s.turn, n, Time.get_ticks_msec()]))
-	if not live.start(_repo("cdda"), OS.get_user_data_dir().path_join("cdda-bench"), WORLD):
+	if not live.start(_repo("cdda"), preload("res://tests/test_dir.gd").global("cdda-bench"), WORLD):
 		print("start failed: " + live.error)
 		quit(1)
 		return
@@ -204,6 +204,7 @@ func _record(what: String, ms: float) -> void:
 
 ## Prints every measure against its budget; exit code 1 when one is over (unless --no-budget).
 func _finish() -> void:
+	preload("res://tests/test_dir.gd").clean()   # the live game's own folder (tests/test_dir.gd)
 	var over := 0
 	for what: String in _results:
 		var limit: float = BUDGET_MS[what] * _scale

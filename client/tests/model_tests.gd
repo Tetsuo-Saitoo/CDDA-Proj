@@ -2,7 +2,10 @@ extends RefCounted
 ## Model loading (ModelLibrary, docs/MODELS.md): a tiny .glb built here with GLTFDocument, its markers,
 ## the caps, hostile files and paths, the strict glTF checks (one small file per rule), the cache, links,
 ## registry fallbacks, model props and item piles on model surfaces.
-## Run from run_tests.gd; files go to user://model_test_<process id> and are removed afterwards.
+## Run from run_tests.gd; files go to model_test in the run's own folder (tests/test_dir.gd) and are removed
+## afterwards.
+
+const TestDir := preload("res://tests/test_dir.gd")
 
 var _check: Callable
 var _dir := ""
@@ -11,8 +14,7 @@ var _dir := ""
 func run(check: Callable, data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
 	print("models (.glb)")
 	_check = check
-	# one folder per process: test runs of other checkouts share user://
-	_dir = ProjectSettings.globalize_path("user://model_test_%d" % OS.get_process_id())
+	_dir = TestDir.global("model_test")
 	_remove(_dir)
 	DirAccess.make_dir_recursive_absolute(_dir.path_join("models/furniture"))
 	DirAccess.make_dir_recursive_absolute(_dir.path_join("models/terrain"))
@@ -705,9 +707,9 @@ func _write(rel: String, bytes: PackedByteArray) -> void:
 	f.close()
 
 
-## Deletes the test folder (only under user://model_test).
+## Deletes the test folder (only under the run's model_test).
 func _remove(dir: String) -> void:
-	if not dir.begins_with(ProjectSettings.globalize_path("user://model_test")):
+	if not dir.begins_with(TestDir.global("model_test")):
 		return
 	var da := DirAccess.open(dir)
 	if da == null:
