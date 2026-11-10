@@ -9,8 +9,9 @@ extends XROrigin3D
 ## - vive (trackpad wands): left pad touched moves; right pad clicked: left / right half snap turns, up half
 ##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
 ## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
-## `save_path`), with a laser pointer from the main hand, and its Cheats page (K7: `cheats_backend`,
-## `cheats_allowed`; a refused cheat buzzes the main hand). Hands (VrHand) show finger tracking when the runtime
+## `save_path`), with a laser pointer from the main hand, and its Cheats and Test range pages (K7: `cheats_backend`,
+## `cheats_allowed`; a refused cheat or range op buzzes the main hand; after a range teleport the head follows the
+## player: follow_teleport). Hands (VrHand) show finger tracking when the runtime
 ## gives it, else fingers from the buttons; they are the only hands: the player's body hides its own and
 ## reaches its arms for their wrists (drive_body).
 ## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs (else it pulls, below),
@@ -113,6 +114,13 @@ var cheats_allowed := false:   # main.gd sets it every frame from the F1 menu's 
 		if menu != null:
 			menu.cheats_allowed = v
 			menu.refresh()
+## K7 range teleports sent from the menu: op id -> the player's square when sent (null: no snapshot yet) ...
+var _teleports := {}
+## ... and after one came back done: where the player stood, and seconds left to see them moved (< 0: not waiting).
+var _follow_from: Variant = null
+var _follow_s := -1.0
+const FOLLOW_WAIT_S := 5.0   # no move seen by then (a teleport to where they stood): go to the player anyway
+const MAX_TELEPORTS := 8
 
 const HAND_IDS := ["vr_l", "vr_r"]   # Hands ids of the left / right controller
 const GRAB_REACH := 0.12   # metres from a hand to a door leaf or an item it can grip
@@ -344,6 +352,7 @@ func _process(delta: float) -> void:
 	place_compass()
 	place_hud(delta)
 	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
+	follow_teleport(delta)
 
 
 ## The HUD panel inside the off forearm (setting `wrist_hud`): shows while turned to the eyes.
@@ -1063,6 +1072,8 @@ func toggle_menu() -> void:
 		menu.cheats_backend = cheats_backend
 		menu.cheats_allowed = cheats_allowed
 		menu.cheat_refused.connect(func(_why: String) -> void: _feel(main_ctrl()))   # the reason shows on the page
+		menu.range_sent.connect(_on_range_sent)
+		menu.range_finished.connect(_on_range_finished)
 	menu.visible = not menu.visible
 	aiming = false
 	arc = {}
@@ -1078,6 +1089,43 @@ func toggle_menu() -> void:
 func _menu_action(key: String) -> void:
 	if key == "calibrate":
 		calibrate_height()
+
+
+## The menu sent a range op: a teleport remembers where the player stands now.
+func _on_range_sent(op_id: int, key: String) -> void:
+	if not VrRange.is_teleport(key):
+		return
+	if _teleports.size() >= MAX_TELEPORTS:
+		_teleports.erase(_teleports.keys()[0])
+	_teleports[op_id] = world.snapshot.player_pos if world.snapshot != null else null
+
+
+## A range op from the menu came back: a teleport done starts the follow.
+func _on_range_finished(op_id: int, _key: String, error: String) -> void:
+	if not _teleports.has(op_id):
+		return
+	var from: Variant = _teleports[op_id]
+	_teleports.erase(op_id)
+	if error.is_empty():
+		_follow_from = from
+		_follow_s = FOLLOW_WAIT_S
+		follow_teleport(0.0)
+
+
+## K7: after a range teleport came back done, the head goes to the player once (go_to_player) as soon as a shown
+## snapshot has them off the square they stood on when it was sent (the snapshot may come before or after the
+## op's result), or, none by FOLLOW_WAIT_S, to wherever the player is then. Every frame (_process).
+func follow_teleport(delta: float) -> void:
+	if _follow_s < 0.0:
+		return
+	_follow_s -= delta
+	var s := world.snapshot
+	if s == null:
+		return
+	if _follow_s >= 0.0 and _follow_from is Vector3i and s.player_pos == _follow_from:
+		return
+	_follow_s = -1.0
+	go_to_player(s.player_pos)
 
 
 ## A menu change takes effect now: the height, and the held items when the main hand changed sides.

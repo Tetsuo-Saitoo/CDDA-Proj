@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR test range page (K7): VR menu "Test range >" page (monster freeze, heal, wait 1 hour, set times, Go to per zone with a pager), status from `range_done`, refusals buzz, the head follows the player after a teleport (`vr/vr_range.gd`, `tests/vr_range_tests.gd`); spawning left; not tried live or in a headset.
 - 2026-11-10 — VR cooking cards (L9, show only): a card over each pot on the heat near the head with heat, contents, CDDA's craft progress or up to 3 recipe matches (asked through LiveSession's recipe wrapper, duck-typed), steam over a lit pot (`vr/vr_cook.gd`, `tests/vr_cook_tests.gd`); not tried live or in a headset.
 - 2026-11-10 — VR point and pull (L2): a half-pressed trigger on an empty hand rays and outlines an item in reach, the click takes it and its copy flies into the hand; main trigger: pack, stairs, then pull, one buzz for nothing (`vr/vr_rig.gd`, `tests/vr_pull_tests.gd`); not tried in a headset.
 - 2026-11-10 — VR backpack (L8): grip over the shoulder takes the worn bag off, let go in front it opens with a compartment per pocket; take items out / put them into a pocket by hand (`vr/vr_pack.gd`, `tests/vr_pack_tests.gd`); not tried in a headset.
