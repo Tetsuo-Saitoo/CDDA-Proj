@@ -43,6 +43,13 @@ var world: WorldView
 var flash_rect: ColorRect          # full-screen white for flashbangs (main.gd puts it on the HUD)
 var _live: Array[Dictionary] = []   # {root, fire, smoke, ring, light, t, p}
 var _flash := 0.0
+var _shake := 0.0                  # 0..1, fades; camera offset in metres = SHAKE_M * _shake
+var _shake_t := 0.0
+var _sounds := {}                  # kind -> AudioStreamWAV (made once)
+
+const SHAKE_M := 0.12
+const SHAKE_FADE := 1.6            # per second
+const SOUND_RATE := 22050
 
 
 func _init(w: WorldView) -> void:
@@ -108,10 +115,19 @@ func start(e: Dictionary) -> bool:
 		root.add_child(_area_glow(area.slice(0, MAX_AREA), root.position, p["fire"]))
 	_live.append({"root": root, "fire": fire, "smoke": smoke, "ring": ring, "light": light, "t": 0.0, "p": p,
 			"r": r_m})
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	var dist := cam.global_position.distance_to(root.global_position) if cam != null else 0.0
 	if float(p["flash"]) > 0.0:
-		var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
-		var dist := cam.global_position.distance_to(root.global_position) if cam != null else 0.0
 		_flash = maxf(_flash, float(p["flash"]) * clampf(1.0 - dist / 20.0, 0.0, 1.0))
+	# Shake: stronger for bigger blasts, fading out over ~6 radii; flashbangs and shockwaves shake too.
+	_shake = maxf(_shake, clampf(1.0 - dist / (r_m * 6.0 + 4.0), 0.0, 1.0) * clampf(r_m / 4.0, 0.3, 1.0))
+	var snd := AudioStreamPlayer3D.new()
+	snd.stream = sound_for(p["kind"], r_m)
+	snd.unit_size = 6.0 + r_m * 2.0
+	snd.max_distance = 200.0
+	root.add_child(snd)
+	if is_inside_tree():
+		snd.play()
 	return true
 
 
@@ -130,6 +146,8 @@ func _process(delta: float) -> void:
 ## Advances every effect by `delta` seconds (tests call it directly).
 func tick(delta: float) -> void:
 	_flash = maxf(_flash - delta * 0.8, 0.0)
+	_shake = maxf(_shake - delta * SHAKE_FADE, 0.0)
+	_shake_t += delta
 	flash_rect.color.a = _flash
 	for i in range(_live.size() - 1, -1, -1):
 		var x: Dictionary = _live[i]
@@ -152,6 +170,49 @@ func tick(delta: float) -> void:
 		if x["t"] >= dur:
 			(x["root"] as Node3D).queue_free()
 			_live.remove_at(i)
+
+
+func shake_strength() -> float:
+	return _shake
+
+
+## Camera offset for the current shake (main.gd puts it in Camera3D.h_offset / v_offset).
+func shake_offset() -> Vector2:
+	if _shake <= 0.0:
+		return Vector2.ZERO
+	return Vector2(sin(_shake_t * 61.0) + 0.5 * sin(_shake_t * 23.0),
+			cos(_shake_t * 53.0) + 0.5 * sin(_shake_t * 31.0)) * SHAKE_M * _shake * _shake
+
+
+## A boom made once per kind and size class: noise through a falling low-pass, with a decaying envelope.
+## Flashbangs are a sharp bright crack, shockwaves a low thump, blasts a crack and a rumble.
+func sound_for(kind: String, r_m: float) -> AudioStreamWAV:
+	var big := r_m >= 4.0
+	var key := "%s:%s" % [kind, big]
+	if _sounds.has(key):
+		return _sounds[key]
+	var secs: float = {"flashbang": 0.5, "shockwave": 1.0}.get(kind, 1.6 if big else 1.1)
+	var n := int(SOUND_RATE * secs)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(key)
+	var lp := 0.0
+	for i in n:
+		var t := float(i) / SOUND_RATE
+		var env := exp(-t * (14.0 if kind == "flashbang" else (3.0 if big else 4.5)))
+		var cut := (0.9 if kind == "flashbang" else 0.35) * exp(-t * 6.0) + (0.02 if kind != "flashbang" else 0.1)
+		if kind == "shockwave":
+			cut *= 0.4
+		lp += (rng.randf_range(-1.0, 1.0) - lp) * cut
+		var v := clampf(lp * env * (2.5 if kind != "flashbang" else 1.2), -1.0, 1.0)
+		data.encode_s16(i * 2, int(v * 32000.0))
+	var w := AudioStreamWAV.new()
+	w.format = AudioStreamWAV.FORMAT_16_BITS
+	w.mix_rate = SOUND_RATE
+	w.data = data
+	_sounds[key] = w
+	return w
 
 
 func shift(d: Vector3) -> void:

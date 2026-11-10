@@ -187,9 +187,15 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	_check.call(ev.live_count() == 1, "explosions: a blast starts, junk is skipped")
 	ev.on_events([{"kind": "explosion", "pos": me, "amount": 8, "text": "flashbang", "detail": 0, "path": []}])
 	_check.call(ev.flash_strength() > 0.0, "explosions: a flashbang next to the camera whites the screen")
+	_check.call(ev.shake_strength() > 0.0 and ev.shake_offset().length() > 0.0, "explosions: nearby blasts shake")
 	for i in 40:
 		ev.tick(0.05)
-	_check.call(ev.live_count() == 0 and ev.flash_strength() == 0.0, "explosions: effects end and the flash fades")
+	_check.call(ev.live_count() == 0 and ev.flash_strength() == 0.0 and ev.shake_strength() == 0.0
+			and ev.shake_offset() == Vector2.ZERO, "explosions: effects end, the flash and the shake fade")
+	var boom := ev.sound_for("blast", 5.0)
+	_check.call(boom.data.size() > 40000 and ev.sound_for("blast", 5.0) == boom
+			and ev.sound_for("flashbang", 1.0).data.size() < boom.data.size(),
+			"explosions: a boom per kind and size, made once (flashbang shorter)")
 	ev.flash_rect.free()
 	ev.free()
 

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Explosions shake the camera (by size and distance, not in VR) and make a generated boom per kind (crack + rumble, flashbang crack, shockwave thump); client tests pass. Note: run_tests prints "all passed" even when a script fails to compile; check for SCRIPT ERROR.
 - 2026-11-09 — Client ballistics: bullets flown by the client (speed/drag per ammo type, drop, zero 25 m) hit the body part drawn (head, eye, torso, limbs); FIRE answer `shot` makes CDDA hit that creature in that part or miss (fork fp3d/shot.h hooks ballistics + hit selection); tracers; id tables gun_ammo + weakpoints; client tests pass.
 - 2026-11-09 — World settings and mods when making a new world: `world_setup` request (sliders, world options, mods with dependencies), client screen; core data now loads before the world; all chargen/ui/live tests pass.
 - 2026-11-09 — Templates: edit (open a template in the chargen tabs) and delete (confirm, then the sim removes it and re-asks); tests pass.

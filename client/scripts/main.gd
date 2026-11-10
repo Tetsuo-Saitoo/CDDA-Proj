@@ -731,6 +731,11 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	_update_aim()
+	var cam := get_viewport().get_camera_3d()
+	if cam != null and vr == null:   # no shaking in VR (comfort)
+		var o := explosions.shake_offset()
+		cam.h_offset = o.x
+		cam.v_offset = o.y
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
