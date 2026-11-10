@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — run_tests.gd fails on any ERROR / SCRIPT ERROR line Godot prints during the run (tests/error_catch.gd, a `Logger`; allow-list for the negative tests' JSON and ConfigFile parse errors; self-check that a push_error and a freed-object cast are caught); before, a runtime script error still gave "all passed". Freed-object vs null note in docs/BUILD.md step 9.
 - 2026-11-10 — CI (A3): `.github/workflows/` ci.yml (Linux build, fork tests, client tests, live test, perf budget), tsan.yml (weekly/by hand), windows.yml (by hand); steps in tools/build/ci_linux.sh, Godot fetched by checksum (ci_godot.sh); docs/BUILD.md step 9. Nothing has run on GitHub yet (Actions off), Windows workflow untried.
 - 2026-11-10 — Perf budget: `snapshot_bench.gd` checks parse, apply, async step, frame time (main scene, 300 frames) and live turn time against budgets, fails over budget; `--budget-scale`, `--no-budget`. Budgets provisional (measured on a loaded machine).
 - 2026-11-10 — Fork (fp3d-qa): upstream's GitHub workflows dropped; `src/chkjson` added (upstream's .gitignore kept it out, Linux configure failed); version.h in git worktrees no longer empty (version.cmake asks git, falls back to "0.I-fp3d").

@@ -160,3 +160,9 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    in that file, exit code 1 when one is over. `--budget-scale=<f>` for slower machines (CI uses 3),
    `--no-budget` only prints. Headless has no GPU: frame times are CPU only, the 90 fps VR target is 11.1 ms for
    both.
+   **Client tests:** `godot --headless --path client --script res://tests/run_tests.gd`, exit code 0 = all passed.
+   Every ERROR / SCRIPT ERROR line Godot prints during the run fails it (`tests/error_catch.gd`, a Godot `Logger`),
+   except the ones negative tests cause on purpose (`EXPECTED_ERRORS` in run_tests.gd); warnings don't count. A
+   runtime script error stops the function it happens in, so the checks after it never ran. In Godot 4.7 a freed
+   object compares equal to `null`: `x != null and not is_instance_valid(x)` never catches one, test
+   `not is_instance_valid(x)` alone.

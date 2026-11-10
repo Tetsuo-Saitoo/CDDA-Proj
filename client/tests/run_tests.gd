@@ -2,15 +2,23 @@ extends SceneTree
 ## Headless checks for blocks C1-C3 (models: tests/model_tests.gd), E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
 ##   godot --headless --path client --import          (once, so class names resolve)
 ##   godot --headless --path client --script res://tests/run_tests.gd
-## Exit code 0 = all passed.
+## Exit code 0 = all passed and no unexpected ERROR / SCRIPT ERROR line was printed (tests/error_catch.gd).
 
 const MOCK := "contracts/mock/snapshot_town.json"
 const IDS := "contracts/mock/id_tables.json"
+const ErrorCatch := preload("res://tests/error_catch.gd")
+## Error lines the negative tests cause on purpose: bad JSON and ConfigFile text fed to the parsers.
+const EXPECTED_ERRORS := ["Parse JSON failed", "ConfigFile parse error"]
 
 var _failed := 0
+var _errors: ErrorCatch
 
 
 func _initialize() -> void:
+	_errors = ErrorCatch.new()
+	_errors.allowed = PackedStringArray(EXPECTED_ERRORS)
+	OS.add_logger(_errors)
+	_test_error_catch()
 	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
@@ -32,8 +40,30 @@ func _initialize() -> void:
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
+	var errs := _errors.take()
+	OS.remove_logger(_errors)
+	_check(errs.is_empty(), "no unexpected ERROR / SCRIPT ERROR lines (%d)" % errs.size())
+	for e in errs:
+		printerr("        " + e)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
+
+
+## The catcher itself: a push_error and a runtime script error (a cast of a freed object, which also stops
+## the function it is in) are both seen. The ERROR and SCRIPT ERROR lines this prints are on purpose.
+func _test_error_catch() -> void:
+	print("error catcher (the next ERROR and SCRIPT ERROR lines are on purpose)")
+	push_error("fp3d error-catch probe")
+	_cast_freed()
+	_check(_errors.take_matching("fp3d error-catch probe") == 1, "push_error is caught")
+	_check(_errors.take_matching("Trying to cast a freed object") == 1, "a runtime script error is caught")
+
+
+func _cast_freed() -> void:
+	var n := Node.new()
+	n.free()
+	var v: Variant = n
+	var _x := v as Node
 
 
 ## Every script under res://scripts and res://tests must compile: a parse error elsewhere otherwise only
