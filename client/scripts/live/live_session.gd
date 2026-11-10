@@ -37,6 +37,10 @@ const Z_BELOW := 1
 const Z_ABOVE := 1
 ## Real seconds of play between autosaves (skipped while nothing happens).
 const AUTOSAVE_S := 300.0
+const MAX_BOOT_TEXT := 160            # characters of a boot phase or CDDA error shown
+const MAX_BOOT_SECONDS := 1.0e7
+const MAX_BOOT_ERRORS := 1 << 30
+const MAX_ERROR_TEXT := 600           # characters of get_error() kept
 
 var state := "idle"
 var error := ""
@@ -183,6 +187,44 @@ func cheats() -> Dictionary:
 	if not _can("get_cheats"):
 		return {}
 	return clean_cheats(_sim.get_cheats())
+
+
+## The boot's progress (CddaSim.get_boot_info, any state), cleaned: {phase, seconds, phase_seconds, errors,
+## last_error}; {} without a game or with an older bridge.
+func boot_info() -> Dictionary:
+	if _sim == null or not _sim.has_method("get_boot_info"):
+		return {}
+	return clean_boot_info(_sim.get_boot_info())
+
+
+## get_boot_info's reply as plain one-line texts (capped) and clamped numbers; junk gives {}.
+static func clean_boot_info(d: Variant) -> Dictionary:
+	if not d is Dictionary:
+		return {}
+	var src: Dictionary = d
+	var e: Variant = src.get("errors", 0)
+	var errors := int(clampf(e, 0, MAX_BOOT_ERRORS)) if (e is int or e is float) and is_finite(float(e)) else 0
+	return {"phase": Snapshot.plain_text(src.get("phase"), MAX_BOOT_TEXT), "seconds": _seconds(src.get("seconds")),
+			"phase_seconds": _seconds(src.get("phase_seconds")), "errors": errors,
+			"last_error": Snapshot.plain_text(src.get("last_error"), MAX_BOOT_TEXT)}
+
+
+static func _seconds(v: Variant) -> float:
+	if not (v is int or v is float) or not is_finite(float(v)):
+		return 0.0
+	return clampf(float(v), 0.0, MAX_BOOT_SECONDS)
+
+
+## The status line while booting: "booting: Loading files (12 s; 3 CDDA errors)"; an older bridge gives no phase.
+static func boot_text(info: Dictionary) -> String:
+	var phase: String = info.get("phase", "")
+	if phase.is_empty():
+		return "game booting (~30 s)"
+	var out := "booting: %s (%d s" % [phase, int(info.get("seconds", 0.0))]
+	var n: int = info.get("errors", 0)
+	if n > 0:
+		out += "; %d CDDA error%s" % [n, "" if n == 1 else "s"]
+	return out + ")"
 
 
 ## Only known names, only bools: the reply is the sim's, but a wrong one must not reach the UI as anything else.
@@ -462,7 +504,7 @@ func _poll(delta: float) -> void:
 	if s != state:
 		state = s
 		if s == "ended" or s == "failed":
-			error = _sim.get_error()
+			error = Snapshot.plain_text(_sim.get_error(), MAX_ERROR_TEXT)
 		if s == "running":
 			_push_cheats_allowed()   # before state_changed: --test / --cheats are applied on it
 		state_changed.emit(s)

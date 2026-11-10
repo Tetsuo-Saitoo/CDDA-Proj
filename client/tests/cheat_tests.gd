@@ -45,6 +45,7 @@ func run(check: Callable) -> void:
 	_check = check
 	print("cheats")
 	_test_clean()
+	_test_boot()
 	_test_session()
 	_test_hud()
 	_test_model()
@@ -77,6 +78,64 @@ func _test_clean() -> void:
 	_check.call(c == want, "cheats: clean_cheats keeps known names, real bools only (%s)" % [c])
 	_check.call(LiveSession.clean_cheats("x").is_empty() and LiveSession.clean_cheats({"cheats": [1]}).is_empty()
 			and LiveSession.clean_cheats(null).is_empty(), "cheats: clean_cheats of junk is empty")
+
+
+class BootSim extends RefCounted:
+	var info: Variant = {}
+	var state := "booting"
+	var err := ""
+
+	func get_boot_info() -> Variant:
+		return info
+
+	func get_state() -> String:
+		return state
+
+	func get_error() -> String:
+		return err
+
+	func drain_events() -> Array:
+		return []
+
+	func get_snapshot_seq() -> int:
+		return 0
+
+	func get_request() -> Dictionary:
+		return {}
+
+
+## The boot screen's line from get_boot_info (any state, cleaned like any sim reply); an older bridge keeps the
+## old guess; a failed boot's reason is cleaned too.
+func _test_boot() -> void:
+	var b := LiveSession.clean_boot_info({"phase": "Loading files: <color_red>data/json/a.json</color>\n"
+			+ String.chr(0x202E), "seconds": 12.7, "phase_seconds": NAN, "errors": 3.0, "last_error": 5})
+	_check.call(b == {"phase": "Loading files: data/json/a.json", "seconds": 12.7, "phase_seconds": 0.0, "errors": 3,
+			"last_error": ""}, "boot: info cleaned (%s)" % [b])
+	var junk := LiveSession.clean_boot_info({"phase": "x".repeat(5000), "seconds": -4, "errors": 1e30})
+	_check.call((junk["phase"] as String).length() == LiveSession.MAX_BOOT_TEXT and junk["seconds"] == 0.0
+			and junk["errors"] == LiveSession.MAX_BOOT_ERRORS and LiveSession.clean_boot_info([1]).is_empty(),
+			"boot: long text cut, numbers clamped, junk gives {}")
+	_check.call(LiveSession.boot_text(b) == "booting: Loading files: data/json/a.json (12 s; 3 CDDA errors)"
+			and LiveSession.boot_text({"phase": "Id tables", "seconds": 1.0, "errors": 1}) == "booting: Id tables (1 s; 1 CDDA error)"
+			and LiveSession.boot_text({"phase": "Running", "seconds": 30.0}) == "booting: Running (30 s)"
+			and LiveSession.boot_text({}) == "game booting (~30 s)", "boot: the status line names the phase")
+	var sim := BootSim.new()
+	sim.info = {"phase": "Finalizing", "seconds": 20}
+	var ls := LiveSession.new()
+	_check.call(ls.boot_info().is_empty(), "boot: no game, no info")
+	ls._sim = sim
+	ls.state = "booting"
+	_check.call(ls.boot_info()["phase"] == "Finalizing", "boot: read while booting")
+	sim.info = "junk"
+	_check.call(ls.boot_info().is_empty(), "boot: a junk reply gives {}")
+	sim.state = "failed"
+	sim.err = "the game stopped booting: nothing moved for 180 s in \"Loading files\"\n" + String.chr(0x200F)
+	var states: Array = []
+	ls.state_changed.connect(func(s: String) -> void: states.append(s))
+	ls._poll(0.0)
+	_check.call(states == ["failed"] and ls.error == "the game stopped booting: nothing moved for 180 s in \"Loading files\"",
+			"boot: a stalled boot fails with its reason, cleaned (%s)" % ls.error)
+	ls.free()
 
 
 func _test_session() -> void:
