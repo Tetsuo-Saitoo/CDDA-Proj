@@ -49,6 +49,7 @@ var grab: GrabController         # doors dragged with the mouse (E6), hover outl
 var item_actions: ItemActions     # one-item take / put / drop for mouse and VR hands (E6 / L2 / L8)
 var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
+var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
@@ -122,6 +123,15 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	inspect = InspectView.new(hands, item_actions)
+	request_ui.get_parent().add_child(inspect)
+	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
+		camera.set_process_unhandled_input(false)
+		fp.set_process_unhandled_input(false))
+	inspect.closed.connect(func() -> void:
+		camera.set_process_unhandled_input(vr == null and not first_person)
+		fp.set_process_unhandled_input(vr == null and first_person))
 	world.door_wants.connect(_on_door_wants)
 	world.door_message.connect(func(t: String) -> void: _log.append(t))
 	viewmodel = WeaponViewmodel.new()
@@ -223,6 +233,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	gore.view_z_max = world.view_z_max
 	gore.apply(snap, world)
 	player_body.apply(snap, world.tables)
+	inspect.refresh()
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -697,6 +708,13 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
+func _can_inspect() -> bool:
+	return _fp_active() and world.snapshot != null and main_menu == null and not request_ui.visible \
+			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
+			and (live == null or _in_main_loop())
+
+
 ## The square hands and the mouse reach doors from: the player's; in mock first person, where you stand.
 func _reach_square() -> Variant:
 	if world.snapshot == null:
@@ -882,7 +900,7 @@ func _demo_tick() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input() or key_menu.visible   # typing must not move the camera
+	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	fp.set_process(_fp_active() and not typing)
 	if _fp_active() and live != null and not typing:
@@ -928,6 +946,8 @@ func _help() -> String:
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
 	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
 			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
+	if _fp_active():
+		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
 		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
 				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
@@ -969,11 +989,13 @@ static func _keys(actions: Array) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible:
-		return
+	if key_menu.visible or inspect.visible:
+		return   # the inspect view takes Tab / Esc itself (InspectView._input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
+		return
+	if inspect.handle_key(event, _can_inspect()):
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
