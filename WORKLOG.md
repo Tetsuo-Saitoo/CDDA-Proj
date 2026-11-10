@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR point and pull (L2): a touched / half-pressed trigger on an empty hand rays and outlines an item in reach, the click takes it and its copy flies into the hand; main trigger: pack, stairs, then pull, one buzz for nothing (`vr/vr_rig.gd`, `tests/vr_pull_tests.gd`); not tried in a headset.
 - 2026-11-10 — VR backpack (L8): grip over the shoulder takes the worn bag off, let go in front it opens with a compartment per pocket; take items out / put them into a pocket by hand (`vr/vr_pack.gd`, `tests/vr_pack_tests.gd`); not tried in a headset.
 - 2026-11-10 — Live stairs go through the bridge's own stairs action when the build has it (step + `<`/`>` stand-in otherwise); client tests pass; not tried live.
 - 2026-11-10 — Furniture doors, drawers and lids open (L8 world side): model markers become Grabbable parts, items on their surfaces move with them; door angles are checked as numbers; main merged; client tests pass; not live, not VR.

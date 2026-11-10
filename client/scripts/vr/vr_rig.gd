@@ -13,9 +13,9 @@ extends XROrigin3D
 ## `cheats_allowed`; a refused cheat buzzes the main hand). Hands (VrHand) show finger tracking when the runtime
 ## gives it, else fingers from the buttons; they are the only hands: the player's body hides its own and
 ## reaches its arms for their wrists (drive_body).
-## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs, it aims the
-## teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist, the HUD
-## panel (VrHud, setting `wrist_hud`) on the inside of the off forearm.
+## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs (else it pulls, below),
+## it aims the teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist,
+## the HUD panel (VrHud, setting `wrist_hud`) on the inside of the off forearm.
 ## Seated play: the origin stands `height` over the level's floor (floor_y), so the head rises by it; the menu
 ## can set it from the head's height now ("Calibrate height").
 ## Hands (block L2): each controller is a hand of the shared Hands layer ("vr_l" / "vr_r"; `hands`, set by main.gd).
@@ -26,6 +26,11 @@ extends XROrigin3D
 ## in that hand, ready to put down. CDDA decides every move; a refusal buzzes and shows its reason by the hand.
 ## Heavy items lag behind the hand; a two-handed one sags in one hand and sits between both when the other hand
 ## grips it too.
+## Point and pull (L2): an empty hand touching nothing, its trigger half pressed (PULL_TRIGGER), shows a
+## faint ray; the item it meets in reach (Hands.find_on_ray: not a door leaf, and for the main hand not one lying on
+## stairs) is outlined. The trigger click takes it into that hand like a grip (the same one-item take: CDDA judges
+## reach) and its copy flies from where it lay into the hand over FLY_S, a buzz on arrival; a grip click lets it go.
+## The main trigger uses pointed stairs first; nothing pointed at all: one buzz.
 ## Backpack (block L8, VrPack `pack`): grip with an empty hand over the shoulder while wearing a container takes
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
@@ -121,6 +126,10 @@ const SAG_DROP := 0.06     # ... and hangs this much lower
 const TWO_HAND_M := 0.35   # the other hand grips within this of a two-handed item's grip: it holds it too
 const NOTE_S := 3.0        # a refusal's reason shows this long by the hand
 const NOTE_MAX := 120      # characters of it (the text comes from the sim)
+const PULL_TRIGGER := 0.15 # a trigger past this points an empty hand's pull ray (not a mere touch: a finger
+                           # rests on Quest / Index triggers most of the time)
+const PULL_RAY_S := 0.05   # the pull ray looks again at most this often (each look casts two look rays)
+const FLY_S := 0.2         # a pulled item's copy flies into the hand in this long
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
 var hands: Hands:
@@ -138,6 +147,13 @@ var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
 var _note_left: Array[float] = [0.0, 0.0]
 var _grip_down: Array[bool] = [false, false]   # the grip button is held (two-handed support uses it)
+var pull_rays: Array[MeshInstance3D] = []      # each hand's faint pull ray (left, right)
+## Tests: each controller's trigger value as if read from it (< 0: read the controller).
+var trigger_in: Array[float] = [-1.0, -1.0]
+var _pointed: Array[Dictionary] = [{}, {}]     # the item each hand's pull ray met at its last look
+var _ray_wait: Array[float] = [0.0, 0.0]       # seconds to the next look
+var _fly_from: Array[Transform3D] = [Transform3D(), Transform3D()]   # where a pulled copy lay
+var _fly_t: Array[float] = [-1.0, -1.0]        # seconds into its flight; < 0: none
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -271,7 +287,15 @@ func _build() -> void:
 	pointer_dot = MeshInstance3D.new()
 	pointer_dot.name = "MenuPointerDot"
 	pointer_dot.mesh = dot
-	for n: MeshInstance3D in [pointer, pointer_dot]:
+	var faint := _overlay_mat(Color(0.45, 0.8, 1.0, 0.3), 90)   # the pointer's look, fainter, hidden by walls
+	faint.no_depth_test = false
+	for side: String in ["Left", "Right"]:
+		var ray := MeshInstance3D.new()
+		ray.name = "PullRay" + side
+		ray.mesh = rod
+		ray.material_override = faint
+		pull_rays.append(ray)
+	for n: MeshInstance3D in [pointer, pointer_dot, pull_rays[0], pull_rays[1]]:
 		n.top_level = true   # placed in world space
 		n.visible = false
 		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -371,12 +395,15 @@ func hand_id(c: XRController3D) -> String:
 
 
 ## Per frame: the hands follow the controllers; a held door swings with its hand; a held item follows by its
-## weight (follow_rate, sag, two_hand_pose); a free hand outlines what it could grip. CDDA's own hand display
-## (VrHeld) hides while that hand holds a copy. `all_hands`: count hands the runtime doesn't track (tests).
+## weight (follow_rate, sag, two_hand_pose), a pulled one flies in first (_fly); a free hand outlines what it could
+## grip, else with its trigger half pressed what its pull ray points at. CDDA's own hand display (VrHeld) hides while
+## that hand holds a copy. `all_hands`: count hands the runtime doesn't track (tests).
 func update_hands(delta: float, all_hands := false) -> void:
 	_tick_notes(delta)
 	if hands == null:
 		pack.close("gone")
+		for i in 2:
+			_show_pull_ray(i, {})
 		return
 	pack.update()
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
@@ -393,17 +420,29 @@ func update_hands(delta: float, all_hands := false) -> void:
 		var id: String = HAND_IDS[i]
 		var held := hands.holding(id)
 		if held.is_empty():
+			_fly_t[i] = -1.0
 			var t := {}
-			var pt := {}   # the open pack goes first
+			var pt := {}   # the open pack goes first, then what the hand touches, then what its pull ray meets
+			var pointing := false
 			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open() \
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
 				if pt.is_empty():
 					t = hands.find_near(c.global_position, GRAB_REACH)
+				pointing = pt.is_empty() and t.is_empty() and trigger_half(i)
+				if pointing:
+					t = _point(i, c, delta)
+			if not pointing:   # the next pointing looks at once
+				_pointed[i] = {}
+				_ray_wait[i] = 0.0
 			pack.hover(i, pt)
 			hands.hover(id, t)
+			_show_pull_ray(i, t if pointing else {})
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
+		_show_pull_ray(i, {})
+		_pointed[i] = {}
+		_ray_wait[i] = 0.0
 		pack.show_drop(i, c.global_position if held.get("kind") == "item" else Vector3.INF)
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
@@ -411,9 +450,109 @@ func update_hands(delta: float, all_hands := false) -> void:
 				(n as Grabbable).drag_hand(c.global_position)
 			else:
 				hands.cancel(id)
+		elif _fly_t[i] >= 0.0:
+			_fly(i, delta)
 		elif drawn[i] is Transform3D:
 			_weigh(i, drawn[i], delta)
 	_sync_held()
+
+
+## Controller i's trigger is pressed past PULL_TRIGGER (trigger_in in tests).
+func trigger_half(i: int) -> bool:
+	if trigger_in[i] >= 0.0:
+		return trigger_in[i] > PULL_TRIGGER
+	var c := _ctrl(i)
+	return c.get_is_active() and c.get_float(&"trigger") > PULL_TRIGGER
+
+
+## The item controller c's ray meets in reach (Hands.find_on_ray), {} for none: a door leaf in front of it hides it,
+## and the main hand points at no item lying on stairs (its trigger uses the stairs).
+func pointed_item(c: XRController3D) -> Dictionary:
+	if hands == null or world.snapshot == null:
+		return {}
+	var from := c.global_position
+	var dir := -c.global_basis.z
+	if not from.is_finite() or not dir.is_finite() or dir.length() < 0.001:
+		return {}
+	var t := hands.find_on_ray(from, dir.normalized(), Hands.RAY_M)
+	if t.get("kind") != "item" or not t.get("item") is ItemRef or not t.get("square") is Vector3i:
+		return {}
+	if c == main_ctrl() and not StairUse.find(world, t["square"], z).is_empty():
+		return {}
+	return t
+
+
+## Hand i's pull ray this frame: what pointed_item found, looked for again every PULL_RAY_S, not every frame.
+func _point(i: int, c: XRController3D, delta: float) -> Dictionary:
+	_ray_wait[i] -= clampf(delta, 0.0, 1.0)
+	if _ray_wait[i] <= 0.0:
+		_ray_wait[i] = PULL_RAY_S
+		_pointed[i] = pointed_item(c)
+	return _pointed[i]
+
+
+## Hand i's faint ray to the item it points at (target t), hidden for {}.
+func _show_pull_ray(i: int, t: Dictionary) -> void:
+	var r := pull_rays[i]
+	var to: Variant = t.get("point")
+	r.visible = to is Vector3 and (to as Vector3).is_finite() and is_inside_tree()
+	if r.visible:
+		r.global_transform = _segment(_ctrl(i).global_position, to, POINTER_R)
+
+
+## Trigger on controller c with an empty hand touching nothing: the item it points at (pointed_item, looked for
+## now) is taken at once into that hand like a grip (main controller: CDDA's main hand, the other: the off hand), and
+## its copy flies from where it lay into the hand (_fly). False when nothing is pointed (the caller buzzes); a refusal
+## from CDDA comes through Hands.refused (a buzz and its reason, the hand empty again, no flight).
+func pull_with(c: XRController3D) -> bool:
+	if hands == null or world.snapshot == null or menu_open():
+		return false
+	var i := 0 if c == left else 1
+	var id: String = HAND_IDS[i]
+	if not hands.holding(id).is_empty() or pack.hand == i or not pack.target_at(c.global_position).is_empty() \
+			or not hands.find_near(c.global_position, GRAB_REACH).is_empty():
+		return false
+	var other := hands.proxy(HAND_IDS[1 - i])
+	if other != null and _supports(i, other.global_transform):
+		return false
+	var t := pointed_item(c)
+	if t.is_empty():
+		return false
+	var slot := world.item_slot((t["item"] as ItemRef).uid)   # where the pile draws it (gone once Hands hides it)
+	hands.set_hand_pose(id, c.global_transform, true)
+	if not hands.grab(id, t, "main" if c == main_ctrl() else "off"):
+		return false
+	_show_pull_ray(i, {})
+	var p := hands.proxy(id)   # null when CDDA refused inside the call
+	if p == null:
+		return true
+	var from := Transform3D(p.global_basis.orthonormalized(), p.global_position)
+	if slot.size() > 4 and slot[4] is Transform3D and (slot[4] as Transform3D).is_finite():
+		var xf: Transform3D = slot[4]   # the copy starts as the item was drawn, turned the same way
+		from = Transform3D(Basis(xf.basis.get_rotation_quaternion()), xf.origin)
+		hands.set_proxy_pose(id, from)
+	if from.is_finite():
+		_fly_from[i] = from
+		_fly_t[i] = 0.0
+	return true
+
+
+## One frame of a pulled copy's flight: from where it lay (_fly_from) into the hand (where Hands put it this frame)
+## over FLY_S, fast off the ground and slowing in; a buzz when it arrives, then it follows by weight (_weigh).
+func _fly(i: int, delta: float) -> void:
+	var id: String = HAND_IDS[i]
+	var p := hands.proxy(id)
+	if p == null:
+		_fly_t[i] = -1.0
+		return
+	_fly_t[i] += clampf(delta, 0.0, 1.0)
+	if _fly_t[i] >= FLY_S:
+		_fly_t[i] = -1.0
+		_feel(_ctrl(i))
+		return
+	var k := 1.0 - pow(1.0 - _fly_t[i] / FLY_S, 2.0)
+	var to := p.global_transform
+	hands.set_proxy_pose(id, _fly_from[i].interpolate_with(Transform3D(to.basis.orthonormalized(), to.origin), k))
 
 
 ## The held item of hand i follows its controller by weight: light ones at once, heavy ones eased from where they
@@ -830,24 +969,27 @@ func change_level(dz: int) -> bool:
 	return true
 
 
-## Stairs the controller points at: in the mock (live_stairs false) the rig goes to the level they lead to; a
-## live game moves the ghost when the player's level changes. Emits stair_used; a buzz and {} when it's no stair.
+## Stairs: in the mock (live_stairs false) the rig goes to the level they lead to; a live game moves the ghost
+## when the player's level changes.
 var live_stairs := false
 
-func use_pointed_stair(c: XRController3D) -> Dictionary:
+## The stairs controller c points at (StairUse.find's dictionary), {} for none.
+func pointed_stair(c: XRController3D) -> Dictionary:
 	var r := LookRay.new(world).cast(c.global_position, -c.global_basis.z)
-	var s := StairUse.find(world, r["square"], z) if r["hit"] else {}
-	if s.is_empty():
-		_buzz(c)
-		return {}
+	return StairUse.find(world, r["square"], z) if r["hit"] else {}
+
+
+## Uses stairs `s` (pointed_stair) from controller c and emits stair_used; in the mock with no free square at the
+## other end: a buzz and false.
+func use_stair(c: XRController3D, s: Dictionary) -> bool:
 	if not live_stairs:
 		var to: Variant = walk.nearest_standable(s["to"])
 		if to == null:
-			_buzz(c)
-			return {}
+			_feel(c)
+			return false
 		go_to_square(to)
 	stair_used.emit(s)
-	return s
+	return true
 
 
 func go_to_square(sq: Vector3i) -> void:
@@ -1020,8 +1162,12 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			and (pack.hand == ci or pack.target_at(c.global_position).get("kind") == "frame"):
 		pack.close("closed")   # the trigger on the pack's frame (or holding it) closes it
 		return
-	if c == main_ctrl() and n == "trigger_click":
-		use_pointed_stair(c)
+	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
+		var s := pointed_stair(c) if c == main_ctrl() else {}
+		if not s.is_empty():
+			use_stair(c, s)
+		elif not pull_with(c):
+			_feel(c)
 		return
 	if n == "grip_click":
 		var holds := hands != null and (not hands.holding(hand_id(c)).is_empty() or pack.hand == ci)
