@@ -9,15 +9,16 @@ const MAX_FILE_BYTES := 4096
 ## `main_hand`: the controller CDDA's main hand is on (left-handed: "left"); it points (stairs, teleport, menu)
 ## and shows the wielded item; the compass is on the other wrist. `height`: metres added to the head (seated
 ## play: the rig's origin stands this far over the level's floor). `grip`: "hold" carries while the grip is held,
-## "toggle" takes on one press and lets go on the next.
+## "toggle" takes on one press and lets go on the next. `wrist_hud`: the HUD panel inside the off forearm (VrHud).
 const DEFAULTS := {"move": "smooth", "move_dir": "head", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0,
 		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false,
-		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0}
+		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0, "wrist_hud": "on"}
 ## Key -> allowed words, or [min, max, menu step] for numbers. Bools are on/off.
 const SPEC := {
 	"move": ["smooth", "teleport"], "move_dir": ["head", "hand"], "turn": ["snap", "smooth", "off"],
 	"layout": ["auto", "quest", "vive"], "hands": ["auto", "buttons", "boxes"],
 	"compass": ["wrist", "belt", "both", "off"], "main_hand": ["right", "left"], "grip": ["hold", "toggle"],
+	"wrist_hud": ["on", "off"],
 	"snap_deg": [15.0, 90.0, 15.0], "turn_speed": [30.0, 360.0, 30.0], "speed": [0.5, 5.0, 0.5],
 	"vignette": [0.0, 1.0, 0.2], "height": [-0.5, 1.0, 0.05], "blink": [], "swap_sticks": [],
 }
@@ -25,15 +26,15 @@ const SPEC := {
 const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", "vr-snap": "snap_deg",
 		"vr-turn-speed": "turn_speed", "vr-speed": "speed", "vr-vignette": "vignette", "vr-blink": "blink",
 		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass",
-		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height"}
+		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height", "vr-hud": "wrist_hud"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
 const ACTIONS := {"calibrate": "press to set from your head"}
 ## Menu rows: key (a setting or an action), label.
 const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move speed"], ["turn", "Turn"],
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
-		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"], ["height", "Height"],
-		["calibrate", "Calibrate height"]]
+		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
+		["wrist_hud", "Wrist HUD"], ["height", "Height"], ["calibrate", "Calibrate height"]]
 
 
 ## `value` checked against SPEC: the cleaned value, or null when it isn't allowed. Strings from the command
@@ -151,4 +152,6 @@ static func label(key: String, v: Variant) -> String:
 		"compass":
 			return {"wrist": "on the off-hand wrist", "belt": "belt ring (look down)", "both": "wrist and belt",
 					"off": "off"}[v]
+		"wrist_hud":
+			return {"on": "inside the off forearm (turn it to you)", "off": "off"}.get(v, str(v))
 	return str(v)

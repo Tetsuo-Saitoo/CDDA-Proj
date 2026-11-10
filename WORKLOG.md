@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — L4 VR wrist HUD (VrHud, `vr/vr_hud.gd`): HudData on a panel inside the off forearm (doll by level, broken / bleeding marked, need words, warnings worst first, last 4 messages), SubViewport rendered only after a change, shows when the inner wrist turns to the eyes, buzz on a new bad warning, setting `wrist_hud` (`--vr-hud`); `vr_hud_tests.gd`. Not tried in a headset.
 - 2026-11-10 — VR compass: creatures on other levels show as fainter rings with up / down chevrons (two for 2+ levels), from Compass.level_blips, like the flat compass.
 - 2026-11-10 — L2 VR items by hand: VR grip goes through the shared Hands layer (take into the gripping hand at once, put / drop where the hand lets go, over the shoulder into the worn bag, adopt what CDDA holds), grip hold / toggle setting, refusal buzz + note, weight lag and two-handed hold; old VR door-grab code removed; mock VR reaches from the headset.
 - 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.

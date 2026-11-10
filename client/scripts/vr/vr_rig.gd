@@ -13,7 +13,8 @@ extends XROrigin3D
 ## gives it, else fingers from the buttons; they are the only hands: the player's body hides its own and
 ## reaches its arms for their wrists (drive_body).
 ## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs, it aims the
-## teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist.
+## teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist, the HUD
+## panel (VrHud, setting `wrist_hud`) on the inside of the off forearm.
 ## Seated play: the origin stands `height` over the level's floor (floor_y), so the head rises by it; the menu
 ## can set it from the head's height now ("Calibrate height").
 ## Hands (block L2): each controller is a hand of the shared Hands layer ("vr_l" / "vr_r"; `hands`, set by main.gd).
@@ -78,6 +79,7 @@ const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controll
 var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
+var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
 var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
 var pointer_dot: MeshInstance3D   # ... and its dot on the panel
 var _held := {}                   # the last show_held, shown again when the main hand changes
@@ -195,6 +197,9 @@ func _build() -> void:
 	add_child(right_hand)
 	compass = VrCompass.new()
 	add_child(compass)
+	hud = VrHud.new()
+	add_child(hud)
+	hud.alerted.connect(func() -> void: _feel(off_ctrl()))   # a new bad warning: a buzz in the HUD's hand
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -276,6 +281,13 @@ func _process(delta: float) -> void:
 	pose_hands()
 	drive_body()
 	place_compass()
+	place_hud(delta)
+
+
+## The HUD panel inside the off forearm (setting `wrist_hud`): shows while turned to the eyes.
+func place_hud(delta: float) -> void:
+	hud.enabled = settings["wrist_hud"] == "on"
+	hud.place(self, delta)
 
 
 ## The compass on the off-hand wrist and/or the belt (settings `compass`); main.gd feeds its blips.
