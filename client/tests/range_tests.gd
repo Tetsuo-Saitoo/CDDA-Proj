@@ -201,8 +201,8 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	p.on_range_done(1, "")
 	var ok_text := p.status.text
 	p.on_range_done(5, "You can't wait now.")
-	_check.call(ok_text.ends_with("done.") and p.status.text.ends_with("You can't wait now.") and p._range_ops.size() == 5,
-			"range page: results show in the status line")
+	_check.call(ok_text == "Go to Guns: done." and p.status.text.ends_with("You can't wait now.") and p._range_ops.size() == 5,
+			"range page: results show in the status line, zones by name (%s)" % ok_text)
 	p.on_range_done(12345, "")
 	_check.call(p.status.text.ends_with("You can't wait now."), "range page: results of other ops ignored")
 	# Typing in an id field: the menu lets the keys through, Esc still closes.
