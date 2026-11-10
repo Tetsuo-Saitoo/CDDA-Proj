@@ -42,14 +42,17 @@ static func message_event(text: String) -> Dictionary:
 	return {"kind": "message", "type": ItemActions.M_INFO, "text": text}
 
 
-## Can items be put into an itype? The id tables' pocket count when they have one, else category "container".
+## Can items be put into an itype? When the id tables send pockets: it has one the player may use. Older tables:
+## category "container".
 static func is_container(type: int, t: IdTables) -> bool:
 	var def: IdTables.Def = t.def_at("itype", type) if t != null else null
 	if def == null:
 		return false
-	if "pockets" in def:
-		var n: Variant = def.get("pockets")
-		return (n is int or n is float) and n > 0
+	if t.has_pockets:
+		for p: Dictionary in def.pockets:
+			if not int(p["flags"]) & IdTables.POCKET_FORBIDDEN:
+				return true
+		return false
 	return def.category == "container"
 
 

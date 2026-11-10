@@ -22,6 +22,17 @@ const MAX_GROUPS := 64
 ## Connect groups past this many get no bit (CDDA has ~36); they then join nothing.
 const MAX_GROUP_BITS := 62
 const TABLES := ["ter", "furn", "trap", "field", "itype", "mtype"]
+const MAX_POCKETS := 32               # per itype, the contract's cap
+const POCKET_RIGID := 1               # itype pocket flags (contracts/id_tables.md)
+const POCKET_WATERTIGHT := 2
+const POCKET_AIRTIGHT := 4
+const POCKET_HOLSTER := 8
+const POCKET_OPEN := 16
+const POCKET_SEALABLE := 32
+const POCKET_AMMO_ONLY := 64
+const POCKET_RESTRICTED := 128
+const POCKET_FORBIDDEN := 256         # the player can't use it
+const POCKET_FLAGS := 511
 
 
 class Def:
@@ -49,6 +60,11 @@ class Def:
 	var size := 0           # mtype: CDDA's creature_size, 1 tiny .. 5 huge
 	var species := {}       # mtype: species name -> true (HUMAN, ZOMBIE, MAMMAL, ...)
 	var bodytype := ""      # mtype: CDDA's body type (human, dog, insect, ...), "" if the bridge doesn't say
+	## itype: the type's own container pockets, the array index being the `pocket` for put/pour: each {name ("" when
+	## not sent), volume_ml, max_weight_g, max_item_ml (-1 = only the volume), flags (POCKET_* bits)}. Empty when
+	## the type holds nothing or the bridge doesn't send pockets. Filled while the tables load, never changed after
+	## (meshing workers read Defs from other threads).
+	var pockets: Array[Dictionary] = []
 
 	func has(flag: String) -> bool:
 		return flags.has(flag)
@@ -64,6 +80,8 @@ var itype: Array[Def] = []
 var body_parts := PackedStringArray()   # body_part index -> id (tables.body_part), empty if missing
 var mtype: Array[Def] = []
 var group_bits := {}     # connect group name -> bit index
+## Some itype row has `pockets`: the bridge sends them, so a type without any holds nothing.
+var has_pockets := false
 var _by_name := {}       # table -> {id -> index}
 ## Terrain ids built on top of a TREE (treetops) and of anything else (roofs).
 var _treetops := {}
@@ -233,6 +251,9 @@ func _read_table(table: String, v: Variant) -> void:
 			def.gun_ammo = _str(r.get("gun_ammo"), MAX_FLAG_LEN, what + ".gun_ammo")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
+			if r.has("pockets"):
+				def.pockets = _pockets(r["pockets"], what + ".pockets")
+				has_pockets = true
 		elif table == "mtype":
 			def.size = _int(r.get("size"), 0, 5, what + ".size")
 			def.species = _flags(r.get("species"), what + ".species")
@@ -261,6 +282,33 @@ func _index_roofs() -> void:
 		if r == null or r.has("INDOORS") or r.has("DIGGABLE") or r.has("WALL") or r.has("NO_FLOOR") \
 				or r.has("GOES_DOWN") or _treetops.has(id):
 			_roofs.erase(id)
+
+
+## itype pockets: a list of at most MAX_POCKETS {name?, volume_ml, max_weight_g, max_item_ml?, flags}.
+func _pockets(v: Variant, what: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_POCKETS:
+		_fail("%s: expected a list of at most %d" % [what, MAX_POCKETS])
+		return out
+	for i in (v as Array).size():
+		var w := "%s[%d]" % [what, i]
+		if not v[i] is Dictionary:
+			_fail(w + " is not an object")
+			return out
+		var p: Dictionary = v[i]
+		var pocket := {
+			"name": _str(p.get("name"), MAX_NAME, w + ".name"),
+			"volume_ml": _int(p.get("volume_ml"), 0, 1 << 40, w + ".volume_ml"),
+			"max_weight_g": _int(p.get("max_weight_g"), 0, 1 << 40, w + ".max_weight_g"),
+			"max_item_ml": _int(p["max_item_ml"], 0, 1 << 40, w + ".max_item_ml") if p.has("max_item_ml") else -1,
+			"flags": _int(p.get("flags"), 0, POCKET_FLAGS, w + ".flags"),
+		}
+		if not is_valid():
+			return []
+		out.append(pocket)
+	return out
 
 
 func _int(v: Variant, lo: int, hi: int, what: String) -> int:
