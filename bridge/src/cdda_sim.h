@@ -52,11 +52,16 @@ class CddaSim : public godot::RefCounted
         void set_real_time( bool on );
         void set_timescale( double scale );
         void set_paused( bool on );
+        void set_auto_pause( bool on );
         void interrupt();
 
         bool save_game( bool only_if_changed );
         godot::Dictionary get_held() const;
         godot::Dictionary get_save_status() const;
+
+        bool set_cheat( const godot::String &name, bool on );
+        godot::Dictionary get_cheats() const;
+        bool give_test_kit();
 };
 
 #endif // FP3D_BRIDGE_CDDA_SIM_H

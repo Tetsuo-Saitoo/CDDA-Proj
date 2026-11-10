@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Cheats and a test kit for testing: set_cheat / get_cheats / give_test_kit (invincible, no needs, no weight limit, unlimited ammo, stamina, no temperature, night vision; CDDA debug traits plus a carry-weight trait); off until turned on, kept in the save; sim test checks each.
+- 2026-11-10 — CDDA safe mode off by default in FP3D games (new and loaded; Shift+1 still toggles it); auto-pause on a new hostile is its own setting (set_auto_pause, on by default); tests no longer toggle safe mode.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).
 - 2026-11-09 — Taller buildings tried: OVERMAP_HEIGHT 30 builds and passes sim/client tests (region default_oter padded, sim-test submap count fixed); +35-50 % turn time, ~+4 % memory, old saves would break; PZ-style plan in docs/TALL_BUILDINGS.md (the z 30 fork change itself was not kept).
 - 2026-11-09 — Stairs look: a connected block of stair (or ramp) tiles draws as one flight in one direction, its height split along its length (was a full flight per tile, each its own way); `TerrainMesher.stair_flight`, fp_tests check it; not yet looked at in the game.

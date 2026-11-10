@@ -87,8 +87,9 @@ func _run() -> void:
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 
-	# Safe mode refuses to wait while a hostile is in view; random starts can have one.
-	var queued: bool = _sim.queue_action("safemode") and _sim.queue_action("pause") and _sim.queue_action("pause")
+	# CDDA's safe mode would refuse to wait with a hostile in view (random starts can have one); FP3D games start
+	# with it off, so waiting just works.
+	var queued: bool = _sim.queue_action("pause") and _sim.queue_action("pause")
 	_check(queued, "queues actions")
 	req = await _main_loop_request(turn0, TURN_TIMEOUT_MS)
 	_check(not req.is_empty() and int(req["turn"]) > turn0, "a turn passes (turn %s)" % req.get("turn", "?"))
