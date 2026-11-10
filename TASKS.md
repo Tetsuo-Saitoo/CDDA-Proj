@@ -71,6 +71,7 @@ Project root is a git repo (`main`); cdda/ is a separate repo on branch `fp3d`, 
 - [x] VR tester asks (2026-11-08): settings menu in the headset (left menu button; `VrMenu`, `VrSettings`, saved in `user://vr.json`, `--vr-*` options win): vignette off/strength, turn snap/smooth/off, blink, move toward head/hand, swap sticks, speeds; controller layout auto/quest/vive (Vive wands: trackpad clicks; Vive, Index, WMR profiles added to `openxr_action_map.tres` by `tools/vr/add_controller_profiles.gd`); low-poly hands (`VrHand`) from OpenXR hand tracking (optical or controller data source, e.g. Index finger tracking; extensions on in project.godot), else fingers from trigger/grip/thumb touch; `tests/vr_comfort_tests.gd` (41 checks)
 - [ ] VR settings/hands leftovers: none of it tried in a headset yet; hand-to-controller offset (`VrHand.GRIP`) is a guess; held items still sit on the controllers, not in the fingers; the menu has no pointer (sticks only); hands have no collision or grab (L2)
 - [ ] L2-L7 (PLAN.md block L): hands, aim/melee, world-space UI, comfort, 90 fps, motion time (time flows with how much you move; needs timescale floor ~0 and D4 smoothing) after M3. PC VR via OpenXR only
+- [ ] Credits in game (user, 2026-11-09): a Credits line in the main menu naming Seglectic (github.com/Seglectic): 3D models, VR ideas and feedback. README has its Credits section; asked of the main-menu session (its menu isn't on main yet).
 
 Later waves: see PLAN.md "Agent waves".
 

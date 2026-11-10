@@ -37,6 +37,10 @@ Building needs Windows (Visual Studio 2022 Build Tools, vcpkg) or Linux (GCC, CM
 - `client/`: Godot project. `bridge/`: GDExtension. `contracts/`: data formats between the two.
 - `cdda/` (repo CDDA-3D-code, branch `fp3d`): the CDDA fork; our changes are in `src/fp3d/` or marked `FP3D:`.
 
+## Credits
+
+- [Seglectic](https://github.com/Seglectic): 3D models, VR ideas and feedback.
+
 ## Licence
 
 CC BY-SA 3.0, like CDDA: see [LICENSE.md](LICENSE.md).
