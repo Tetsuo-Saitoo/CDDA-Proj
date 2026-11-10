@@ -62,8 +62,9 @@ code calls its tile renderer directly).
   player waits (`pause`). A late answer to an expired id is ignored: the client re-sends its action to the next
   request. Activities and sleep fast-forward.
 - **Pause** stops turns in both modes (at the next turn boundary; a pending request doesn't expire). The sim
-  auto-pauses real time when safe mode stops for a new monster (`pause_reason` "hostile spotted"); only the
-  client resumes.
+  auto-pauses real time when a new hostile comes into view (`pause_reason` "hostile spotted"; where CDDA's safe
+  mode would stop you) unless the client turned that off (`set_auto_pause_hostiles`); only the client resumes.
+  CDDA's safe mode itself is off in FP3D games, new and loaded (`safemode` toggles it).
 - **Interrupt**: `fp3d::interrupt()` stops the current activity (CDDA confirms with a popup first).
 
 ### Action queue (block B5: `fp3d::queue_action`, `clear_actions`, `queued_actions`)
@@ -82,8 +83,9 @@ Verified by `fp3d-sim-test`: a real `start_game()` character opens a door (`dire
 (`item_multi`), eats it (`item_select` + `popup`), looks (`target`/look), throws a rock at a square
 (`target`/throw + FIRE), waits 5 minutes (`menu`, 300 turns of activity), runs 3 real-time turns at 4×, is
 auto-paused by a zombie and resumed, then saves, quits and reloads with the world intact. Then it queues a bad
-action, `safemode` and three `pause`s (all run, 3 turns pass, no answers), checks the queue waits while paused and
-refuses a 33rd action.
+action and three `pause`s with the zombie still in view (all run, 3 turns pass, no answers; safe mode is off),
+checks the queue waits while paused and refuses a 33rd action; then checks safe mode is off in the new and the
+loaded game, `safemode` turns it on and off, and real time runs on past a new zombie with auto-pause off.
 
 Rules
 - One outstanding request at a time per sim thread; requests carry an `id`; answers with a wrong id are ignored.

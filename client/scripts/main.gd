@@ -8,6 +8,7 @@ extends Node3D
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
 ## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
 ## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
+## --no-light: no darkening by CDDA's light and night (WorldLighting, block C6).
 ## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
 ## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
 ## fresh world fp3d-live), --world=/--save= load directly. In the game the
@@ -42,10 +43,18 @@ var look_panel: Label
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
+var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows the player (_update_look_line)
 var gore: GoreView               # blood, gibs and bile fields on the ground
+var fields_view: FieldView       # fire, sparks, smoke and gas fields
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
+var item_actions: ItemActions     # one-item take / put / drop for mouse and VR hands (E6 / L2 / L8)
+var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
+var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
+var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
+var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
+var hud_view: HudView             # the screen view of hud_data
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
@@ -72,6 +81,7 @@ func _ready() -> void:
 	world = WorldView.new()
 	world.name = "World"
 	world.catalog.load_registry_dir(_repo_path("assets/registry"))
+	world.lighting.enabled = not _args.has("no-light")
 	for w in world.catalog.warnings:
 		push_warning(w)
 	add_child(world)
@@ -96,6 +106,9 @@ func _ready() -> void:
 	gore = GoreView.new()
 	add_child(gore)
 	world.coords.origin_shifted.connect(gore.shift)
+	fields_view = FieldView.new()
+	add_child(fields_view)
+	world.coords.origin_shifted.connect(fields_view.shift)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -114,8 +127,24 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(grab.icon)
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
+	item_actions = ItemActions.new()
+	add_child(item_actions)
+	hands = Hands.new(world, item_actions)
+	add_child(hands)
+	grab.hands = hands
+	inspect = InspectView.new(hands, item_actions)
+	request_ui.get_parent().add_child(inspect)
+	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
+		camera.set_process_unhandled_input(false)
+		fp.set_process_unhandled_input(false))
+	inspect.closed.connect(func() -> void:
+		camera.set_process_unhandled_input(vr == null and not first_person)
+		fp.set_process_unhandled_input(vr == null and first_person))
 	world.door_wants.connect(_on_door_wants)
-	world.door_message.connect(func(t: String) -> void: _log.append(t))
+	world.door_message.connect(func(t: String) -> void:
+		_log.append(t)
+		hud_data.on_events([MockItems.message_event(t)]))
 	viewmodel = WeaponViewmodel.new()
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
@@ -181,9 +210,26 @@ func _reload() -> void:
 	var t1 := Time.get_ticks_msec()
 	if _args.has("demo-creatures"):
 		_add_demo_creatures(snap)
+	_use_mock_items(snap)
 	_show(snap)
 	status = "turn %d seq %d: load %d ms, %s" % [snap.turn, snap.seq, t1 - t0, status]
 	print(status)
+
+
+## Mock mode: the hands take, put and drop items on the client's own copy of the snapshot (MockItems), so E6 can
+## be tried without the bridge; every pile gets item handles first.
+func _use_mock_items(snap: Snapshot) -> void:
+	item_actions.clear()
+	mock_items = MockItems.new(snap, world.tables)
+	mock_items.seed()
+	item_actions.backend = mock_items
+	mock_items.message.connect(func(t: String) -> void:
+		_log.append(t)
+		hud_data.on_events([MockItems.message_event(t)])
+		item_actions.on_events([MockItems.message_event(t)]))
+	mock_items.changed.connect(func(s: Snapshot) -> void:
+		_show(s)
+		item_actions.on_snapshot(s))
 
 
 ## Shows a validated snapshot; `status` gets the rebuild stats.
@@ -196,15 +242,19 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
-	gore.view_z_max = world.view_z_max
+	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
+	fields_view.view_z_max = world.things_z_max()
+	fields_view.apply(snap, world)
 	player_body.apply(snap, world.tables)
+	inspect.refresh()
+	hud_data.update(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
 	if vr != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)   # first person: every level, ceilings included
+		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
 
 func _frame_player() -> void:
@@ -240,17 +290,17 @@ func _place_player_body() -> void:
 	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	var yaw := fp.yaw
 	if vr != null:
-		at = Vector3(vr.camera.global_position.x, vr.global_position.y, vr.camera.global_position.z)
+		at = Vector3(vr.camera.global_position.x, vr.floor_y(), vr.camera.global_position.z)
 		yaw = vr.camera.global_rotation.y
 	elif first_person:
 		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
-		VrHands.drive(player_body, vr)
+		# the rig poses the hands and the arms after this (VrRig.drive_body)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
-	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
+	player_body.visible = own or world.snapshot.player_pos.z <= world.things_z_max()
 
 
 func _fp_active() -> bool:
@@ -261,8 +311,9 @@ func _fp_active() -> bool:
 func _set_first_person(on: bool) -> void:
 	if on and not first_person:
 		fp.set_look(camera.rotation.y, 0.0)   # keep facing the same way
-		world.set_view_z_max(CddaCoords.Z_MAX)   # ceilings back
+		world.set_view_z_max(world.coords.z_max)   # ceilings back
 	first_person = on
+	world.lighting.min_brightness = 0.0 if on else WorldLighting.OUTSIDE_MIN   # the map stays readable
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	camera.set_process_unhandled_input(not on)
 	fp.set_process_unhandled_input(on)
@@ -288,11 +339,14 @@ func _start_vr() -> void:
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
 	vr.save_path = VrSettings.FILE
+	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
+	vr.compass.opacity = hud_settings.compass_opacity
 	add_child(vr)
 	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
 		var p: Variant = _reach_square()
 		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
+	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
@@ -311,7 +365,7 @@ func _start_vr() -> void:
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)
+		world.set_view_z_max(world.coords.z_max)
 	print("VR on: %s" % vr.settings)
 
 
@@ -328,6 +382,7 @@ func _start_live() -> void:
 	add_child(live)
 	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
+	live.busy = world.busy   # no new snapshot fetch while the last one is still being put on screen
 	world.applied.connect(_on_world_applied)
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)
@@ -336,6 +391,10 @@ func _start_live() -> void:
 		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
+	live.held_changed.connect(hud_data.set_held)
+	item_actions.backend = live
+	live.events_arrived.connect(item_actions.on_events)
+	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
@@ -453,12 +512,14 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
+	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
+	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
+		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
-	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if not door.is_empty():   # the "Open where?" of a door you dragged: its direction
 		grab.ask = {}
 		request_ui.clear()
@@ -482,6 +543,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	hud_data.on_events(events)
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
@@ -540,6 +602,7 @@ func _live_action(event: InputEvent) -> bool:
 	if act == "":
 		return false
 	if _in_main_loop():
+		grab.ask = {}   # a key's own action: its prompts are the player's to answer
 		live.queue_action(act)
 	return true
 
@@ -559,10 +622,7 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
 		return r
-	# From the chest: in first person a line from the eyes would run straight away from the view.
-	var from := world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
-	if _fp_active():
-		from = fp.global_position - Vector3(0, 0.6, 0)
+	var from := _look_from()
 	var me := world.coords.world_to_ms(from)
 	var sq: Vector3i = r["square"]
 	var d := sq - me
@@ -573,9 +633,30 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	lines.append_array(look_ray.describe(sq))
 	look_panel.text = "
 ".join(lines)
-	_look_line = _line_mesh(from, r["point"])
+	_look_end = r["point"]
+	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
 	return r
+
+
+## Where the look line starts: the chest (in first person a line from the eyes would run straight away from the view).
+func _look_from() -> Vector3:
+	if _fp_active():
+		return fp.global_position - Vector3(0, 0.6, 0)
+	return world.coords.ms_center_to_world(world.snapshot.player_pos) + Vector3(0, 1.0, 0)
+
+
+## Keeps the look line's start on the player as they move; the end stays on the looked-at point.
+func _update_look_line() -> void:
+	if _look_line == null or world.snapshot == null:
+		return
+	var im := _look_line.mesh as ImmediateMesh
+	var mat := im.surface_get_material(0)
+	im.clear_surfaces()
+	im.surface_begin(Mesh.PRIMITIVE_LINES, mat)
+	im.surface_add_vertex(_look_from())
+	im.surface_add_vertex(_look_end)
+	im.surface_end()
 
 
 ## The level stairs are used from: the player's in a live game, else the viewer's.
@@ -592,6 +673,9 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 	if s.is_empty():
 		return false
 	if live != null:
+		if not stairs_settled(live.queued_actions(), world.busy(), live.snapshot_seq, world.snapshot.seq):
+			status = "stairs: wait for the last move to finish"
+			return false
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
@@ -607,6 +691,12 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		return false
 	status = "level %d" % (vr.z if from_vr else fp.z)
 	return true
+
+
+## The steps toward a stair come from where the shown snapshot puts the player, so they are worked out only
+## when nothing is queued and the world shows the newest snapshot.
+static func stairs_settled(queued: int, world_busy: bool, fetched_seq: int, shown_seq: int) -> bool:
+	return queued == 0 and not world_busy and fetched_seq == shown_seq
 
 
 func _clear_look() -> void:
@@ -666,6 +756,13 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
+func _can_inspect() -> bool:
+	return _fp_active() and world.snapshot != null and main_menu == null and not request_ui.visible \
+			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
+			and (live == null or _in_main_loop())
+
+
 ## The square hands and the mouse reach doors from: the player's; in mock first person, where you stand.
 func _reach_square() -> Variant:
 	if world.snapshot == null:
@@ -681,8 +778,8 @@ func _on_door_wants(square: Vector3i, open: bool) -> void:
 	if live == null or world.snapshot == null or not _in_main_loop():
 		return
 	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
-	if act != "":
-		live.queue_action(act)
+	if act != "" and not live.queue_action(act):
+		grab.ask = {}
 
 
 ## The mouse point grabbing and looking use: the screen centre while the mouse looks around.
@@ -725,13 +822,16 @@ func _setup_environment() -> void:
 	_aim_sun(45.0, 0.0)
 
 
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp).
+## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
+## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
 func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var alt := deg_to_rad(maxf(alt_deg, 8.0))
+	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
+	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
 	var az := deg_to_rad(az_deg)
 	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
 	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else 0.15
+	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
+	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
 
 
 func _setup_hud() -> void:
@@ -766,8 +866,12 @@ func _setup_hud() -> void:
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
 	layer.add_child(hands_panel)
+	hud_view = HudView.new()
+	hud_view.data = hud_data
+	layer.add_child(hud_view)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
+	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:
@@ -850,7 +954,7 @@ func _demo_tick() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input() or key_menu.visible   # typing must not move the camera
+	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	fp.set_process(_fp_active() and not typing)
 	if _fp_active() and live != null and not typing:
@@ -864,17 +968,21 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
-	creature_view.view_z_max = world.view_z_max
+	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
+	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
-		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
+				world.coords.ms_center_to_world))
+	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
+		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()
-	var lines := PackedStringArray([status, "%s  camera square %s  view z <= %d  roofs %s  %d fps" % [
-			view, tile, world.view_z_max, "on" if world.roofs_visible else "off",
+	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
+			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
 	if vr != null:
 		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
@@ -882,9 +990,10 @@ func _process(_delta: float) -> void:
 	if live != null:
 		lines.append(_act_help())
 		lines.append("in hands: " + _wielded_name())
-	lines.append_array(_log)
+	# messages: hud_view's feed
 	hud.text = "\n".join(lines)
 	hud.visible = not key_menu.visible
+	hud_view.visible = not key_menu.visible
 
 
 ## The view's key line, from the current bindings.
@@ -894,7 +1003,10 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at, hold on a door and drag to open  " % [k.call(&"look"), k.call(&"look_at")]
+	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
+	if _fp_active():
+		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
 		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
 				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
@@ -936,14 +1048,18 @@ static func _keys(actions: Array) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible:
-		return
+	if key_menu.visible or inspect.visible:
+		return   # the inspect view takes Tab / Esc itself (InspectView._input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
+	if inspect.handle_key(event, _can_inspect()):
+		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
+		return   # E on an item you look at takes it (else E uses / examines, below)
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
@@ -974,9 +1090,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
 		_clear_look()
 	elif InputActions.pressed(event, &"cutaway_up"):
-		world.set_view_z_max(world.view_z_max + 1)
+		world.step_view_z(1)
 	elif InputActions.pressed(event, &"cutaway_down"):
-		world.set_view_z_max(world.view_z_max - 1)
+		world.step_view_z(-1)
 	elif InputActions.pressed(event, &"roofs_toggle"):
 		world.set_roofs_visible(not world.roofs_visible)
 	elif InputActions.pressed(event, &"reload"):

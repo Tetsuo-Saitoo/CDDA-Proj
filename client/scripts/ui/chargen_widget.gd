@@ -393,14 +393,15 @@ func refresh_points() -> void:
 	if _summary != null:
 		var traits := PackedStringArray()
 		for id in model.locked_traits() + model.picked_traits:
-			traits.append(model.traits[id]["name"] if model.traits.has(id) else id)
+			traits.append(CddaText.to_bbcode(model.traits[id]["name"] if model.traits.has(id) else id))
 		var bgs := PackedStringArray()
 		for b in model.picked_backgrounds:
-			bgs.append(model.profession_name(b))
+			bgs.append(CddaText.to_bbcode(model.profession_name(b)))
 		var sc: Dictionary = model.scen()
+		# names come from the sim (mods, templates): converted like all CDDA text, never used as BBCode
 		_summary.text = "[b]%s[/b], %s\nScenario: %s\nBackgrounds: %s\nTraits: %s" % [
-				model.char_name if not model.char_name.is_empty() else "(random name)",
-				model.profession_name(model.profession), sc.get("name", ""),
+				CddaText.to_bbcode(model.char_name) if not model.char_name.is_empty() else "(random name)",
+				CddaText.to_bbcode(model.profession_name(model.profession)), CddaText.to_bbcode(str(sc.get("name", ""))),
 				", ".join(bgs) if not bgs.is_empty() else "-", ", ".join(traits) if not traits.is_empty() else "-"]
 
 
@@ -445,12 +446,12 @@ func _show_detail(tab: String, i: int) -> void:
 	if e.has("skills") and not (e["skills"] as Dictionary).is_empty():
 		var parts := PackedStringArray()
 		for s: String in e["skills"]:
-			parts.append("%s %d" % [_skill_name(s), e["skills"][s]])
+			parts.append("%s %d" % [CddaText.to_bbcode(_skill_name(s)), e["skills"][s]])
 		text += "\n\nSkills: " + ", ".join(parts)
 	if tab == "Traits":
 		var why := model.trait_blocker(id)
 		if not why.is_empty() and not model.picked_traits.has(id):
-			text += "\n\n[color=#ff7766]%s[/color]" % why
+			text += "\n\n[color=#ff7766]%s[/color]" % CddaText.to_bbcode(why)
 	(_details[tab] as RichTextLabel).text = text
 
 

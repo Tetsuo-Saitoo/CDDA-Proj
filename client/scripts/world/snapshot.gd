@@ -5,12 +5,13 @@ extends RefCounted
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
 ## Fields the client doesn't use yet (vehicles) are ignored, not trusted; whoever
-## starts using them adds their checks here. A submap without `trap` or `items` has none.
+## starts using them adds their checks here. A submap without `trap`, `items` or `lights` has none.
+## `env.ambient_light` and per-submap `lights` ([[tile, luminance, kind], ...], block C6) are optional
+## until the bridge sends them.
 
 const CONTRACT_VERSION := 0
 const TILES := 144
 const MAX_FILE_BYTES := 16 << 20          # a full 21-level bubble is ~6 MB of JSON
-const MAX_SUBMAPS := 11 * 11 * 21
 const MAX_ID := 1 << 20                   # CDDA has ~1.1k terrain ids; anything larger is garbage
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
@@ -41,8 +42,15 @@ const CARRIED_WIELDED := 2
 const CARRIED_OFFHAND := 4
 const FIELD_STRIDE := 4                   # fields: tile, type (CDDA field id), intensity, age turns
 const MAX_FIELDS_PER_TILE := 4
+const MAX_STAMINA := 1 << 24
+const NEEDS := ["hunger", "thirst", "sleepiness", "pain", "morale"]   # player_view int16s
 const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
 const MAX_WORN := 64                      # the contract's cap
+const LIGHT_STRIDE := 3                   # lights: tile, luminance, kind
+const MAX_LIGHTS_PER_SUBMAP := 16
+const LIGHT_FIXED := 0                    # kinds (assumed until the contract says): terrain, furniture, vehicle
+const LIGHT_ITEM := 1                     # an item, on the ground or carried
+const LIGHT_FIRE := 2                     # a field: fire, burning things
 
 const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
@@ -63,22 +71,31 @@ class Submap:
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
+	var lights: PackedInt32Array  # LIGHT_STRIDE ints per light source: tile, luminance 0..255, kind (LIGHT_*)
 
 
 var error := ""
 var turn := 0
 var seq := 0
 var ids_generation := -1   # -1: the snapshot doesn't say
+## The map's whole z range (`z_levels`, CddaCoords defaults when absent). Every z in the snapshot is inside it.
+var z_min := CddaCoords.Z_MIN_DEFAULT
+var z_max := CddaCoords.Z_MAX_DEFAULT
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
+var player_stamina := -1                   # -1: not sent
+var player_stamina_max := -1
+var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
+var ambient_light := -1  # env.ambient_light: CDDA's natural light at the player's z, 0..255; -1 when not sent
+var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
@@ -182,7 +199,9 @@ func _read(data: Variant) -> void:
 	seq = _int(d.get("seq"), 0, MAX_TURN, "seq")
 	if d.has("ids_generation"):
 		ids_generation = _int(d["ids_generation"], 0, 0xFFFFFFFF, "ids_generation")
-	bubble_origin = _vec3i(d.get("bubble_origin"), MAX_ABS_SM, "bubble_origin")
+	if d.has("z_levels"):
+		_read_z_levels(d["z_levels"])
+	bubble_origin =_vec3i(d.get("bubble_origin"), MAX_ABS_SM, "bubble_origin")
 	if is_valid() and bubble_origin.z != 0:
 		_fail("bubble_origin z must be 0")
 	_read_player(d.get("player"))
@@ -190,6 +209,25 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
+
+
+## [min, max]: the map's z range. It must hold z 0 and stay within CddaCoords.Z_LIMIT either way.
+func _read_z_levels(v: Variant) -> void:
+	if not is_valid():
+		return
+	if not v is Array or (v as Array).size() != 2:
+		_fail("z_levels: expected [min, max]")
+		return
+	var lo := _int(v[0], -CddaCoords.Z_LIMIT, 0, "z_levels min")
+	var hi := _int(v[1], 0, CddaCoords.Z_LIMIT, "z_levels max")
+	if is_valid():
+		z_min = lo
+		z_max = hi
+
+
+## The most submaps a snapshot can list: the whole bubble on every level of its z range.
+func max_submaps() -> int:
+	return CddaCoords.MAPSIZE * CddaCoords.MAPSIZE * (z_max - z_min + 1)
 
 
 func _read_player(v: Variant) -> void:
@@ -206,25 +244,44 @@ func _read_player(v: Variant) -> void:
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
 	_read_body((v as Dictionary))
+	_read_needs((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
+
+
+## Stamina and needs for the HUD: optional; numbers out of range are clamped, anything else rejects.
+func _read_needs(d: Dictionary) -> void:
+	if not is_valid():
+		return
+	for key: String in ["stamina", "stamina_max"] + NEEDS:
+		var x: Variant = d.get(key)
+		if x == null:
+			continue
+		if not (x is int or x is float) or is_nan(float(x)):
+			_fail("player.%s is not a number" % key)
+			return
+		if key.begins_with("stamina"):
+			set("player_" + key, int(clampf(float(x), 0.0, MAX_STAMINA)))
+		else:
+			player_needs[key] = int(clampf(float(x), -32768.0, 32767.0))
 
 
 func _read_body(d: Dictionary) -> void:
 	var ids: Variant = d.get("body_parts")
 	if ids == null or not is_valid():
 		return
-	if not ids is Array or (ids as Array).size() > MAX_BODY_PARTS:
-		_fail("player.body_parts: expected a list of at most %d" % MAX_BODY_PARTS)
+	if not ids is Array:
+		_fail("player.body_parts: expected a list")
 		return
-	var n := (ids as Array).size()
+	var all := (ids as Array).size()
+	var n := mini(all, MAX_BODY_PARTS)   # parts past the cap (a mod's) aren't drawn
 	var cols := {}
 	for key: String in ["hp", "hp_max", "bleed", "bandaged", "disinfected", "bite", "infected"]:
 		var a: Variant = d.get(key)
 		if a == null:
 			continue   # older bridges: no wounds
-		if not a is Array or (a as Array).size() != n:
-			_fail("player.%s: expected %d values" % [key, n])
+		if not a is Array or (a as Array).size() != all:
+			_fail("player.%s: expected %d values" % [key, all])
 			return
 		cols[key] = a
 	for i in n:
@@ -243,10 +300,10 @@ func _read_body(d: Dictionary) -> void:
 func _read_worn(v: Variant) -> void:
 	if v == null or not is_valid():
 		return
-	if not v is Array or (v as Array).size() > MAX_WORN:
-		_fail("player.worn: expected a list of at most %d" % MAX_WORN)
+	if not v is Array:
+		_fail("player.worn: expected a list")
 		return
-	for i in (v as Array).size():
+	for i in range(maxi(0, (v as Array).size() - MAX_WORN), (v as Array).size()):   # past the cap: the outer ones
 		var what := "player.worn[%d]" % i
 		var r: Variant = v[i]
 		if not r is Dictionary:
@@ -258,11 +315,13 @@ func _read_worn(v: Variant) -> void:
 		w.damage = _int(r.get("damage", 0), 0, 255, what + ".damage")
 		w.degradation = _int(r.get("degradation", 0), 0, 255, what + ".degradation")
 		var c: Variant = r.get("covers")
-		if not c is Array or (c as Array).size() > MAX_BODY_PARTS:
-			_fail(what + ".covers: expected a list of at most %d" % MAX_BODY_PARTS)
+		if not c is Array:
+			_fail(what + ".covers: expected a list")
 			return
-		for x: Variant in c:
-			w.covers.append(_int(x, 0, MAX_ID, what + ".covers"))
+		for k in mini((c as Array).size(), MAX_BODY_PARTS * 4):   # each part once, at most MAX_BODY_PARTS
+			var x := _int(c[k], 0, MAX_ID, what + ".covers")
+			if w.covers.size() < MAX_BODY_PARTS and not w.covers.has(x):
+				w.covers.append(x)
 		if not is_valid():
 			return
 		player_worn.append(w)
@@ -319,6 +378,8 @@ func _read_env(v: Variant) -> void:
 		sun_alt_deg = _float(e["sun_alt_deg"], -90.0, 90.0, "env.sun_alt_deg")
 	if e.has("sun_az_deg"):
 		sun_az_deg = _float(e["sun_az_deg"], -360.0, 360.0, "env.sun_az_deg")
+	if e.has("ambient_light"):
+		ambient_light = _int(e["ambient_light"], 0, 255, "env.ambient_light")
 
 
 func _read_ids(v: Variant) -> void:
@@ -339,8 +400,8 @@ func _read_submaps(v: Variant) -> void:
 		_fail("submaps is not a list")
 		return
 	var list: Array = v
-	if list.size() > MAX_SUBMAPS:
-		_fail("%d submaps, cap is %d" % [list.size(), MAX_SUBMAPS])
+	if list.size() > max_submaps():
+		_fail("%d submaps, cap is %d" % [list.size(), max_submaps()])
 		return
 	var lo := bubble_origin
 	for i in list.size():
@@ -355,7 +416,7 @@ func _read_submaps(v: Variant) -> void:
 			return
 		var rel := sm.pos - lo
 		if rel.x < 0 or rel.x >= CddaCoords.MAPSIZE or rel.y < 0 or rel.y >= CddaCoords.MAPSIZE \
-				or sm.pos.z < CddaCoords.Z_MIN or sm.pos.z > CddaCoords.Z_MAX:
+				or sm.pos.z < z_min or sm.pos.z > z_max:
 			_fail("%s.pos %s is outside the bubble" % [what, sm.pos])
 			return
 		if submaps.has(sm.pos):
@@ -372,6 +433,9 @@ func _read_submaps(v: Variant) -> void:
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
+		if s.has("lights"):
+			has_lights = true
+			sm.lights = _lights(s["lights"], what + ".lights")
 		if not is_valid():
 			return
 		submaps[sm.pos] = sm
@@ -418,7 +482,7 @@ func _vec3i(v: Variant, limit: int, what: String) -> Vector3i:
 		return Vector3i.ZERO
 	var a: Array = v
 	return Vector3i(_int(a[0], -limit, limit, what + ".x"), _int(a[1], -limit, limit, what + ".y"),
-			_int(a[2], CddaCoords.Z_MIN, CddaCoords.Z_MAX, what + ".z"))
+			_int(a[2], z_min, z_max, what + ".z"))
 
 
 ## 144 CDDA int ids. Ids with no name in the table are allowed; they render as unknown boxes.
@@ -523,11 +587,11 @@ func _carried(v: Variant, what: String) -> PackedInt64Array:
 	var out := PackedInt64Array()
 	if v == null or not is_valid():
 		return out
-	if not v is Array or (v as Array).size() > MAX_CARRIED:
-		_fail("%s: expected a list of at most %d items" % [what, MAX_CARRIED])
+	if not v is Array:
+		_fail("%s: expected a list" % what)
 		return out
 	var uids := {}
-	for i in (v as Array).size():
+	for i in mini((v as Array).size(), MAX_CARRIED):   # past the cap: left out (a container comes before its contents)
 		var c: Variant = v[i]
 		var w := "%s[%d]" % [what, i]
 		if not c is Array or (c as Array).size() != CARRIED_STRIDE:
@@ -543,6 +607,28 @@ func _carried(v: Variant, what: String) -> PackedInt64Array:
 		if is_valid() and (uids.has(uid) or (parent != 0 and not uids.has(parent))):
 			_fail("%s: uid %d twice, or its container %d not listed before it" % [w, uid, parent])
 		uids[uid] = true
+		if not is_valid():
+			return out
+	return out
+
+
+## [[tile, luminance, kind], ...]: at most MAX_LIGHTS_PER_SUBMAP light sources.
+func _lights(v: Variant, what: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_LIGHTS_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d lights" % [what, MAX_LIGHTS_PER_SUBMAP])
+		return out
+	for i in (v as Array).size():
+		var l: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not l is Array or (l as Array).size() != LIGHT_STRIDE:
+			_fail(w + ": expected [tile, luminance, kind]")
+			return out
+		out.append(_int(l[0], 0, TILES - 1, w + ".tile"))
+		out.append(_int(l[1], 0, 255, w + ".luminance"))
+		out.append(_int(l[2], LIGHT_FIXED, LIGHT_FIRE, w + ".kind"))
 		if not is_valid():
 			return out
 	return out

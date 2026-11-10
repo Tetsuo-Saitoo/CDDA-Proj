@@ -3,7 +3,8 @@ extends Control
 ## Heading strip at the top of the screen. CDDA's north is -z in Godot space (CDDA y points south).
 ## Creatures the player perceives show under the strip at their bearing from the view, nearer = bigger and
 ## brighter: hostiles as red arrows (ones behind the shown span point out from the strip's ends), others as
-## small dots, green when friendly, pale when neutral or unknown.
+## small dots, green when friendly, pale when neutral or unknown. Creatures on another level than the player's
+## (set_level_blips) are hollow and fainter, with a chevron beside them pointing up or down (two for 2+ levels).
 
 const SPAN_DEG := 180.0   # degrees shown across the strip
 const LETTERS := {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
@@ -14,6 +15,7 @@ const FAR_M := 40.0          # at this distance or more a marker is at its small
 const HOSTILE_COLOR := Color(1.0, 0.18, 0.12)
 const FRIENDLY_COLOR := Color(0.3, 0.95, 0.4)
 const NEUTRAL_COLOR := Color(0.9, 0.9, 0.8)
+const OTHER_LEVEL_FADE := 0.6   # alpha factor for markers on another level
 
 var heading_deg := 0.0:
 	set(v):
@@ -29,6 +31,8 @@ var opacity := 1.0:
 ## Vector3(bearing in degrees, distance in metres, Snapshot.Creature attitude HOSTILE/NEUTRAL/FRIENDLY) per
 ## creature: hostiles nearest first, then the others nearest first (set_blips).
 var blips: Array[Vector3] = []
+## Level offset per blip (creature z minus the player's: + above, - below); missing entries count as 0.
+var blip_levels := PackedInt32Array()
 
 
 ## Compass heading of a view (0 north, 90 east); looking straight down, up on screen counts as forward.
@@ -66,8 +70,26 @@ static func marker_kind(c: Snapshot.Creature) -> int:
 ## Blips for the snapshot's creatures as seen from `from` (Godot space); `to_world` maps an absolute square to
 ## Godot space (CddaCoords.ms_center_to_world). The snapshot holds only creatures the player perceives.
 static func creature_blips(snap: Snapshot, from: Vector3, to_world: Callable) -> Array[Vector3]:
-	var hostile: Array[Vector3] = []
-	var others: Array[Vector3] = []
+	var out: Array[Vector3] = []
+	for b in level_blips(snap, from, to_world):
+		out.append(Vector3(b.x, b.y, b.z))
+	return out
+
+
+## Level offset of each creature_blips marker, in the same order: the creature's z minus the player's
+## (snap.player_pos.z), + above, - below.
+static func creature_blip_levels(snap: Snapshot, from: Vector3, to_world: Callable) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	for b in level_blips(snap, from, to_world):
+		out.append(int(b.w))
+	return out
+
+
+## creature_blips with the level offset as w: Vector4(bearing, distance, kind, level offset), same order and
+## caps. One pass for set_level_blips.
+static func level_blips(snap: Snapshot, from: Vector3, to_world: Callable) -> Array[Vector4]:
+	var hostile: Array[Vector4] = []
+	var others: Array[Vector4] = []
 	if snap == null:
 		return hostile
 	for c in snap.creatures:
@@ -75,9 +97,10 @@ static func creature_blips(snap: Snapshot, from: Vector3, to_world: Callable) ->
 		if k < 0:
 			continue
 		var at: Vector3 = to_world.call(c.pos)
-		var b := Vector3(bearing_deg(from, at), Vector2(at.x - from.x, at.z - from.z).length(), k)
+		var b := Vector4(bearing_deg(from, at), Vector2(at.x - from.x, at.z - from.z).length(), k,
+				c.pos.z - snap.player_pos.z)
 		(hostile if k == Snapshot.Creature.HOSTILE else others).append(b)
-	var nearer := func(a: Vector3, b: Vector3) -> bool: return a.y < b.y
+	var nearer := func(a: Vector4, b: Vector4) -> bool: return a.y < b.y
 	hostile.sort_custom(nearer)
 	others.sort_custom(nearer)
 	if hostile.size() > MAX_BLIPS:
@@ -88,11 +111,42 @@ static func creature_blips(snap: Snapshot, from: Vector3, to_world: Callable) ->
 	return hostile
 
 
+## Markers all drawn as on the player's level (see set_level_blips).
 func set_blips(list: Array[Vector3]) -> void:
-	if list == blips:
+	if list == blips and blip_levels.is_empty():
 		return
 	blips = list
+	blip_levels = PackedInt32Array()
 	queue_redraw()
+
+
+## Markers with their level offsets (level_blips).
+func set_level_blips(list: Array[Vector4]) -> void:
+	var b: Array[Vector3] = []
+	var levels := PackedInt32Array()
+	for v in list:
+		b.append(Vector3(v.x, v.y, v.z))
+		levels.append(int(v.w))
+	if b == blips and levels == blip_levels:
+		return
+	blips = b
+	blip_levels = levels
+	queue_redraw()
+
+
+## Chevrons beside a marker at `at` for a level offset: one per level up to two, pointing up (above) or down
+## (below); none on the player's level. Each is a 3-point polyline.
+static func level_ticks(at: Vector2, dz: int) -> Array[PackedVector2Array]:
+	var out: Array[PackedVector2Array] = []
+	var d := -1.5 if dz > 0 else 1.5   # screen y grows down: the tip is at y + d
+	for i in mini(absi(dz), 2):
+		var o := at + Vector2(0.0, i * 3.0 * signf(d))   # the second chevron further the same way
+		out.append(PackedVector2Array([o + Vector2(-2.5, -d), o + Vector2(0.0, d), o + Vector2(2.5, -d)]))
+	return out
+
+
+func _level(i: int) -> int:
+	return blip_levels[i] if i < blip_levels.size() else 0
 
 
 func _draw() -> void:
@@ -122,7 +176,7 @@ func _draw() -> void:
 
 ## Others under hostiles, farthest first, so the nearest is on top; one arrow per end for hostiles off the strip
 ## (the nearest's, left of the strip and right of the degree readout, which ends at `right_x`); others off the
-## strip aren't shown.
+## strip aren't shown. Markers on another level are hollow and fainter, with level_ticks beside them.
 func _draw_blips(w: float, h: float, right_x: float) -> void:
 	for i in range(blips.size() - 1, -1, -1):
 		var b := blips[i]
@@ -131,30 +185,56 @@ func _draw_blips(w: float, h: float, right_x: float) -> void:
 			continue
 		var t := nearness(b.y)
 		var r := lerpf(2.0, 3.5, t)
-		var col := FRIENDLY_COLOR if b.z == Snapshot.Creature.FRIENDLY else NEUTRAL_COLOR
-		draw_circle(Vector2(w / 2.0 + s * w / 2.0, h + 2.0 + r), r, Color(col, lerpf(0.4, 0.9, t)))
-	var edge := {-1: -1.0, 1: -1.0}   # side -> nearness of the nearest off-strip hostile there
+		var col := Color(FRIENDLY_COLOR if b.z == Snapshot.Creature.FRIENDLY else NEUTRAL_COLOR, lerpf(0.4, 0.9, t))
+		var at := Vector2(w / 2.0 + s * w / 2.0, h + 2.0 + r)
+		var dz := _level(i)
+		if dz == 0:
+			draw_circle(at, r, col)
+		else:
+			col.a *= OTHER_LEVEL_FADE
+			draw_arc(at, r, 0.0, TAU, 12, col, 1.0)
+			_draw_ticks(at + Vector2(r + 3.0, 0.0), dz, col)
+	var edge := {-1: [-1.0, 0], 1: [-1.0, 0]}   # side -> [nearness, level offset] of the nearest off-strip hostile
 	for i in range(blips.size() - 1, -1, -1):
 		var b := blips[i]
 		if b.z != Snapshot.Creature.HOSTILE:
 			continue
 		var t := nearness(b.y)
 		var s := strip_pos(b.x, heading_deg)
+		var dz := _level(i)
 		if absf(s) > 1.0:
 			var side := 1 if s > 0.0 else -1
-			edge[side] = maxf(edge[side], t)
+			if t > edge[side][0]:
+				edge[side] = [t, dz]
 			continue
 		var x := w / 2.0 + s * w / 2.0
 		var r := lerpf(4.0, 8.0, t)
-		var col := Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t))
 		var tip := Vector2(x, h + 1.0)   # points up at its bearing on the strip
-		draw_colored_polygon(PackedVector2Array([tip, tip + Vector2(r, r * 1.6), tip + Vector2(-r, r * 1.6)]), col)
+		_draw_arrow(PackedVector2Array([tip, tip + Vector2(r, r * 1.6), tip + Vector2(-r, r * 1.6)]), t, dz)
+		if dz != 0:
+			_draw_ticks(tip + Vector2(r + 3.0, r * 0.8), dz, Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t) * OTHER_LEVEL_FADE))
 	for side: int in edge:
-		var t: float = edge[side]
+		var t: float = edge[side][0]
 		if t < 0.0:
 			continue
 		var r := lerpf(4.0, 8.0, t)
 		var back := -4.0 if side < 0 else right_x
 		var tip := Vector2(back + side * r * 1.6, h / 2.0)
-		draw_colored_polygon(PackedVector2Array([tip, Vector2(back, tip.y - r), Vector2(back, tip.y + r)]),
-				Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t)))
+		_draw_arrow(PackedVector2Array([tip, Vector2(back, tip.y - r), Vector2(back, tip.y + r)]), t, edge[side][1])
+
+
+## A hostile arrow: filled on the player's level, an outline (fainter) on another.
+func _draw_arrow(points: PackedVector2Array, t: float, dz: int) -> void:
+	var col := Color(HOSTILE_COLOR, lerpf(0.45, 1.0, t))
+	if dz == 0:
+		draw_colored_polygon(points, col)
+		return
+	col.a *= OTHER_LEVEL_FADE
+	var closed := points.duplicate()
+	closed.append(points[0])
+	draw_polyline(closed, col, 1.5)
+
+
+func _draw_ticks(at: Vector2, dz: int, col: Color) -> void:
+	for p in level_ticks(at, dz):
+		draw_polyline(p, col, 1.5)

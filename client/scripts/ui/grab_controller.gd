@@ -1,14 +1,23 @@
 class_name GrabController
 extends Node
-## Block E6: grabbing with the mouse, Amnesia-style. In first person the door leaf (Grabbable) under the
+## Block E6: the mouse's hand, Amnesia-style. In first person the door leaf (Grabbable) or the single item under the
 ## pointer (the mouse, or the screen centre while the mouse looks around) on a square you can reach gets an
-## outline and the pointer becomes a hand; hold `look_at` (LMB) on it and drag: the leaf follows the mouse
-## (Grabbable.drag_mouse) and lets go with the button. Outside view: no hover, but a press on a door still
-## grabs it. In a live game it also remembers which door crossed its threshold, so main.gd can answer the
-## "Open where?" / "Close where?" prompt that CDDA's open / close asks (`want`, `answer_for`).
+## outline and the pointer becomes a hand. Doors: hold `look_at` (LMB) on one and drag; the leaf follows the mouse
+## (Grabbable.drag_mouse) and lets go with the button. Items (with `hands` set): E takes the one you look at into
+## the pack; holding LMB carries it in front of you (the wheel moves it nearer / farther, Shift+wheel turns it),
+## and letting go puts it into the container, onto the surface (it keeps the spot) or onto the burner you point
+## at, through Hands -> ItemActions (one CDDA action each; CDDA decides). Esc while carrying puts it back.
+## Outside view: no hover, but a press on a door still grabs it. In a live game it also remembers which door
+## crossed its threshold, so main.gd can answer the "Open where?" / "Close where?" prompt that CDDA's open /
+## close asks (`want`, `answer_for`).
 
 const HOVER_M := 4.0
 const ASK_MS := 3000
+const CARRY_MIN_M := 0.35
+const CARRY_MAX_M := 2.5
+const CARRY_STEP_M := 0.1
+const TURN_STEP := PI / 12
+const FLASH_MS := 2500
 
 var world: WorldView
 var look_ray: LookRay
@@ -17,6 +26,23 @@ var reach: Callable          # () -> Variant: the square you reach from (Vector3
 var grabbed: Grabbable
 var hover: Grabbable
 var ask := {}                # {word, pos, until}: the door prompt a queued open / close will bring
+## Items and doors through the shared hands (E6 / L2); null: doors only, as before.
+var hands: Hands:
+	set(h):
+		hands = h
+		if h != null:
+			_reach_fn = func() -> Variant: return reach.call() if reach.is_valid() else null
+			h.picker.reach = _reach_fn
+			h.refused.connect(func(id: String, _t: Dictionary, reason: String) -> void:
+				if id == "mouse":
+					flash(reason, true))
+var item_hover := {}         # the item target under the pointer (Hands target), {} if none
+var _reach_fn := Callable()  # what this controller gave hands.picker.reach
+var carry_m := 0.8           # how far in front of the camera a carried item floats
+var drop := {}               # carrying: what letting go does now (Hands.drop_on_ray)
+var _flash := ""
+var _flash_until := 0
+var _flash_bad := false
 
 
 func _init(w: WorldView) -> void:
@@ -27,8 +53,12 @@ func _init(w: WorldView) -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_PREDELETE and is_instance_valid(icon) and icon.get_parent() == null:
+	if what != NOTIFICATION_PREDELETE:
+		return
+	if is_instance_valid(icon) and icon.get_parent() == null:
 		icon.free()   # never shown (tests)
+	if hands != null and is_instance_valid(hands) and hands.picker.reach == _reach_fn:
+		hands.picker.reach = Callable()   # it calls into this controller
 
 
 ## [Grabbable, hit point] under screen point `pt` on a reachable square, or [].
@@ -45,22 +75,79 @@ func pick(cam: Camera3D, pt: Vector2, max_m := LookRay.MAX_M) -> Array:
 	return world.grabbable_on_ray(o, d, centre, limit)
 
 
-## Per frame: hover outline and the pointer icon. `enabled`: first person, nothing else using the mouse.
+## A short line under the pointer for a while (a refusal's reason in red).
+func flash(text: String, bad := false) -> void:
+	_flash = text.left(160)
+	_flash_bad = bad
+	_flash_until = Time.get_ticks_msec() + FLASH_MS
+
+
+## Carrying an item with the mouse.
+func carrying() -> bool:
+	if hands == null:
+		return false
+	var h := hands.holding("mouse")
+	return not h.is_empty() and h["kind"] == "item"
+
+
+## Per frame: hover outline, the pointer icon and its line, the carried item's place.
+## `enabled`: first person, nothing else using the mouse.
 func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 	if grabbed != null and not is_instance_valid(grabbed):
 		grabbed = null
-	var h: Grabbable = null
-	if grabbed == null and enabled:
-		var p := pick(cam, pt, HOVER_M)
-		h = p[0] if not p.is_empty() else null
-	_set_hover(h)
 	icon.at = pt
-	if grabbed != null:
+	var text := ""
+	if hands != null and cam != null and carrying():
+		_carry(cam, pt)
 		icon.mode = GrabIcon.FIST
-	elif hover != null:
-		icon.mode = GrabIcon.HAND
+		text = Hands.drop_hint(drop, world.tables)
+	elif hands != null:
+		var t := {}
+		if grabbed == null and enabled and cam != null:
+			t = hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), HOVER_M)
+		hands.hover("mouse", t)
+		hover = t["node"] if not t.is_empty() and t["kind"] == "door" else null
+		item_hover = t if not t.is_empty() and t["kind"] == "item" else {}
+		if grabbed != null:
+			icon.mode = GrabIcon.FIST
+		elif not t.is_empty():
+			icon.mode = GrabIcon.HAND
+			if not item_hover.is_empty():
+				text = "%s\n%s take   hold %s carry" % [t["name"], InputActions.key_of(&"use_held"),
+						InputActions.key_of(&"look_at")]
+		else:
+			icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
 	else:
-		icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
+		var h: Grabbable = null
+		if grabbed == null and enabled:
+			var p := pick(cam, pt, HOVER_M)
+			h = p[0] if not p.is_empty() else null
+		_set_hover(h)
+		if grabbed != null:
+			icon.mode = GrabIcon.FIST
+		elif hover != null:
+			icon.mode = GrabIcon.HAND
+		else:
+			icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
+	if Time.get_ticks_msec() < _flash_until:
+		text = _flash
+		icon.bad = _flash_bad
+	else:
+		icon.bad = false
+	icon.text = text
+
+
+## The carried item floats `carry_m` in front of the camera, or rests where the pointer meets a place it can go.
+func _carry(cam: Camera3D, pt: Vector2) -> void:
+	var held: ItemRef = hands.holding("mouse")["item"]
+	var o := cam.project_ray_origin(pt)
+	var d := cam.project_ray_normal(pt)
+	drop = hands.drop_on_ray(o, d, held)
+	var pos := o + d * carry_m
+	var p: Variant = drop.get("point")
+	if drop.get("kind", "none") != "none" and p is Vector3 and o.distance_to(p) < carry_m:
+		pos = p as Vector3
+	hands.set_hand("mouse", Transform3D(cam.global_basis, pos))
 
 
 func _set_hover(h: Grabbable) -> void:
@@ -73,10 +160,12 @@ func _set_hover(h: Grabbable) -> void:
 		h.set_highlight(true)
 
 
-## Press on a leaf grabs it, motion drags it, release lets go; true when the event was used.
+## Press on a leaf or an item grabs it, motion drags a leaf, release lets go; true when the event was used.
 func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 	if grabbed != null and not is_instance_valid(grabbed):
 		grabbed = null
+	if carrying():
+		return _carry_event(event)
 	if grabbed != null:
 		if event is InputEventMouseMotion and cam != null:
 			grabbed.drag_mouse((event as InputEventMouseMotion).relative, cam.global_basis)
@@ -85,44 +174,103 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 			release()
 			return true
 		return false
-	if InputActions.pressed(event, &"look_at"):
-		var p := pick(cam, pt)
-		if p.is_empty():
+	if not InputActions.pressed(event, &"look_at"):
+		return false
+	if hands != null:
+		if cam == null:
 			return false
-		grabbed = p[0]
-		grabbed.begin_grab(p[1])
-		grabbed.set_highlight(true)
+		var t := hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), LookRay.MAX_M)
+		if t.is_empty() or not hands.grab("mouse", t):
+			return false
+		if t["kind"] == "door":
+			grabbed = t["node"]
+		else:
+			carry_m = clampf(float(t["dist"]), CARRY_MIN_M + 0.1, 1.2)
+			item_hover = {}
 		return true
-	return false
+	var p := pick(cam, pt)
+	if p.is_empty():
+		return false
+	grabbed = p[0]
+	grabbed.begin_grab(p[1])
+	grabbed.set_highlight(true)
+	return true
+
+
+func _carry_event(event: InputEvent) -> bool:
+	if event.is_action_released(&"look_at"):
+		hands.release("mouse", drop)
+		drop = {}
+		return true
+	if InputActions.pressed(event, &"carry_farther"):
+		carry_m = minf(carry_m + CARRY_STEP_M, CARRY_MAX_M)
+	elif InputActions.pressed(event, &"carry_closer"):
+		carry_m = maxf(carry_m - CARRY_STEP_M, CARRY_MIN_M)
+	elif InputActions.pressed(event, &"carry_turn_left"):
+		hands.turn_held("mouse", TURN_STEP)
+	elif InputActions.pressed(event, &"carry_turn_right"):
+		hands.turn_held("mouse", -TURN_STEP)
+	elif event is InputEventKey and (event as InputEventKey).pressed \
+			and (event as InputEventKey).physical_keycode == KEY_ESCAPE:
+		hands.cancel("mouse")
+		drop = {}
+	elif not InputActions.pressed(event, &"look_at"):
+		return false
+	return true
+
+
+## E on the item under the pointer takes it into the pack; true when the event was used that way.
+func take_hovered(event: InputEvent) -> bool:
+	if hands == null or item_hover.is_empty() or carrying() or not InputActions.pressed(event, &"use_held"):
+		return false
+	if not hands.take("mouse", item_hover, "pack"):
+		flash("You can't take that now.", true)
+	return true
 
 
 func release() -> void:
 	if is_instance_valid(grabbed):
-		grabbed.end_grab()
+		if hands != null and not hands.holding("mouse").is_empty():
+			hands.release("mouse", {})
+		else:
+			grabbed.end_grab()
 		grabbed.set_highlight(grabbed == hover)
 	grabbed = null
 
 
 ## A leaf crossed its threshold in a live game: the main-loop action to queue ("" when the door isn't next to
-## the player), remembering the prompt that will follow.
+## the player), remembering the prompt that will follow (the door's own square: the answer is worked out from
+## where the prompt says the player stands then).
 func want(square: Vector3i, open: bool, player: Vector3i, now: int) -> String:
-	var d := square - player
-	if d.z != 0 or absi(d.x) > 1 or absi(d.y) > 1:
+	if not adjacent(square - player):
 		return ""
-	ask = {"word": "open" if open else "close", "pos": Vector3i(d.x, d.y, 0), "until": now + ASK_MS}
+	ask = {"word": "open" if open else "close", "square": square, "until": now + ASK_MS}
 	return "open" if open else "close"
 
 
-## The answer to CDDA's direction prompt when it is the one `a` waits for, else {}.
+## The answer to CDDA's direction prompt when it is the one `a` waits for, else {}: the door's square relative
+## to the prompt's `origin`, and only when that is one of the eight squares around it on the same level.
 static func answer_for(a: Dictionary, req: Dictionary, now: int) -> Dictionary:
 	if a.is_empty() or now > int(a["until"]) or req.get("kind", "") != "direction" or not req.get("id") is int:
 		return {}
 	if not str(req.get("text", "")).to_lower().contains(a["word"]):
 		return {}
-	return {"id": req["id"], "pos": a["pos"]}
+	var o: Variant = req.get("origin")
+	if not o is Vector3i or not a.get("square") is Vector3i:
+		return {}
+	var d: Vector3i = a["square"] - (o as Vector3i)
+	if not adjacent(d):
+		return {}
+	return {"id": req["id"], "pos": d}
 
 
-## The pointer: a dot while the mouse looks around, an open hand over something to grab, a fist while dragging.
+## One of the eight squares around, same level.
+static func adjacent(d: Vector3i) -> bool:
+	return d.z == 0 and absi(d.x) <= 1 and absi(d.y) <= 1 and d != Vector3i.ZERO
+
+
+## The pointer: a dot while the mouse looks around, an open hand over something to grab, a fist while dragging,
+## and a short line under it (what you point at and its keys, where a carried item would go, a refusal).
 class GrabIcon:
 	extends Control
 	enum { NONE, DOT, HAND, FIST }
@@ -135,6 +283,16 @@ class GrabIcon:
 		set(v):
 			if v != mode:
 				mode = v
+				queue_redraw()
+	var text := "":
+		set(v):
+			if v != text:
+				text = v
+				queue_redraw()
+	var bad := false:
+		set(v):
+			if v != bad:
+				bad = v
 				queue_redraw()
 
 	func _init() -> void:
@@ -161,3 +319,13 @@ class GrabIcon:
 				var thumb := at + (Vector2(-9, 2) if fist else Vector2(-14, -3))
 				draw_line(at + Vector2(-7, 7), thumb, Color.BLACK, 5.5)
 				draw_line(at + Vector2(-7, 7), thumb, col, 3.0)
+		if text.is_empty() or mode == NONE and not bad:
+			return
+		var font := ThemeDB.fallback_font
+		var y := at.y + 34.0
+		for line in text.split("\n"):
+			var w := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+			var p := Vector2(at.x - w / 2.0, y)
+			draw_string_outline(font, p, line, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, 4, Color.BLACK)
+			draw_string(font, p, line, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1, 0.45, 0.4) if bad else Color(1, 1, 0.9))
+			y += 18.0

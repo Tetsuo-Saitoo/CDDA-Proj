@@ -55,6 +55,7 @@ std::string boot_world;
 std::string boot_save;
 // New games: false = a new character in an existing world; true = CDDA's character creation through the client.
 bool boot_fresh_world = true;
+bool boot_replace_world = false;  // start(): FP3D's own throwaway world may be replaced
 bool boot_chargen = false;
 bool boot_world_setup = false;
 #if defined(_WIN32)
@@ -92,8 +93,9 @@ void sim_main()
         setupDebug( DebugOutput::file );
         rng_set_engine_seed( std::random_device{}() );
         if( boot_save.empty() ) {
-            if( boot_chargen || boot_world_setup || !boot_fresh_world ) {
-                fp3d::boot_new_game_data( boot_world, boot_fresh_world, true, boot_world_setup );
+            if( boot_chargen || boot_world_setup || !boot_fresh_world || !boot_replace_world ) {
+                fp3d::boot_new_game_data( boot_world, boot_fresh_world, true, boot_world_setup,
+                                          boot_replace_world );
                 if( boot_chargen ) {
                     if( !fp3d::run_chargen() ) {
                         throw std::runtime_error( "character creation cancelled" );
@@ -385,25 +387,27 @@ const char *state_name( state s )
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen, bool world_setup );
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world );
 } // namespace
 
 std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                    const std::string &save )
 {
-    return start_impl( data_dir, user_dir, world, save, true, false, false );
+    // A new game here may replace FP3D's own throwaway world of that name (--quick, the tests); nothing else.
+    return start_impl( data_dir, user_dir, world, save, true, false, false, true );
 }
 
 std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                             bool fresh_world, bool chargen, bool world_setup )
 {
-    return start_impl( data_dir, user_dir, world, "", fresh_world, chargen, world_setup && fresh_world );
+    // A fresh world from the menu never replaces one: the game thread refuses a name in use (any case).
+    return start_impl( data_dir, user_dir, world, "", fresh_world, chargen, world_setup && fresh_world, false );
 }
 
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen, bool world_setup )
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world )
 {
     if( get_state() != state::idle ) {
         return "already started (CDDA runs once per process)";
@@ -453,6 +457,7 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     boot_world = world;
     boot_save = save;
     boot_fresh_world = fresh_world;
+    boot_replace_world = replace_world && fp3d::replaceable_world( world );
     boot_chargen = chargen;
     boot_world_setup = world_setup;
     fp3d::set_active( true );

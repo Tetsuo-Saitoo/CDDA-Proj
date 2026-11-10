@@ -383,6 +383,56 @@ func _test_target() -> void:
 	_key(KEY_ENTER)
 	_expect({"id": 7, "pos": o}, "no actions: Enter checks the square")
 	_check.call(not ui.set_target_cursor(o), "set_target_cursor needs a target request")
+	_test_target_names(o)
+
+
+## Candidates named from the snapshot and id tables (main.gd's world_state); names are plain text.
+func _test_target_names(o: Vector3i) -> void:
+	var tables := IdTables.from_data({"ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [], "itype": [],
+			"mtype": [{"id": "mon_null"}, {"id": "mon_zombie", "name": "zombie"},
+			{"id": "mon_odd", "name": "[b]odd[/b]\nthing" + "x".repeat(100)}]})
+	_check.call(tables.is_valid(), "target names: test tables (%s)" % tables.error)
+	var mon := Snapshot.Creature.MONSTER
+	var snap := Snapshot.new()
+	for r: Array in [[mon, 1, Vector3i(1, 0, 0), 255, Snapshot.Creature.UNKNOWN],
+			[Snapshot.Creature.NPC, 0, Vector3i(4, -2, 0), 100, Snapshot.Creature.FRIENDLY],
+			[mon, 2, Vector3i(2, 2, 0), 10, Snapshot.Creature.NEUTRAL], [mon, 99, Vector3i(-5, 0, 0), 0, Snapshot.Creature.HOSTILE]]:
+		var c := Snapshot.Creature.new()
+		c.kind = r[0]
+		c.type = r[1]
+		c.pos = o + (r[2] as Vector3i)
+		c.hp_frac = r[3]
+		c.attitude = r[4]
+		snap.creatures.append(c)
+	snap.creatures_moved()
+	ui.world_state = func() -> Array: return [snap, tables]
+	var req := _req("target", {"mode": "fire", "origin": o, "cursor": o, "actions": PackedStringArray(["FIRE"]),
+			"candidates": [o + Vector3i(1, 0, 0), o + Vector3i(4, -2, 0), o + Vector3i(2, 2, 0), o + Vector3i(3, 0, 0),
+			o + Vector3i(-5, 0, 0)]})
+	_show(req)
+	var w := ui.widget as TargetRequestWidget
+	var texts := []
+	for b in w.candidate_buttons:
+		texts.append(b.text)
+	var odd := "[b]odd[/b] thing" + "x".repeat(TargetRequestWidget.MAX_NAME_CHARS - 16)
+	_check.call(texts == ["zombie (hostile, uninjured)   1 E   (1)", odd + " (neutral, nearly dead)   2 S, 2 E   (2)",
+			"3 E   (3)", "someone (friendly, heavily injured)   2 N, 4 E   (4)", "creature (hostile, nearly dead)   5 W   (5)"],
+			"target names: name, attitude and health per creature; NPCs someone, unknown types creature %s" % [texts])
+	var cols := []
+	for b in w.candidate_buttons:
+		cols.append(b.get_theme_color("font_color") if b.has_theme_color_override("font_color") else null)
+	_check.call(cols == [TargetRequestWidget.HOSTILE_TEXT, null, null, TargetRequestWidget.FRIENDLY_TEXT,
+			TargetRequestWidget.HOSTILE_TEXT], "target names: hostile red, friendly green, others plain")
+	_check.call(TargetRequestWidget.health_words(204) == "lightly injured" and TargetRequestWidget.health_words(-3) == "nearly dead",
+			"target names: health in words")
+	for bad: Callable in [func() -> Variant: return ["x", 5], func() -> Variant: return null,
+			func() -> Variant: return [tables, snap], Callable()]:
+		ui.world_state = bad
+		_show(req)
+		w = ui.widget as TargetRequestWidget
+		_check.call(w.candidate_buttons[0].text == "1 E   (1)", "target names: a bad world state names nothing")
+	ui.world_state = Callable()
+	ui.clear()
 
 
 func _test_hostile() -> void:
@@ -567,6 +617,10 @@ func _test_chargen() -> void:
 	_check.call(not w.pick("Traits", 99), "chargen widget: bad index ignored")
 	w.change_stat("int", 1)
 	_check.call(w.model.stats["int"] == 9, "chargen widget: stat button")
+	w.model.char_name = "[img]res://x.tres[/img][font=x]"
+	w.refresh_points()
+	_check.call(not w._summary.text.contains("[img]") and not w._summary.text.contains("[font")
+			and w._summary.text.contains("[lb]img]"), "chargen widget: names are text, not markup")
 	var e := InputEventKey.new()
 	e.keycode = KEY_ENTER
 	e.pressed = true
@@ -607,6 +661,19 @@ func _test_main_menu() -> void:
 	m.show_page("new")
 	m._world_edit.text = "World"
 	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
+	m._world_edit.text = "wORLD"
+	_check.call(not m.start_new() and got.is_empty(), "menu: nor one whose name differs only in case")
+	var many := PackedStringArray()
+	for i in MainMenu.MAX_LISTED + 5:
+		many.append("w%d" % i)
+	m.setup(many, func(_w: String) -> PackedStringArray: return PackedStringArray())
+	m.show_page("new")
+	m._world_edit.text = "W%d" % (MainMenu.MAX_LISTED + 2)
+	_check.call(m.worlds.size() == MainMenu.MAX_LISTED and not m.start_new() and got.is_empty(),
+			"menu: nor one past the listed worlds")
+	m.setup(PackedStringArray(["World", "bad/name", "Other"]),
+			func(w: String) -> PackedStringArray: return PackedStringArray(["Ann"]) if w == "Other" else PackedStringArray())
+	m.show_page("new")
 	m._world_edit.text = "Fresh"
 	_check.call(m.start_new() and got[-1] == ["new", "Fresh", true, true, true], "menu: new world with chargen and setup")
 	m.show_page("load")
@@ -676,6 +743,10 @@ func _test_world_setup() -> void:
 	_check.call(wd.set_option("I", 3) and not wd.set_option("I", 99), "world widget: setting")
 	var row := wd._mod_ids.find("addon")
 	_check.call(wd.pick_mod(row) and wd.model.picked_mods.has("base"), "world widget: tick a mod")
+	wd.model.mods["base"]["name"] = "[img]res://x.tres[/img]"
+	wd._show_mod(row)
+	_check.call(not wd._mod_detail.text.contains("[img]") and wd._mod_detail.text.contains("Needs: [lb]img]"),
+			"world widget: names in Needs are text, not markup")
 	var e := InputEventKey.new()
 	e.keycode = KEY_ENTER
 	e.pressed = true
