@@ -6,8 +6,9 @@ extends RefCounted
 ## Registry files are hostile input too (mods will ship them): file count, depth, sizes, types and
 ## string lengths are capped; bad files and entries are skipped and listed in [member warnings].
 ## Art for props is a `model` that loads (ModelLibrary, from assets/models next to the registry folder)
-## or a `placeholder` (a procedural shape, see PropShapes); terrain uses `mesher`. A model that is missing
-## or bad doesn't count: the entry's placeholder takes over, else the chain goes on.
+## or a `placeholder` (a procedural shape, see PropShapes); terrain a `mesher` or a model that loads. A
+## model that is missing or bad doesn't count: the entry's placeholder (or mesher) takes over, else the
+## chain goes on. An entry's `material` tints its model (ModelLibrary.get_tinted).
 
 const MAX_FILE_BYTES := 4 << 20
 const MAX_FILES := 256
@@ -59,14 +60,25 @@ func all_warnings() -> PackedStringArray:
 	return warnings + models.warnings
 
 
-## The entry's model, or null when it has none or it doesn't load.
+## The entry's model, tinted toward its `material` when that is a palette material (one cached variant per
+## model and material, ModelLibrary.get_tinted); null when it has none or it doesn't load.
 func model_of(e: Entry) -> ModelLibrary.Model:
-	return null if e == null or e.model.is_empty() else models.get_model(e.model)
+	return null if e == null or e.model.is_empty() else models.get_tinted(e.model, e.material)
+
+
+## Whether the entry's model loads (no tinted variant is made for asking).
+func model_loads(e: Entry) -> bool:
+	return e != null and not e.model.is_empty() and models.get_model(e.model) != null
 
 
 ## Whether the client can show this entry as a prop: a placeholder, or a model that loads.
 func has_art(e: Entry) -> bool:
-	return e != null and (not e.placeholder.is_empty() or model_of(e) != null)
+	return e != null and (not e.placeholder.is_empty() or model_loads(e))
+
+
+## Whether the client can show this entry as terrain: a mesher, or a model that loads.
+func has_terrain_art(e: Entry) -> bool:
+	return e != null and (not e.mesher.is_empty() or model_loads(e))
 
 
 ## Follows the chain for a prop-like id: exact entry of this kind, then the `looks_like` chain

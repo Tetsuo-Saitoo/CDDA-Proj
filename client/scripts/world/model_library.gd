@@ -12,6 +12,10 @@ extends RefCounted
 ## of the registry chain). Results, failures too, are cached per path.
 ##
 ## Models face +Z (Godot's model front), origin at the bottom centre, 1 unit = 1 m.
+##
+## A registry entry with a `material` gets a tinted variant ([method get_tinted]): copies of the model's
+## meshes and materials with the albedo blended toward the palette material's colour, so a model made in
+## neutral light grey can serve several ids. One variant per path and palette material, cached.
 
 const MAX_FILE_BYTES := 32 << 20
 const MAX_JSON_BYTES := 4 << 20
@@ -33,6 +37,8 @@ const MAX_MORPH_TARGETS := 8
 const MAX_TRIANGLES := 60000
 const MAX_MARKERS := 128
 const MAX_MODELS := 1024
+## Tinted variants copy their model's meshes: past this many, models are drawn untinted.
+const MAX_TINTED := 512
 const MAX_NAME := 128
 const MAX_NUMBER := 99
 const MAX_WARNINGS := 256
@@ -47,6 +53,9 @@ const NUMBERED_POINTS := ["burner"]
 const PARTS := ["lid"]
 const NUMBERED_PARTS := ["door", "drawer", "handle", "knob"]
 const COLLIDER_SUFFIX := "-convcolonly"
+## Share of a registry material's colour in a tinted model's albedo (the rest keeps the model's own colour
+## and texture detail): albedo colour * lerp(white, material colour, TINT).
+const TINT := 0.7
 
 enum Marker { NONE, POINT, PART, SURFACE, FILL, COLLIDER }
 
@@ -67,6 +76,8 @@ class Model:
 	var colliders: Array = []
 	var aabb := AABB()
 	var triangles := 0
+	## Registry material this variant is tinted with ("" = the model as made).
+	var tint := ""
 
 	func has_marker(name: String) -> bool:
 		return markers.has(name)
@@ -91,8 +102,11 @@ var max_file_bytes := MAX_FILE_BYTES
 var max_nodes := MAX_NODES
 var max_triangles := MAX_TRIANGLES
 var max_markers := MAX_MARKERS
+var max_tinted := MAX_TINTED
 var _cache := {}   # relative path -> Model, or null when it failed
+var _tinted := {}  # "path|material" -> tinted Model (at most MAX_TINTED)
 var _full_warned := false
+var _tint_warned := false
 
 
 ## The model at a registry path, or null (missing, outside the folder, or a bad file: see warnings).
@@ -107,6 +121,74 @@ func get_model(rel: String) -> Model:
 	var m := _load(rel)
 	_cache[rel] = m
 	return m
+
+
+## The model at a registry path tinted toward a palette material (CddaPalette.MATERIALS), cached: the same
+## object for the same path and material. A name that isn't a palette material ("" included) gives the
+## model as made, and so does any new variant past MAX_TINTED (with a warning); null when the model
+## doesn't load.
+func get_tinted(rel: String, material: String) -> Model:
+	var m := get_model(rel)
+	if m == null or not CddaPalette.MATERIALS.has(material):
+		return m
+	var key := rel + "|" + material
+	var t: Model = _tinted.get(key)
+	if t == null:
+		if _tinted.size() >= max_tinted:
+			if not _tint_warned:
+				_warn("more than %d tinted models, the rest are drawn untinted" % max_tinted)
+				_tint_warned = true
+			return m
+		t = tinted(m, CddaPalette.material(material))
+		t.tint = material
+		_tinted[key] = t
+	return t
+
+
+## A variant of m whose drawn meshes use copies of its materials, the albedo colour multiplied by
+## lerp(white, tint, TINT) (textures keep their detail). Meshes and materials shared inside the model stay
+## shared in the variant; markers, surfaces, fill and colliders are m's own. m is left as it is.
+static func tinted(m: Model, tint: Color) -> Model:
+	var t := Model.new()
+	t.path = m.path
+	t.markers = m.markers
+	t.marker_parts = m.marker_parts
+	t.surfaces = m.surfaces
+	t.fill = m.fill
+	t.colliders = m.colliders
+	t.aabb = m.aabb
+	t.triangles = m.triangles
+	var factor := Color.WHITE.lerp(Color(tint, 1.0), TINT)
+	var meshes := {}      # original mesh -> its tinted copy
+	var materials := {}   # original material -> its tinted copy
+	var plain: Array = [null]   # tinted stand-in for surfaces without a material (made once)
+	for p: Array in m.parts:
+		var mesh: Mesh = p[0]
+		if not meshes.has(mesh):
+			meshes[mesh] = _tinted_mesh(mesh, factor, materials, plain)
+		t.parts.append([meshes[mesh], p[1]])
+	return t
+
+
+static func _tinted_mesh(mesh: Mesh, factor: Color, materials: Dictionary, plain: Array) -> Mesh:
+	if not mesh is ArrayMesh:
+		return mesh   # glTF meshes are ArrayMeshes; anything else is drawn as made
+	var copy := mesh.duplicate() as ArrayMesh
+	for s in copy.get_surface_count():
+		var mat := copy.surface_get_material(s)
+		if mat == null:
+			if plain[0] == null:
+				var sm := StandardMaterial3D.new()
+				sm.albedo_color = factor
+				plain[0] = sm
+			copy.surface_set_material(s, plain[0])
+		elif mat is BaseMaterial3D:
+			if not materials.has(mat):
+				var tm := mat.duplicate() as BaseMaterial3D
+				tm.albedo_color = (mat as BaseMaterial3D).albedo_color * factor
+				materials[mat] = tm
+			copy.surface_set_material(s, materials[mat])
+	return copy
 
 
 ## Absolute path of a registry path, or "" when it isn't a plain relative path inside root.

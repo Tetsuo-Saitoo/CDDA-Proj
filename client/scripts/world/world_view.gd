@@ -1,9 +1,9 @@
 class_name WorldView
 extends Node3D
 ## Shows the newest snapshot: one node per submap per z that has anything to draw (open sky gets none),
-## holding "terrain", "roof" and "caps" meshes
-## (TerrainMesher) and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher:
-## furniture, traps, item piles; models are one MultiMeshInstance3D per model part).
+## holding "terrain", "roof" and "caps" meshes and "terrain_models", "terrain_roof_models" (TerrainMesher)
+## and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher: furniture, traps, item
+## piles); models are one MultiMeshInstance3D per model part.
 ## Terrain is rebuilt when a submap's revision differs from the one built (any difference, not only an
 ## increase: a submap that leaves the bubble and comes back restarts at 1), together with its six
 ## neighbours, whose edge walls, wall tops and roof lids depend on it. Props are rebuilt with the
@@ -367,11 +367,14 @@ func _build(pos: Vector3i, r: TerrainMesher.Result, snap: Snapshot) -> void:
 	if b.is_empty():
 		b = {"pverts": 0, "counts": {}, "props": false}
 		_built[pos] = b
-	var drawn := r.terrain != null or r.roof != null or r.caps != null or not r.doors.is_empty()
+	var drawn := r.terrain != null or r.roof != null or r.caps != null or not r.doors.is_empty() \
+			or not r.models.is_empty() or not r.roof_models.is_empty()
 	var node := _node(pos, drawn)
 	if node != null:
 		for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps]]:
 			_set_mesh(node, part[0], part[1])
+		_set_models(node, "terrain_models", r.models)
+		_set_models(node, "terrain_roof_models", r.roof_models)
 		_build_doors(node, pos, r.doors)
 	b["rev"] = (snap.submaps[pos] as Snapshot.Submap).revision
 	b["verts"] = r.vertices
@@ -520,7 +523,7 @@ func _update_visibility() -> void:
 	for pos: Vector3i in _nodes:
 		var node: Node3D = _nodes[pos]
 		node.visible = pos.z <= view_z_max
-		for part in ["roof", "roof_props", "roof_models"]:
+		for part in ["roof", "roof_props", "roof_models", "terrain_roof_models"]:
 			var roof := node.get_node_or_null(part) as Node3D
 			if roof:
 				roof.visible = roofs_visible
