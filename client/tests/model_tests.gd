@@ -322,6 +322,9 @@ func _test_hostile(glb: PackedByteArray) -> void:
 	var eoi_first := PackedByteArray([0xFF, 0xD8, 0xFF, 0xD9, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]) + tail
 	var plain_jpg := PackedByteArray([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF,
 			0xFF, 0xC0, 0, 11, 8, 0, 16, 0, 32, 1, 1, 0x11, 0]) + tail
+	var chain: Array = []   # no cycle, one level deeper than MAX_DEPTH
+	for i in ModelLibrary.MAX_DEPTH + 2:
+		chain.append({"children": [i + 1]} if i < ModelLibrary.MAX_DEPTH + 1 else {})
 	var walk_ok := ModelLibrary._image_size(plain_jpg, 0, plain_jpg.size()) == Vector2i(32, 16)
 	for bad: PackedByteArray in [stuffed, scan_first, short_len, two_soi, eoi_first]:
 		walk_ok = walk_ok and ModelLibrary._image_size(bad, 0, bad.size()) == Vector2i(-1, -1)
@@ -332,6 +335,10 @@ func _test_hostile(glb: PackedByteArray) -> void:
 		["JPEG stuffed byte before the frame", img.call(stuffed, "image/jpeg"), "bad image"],
 		["JPEG scan before the frame", img.call(scan_first, "image/jpeg"), "bad image"],
 		["JPEG segment length under 2", img.call(short_len, "image/jpeg"), "bad image"],
+		["nodes nested too deep", glb_of({"asset": asset, "nodes": chain}), "deeper than"],
+		["JSON chunk over 4 MiB", glb_of({"asset": asset, "extras": {"pad": "x".repeat(ModelLibrary.MAX_JSON_BYTES)}}), "JSON chunk"],
+		["two buffers", glb_of({"asset": asset, "buffers": [{"byteLength": 4}, {"byteLength": 4}]}, PackedByteArray([1, 2, 3, 4])), "buffers"],
+		["fractional count", glb_of({"asset": asset, "accessors": [{"count": 2.5}]}), "elements"],
 		["glTF JSON not ASCII", glb_of('{"asset": {"version": "2.0"}, "nodes": [{"name": "caf\u00e9"}]}'), "ASCII"],
 		["garbage", garbage, "not a .glb"],
 		["truncated", glb.slice(0, glb.size() - 8), "length field"],
@@ -465,6 +472,7 @@ func _test_strict() -> void:
 		["texture without a source", tri_glb({"textures": [{}]}), "texture image"],
 		["2-byte attribute without a stride", tri_glb({"accessors/2": {"bufferView": 0, "componentType": 5121, "normalized": true,
 				"count": 3, "type": "VEC2"}, "meshes/0/primitives/0/attributes/TEXCOORD_0": 2}), "byteStride"],
+		["strided index view", tri_glb({"bufferViews/1/byteStride": 4, "accessors/1/count": 1}), "indices"],
 		["primitives in a mesh", tri_glb({}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES + 1), "primitives"],
 		["surfaces drawn", tri_glb({"nodes/1": {"mesh": 0}, "nodes/2": {"mesh": 0}, "nodes/3": {"mesh": 0},
 				"nodes/4": {"mesh": 0}}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES), "surfaces drawn"],

@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-10 — lead-qa review fixes (UI): the F1 menu's text fields keep their keys (CDDA prompts wait while it is open); shoulder and top views aim, grab and look from in front of the player and fly bullets from the eyes, top-down mouse-look aims along the facing; range info read once a second unless ops wait, at most 16 ops waiting; B backs out of a key slot set from the pad; the jam hint names the bound reload key. Client tests pass.
+- 2026-11-10 — Shot review leftovers (fork fp3d-combat): the client's body part / weak point only weights CDDA's pick (roll against its chance times up to 4), and a `fly` trigger pull asks for at most 8 rounds (long bursts no longer stall); sim checks, contract.
 - 2026-11-10 — Test range smoke run through the UI: `tests/range_live_test.gd` (live script) presses main's "Test range" button and every range control headless; all done and shown in the world (zone list, time, an hour waited, items in the Tab list, the monster). The Cheats page names zones without "(not built yet)" in its status line.
 - 2026-11-10 — Jams reviewed (lead-bridge approved 5451a10). Balance change against vanilla, on purpose: a jam stops the burst, and clearing takes the fix's full 10 s, not the quick fix's random try. Clearing in the dark stays allowed (comment in gun_faults.cpp).
 - 2026-11-10 — Jams: item action `clear` (bridge `queue_item_action` op, lead-bridge's request): clears the wielded gun's jam by handle, refuses anything else without spending; branches merged up with fp3d / main.
