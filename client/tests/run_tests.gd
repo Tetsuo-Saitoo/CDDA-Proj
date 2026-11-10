@@ -78,15 +78,15 @@ func _test_test_dir() -> void:
 	var mine := TestDir.path("probe.txt")
 	_check(mine.begins_with("%s/%s%d/" % [TestDir.ROOT, TestDir.PREFIX, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
 	# A stale run's folder (stamped long ago) goes; another live run's folder (fresh stamp, or just made and not
-	# stamped yet) stays. Ids above 2^22: never a real pid on Windows or Linux.
-	var stale := TestDir.ROOT.path_join(TestDir.PREFIX + "999999991")
+	# stamped yet) stays. Fake ids are 10^9 + pid*10 + k: unique per run, and never a real pid (Linux caps at 2^22).
+	var stale := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 1))
 	DirAccess.make_dir_recursive_absolute(stale.path_join("save/w"))
 	FileAccess.open(stale.path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
 	TestDir.stamp(stale, 1)
-	var other := TestDir.ROOT.path_join(TestDir.PREFIX + "999999993")
+	var other := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 3))
 	DirAccess.make_dir_recursive_absolute(other)
 	TestDir.stamp(other)
-	var fresh := TestDir.ROOT.path_join(TestDir.PREFIX + "999999995")
+	var fresh := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 5))
 	DirAccess.make_dir_recursive_absolute(fresh)
 	FileAccess.open(mine, FileAccess.WRITE).store_string("x")
 	TestDir.clean()
