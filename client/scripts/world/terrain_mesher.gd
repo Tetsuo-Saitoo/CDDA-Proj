@@ -6,7 +6,8 @@ extends RefCounted
 ## places the result at the submap's corner. Walls fill their whole tile (CDDA walls are a tile thick,
 ## and collision will be too), so neighbour connections show up as culled shared faces and as the
 ## direction doors, windows and fences run. Outputs three meshes:
-## - terrain: floors, walls, doors, windows (glass in its own transparent surface), stairs, props;
+## - terrain: floors, walls, door frames, windows (glass in its own transparent surface), stairs, props;
+##   door leaves are not in it: they come out as `doors` (WorldView makes each a Grabbable that swings);
 ## - roof: roof terrain and, where the level above isn't loaded, a lid over roofed (indoor) tiles;
 ## - caps: wall tops hidden under the floor above, shown only when the level above is cut away.
 
@@ -87,6 +88,8 @@ class Result:
 	var roof: ArrayMesh
 	var caps: ArrayMesh
 	var vertices := 0
+	## Door leaves to swing: {square, local (corner in the submap), along_x, color, glass, open, locked}.
+	var doors: Array[Dictionary] = []
 
 
 var _snap: Snapshot
@@ -95,6 +98,7 @@ var _solid: Buf
 var _glass: Buf
 var _roof: Buf
 var _caps: Buf
+var _doors: Array[Dictionary] = []
 
 
 func _init(snap: Snapshot, catalog: TerrainCatalog) -> void:
@@ -107,6 +111,7 @@ func build(sm_pos: Vector3i) -> Result:
 	_glass = Buf.new()
 	_roof = Buf.new()
 	_caps = Buf.new()
+	_doors = []
 	var sm: Snapshot.Submap = _snap.submaps[sm_pos]
 	var above_loaded := _snap.submaps.has(sm_pos + Vector3i(0, 0, 1))
 	var base := CddaCoords.sm_to_ms(sm_pos)
@@ -124,6 +129,7 @@ func build(sm_pos: Vector3i) -> Result:
 	r.terrain = _mesh([_solid, _glass], ["solid", "glass"])
 	r.roof = _mesh([_roof], ["solid"])
 	r.caps = _mesh([_caps], ["solid"])
+	r.doors = _doors
 	return r
 
 
@@ -195,18 +201,10 @@ func _door(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 	var frame := _frame_color(p)
 	_solid.box(o + Vector3(0, DOOR_H, 0), o + Vector3(1, H, 1), frame, ALL & ~PY)
 	_top(p, o, H, frame)
-	var leaf := _glass if st.glass else _solid
 	var col := Color(0.6, 0.8, 0.9, 0.35) if st.glass else st.color
-	if st.state == 0:
-		if along_x:
-			leaf.box(o + Vector3(0, 0, 0.45), o + Vector3(1, DOOR_H, 0.55), col)
-		else:
-			leaf.box(o + Vector3(0.45, 0, 0), o + Vector3(0.55, DOOR_H, 1), col)
-	elif st.state == 1:   # swung back against the side of the opening
-		if along_x:
-			leaf.box(o + Vector3(0, 0, 0), o + Vector3(0.08, DOOR_H, 1), col)
-		else:
-			leaf.box(o + Vector3(0, 0, 0), o + Vector3(1, DOOR_H, 0.08), col)
+	if st.state <= 1:   # a leaf (closed or open): its own node, so it can swing
+		_doors.append({"square": p, "local": o, "along_x": along_x, "color": col, "glass": st.glass,
+				"open": st.state == 1, "locked": st.locked})
 
 
 func _window(p: Vector3i, o: Vector3, st: TerrainCatalog.Style) -> void:

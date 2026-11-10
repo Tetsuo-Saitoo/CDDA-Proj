@@ -120,13 +120,20 @@ func _test_walk(world: WorldView) -> void:
 	_check.call(door != null, "fp: the mock has a door with a free square west of it")
 	if door != null:
 		var start: Vector3i = door - Vector3i(1, 0, 0)
+		world.door_open[door] = false
 		fp.go_to_square(start)
 		fp.set_look(-PI / 2, 0.0)
 		var x0 := fp.position.x
 		for i in 5:
 			fp.step(0.05, {"move": Vector2(0, 1)})
+		_check.call(fp.position.x - x0 < 0.5 and fp.walk.square_at(fp.position, 0) == start,
+				"fp: a closed door stops you")
+		world.door_open[door] = true   # dragged open
+		fp.go_to_square(start)
+		for i in 5:
+			fp.step(0.05, {"move": Vector2(0, 1)})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75) and fp.walk.square_at(fp.position, 0) == door,
-				"fp: walks into a door square (doors don't block)")
+				"fp: walks through an open door")
 		fp.go_to_square(start)
 		fp.step(0.1, {"move": Vector2(0, 1), "fast": true})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75), "fp: fast walks 2.5x")
@@ -134,6 +141,7 @@ func _test_walk(world: WorldView) -> void:
 		for i in 5:
 			fp.step(0.05, {"move": Vector2(0, 5)})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75), "fp: stick input past 1 is cut to 1")
+		world.door_open.erase(door)
 	fp.go_to_square(player)
 	var z0 := fp.z
 	_check.call(not fp.change_level(5) and fp.z == z0 and fp.position.is_equal_approx(eye),

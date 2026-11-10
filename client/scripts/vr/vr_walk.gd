@@ -2,8 +2,9 @@ class_name VrWalk
 extends RefCounted
 ## Block L1: where the VR viewer may stand and how it moves, read from the newest snapshot. No nodes, so the
 ## tests run it headless. A square is standable when the snapshot has it, it has a floor, and neither its
-## terrain nor its furniture is impassable. L1 is a ghost walk (no interaction yet), so doors and gates count
-## as open; walls, windows, fences, trees and impassable furniture block.
+## terrain nor its furniture is impassable. Walls, windows, fences, trees, impassable furniture and closed
+## doors block; doors open by dragging them (Grabbable): in mock mode the client's own state
+## (WorldView.door_open) counts, in a live game CDDA's.
 
 const K := TerrainCatalog.Kind
 const NO_STAND := [K.NONE, K.TREETOP]
@@ -48,7 +49,13 @@ func can_stand(p: Vector3i) -> bool:
 	var kind := world.catalog.style_for(ter).kind
 	if kind in NO_STAND:
 		return false
-	if kind != K.DOOR:
+	if kind == K.DOOR:
+		var open: bool = world.catalog.style_for(ter).state != 0
+		if world.door_local:
+			open = world.door_open.get(p, open)
+		if not open:
+			return false
+	else:
 		var td := _def("ter", ter, snap.ter_names)
 		if td != null:
 			if td.move_cost <= 0 and (td.open.is_empty() or kind == K.WINDOW):

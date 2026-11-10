@@ -38,6 +38,7 @@ class Style:
 	var state := 0                # door: 0 closed, 1 open, 2 empty/broken; window: 0 glass, 1 open, 2 curtains, 3 glass wall
 	var height := 3.0
 	var glass := false            # glass door leaf
+	var locked := false           # door with CDDA's LOCKED flag
 	var groups := 0               # connect groups (bits, IdTables.group_bit)
 	var connects_to := 0          # groups this tile joins; both 0 = join by kind (no id tables)
 
@@ -219,6 +220,7 @@ func _dress(d: IdTables.Def, name: String, s: Style) -> void:
 		Kind.DOOR:
 			if d == null:
 				return
+			s.locked = d.has("LOCKED")
 			var passable := d.move_cost > 0
 			if passable:
 				s.state = 1 if not d.close.is_empty() else 2   # open, or an empty frame
