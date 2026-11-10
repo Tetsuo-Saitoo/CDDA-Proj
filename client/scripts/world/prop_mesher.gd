@@ -9,7 +9,10 @@ extends RefCounted
 ## room, street lights the road), seats with ALIGN_WORKBENCH toward a table or counter, anything else
 ## with its back to a wall; `random_yaw` props turn freely. Item piles show up to MAX_SHOWN items
 ## (the four largest from the snapshot, small clutter for the rest) at sub-tile slots (4 x 4 per tile)
-## picked by a hash of the square, so a pile looks the same every rebuild. Items rest on the surfaces
+## picked by a hash of the square, so a pile looks the same every rebuild. A pile whose tile has item
+## handles (contracts/snapshot.md) shows one item per handle instead, at its placed spot or its slot,
+## and lists each as an item slot (Result.item_slots) a crosshair or a hand can point at; `hidden`
+## ones (held in a hand) are left out. Items rest on the surfaces
 ## of the furniture they share a tile with (tables, shelves) and are hidden in closed containers. A
 ## furniture model's `surface_N` planes replace the placeholder's surfaces (items behind a model's doors
 ## are drawn there and hidden by the doors).
@@ -27,6 +30,22 @@ const MODEL_TURN := Transform3D(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vecto
 const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
 const CLUTTER: Array[Color] = [Color(0.7, 0.68, 0.62), Color(0.45, 0.5, 0.55), Color(0.62, 0.45, 0.3),
 		Color(0.8, 0.8, 0.78), Color(0.5, 0.36, 0.32)]
+## Bounds of the item shapes at unit size (PropShapes builds them from y 0 up): the middle is what a
+## pointer aims at, the top where the next item of a stack lies, the longest side the item's size.
+const ITEM_BOX := {
+	"item_box": AABB(Vector3(-0.51, 0, -0.51), Vector3(1.02, 0.9, 1.02)),
+	"item_book": AABB(Vector3(-0.5, 0, -0.38), Vector3(1.0, 0.32, 0.76)),
+	"item_cloth": AABB(Vector3(-0.5, 0, -0.4), Vector3(1.0, 0.28, 0.8)),
+	"item_bottle": AABB(Vector3(-0.24, 0, -0.24), Vector3(0.48, 1.08, 0.48)),
+	"item_can": AABB(Vector3(-0.37, 0, -0.37), Vector3(0.74, 0.89, 0.74)),
+	"item_long": AABB(Vector3(-0.1, 0, -1.4), Vector3(0.2, 0.22, 2.7)),
+	"item_tool": AABB(Vector3(-0.3, 0, -0.9), Vector3(0.6, 0.2, 1.5)),
+	"item_small": AABB(Vector3(-0.5, 0, -0.35), Vector3(1.0, 0.6, 0.85)),
+	"item_bag": AABB(Vector3(-0.45, 0, -0.35), Vector3(0.9, 0.85, 0.7)),
+	"item_corpse": AABB(Vector3(-0.5, 0, -0.28), Vector3(1.12, 0.3, 0.56)),
+}
+const ITEM_BOX_OTHER := AABB(Vector3(-0.42, 0, -0.42), Vector3(0.84, 1.0, 0.84))   # blocks, anything else
+const GLYPH_UP := 0.3   # item glyph cards float this far above their spot
 
 
 class Result:
@@ -40,8 +59,13 @@ class Result:
 	var furniture := 0
 	var items := 0
 	var traps := 0
+	## One per drawn item that has a handle: [uid, itype, tile, Transform3D (submap-local, as drawn,
+	## scaled), size_m (its longest side), centre (submap-local: the middle of what is drawn)].
+	var item_slots: Array = []
 
 
+## Items not to draw (uid -> true), e.g. one held in a hand: no shape, no slot, not counted as clutter.
+var hidden := {}
 var _snap: Snapshot
 var _ter: TerrainCatalog
 var _cat: PropCatalog
@@ -88,9 +112,11 @@ func build(sm_pos: Vector3i) -> Result:
 			var xf := _tile_xf(i, sm).translated_local(Vector3(0, 0.005, 0))
 			_emit(b, md, prop, xf, 0, r, rng)
 			r.traps += 1
+	var handles := handles_by_tile(sm)
 	var piles := sm.items
 	for k in range(0, piles.size(), Snapshot.PILE_STRIDE):
-		r.items += _pile(sm, base, piles.slice(k, k + Snapshot.PILE_STRIDE), tile_xf, r, rng)
+		var pile := piles.slice(k, k + Snapshot.PILE_STRIDE)
+		r.items += _pile(sm, base, pile, tile_xf, r, rng, handles.get(pile[0], []))
 	r.props = _mesh(_solid, _glass)
 	r.roof_props = _mesh(_roof_solid, _roof_glass)
 	r.vertices = _solid.verts.size() + _glass.verts.size() + _roof_solid.verts.size() + _roof_glass.verts.size()
@@ -191,25 +217,29 @@ func _emit(b: PropShapes.Builder, md: Dictionary, prop: PropCatalog.Prop, xf: Tr
 	PropShapes.build(prop.shape, b, prop.main, prop.accent, prop.leaf, links, prop.height, rng)
 
 
-## Items of one pile [tile, count, top0..3]; returns how many were shown.
+## Items of one pile [tile, count, top0..3] (`handles`: its tile's, handles_by_tile); returns how many
+## were shown. Items with a handle are listed in r.item_slots.
 func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary, r: Result,
-		rng: RandomNumberGenerator) -> int:
-	var placed := pile_transforms(sm, base, pile, tile_xf)
+		rng: RandomNumberGenerator, handles: Array = []) -> int:
+	var placed := pile_transforms(sm, base, pile, tile_xf, handles)
 	var b := _builder(sm, pile[0])
 	var md := _models(sm, pile[0], r)
 	for k in placed.size():
-		var xf: Transform3D = placed[k][0]
-		var itype: int = placed[k][1]
+		var e: Array = placed[k]
+		var xf: Transform3D = e[0]
+		var itype: int = e[1]
 		var prop := _cat.item(itype)
 		if prop.shape == "item_corpse" and pile[Snapshot.PILE_CORPSE] != 0:
 			continue   # CreatureView lays the body there
+		if e[2] != 0:
+			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4]])
 		if prop.model != null and itype != 0:
 			_add_model(md, prop.model, xf)
 			r.model_props += 1
 			continue
 		if prop.shape.is_empty():
 			if r.glyphs.size() < MAX_GLYPHS:
-				r.glyphs.append([xf.origin + Vector3(0, 0.3, 0), prop.symbol, prop.accent])
+				r.glyphs.append([xf.origin + Vector3(0, GLYPH_UP, 0), prop.symbol, prop.accent])
 			continue
 		b.xf = xf
 		var main := prop.main if itype != 0 else CLUTTER[(pile[0] + k) % CLUTTER.size()]
@@ -218,11 +248,16 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 	return placed.size()
 
 
-## Where the items of a pile [tile, count, top0..3] go: one [transform (scaled to the item), itype]
-## per shown item (itype 0: clutter for the smaller rest of the pile), on the surfaces of the tile's
-## furniture (its model's surface_N planes when it has them); empty when they are inside a closed
-## container. Deterministic per square.
-func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary) -> Array:
+## Where the items of a pile [tile, count, top0..3] go: one [transform (scaled to the item), itype, uid,
+## size_m, centre, height] per shown item, on the surfaces of the tile's furniture (its model's surface_N
+## planes when it has them); empty when they are inside a closed container. Deterministic per square.
+## Without `handles` (the tile's [uid, itype, spot_x, spot_y] lists): the four largest itypes, then
+## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
+## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
+## slot, the 17th and later on top of the ones before on the same slot; `hidden` ones are skipped (their
+## slot stays empty, so the rest don't move); then clutter for the items without a handle.
+func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary,
+		handles: Array = []) -> Array:
 	var out := []
 	var i := pile[0]
 	var count := pile[1]
@@ -231,35 +266,123 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	var planes: Array = furn.model.surfaces if furn != null and furn.model != null else []
 	if count <= 0 or (planes.is_empty() and info.get("hide", false)):
 		return out
-	var surfaces: Array = info.get("surfaces", [0.0])
-	var rect: Array = info.get("rect", PropShapes.FLOOR_INFO["rect"])
+	var surf := Surface.new()
+	surf.heights = info.get("surfaces", [0.0])
+	surf.rect = info.get("rect", PropShapes.FLOOR_INFO["rect"])
+	surf.planes = planes
 	var full: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
-	var on := Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
-	var model_xf := full * MODEL_TURN
+	surf.on = Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
+	surf.model_xf = full * MODEL_TURN
 	var h := _hash(base + Vector3i(i % SEEX, i / SEEX, 0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = h
 	var start := h % (SUB * SUB)
 	var step := 2 * ((h >> 4) % 8) + 1   # odd: visits all 16 slots
-	for k in mini(count, MAX_SHOWN):
+	if handles.is_empty():
+		for k in mini(count, MAX_SHOWN):
+			var slot := (start + k * step) % (SUB * SUB)
+			var u := (slot % SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
+			var v := (slot / SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
+			var pos := surf.at(k, u, v)
+			var itype := pile[2 + k] if k < 4 else 0
+			var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
+			out.append(_placed(Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos), itype, 0, size))
+		return out
+	var jitter: Array[Vector2] = []   # per slot, so a stack stands straight
+	for _s in SUB * SUB:
+		jitter.append(Vector2(rng.randf_range(-0.04, 0.04), rng.randf_range(-0.04, 0.04)))
+	var tops := {}   # Vector2i(slot, surface) -> height of what lies there
+	var n := handles.size()
+	for k in n + clampi(count - n, 0, MAX_SHOWN):
+		var uid := 0
+		var itype := 0
+		var spot := Vector2(-1, -1)
+		if k < n:
+			var hd: Array = handles[k]
+			uid = hd[0]
+			if hidden.has(uid):
+				continue
+			itype = hd[1]
+			if hd[2] >= 0 and hd[3] >= 0:
+				spot = Vector2(hd[2] / 1000.0, hd[3] / 1000.0)
+		rng.seed = hash([h, uid] if uid != 0 else [h, -1 - k])   # an item keeps its turn when others leave
 		var slot := (start + k * step) % (SUB * SUB)
-		var u := (slot % SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
-		var v := (slot / SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
-		var pos: Vector3
-		if planes.is_empty():
-			pos = on * Vector3(lerpf(rect[0], rect[2], u), surfaces[k % surfaces.size()], lerpf(rect[1], rect[3], v))
-		else:
-			var s: Array = planes[k % planes.size()]
-			var r2: Rect2 = s[1]
-			var local := Vector3(lerpf(r2.position.x, r2.end.x, u), s[2], lerpf(r2.position.y, r2.end.y, v))
-			pos = model_xf * ((s[0] as Transform3D) * local)
-		var itype := pile[2 + k] if k < 4 else 0
+		var sk := k % surf.count()
+		var uv := surf.spot_uv(sk, spot) if spot.x >= 0.0 else \
+				Vector2((slot % SUB + 0.5) / SUB, (slot / SUB + 0.5) / SUB) + jitter[slot]
 		var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
-		out.append([Transform3D(on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos), itype])
+		var xf := Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), surf.at(sk, uv.x, uv.y))
+		var key := Vector2i(slot, sk)
+		var lift: float = tops.get(key, 0.0) if spot.x < 0.0 else 0.0
+		xf.origin.y += lift
+		var e := _placed(xf, itype, uid, size)
+		if spot.x < 0.0:
+			tops[key] = lift + float(e[5])
+		out.append(e)
 	return out
 
 
 const ITEM_CLUTTER_M := 0.07
+
+
+## [transform, itype, uid, size_m, centre, height] of an item drawn at `xf` (scaled by `size`).
+func _placed(xf: Transform3D, itype: int, uid: int, size: float) -> Array:
+	var ext := _extent(_cat.item(itype), itype, xf, size)
+	return [xf, itype, uid, ext[0], ext[1], ext[2]]
+
+
+## [size_m (longest side), centre, height] of an item drawn at `xf`: from its model's bounds, its shape's
+## (ITEM_BOX), or around a glyph card.
+static func _extent(prop: PropCatalog.Prop, itype: int, xf: Transform3D, size: float) -> Array:
+	var box: AABB = ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
+	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
+		box = prop.model.aabb
+	elif itype != 0 and prop.model == null and prop.shape.is_empty():
+		return [size, xf.origin + Vector3(0, GLYPH_UP, 0), size]
+	return [box.get_longest_axis_size() * size, xf * box.get_center(), maxf(box.end.y, 0.0) * size]
+
+
+## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y], ...] in the snapshot's order.
+static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
+	var out := {}
+	var hs := sm.handles
+	for k in range(0, hs.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		var t := int(hs[k])
+		if not out.has(t):
+			out[t] = []
+		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4])])
+	return out
+
+
+## Where the items of one tile can lie: the placeholder's surface heights and rect, or a furniture model's
+## surface_N planes.
+class Surface:
+	var on: Transform3D          # the furniture (or the tile), unscaled
+	var model_xf: Transform3D    # the furniture's model
+	var heights: Array = [0.0]
+	var rect: Array = []
+	var planes: Array = []
+
+	func count() -> int:
+		return maxi(planes.size() if not planes.is_empty() else heights.size(), 1)
+
+	## The point u, v (0..1 across) of surface k.
+	func at(k: int, u: float, v: float) -> Vector3:
+		if planes.is_empty():
+			return on * Vector3(lerpf(rect[0], rect[2], u), heights[k % heights.size()], lerpf(rect[1], rect[3], v))
+		var s: Array = planes[k % planes.size()]
+		var r2: Rect2 = s[1]
+		var local := Vector3(lerpf(r2.position.x, r2.end.x, u), s[2], lerpf(r2.position.y, r2.end.y, v))
+		return model_xf * ((s[0] as Transform3D) * local)
+
+	## A spot (fractions of the square, x east, y south) as u, v on surface k, turned with the surface: the
+	## item lies toward the same side of the square whichever way the furniture faces.
+	func spot_uv(k: int, spot: Vector2) -> Vector2:
+		var b := on.basis
+		if not planes.is_empty():
+			b = (model_xf.basis * ((planes[k % planes.size()] as Array)[0] as Transform3D).basis).orthonormalized()
+		var d := b.inverse() * Vector3(spot.x - 0.5, 0.0, spot.y - 0.5)
+		return Vector2(clampf(d.x + 0.5, 0.0, 1.0), clampf(d.z + 0.5, 0.0, 1.0))
 
 
 func _ter_style(p: Vector3i) -> TerrainCatalog.Style:
