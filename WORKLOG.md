@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Model loader: stricter image header and glTF text checks, caps on primitives per mesh and drawn surfaces, a mesh budget across models; loading and tinting no longer hold the library lock (tints made from the importer's copies); client tests pass.
 - 2026-11-10 — Items in an open drawer or behind an opened cabinet door / lid can be pointed at and follow the part; MockItems.put_check lets tests refuse a pocket (for lead-vr's backpack).
 - 2026-11-10 — Doors, drawers and lids are named under the mouse pointer with a drag hint; fly up / down default to Space / Ctrl only (E and Q are take/use and CDDA wield).
 - 2026-11-10 — Snapshot reads the bridge's cooking fields (heat squares, cookware with contents and craft progress) with caps and checks; `heat_at` / `cookware_at` for VR; client tests pass.

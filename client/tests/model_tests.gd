@@ -259,6 +259,31 @@ func _test_tint() -> void:
 	_check.call(first != null and first.tint == "brick" and capped.get_tinted(path, "wood").tint.is_empty()
 			and capped.get_tinted(path, "brick") == first and capped.warnings.size() == 1 and capped.warnings[0].contains("tinted"),
 			"tinted variants are capped: past the cap, the model as made, with one warning " + str(capped.warnings))
+	var mapped := not m.sources.is_empty()
+	for p: Array in m.parts:
+		mapped = mapped and m.sources.get(p[0]) is ImporterMesh
+	_check.call(mapped, "tinted variants are made from the importer's copies of every drawn mesh")
+	var busy := _lib()
+	busy.get_model(path)
+	var out: Array = [null]
+	var task := WorkerThreadPool.add_task(func() -> void: out[0] = busy.get_tinted(path, "wood_dark"))
+	var spins := 0
+	while not WorkerThreadPool.is_task_completed(task) and spins < 3000:
+		busy.get_warnings()
+		busy.get_model(path)
+		busy.get_tinted(path, "")
+		spins += 1
+		OS.delay_usec(500)
+	var finished := WorkerThreadPool.is_task_completed(task)
+	if finished:
+		WorkerThreadPool.wait_for_task_completion(task)
+	_check.call(finished and out[0] != null and (out[0] as ModelLibrary.Model).tint == "wood_dark",
+			"a worker tints while the main thread keeps asking the library (no wait on each other)")
+	var budget := _lib()
+	budget.max_total_triangles = m.triangles
+	_check.call(budget.get_model(path) != null and budget.get_tinted(path, "brick").tint.is_empty()
+			and budget.get_model("furniture/cupboard_2.glb") == null and budget.warnings.size() == 2
+			and budget.warnings[0].contains("mesh budget"), "mesh budget: past it, models aren't kept and variants are untinted " + str(budget.warnings))
 
 
 func _test_caps(glb: PackedByteArray) -> void:
@@ -276,7 +301,7 @@ func _test_hostile(glb: PackedByteArray) -> void:
 	var png := PackedByteArray([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
 			0, 0, 0x4E, 0x20, 0, 0, 0x4E, 0x20, 8, 6, 0, 0, 0, 0, 0, 0, 0])   # 20000 x 20000
 	var jpg := PackedByteArray([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-			0xFF, 0xC0, 0, 17, 8, 0x13, 0x88, 0, 16, 3, 0, 0, 0, 0, 0, 0])   # 5000 high
+			0xFF, 0xC0, 0, 17, 8, 0x13, 0x88, 0, 16, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0])   # 5000 high
 	var img := func(bytes: PackedByteArray, mime: String) -> PackedByteArray:
 		return glb_of({"asset": asset, "buffers": [{"byteLength": bytes.size()}],
 				"bufferViews": [{"buffer": 0, "byteLength": bytes.size()}],
@@ -284,7 +309,28 @@ func _test_hostile(glb: PackedByteArray) -> void:
 	var garbage := PackedByteArray()
 	for i in 200:
 		garbage.append((i * 37 + 11) % 256)
+	# JPEG headers whose first frame can't be found by walking the segments the way decoders do
+	var tail := PackedByteArray([0xFF, 0xDB, 0, 4, 0, 0, 0xFF, 0xC4, 0, 4, 0, 0, 0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0x3F, 0,
+			0, 0, 0, 0, 0xFF, 0xD9])
+	var stuffed := PackedByteArray([0xFF, 0xD8, 0xFF, 0x00, 0x00, 0x14, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x40, 0x00, 0x40, 0x00,
+			0x01, 0x01, 0x11, 0x00, 0xFF, 0xE0, 0x00, 0x12, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x08, 0x00, 0x08, 0x01, 0x01,
+			0x11, 0x00, 0, 0, 0]) + tail
+	var scan_first := PackedByteArray([0xFF, 0xD8, 0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0x3F, 0, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8,
+			1, 1, 0x11, 0]) + tail
+	var short_len := PackedByteArray([0xFF, 0xD8, 0xFF, 0xE0, 0, 1, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]) + tail
+	var two_soi := PackedByteArray([0xFF, 0xD8, 0xFF, 0xD8, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]) + tail
+	var eoi_first := PackedByteArray([0xFF, 0xD8, 0xFF, 0xD9, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]) + tail
+	var plain_jpg := PackedByteArray([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF,
+			0xFF, 0xC0, 0, 11, 8, 0, 16, 0, 32, 1, 1, 0x11, 0]) + tail
+	var walk_ok := ModelLibrary._image_size(plain_jpg, 0, plain_jpg.size()) == Vector2i(32, 16)
+	for bad: PackedByteArray in [stuffed, scan_first, short_len, two_soi, eoi_first]:
+		walk_ok = walk_ok and ModelLibrary._image_size(bad, 0, bad.size()) == Vector2i(-1, -1)
+	_check.call(walk_ok, "JPEG size: read from the first frame of a plain header; odd marker sequences are unreadable")
 	var cases := [
+		["JPEG stuffed byte before the frame", img.call(stuffed, "image/jpeg"), "bad image"],
+		["JPEG scan before the frame", img.call(scan_first, "image/jpeg"), "bad image"],
+		["JPEG segment length under 2", img.call(short_len, "image/jpeg"), "bad image"],
+		["glTF JSON not ASCII", glb_of('{"asset": {"version": "2.0"}, "nodes": [{"name": "caf\u00e9"}]}'), "ASCII"],
 		["garbage", garbage, "not a .glb"],
 		["truncated", glb.slice(0, glb.size() - 8), "length field"],
 		["external buffer", glb_of({"asset": asset, "buffers": [{"uri": "../../secret.bin", "byteLength": 4}]}), "buffers must be"],
@@ -410,6 +456,9 @@ func _test_strict() -> void:
 		["node transform size", tri_glb({"nodes/0/translation": [1, 2]}), "node transform"],
 		["node transform number", not_finite, "node transform"],
 		["model size", scene_glb(big), "20 m"],
+		["primitives in a mesh", tri_glb({}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES + 1), "primitives"],
+		["surfaces drawn", tri_glb({"nodes/1": {"mesh": 0}, "nodes/2": {"mesh": 0}, "nodes/3": {"mesh": 0},
+				"nodes/4": {"mesh": 0}}, PackedByteArray(), 3, ModelLibrary.MAX_MESH_PRIMITIVES), "surfaces drawn"],
 	]
 	for c: Array in cases:
 		_write("models/furniture/bad.glb", c[1])
