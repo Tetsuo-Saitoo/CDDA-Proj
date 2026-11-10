@@ -141,11 +141,11 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    started when installed, like `tools/vr/play_vr.sh`), `--town` the mock town; other step 5/6 options pass
    through. Saves, keys and logs stay in `~/.local/share/godot/app_userdata/CDDA-3D/`; no VR runtime is inside.
    Needs FUSE 3 (`fusermount3`; Arch: `fuse3`), else run it with `--appimage-extract-and-run`.
-9. **CI, perf budget, ThreadSanitizer.** GitHub Actions (`.github/workflows/`, read-only token, no secrets):
-   `ci.yml` on pushes to `main` and pull requests (client tests and the mock perf budget; the fork, bridge, fork
-   tests, live test and live perf budget on Linux), `tsan.yml` weekly and by hand, `windows.yml` by hand only
-   (a cold MSVC build takes hours). Actions must be switched on in each repo's settings first. The Linux steps
-   are one script, so a Linux PC or WSL runs exactly what CI runs:
+9. **CI, perf budget, ThreadSanitizer.** The GitHub Actions workflows wait on branch `claude/team-qa-ci` until
+   Actions is set up in the repos' settings (read-only token, approval for outside contributors): `ci.yml` on
+   pushes to `main` and pull requests (client tests and the mock perf budget; the fork, bridge, fork tests, live
+   test and live perf budget on Linux), `tsan.yml` weekly and by hand, `windows.yml` by hand only (a cold MSVC
+   build takes hours). The Linux steps are one script, so a Linux PC or WSL runs exactly what CI runs:
    ```bash
    git submodule update --init          # a fresh clone; then godot-cpp as in step 5
    GODOT=<Godot 4.7.2 Linux editor> bash tools/build/ci_linux.sh [build fork-tests client-tests live-test perf perf-live]
