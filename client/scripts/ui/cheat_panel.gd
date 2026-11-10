@@ -22,7 +22,8 @@ func _init() -> void:
 	visible = false
 	var note := Label.new()
 	note.text = ("Testing cheats. They stay with the character in its save; turn them off here. "
-			+ "Each one applies at the game's next turn.")
+			+ "Each one applies at the game's next turn. The first cheat or test kit turns this game's "
+			+ "achievements off for good.")
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", WARN)
 	add_child(note)
@@ -81,12 +82,12 @@ func give_kit() -> void:
 	if CheatModel.apply(backend, CheatModel.TEST_KIT):
 		_say("Test kit asked for: it arrives at the next turn.", false)
 	else:
-		_say("No test kit: no running game.", true)
+		_say("No test kit: no running game, or cheats aren't allowed.", true)
 
 
 func _on_toggled(on: bool, key: String) -> void:
 	if not CheatModel.apply(backend, key, on):
-		_say("Not changed: no running game.", true)
+		_say("Not changed: no running game, or cheats aren't allowed.", true)
 		refresh()
 	elif key != CheatModel.AUTO_PAUSE:
 		_say("%s %s: applies at the next turn." % [CheatModel.LABELS[key], "on" if on else "off"], false)

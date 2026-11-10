@@ -413,6 +413,44 @@ func _node(pos: Vector3i, make: bool) -> Node3D:
 	return node
 
 
+## World y of what one stands on at point p (x, z used) on level z: the floor, or the stair flight or ramp
+## surface drawn on that square (TerrainMesher.surface_heights), so cameras and figures climb them. Squares
+## are looked up once per shown snapshot (at most MAX_GROUND kept).
+func ground_y(p: Vector3, z: int) -> float:
+	var sq := coords.world_to_ms(p)
+	sq.z = z
+	var base := coords.ms_to_world(sq)
+	var hs := _ground_heights(sq)
+	if hs.size() != 4:
+		return base.y
+	var h := TerrainMesher.height_at(hs, clampf((p.x - base.x) / CddaCoords.TILE_M, 0.0, 1.0),
+			clampf((p.z - base.z) / CddaCoords.TILE_M, 0.0, 1.0))
+	return base.y + (clampf(h, -CddaCoords.LEVEL_M, CddaCoords.LEVEL_M) if is_finite(h) else 0.0)
+
+
+const MAX_GROUND := 4096
+var _ground := {}        # square -> its surface heights (empty: flat floor), for _ground_of
+var _ground_ramps := {}
+var _ground_of: Array = []   # [snapshot, tables] the cache was filled from
+
+
+func _ground_heights(sq: Vector3i) -> PackedFloat32Array:
+	if snapshot == null:
+		return PackedFloat32Array()
+	if _ground_of.size() != 2 or _ground_of[0] != snapshot or _ground_of[1] != tables or _ground.size() >= MAX_GROUND:
+		_ground = {}
+		_ground_ramps = {}
+		_ground_of = [snapshot, tables]
+	if not _ground.has(sq):
+		var hs := PackedFloat32Array()
+		var st := TerrainMesher.style_in(snapshot, catalog, sq)
+		if st != null and (st.kind in [TerrainCatalog.Kind.STAIRS_UP, TerrainCatalog.Kind.RAMP_UP] or st.ramp_low):
+			hs = TerrainMesher.surface_heights(sq, TerrainMesher.kind_lookup(snapshot, catalog),
+					TerrainMesher.low_lookup(snapshot, catalog), _ground_ramps)
+		_ground[sq] = hs
+	return _ground[sq]
+
+
 ## How many submaps have a node (something drawn).
 func node_count() -> int:
 	return _nodes.size()
@@ -842,7 +880,7 @@ func items_near(p: Vector3, radius: float, centre: Vector3i) -> Array:
 ## The drawn item `uid` as items_on_ray gives it (the point: its middle), [] when it isn't drawn.
 func item_slot(uid: int) -> Array:
 	var s: Array = _slot_of.get(uid, [])
-	if s.is_empty() or hidden_items.has(uid) or not _built.has(s[0]):
+	if s.is_empty() or hidden_items.has(uid) or not _built.has(s[0]) or not _slot_shown(s[1]):
 		return []
 	return _slot_entry(s[0], s[1], _slot_centre(s[0], s[1]))
 
@@ -859,17 +897,56 @@ func _slots_around(centre: Vector3i) -> Array:
 				continue
 			var l := CddaCoords.ms_to_local(sq)
 			for e: Array in (b.get("slots", {}) as Dictionary).get(l.y * CddaCoords.SEEX + l.x, []):
-				if not hidden_items.has(e[0]):
+				if not hidden_items.has(e[0]) and _slot_shown(e):
 					out.append([pos, e])
 	return out
 
 
+## An item on a furniture part (drawer, cabinet door shelf) can be pointed at while the part is open (a lid's
+## always: they lie on top of it); one behind a model's doors or lid while one of them is open
+## (PropMesher.Result.item_slots ride / gates). A part that is gone hides its items.
+func _slot_shown(e: Array) -> bool:
+	if e.size() < 8:
+		return true
+	var ride: String = e[6]
+	if not ride.is_empty():
+		var g: Variant = parts.get(ride)
+		if not is_instance_valid(g) or not (g is Grabbable) or ((g as Grabbable).kind != "lid" and not part_open(g)):
+			return false
+	var gates: PackedStringArray = e[7]
+	if gates.is_empty():
+		return true
+	for id in gates:
+		var g: Variant = parts.get(id)
+		if is_instance_valid(g) and g is Grabbable and part_open(g):
+			return true
+	return false
+
+
+## A furniture part open far enough to see into: past Grabbable.OPEN_FRAC of its travel.
+static func part_open(g: Grabbable) -> bool:
+	return g.max_amount > 0.0 and g.amount >= g.max_amount * Grabbable.OPEN_FRAC
+
+
+## How far an item drawn with part `e[6]` has moved from where PropMesher placed it (submap-local): the part's
+## Leaf motion, taken from the part's own space (Leaf space = pivot space at rest). Identity for the others.
+func _ride_xf(e: Array) -> Transform3D:
+	if e.size() < 8 or (e[6] as String).is_empty():
+		return Transform3D.IDENTITY
+	var g: Variant = parts.get(e[6])
+	if not is_instance_valid(g) or not (g is Grabbable) or (g as Grabbable).leaf == null:
+		return Transform3D.IDENTITY
+	var p := g as Grabbable
+	var m := p.transform * p.leaf.transform * p.transform.affine_inverse()
+	return m if m.is_finite() else Transform3D.IDENTITY
+
+
 func _slot_centre(pos: Vector3i, e: Array) -> Vector3:
-	return coords.sm_to_world(pos) + (e[5] as Vector3)
+	return coords.sm_to_world(pos) + _ride_xf(e) * (e[5] as Vector3)
 
 
 func _slot_entry(pos: Vector3i, e: Array, point: Vector3) -> Array:
-	var xf: Transform3D = e[3]
+	var xf: Transform3D = _ride_xf(e) * (e[3] as Transform3D)
 	var tile: int = e[2]
 	var sq := CddaCoords.sm_to_ms(pos) + Vector3i(tile % CddaCoords.SEEX, tile / CddaCoords.SEEX, 0)
 	return [e[0], e[1], sq, point, Transform3D(xf.basis, xf.origin + coords.sm_to_world(pos)), e[4]]

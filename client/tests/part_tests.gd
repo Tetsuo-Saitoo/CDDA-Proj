@@ -222,8 +222,9 @@ func _test_specs(world: WorldView, data: Variant, cab: ModelLibrary.Model) -> vo
 	var on_drawer: bool = not dr.is_empty() and (dr["items_mesh"] != null or not (dr["items_models"] as Dictionary).is_empty()
 			or not (dr["items_glyphs"] as Array).is_empty())
 	var uids := r.item_slots.map(func(e: Array) -> int: return e[0])
-	_check.call(on_drawer and uids == [701] and r.items == 2,
-			"parts: the book on the drawer's floor is drawn with the drawer and not pointable; the shelf's is " + str(uids))
+	var rides := r.item_slots.map(func(e: Array) -> String: return e[6])
+	_check.call(on_drawer and uids == [701, 702] and rides == ["", _id("drawer_1")] and r.items == 2,
+			"parts: the book on the drawer's floor is drawn with the drawer, its slot names the drawer " + str(uids))
 	var open := _build(world, _scene(data, "f_safe_o"))
 	_check.call(open.parts.size() == 4 and _spec(open, "door_1")["cdda_open"] == true
 			and (_spec(open, "door_1")["pivot"] as Transform3D).is_equal_approx(d1["pivot"]),
@@ -255,10 +256,28 @@ func _test_world(world: WorldView, data: Variant, cab: ModelLibrary.Model) -> vo
 			"parts: the door's own meshes are under its leaf")
 	var items := gd.contents().get_node_or_null("Items") as Node3D
 	var at := items.global_position if items else Vector3.ZERO
+	_check.call(world.item_slot(702).is_empty() and not world.item_slot(701).is_empty(),
+			"parts: the book in the closed drawer can't be pointed at; the shelf's can")
 	gd.set_amount(0.3)
 	var front := (gd.global_basis * gd.axis).normalized()
 	_check.call(items != null and items.global_position.distance_to(at + front * 0.3) < 0.001,
 			"parts: what lies in the drawer slides out with it")
+	# Its item slot follows: pointable while open, where it is drawn now.
+	var s702 := world.item_slot(702)
+	var rest: Vector3 = world.coords.sm_to_world(_pos) + (world._slot_of[702][1][5] as Vector3)
+	var near := world.items_near(rest + front * 0.3, 0.05, _safe_sq())
+	_check.call(not s702.is_empty() and (s702[3] as Vector3).distance_to(rest + front * 0.3) < 0.001
+			and not near.is_empty() and near[0] == 702,
+			"parts: the book in the open drawer is pointed at where it is drawn now")
+	# An item behind the model's doors (a slot gated by them) shows while one is open; a gone part hides it.
+	var gated := [1, 1, 0, Transform3D(), 0.1, Vector3.ZERO, "", PackedStringArray([_id("door_1")])]
+	g1.set_amount(0.0)
+	var shut := world._slot_shown(gated)
+	g1.set_amount(g1.max_amount)
+	var gone := gated.duplicate()
+	gone[6] = _id("nothing")
+	_check.call(not shut and world._slot_shown(gated) and not world._slot_shown(gone),
+			"parts: items behind a door show when it opens; on a part that is gone, never")
 	# Hands and rays find parts.
 	g1.set_amount(0.0)
 	var hp := g1.handle_point()

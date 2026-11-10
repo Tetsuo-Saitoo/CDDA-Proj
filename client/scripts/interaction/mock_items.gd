@@ -6,7 +6,8 @@ extends RefCounted
 ## every accepted call ends in a new capture (snap.seq + 1, `changed`), and a refusal first says why with
 ## `message` (CDDA's m_info) and changes no item. It answers inside the call: the caller re-applies the snapshot
 ## to the world on `changed` and passes it on to ItemActions.on_snapshot.
-## Simplified: no weight, volume or pocket limits; what goes into a container lying on the ground isn't listed.
+## Simplified: no weight, volume or pocket limits (tests add their own with `put_check`); what goes into a
+## container lying on the ground isn't listed.
 
 ## Why a call was refused (CDDA's m_info message); `changed` follows.
 signal message(text: String)
@@ -21,6 +22,13 @@ const PS := Snapshot.PILE_STRIDE
 var snap: Snapshot
 var tables: IdTables
 var _next_uid := FIRST_UID
+## Optional pocket rule for put_item, as CDDA's would refuse: (item_type: int, container_type: int, pocket: int)
+## -> String, "" to allow, else the refusal message (e.g. "The rock is too big for the pocket."). Called only
+## once the put is otherwise allowed; nothing moves when it refuses.
+var put_check := Callable()
+## Optional ammo rule for reload_item: (item_type: int, ammo_type: int) -> String, "" to allow, else the
+## refusal (e.g. "That ammo doesn't fit your Glock 19."). Without one any ammo fits.
+var reload_check := Callable()
 
 
 func _init(s: Snapshot, t: IdTables) -> void:
@@ -144,6 +152,10 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 		return _refuse("You can't put your %s inside itself." % _name(t))
 	if not is_container(ct, tables):
 		return _refuse("Could not put %s into %s, it can't hold anything." % [_name(t), _name(ct)])
+	if put_check.is_valid():
+		var why: Variant = put_check.call(t, ct, pocket)
+		if why is String and not (why as String).is_empty():
+			return _refuse((why as String).left(200))
 	var moved := _remove_subtree(row)
 	if crow >= 0:
 		moved[2] = cu
@@ -192,6 +204,130 @@ func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) 
 	_add_handle(sm, tile, u, t, sx, sy)
 	_touch(sm)
 	return _captured()
+
+
+## Unload a carried item: its first content (a gun's magazine with its rounds, a magazine's rounds) goes to
+## `hand` as take puts things there. Items lying on the ground have no listed contents here: refused.
+func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0 or not _pos_ok(pos) or not (hand in ItemActions.HANDS):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You can't unload that from here.")
+	if snap.carried[row * CS + 4] & Snapshot.CARRIED_WORN:
+		return _refuse("You can't unload a %s!" % _name(t))   # containers are emptied with take and put
+	if _subtree_end(row) == row + 1:
+		return _refuse("Your %s isn't loaded." % _name(t))
+	var first := row + 1   # its first content, with what is inside that
+	var ft := snap.carried[first * CS + 1]
+	var flags := 0
+	var parent := 0
+	var pocket := -1
+	if hand == "main":
+		var w := _flagged(Snapshot.CARRIED_WIELDED)
+		if w >= 0:
+			return _refuse("Your hand is full: you're holding your %s." % _name(snap.carried[w * CS + 1]))
+		flags = Snapshot.CARRIED_WIELDED
+	elif hand == "off" and _flagged(Snapshot.CARRIED_OFFHAND) >= 0:
+		return _refuse("Your off hand is full.")
+	elif hand == "off":
+		flags = Snapshot.CARRIED_OFFHAND
+	var moved := _remove_subtree(first)
+	moved[2] = parent
+	moved[3] = pocket
+	moved[4] = flags
+	var at := 0   # wielded first
+	if hand != "main":
+		var bag := _worn_container()
+		if bag >= 0:
+			moved[2] = snap.carried[bag * CS]
+			moved[3] = 0
+			at = _subtree_end(bag)
+		else:
+			at = snap.carried.size() / CS
+	_insert_rows(at, moved)
+	if hand == "main":
+		snap.player_wielded = ft
+	return _captured()
+
+
+## Reload a carried item with `ammo` (carried, or a handle on `pos` in reach): the ammo row (with what is
+## inside it) goes into the item, or merges into rounds of its type already there (counts aren't modelled).
+## Refused when the item holds something else, or when reload_check says so.
+func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	var au := _uid(ammo)
+	var at := _type(ammo_type)
+	if snap == null or u <= 0 or t <= 0 or au <= 0 or at <= 0 or not _pos_ok(pos):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	if au == u:
+		return _refuse("You can't load the %s with itself." % _name(t))
+	var arow := ItemActions.carried_row(snap, au, at)
+	var sm: Snapshot.Submap = null
+	var h := -1
+	if arow < 0:
+		if not _in_reach(pos):
+			return _refuse("You can't reach that from here.")
+		sm = _submap(pos)
+		h = ItemActions.handle_index(sm, ItemActions.tile_of(pos), au, at)
+		if h < 0:
+			return _refuse("That isn't there any more.")
+	elif _subtree(row).has(au) or _subtree(arow).has(u):
+		return _refuse("You can't load the %s with that." % _name(t))
+	if reload_check.is_valid():
+		var why: Variant = reload_check.call(t, at)
+		if why is String and not (why as String).is_empty():
+			return _refuse((why as String).left(200))
+	var merge := false
+	if _subtree_end(row) > row + 1:
+		if snap.carried[(row + 1) * CS + 1] != at:
+			return _refuse("Your %s is already loaded." % _name(t))
+		merge = true
+	var aflags := snap.carried[arow * CS + 4] if arow >= 0 else 0
+	var moved := PackedInt64Array([au, at, u, 0, 0])
+	if arow >= 0:
+		moved = _remove_subtree(arow)
+		moved[2] = u
+		moved[3] = 0
+		moved[4] = 0
+	else:
+		_remove_handle(sm, ItemActions.tile_of(pos), h)
+		_touch(sm)
+	if not merge:
+		_insert_rows(ItemActions.carried_row(snap, u, t) + 1, moved)
+	if aflags & Snapshot.CARRIED_WIELDED:
+		snap.player_wielded = 0
+	return _captured()
+
+
+## A carried item for tests and mock scenes: a new row inside `parent` (a carried uid, pocket 0; 0 = on the
+## body) after what that already holds, with CARRIED_* `flags`. Returns its uid, -1 when the parent isn't
+## carried or the list is full.
+func give(type: int, parent := 0, flags := 0) -> int:
+	if snap == null or type <= 0 or type > Snapshot.MAX_ID or snap.carried.size() / CS >= Snapshot.MAX_CARRIED:
+		return -1
+	var at := snap.carried.size() / CS
+	if parent != 0:
+		at = -1
+		for i in range(0, snap.carried.size() - CS + 1, CS):
+			if snap.carried[i] == parent:
+				at = _subtree_end(i / CS)
+				break
+		if at < 0:
+			return -1
+	_next_uid = maxi(_next_uid, _max_uid() + 1)
+	var u := _next_uid
+	_next_uid += 1
+	_insert_rows(at, PackedInt64Array([u, type, parent, 0 if parent != 0 else -1, flags]))
+	if flags & Snapshot.CARRIED_WIELDED:
+		snap.player_wielded = type
+	return u
 
 
 ## The bridge's action queue: the mock answers at once.

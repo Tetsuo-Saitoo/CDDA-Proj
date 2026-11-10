@@ -34,7 +34,9 @@ extends RefCounted
 ## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8) is drawn as
 ## the model's `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
 ## Grabbables): plain data, so this stays worker-safe. Items on a mover's surface_N are drawn with it (the
-## spec's items_*), in its own space, and get no item slot (they move). Movers on roof terrain, and past
+## spec's items_*), in its own space; their item slot names the part (WorldView moves the slot with it and
+## points at it only while the part is open, or always on a lid). Items behind a model's doors get a slot
+## gated by the tile's doors and lids (pointable while one is open). Movers on roof terrain, and past
 ## MAX_PARTS in a submap, stay put (the whole model drawn as before).
 
 const K := TerrainCatalog.Kind
@@ -96,7 +98,9 @@ class Result:
 	var items := 0
 	var traps := 0
 	## One per drawn item that has a handle: [uid, itype, tile, Transform3D (submap-local, as drawn,
-	## scaled), size_m (its longest side), centre (submap-local: the middle of what is drawn)].
+	## scaled), size_m (its longest side), centre (submap-local: the middle of what is drawn), ride (the id of
+	## the part it is drawn with, "" none: transform and centre are at the part's rest), gates
+	## (PackedStringArray: ids of the doors / lids it lies behind; pointable while one is open; empty: none)].
 	var item_slots: Array = []
 	## Furniture doors, drawers and lids (Grabbable.part specs, at most MAX_PARTS), one Dictionary each:
 	## id ("x_y_z/door_1": the absolute square and the marker), square, kind, meshes ([Mesh, Transform3D in
@@ -479,13 +483,15 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		if not xf.is_finite() or not (e[4] as Vector3).is_finite():
 			continue   # a degenerate surface (zero scale): nothing to draw or point at
 		var pi := _part_on(pile[0], e[6], r)   # on a drawer's or door's surface: drawn with it
-		# Pointable only when drawn where it can be seen and stays there: not behind a closed model's doors,
-		# not on a part that moves, not a glyph past MAX_GLYPHS.
+		# Pointable when drawn: not a glyph past MAX_GLYPHS; behind a closed model's doors only when the tile
+		# has doors or lids that open (WorldView checks one is). On a part: named, WorldView moves it with it.
 		var glyph_only := prop.model == null and prop.shape.is_empty()
-		var pointable: bool = e[2] != 0 and pi < 0 and not behind_doors \
+		var gates := _gates(pile[0], r) if behind_doors else PackedStringArray()
+		var pointable: bool = e[2] != 0 and not (behind_doors and gates.is_empty()) \
 				and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
 		if pointable:
-			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4]])
+			var ride: String = r.parts[pi]["id"] if pi >= 0 else ""
+			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4], ride, gates])
 		if pi >= 0:
 			var spec: Dictionary = r.parts[pi]
 			_draw_item(_part_builder(pi), spec["items_models"], spec["items_glyphs"],
@@ -525,6 +531,18 @@ func _part_on(tile: int, plane: int, r: Result) -> int:
 		return -1
 	var mi := m.surface_mover[plane]
 	return idx[mi] if mi >= 0 and mi < idx.size() and idx[mi] < r.parts.size() else -1
+
+
+## Ids of tile `tile`'s parts that hide what lies inside it when closed: its doors and lids (not drawers).
+func _gates(tile: int, r: Result) -> PackedStringArray:
+	var out := PackedStringArray()
+	var tp: Array = _tile_parts.get(tile, [])
+	if tp.is_empty():
+		return out
+	for pi: int in (tp[1] as PackedInt32Array):
+		if pi < r.parts.size() and r.parts[pi]["kind"] in ["door", "lid"]:
+			out.append(r.parts[pi]["id"])
+	return out
 
 
 ## A shape builder drawing into part `pi`'s own item buffers.

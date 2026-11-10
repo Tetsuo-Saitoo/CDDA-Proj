@@ -11,7 +11,8 @@ extends Node3D
 ## --no-light: no darkening by CDDA's light and night (WorldLighting, block C6).
 ## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
 ## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
-## fresh world fp3d-live), --world=/--save= load directly. In the game the
+## fresh world fp3d-live, or fp3d-live-2 ... if a world it didn't make has that name), --world=/--save= load
+## directly. In the game the
 ## first-person camera stands on the player's square; arrows / numpad (and WASD in first person) move
 ## relative to where you look, KP5 or . waits, [ ] take stairs. CDDA's prompts show in RequestUI
 ## (scripts/ui/, block E3): mouse or keys, each widget lists its keys.
@@ -403,6 +404,7 @@ func _start_live() -> void:
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
 	cheat_panel.backend = live
+	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
@@ -410,12 +412,16 @@ func _start_live() -> void:
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
-	# looks in LIVE_WORLD. Saves live under user://cdda/save/<world>/ (copy CDDA worlds there).
+	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
+	# user://cdda/save/<world>/ (copy CDDA worlds there).
 	var user_dir := OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if _args.has("world") or _args.has("save"):
-		var w: String = _args.get("world", LIVE_WORLD)
+		var w: String = _args.get("world", "")
+		if w.is_empty():
+			w = world_for_save(LiveSession.list_worlds(user_dir), _args.get("save", ""),
+					func(n: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, n))
 		var saves := LiveSession.list_saves(user_dir, w)
 		var s: String = _args.get("save", saves[0] if not saves.is_empty() else "")
 		if s.is_empty():
@@ -428,6 +434,26 @@ func _start_live() -> void:
 		_show_main_menu(data_dir, user_dir)
 		return
 	_after_live_start(ok)
+
+
+## --save without --world: quick starts play in LIVE_WORLD, or in LIVE_WORLD-2, -3, ... when the bridge found
+## LIVE_WORLD it didn't make (a player's or an older build's). The first of those (in that order) holding
+## `save`, else LIVE_WORLD (the bridge then says the save isn't there).
+static func world_for_save(worlds: PackedStringArray, save: String, saves: Callable) -> String:
+	var nums: Array[int] = []
+	for w in worlds:
+		var tail := w.substr(LIVE_WORLD.length() + 1)
+		if w.begins_with(LIVE_WORLD + "-") and tail.length() <= 4 and tail.is_valid_int() and tail[0] != "+" \
+				and tail[0] != "-" and tail.to_int() >= 2:
+			nums.append(tail.to_int())
+	nums.sort()
+	var order := PackedStringArray([LIVE_WORLD])
+	for n in nums:
+		order.append("%s-%d" % [LIVE_WORLD, n])
+	for w in order:
+		if not save.is_empty() and w in worlds and save in (saves.call(w) as PackedStringArray):
+			return w
+	return LIVE_WORLD
 
 
 ## --live without --world/--save/--quick: CDDA's main menu (MainMenu), then a new game (character creation
@@ -448,6 +474,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.quit_requested.connect(_quit)
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
+		_sync_cheats_allowed()
 		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
 
@@ -459,6 +486,13 @@ func _menu_started(center: Control, ok: bool) -> void:
 	center.queue_free()
 	main_menu = null
 	_after_live_start(true)
+
+
+## The bridge lets cheats work only while the player allowed them: the F1 debug switch, --test / --cheats, or a
+## test-range game (KeyMenu.cheats_allowed).
+func _sync_cheats_allowed() -> void:
+	if live != null:
+		live.set_cheats_allowed(key_menu.cheats_allowed())
 
 
 ## --test: the test kit, once, and only for a new game (never on a load: the save already has it).
@@ -949,6 +983,7 @@ func _setup_hud() -> void:
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
+	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 
 

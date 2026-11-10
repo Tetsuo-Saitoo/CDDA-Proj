@@ -32,6 +32,11 @@ class FakeSim extends RefCounted:
 	func set_auto_pause(on: bool) -> void:
 		auto = on
 
+	var allowed := false
+
+	func set_cheats_allowed(on: bool) -> void:
+		allowed = on
+
 	func get_clock() -> Dictionary:
 		return {"auto_pause": auto, "paused": false}
 
@@ -106,6 +111,14 @@ func _test_session() -> void:
 	ls._poll_cheats()
 	_check.call(first == 1 and got.size() == 3 and got[1]["invincible"] == true and got[2].is_empty(),
 			"cheats: cheats_changed on a change only, {} when the game ends (%d, %s)" % [first, got])
+	# The bridge's opt-in: off until the player allows cheats; kept and sent again when the game starts.
+	_check.call(not ls.cheats_allowed and not sim.allowed, "cheats: not allowed by default")
+	ls.set_cheats_allowed(true)
+	var now := sim.allowed
+	sim.allowed = false   # a fresh game starts with it off
+	ls._push_cheats_allowed()
+	ls.set_cheats_allowed(false)
+	_check.call(now and ls.cheats_allowed == false and not sim.allowed, "cheats: set_cheats_allowed reaches the sim, and again on start")
 	ls.free()
 
 

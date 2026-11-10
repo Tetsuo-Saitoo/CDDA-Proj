@@ -81,6 +81,14 @@ static func world_name_ok(n: String) -> bool:
 	return true
 
 
+## The bridge makes no new world whose name starts with this, in any case (quick starts and tests use it).
+const RESERVED_PREFIX := "fp3d-"
+
+
+static func world_reserved(n: String) -> bool:
+	return n.to_lower().begins_with(RESERVED_PREFIX)
+
+
 ## A fresh world name that isn't taken ("World", "World2", ...).
 func suggested_world() -> String:
 	var n := "World"
@@ -183,6 +191,9 @@ func start_new() -> bool:
 		world = _world_edit.text.strip_edges()
 		if not world_name_ok(world):
 			set_message("World names are 1-32 letters, digits, _ or -.")
+			return false
+		if world_reserved(world):
+			set_message("World names starting with %s are kept for quick starts and tests." % RESERVED_PREFIX)
 			return false
 		if world_taken(world):
 			set_message("A world named %s exists: pick another name or add the character to it." % world)
