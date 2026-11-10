@@ -120,7 +120,8 @@ void sim_main()
             fp3d::boot_saved_game( boot_world, boot_save, true );
             fp3d::reset_snapshots();
         }
-        // The client reads the world while the sim waits for it, so every request comes with a fresh snapshot.
+        // The client reads the world while the sim waits for it, so every request but a `shot` one (fp3d::ask skips
+        // the hook for those: a burst asks once per round) comes with a fresh snapshot and held state.
         fp3d::set_before_ask_hook( [] {
             // Test range operations first (main-loop requests only), so the snapshot shows what they did.
             fp3d::run_range_requests();

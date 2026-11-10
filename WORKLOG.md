@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Snapshot `player.wielded_gun` {type, dirt, rounds, faults} for the gun view; fp3d (combat) and main merged into the bridge branches; before-ask hook code uses `in_timed_hook()` (combat's sim hook too); ui_requests.md: `shot` requests bring no snapshot or held update.
 - 2026-11-10 — Test range bridged: `fp3d-qa` (K7) merged into the bridge branch; `CddaSim.start_test_range`, queued `range_*` operations and `get_range_info()`; range operations: stricter checks (range games only, in the main loop's hook). Before-ask hook work sees whether the request is the main loop's (`in_timed_hook`). Sim test range-op checks.
 - 2026-11-10 — Unload / reload in ItemActions (for VR mag release and insert) with LiveSession and MockItems support; the main menu refuses new fp3d- world names and --save alone also looks in fp3d-live-2, -3 ...; client tests pass.
 - 2026-11-10 — Cheats opt-in: LiveSession sends the bridge's `set_cheats_allowed` from the debug switch (or --test / --cheats / test range), again when a game starts; cheats page says the first cheat ends that game's achievements; client tests pass.
