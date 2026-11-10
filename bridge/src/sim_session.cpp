@@ -16,11 +16,13 @@
 #include "fp3d/boot.h"
 #include "fp3d/bridge.h"
 #include "fp3d/chargen.h"
+#include "fp3d/cheats.h"
 #include "fp3d/events.h"
 #include "fp3d/game_access.h"
 #include "fp3d/held.h"
 #include "fp3d/id_tables.h"
 #include "fp3d/snapshot.h"
+#include "fp3d/test_range.h"
 #include "game.h"
 #include "map_scale_constants.h"
 #include "rng.h"
@@ -58,6 +60,7 @@ bool boot_fresh_world = true;
 bool boot_replace_world = false;  // start(): FP3D's own throwaway world may be replaced
 bool boot_chargen = false;
 bool boot_world_setup = false;
+bool boot_range = false;          // start_test_range()
 #if defined(_WIN32)
 HANDLE sim_thread = nullptr;
 #else
@@ -92,7 +95,11 @@ void sim_main()
         fp3d::init_paths( boot_data_dir, boot_user_dir );
         setupDebug( DebugOutput::file );
         rng_set_engine_seed( std::random_device{}() );
-        if( boot_save.empty() ) {
+        if( boot_range ) {
+            fp3d::boot_new_game_data( boot_world, true, true, false, true );
+            fp3d::boot_test_range( 1 );
+            fp3d::set_cheats_allowed( true );
+        } else if( boot_save.empty() ) {
             if( boot_chargen || boot_world_setup || !boot_fresh_world || !boot_replace_world ) {
                 fp3d::boot_new_game_data( boot_world, boot_fresh_world, true, boot_world_setup,
                                           boot_replace_world );
@@ -115,6 +122,9 @@ void sim_main()
         }
         // The client reads the world while the sim waits for it, so every request comes with a fresh snapshot.
         fp3d::set_before_ask_hook( [] {
+            // Test range operations first (main-loop requests only), so the snapshot shows what they did.
+            fp3d::run_range_requests();
+            fp3d::capture_range_info();
             fp3d::publish_snapshot( fp3d::capture_snapshot() );
             fp3d::publish_held();
         } );
@@ -387,7 +397,8 @@ const char *state_name( state s )
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world );
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world,
+                        bool range = false );
 } // namespace
 
 std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
@@ -404,10 +415,16 @@ std::string start_new_game( const std::string &data_dir, const std::string &user
     return start_impl( data_dir, user_dir, world, "", fresh_world, chargen, world_setup && fresh_world, false );
 }
 
+std::string start_test_range( const std::string &data_dir, const std::string &user_dir )
+{
+    return start_impl( data_dir, user_dir, "fp3d-range", "", true, false, false, true, true );
+}
+
 namespace
 {
 std::string start_impl( const std::string &data_dir, const std::string &user_dir, const std::string &world,
-                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world )
+                        const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world,
+                        bool range )
 {
     if( get_state() != state::idle ) {
         return "already started (CDDA runs once per process)";
@@ -464,6 +481,7 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     boot_replace_world = replace_world && fp3d::replaceable_world( world );
     boot_chargen = chargen;
     boot_world_setup = world_setup;
+    boot_range = range;
     fp3d::set_active( true );
     fp3d::set_events_enabled( true );
     set_state( state::booting );

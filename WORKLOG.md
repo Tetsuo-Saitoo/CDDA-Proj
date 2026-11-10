@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Test range bridged: `fp3d-qa` (K7) merged into the bridge branch; `CddaSim.start_test_range`, queued `range_*` operations and `get_range_info()`; range operations: stricter checks (range games only, in the main loop's hook). Before-ask hook work sees whether the request is the main loop's (`in_timed_hook`). Sim test range-op checks.
 - 2026-11-10 — Item actions `unload` (to a hand or the pack) and `reload` (with an explicit ammo or magazine handle), CDDA's rules and moves, no menus. Sim test `guns`.
 - 2026-11-10 — Cheats and test kits need the client's opt-in (`set_cheats_allowed`), and using them turns achievements off; quick-start worlds: stricter checks. Sim test checks.
 - 2026-11-10 — Chargen templates and world mods: stricter checks (names, saving, mod order, file size up to 4 MiB, parsed templates cached); "Character to Template" templates keep their setup as in CDDA. Chargen test checks.
