@@ -56,7 +56,7 @@ func entry(id: String, kind: String) -> Entry:
 
 ## Registry warnings and model warnings (models load on first use, so these grow as the world shows).
 func all_warnings() -> PackedStringArray:
-	return warnings + models.warnings
+	return warnings + models.get_warnings()
 
 
 ## The entry's model, or null when it has none or it doesn't load.
