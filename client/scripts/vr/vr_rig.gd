@@ -26,6 +26,13 @@ extends XROrigin3D
 ## in that hand, ready to put down. CDDA decides every move; a refusal buzzes and shows its reason by the hand.
 ## Heavy items lag behind the hand; a two-handed one sags in one hand and sits between both when the other hand
 ## grips it too.
+## Backpack (block L8, VrPack `pack`): grip with an empty hand over the shoulder while wearing a container takes
+## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
+## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
+## (Hands.adopt) and lets it go the usual way; letting go of any held item over a compartment puts it into that
+## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
+## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
+## itself past VrPack.CLOSE_M from the head or when the bag is gone.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -123,6 +130,9 @@ var hands: Hands:
 		hands = h
 		if h != null and not h.refused.is_connected(_on_refused):
 			h.refused.connect(_on_refused)
+		if pack != null:
+			pack.hands = h
+var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -216,6 +226,10 @@ func _build() -> void:
 	hud = VrHud.new()
 	add_child(hud)
 	hud.alerted.connect(func() -> void: _feel(off_ctrl()))   # a new bad warning: a buzz in the HUD's hand
+	pack = VrPack.new()
+	pack.head = camera
+	pack.ids.assign(HAND_IDS)
+	add_child(pack)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -362,7 +376,9 @@ func hand_id(c: XRController3D) -> String:
 func update_hands(delta: float, all_hands := false) -> void:
 	_tick_notes(delta)
 	if hands == null:
+		pack.close("gone")
 		return
+	pack.update()
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
 		var id: String = HAND_IDS[i]
@@ -370,18 +386,25 @@ func update_hands(delta: float, all_hands := false) -> void:
 		if p != null:
 			drawn[i] = p.global_transform
 		hands.set_hand_pose(id, _ctrl(i).global_transform, true)
+	if pack.hand >= 0:
+		pack.follow(_ctrl(pack.hand).global_transform)
 	for i in 2:
 		var c := _ctrl(i)
 		var id: String = HAND_IDS[i]
 		var held := hands.holding(id)
 		if held.is_empty():
 			var t := {}
-			if (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open() \
+			var pt := {}   # the open pack goes first
+			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open() \
 					and not _supports(i, drawn[1 - i]):
-				t = hands.find_near(c.global_position, GRAB_REACH)
+				pt = pack.target_at(c.global_position)
+				if pt.is_empty():
+					t = hands.find_near(c.global_position, GRAB_REACH)
+			pack.hover(i, pt)
 			hands.hover(id, t)
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
+		pack.show_drop(i, c.global_position if held.get("kind") == "item" else Vector3.INF)
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
@@ -431,26 +454,36 @@ func _supports(j: int, drawn: Variant) -> bool:
 	return _ctrl(j).global_position.distance_to(xf * (g.origin / s)) <= TWO_HAND_M
 
 
-## Grip on controller c: the door leaf or item it touches, else what CDDA holds in that hand (main controller:
-## the wielded item; the other: the off-hand item). An item lying in the world is taken at once into that hand.
-## Near the other hand's two-handed item it only steadies it. False (and a buzz) when there is nothing to grab;
-## a refusal from CDDA comes later through Hands.refused.
+## Grip on controller c: an item or the frame of the open pack (VrPack.grip), else the door leaf or item it
+## touches, else over the shoulder the biggest worn container (taken off: VrPack.open_in), else what CDDA holds in
+## that hand (main controller: the wielded item; the other: the off-hand item). An item lying in the world is
+## taken at once into that hand. Near the other hand's two-handed item it only steadies it. False (and a buzz)
+## when there is nothing to grab; a refusal from CDDA comes later through Hands.refused.
 func grab_with(c: XRController3D) -> bool:
 	if hands == null:
 		return false
 	var i := 0 if c == left else 1
 	var id: String = HAND_IDS[i]
-	if not hands.holding(id).is_empty():
+	if not hands.holding(id).is_empty() or pack.hand == i:
 		return false
 	var other := hands.proxy(HAND_IDS[1 - i])
 	if other != null and _supports(i, other.global_transform):
 		return true
 	hands.set_hand_pose(id, c.global_transform, true)   # a door starts its swing here, an adopted item shows here
 	var t := {}
-	if world.snapshot != null and not menu_open():
-		t = hands.find_near(c.global_position, GRAB_REACH)
+	var pt := {}
+	var looks := world.snapshot != null and not menu_open()
+	if looks:
+		pt = pack.target_at(c.global_position)
+		if pt.is_empty():
+			t = hands.find_near(c.global_position, GRAB_REACH)
 	var ok := false
-	if t.is_empty():
+	if not pt.is_empty():
+		ok = pack.grip(i, pt)
+	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
+		var bag := shoulder_bag(hands.picker.worn_containers(), null, world.tables)
+		ok = bag != null and pack.open_in(i, bag)
+	elif t.is_empty():
 		var it := cdda_holds(c)
 		ok = it != null and hands.adopt(id, it)
 	elif t["kind"] == "item":
@@ -478,21 +511,26 @@ func cdda_holds(c: XRController3D) -> ItemRef:
 	return null
 
 
-## Lets go of what hand c holds. An item: over the shoulder into the biggest worn container (none: a buzz, and it
-## goes where the hand is), else where the hand is (Hands.drop_at; nowhere it can go: it stays in CDDA's hand).
-## A door settles. Returns Hands.release's action ("" when nothing was sent).
+## Lets go of what hand c holds. The pack: over the shoulder it closes, elsewhere it floats open in front (nothing
+## sent). An item: over a compartment of the open pack into that pocket (its own pocket: back, nothing sent), over
+## the shoulder into the biggest worn container (none: a buzz, and it goes where the hand is), else where the hand
+## is (Hands.drop_at; nowhere it can go: it stays in CDDA's hand). A door settles. Returns Hands.release's action
+## ("" when nothing was sent).
 func let_go(c: XRController3D) -> String:
 	if hands == null:
 		return ""
 	var id := hand_id(c)
+	if pack.hand == (0 if c == left else 1):
+		pack.let_go(over_shoulder(camera.global_transform, c.global_position), c.global_position)
+		return ""
 	var held := hands.holding(id)
 	if held.is_empty():
 		return ""
 	var it: ItemRef = held.get("item")
 	if held.get("kind") != "item" or it == null or world.snapshot == null:
 		return hands.release(id, {})
-	var drop := {}
-	if over_shoulder(camera.global_transform, c.global_position):
+	var drop := pack.drop_for(c.global_position, it)
+	if drop.is_empty() and over_shoulder(camera.global_transform, c.global_position):
 		var bag := shoulder_bag(hands.picker.worn_containers(), it, world.tables)
 		if bag != null:
 			drop = {"kind": "container", "container": bag}
@@ -977,11 +1015,16 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return
 	if world.snapshot == null:
 		return
+	var ci := 0 if c == left else 1
+	if n == "trigger_click" and pack.is_open() \
+			and (pack.hand == ci or pack.target_at(c.global_position).get("kind") == "frame"):
+		pack.close("closed")   # the trigger on the pack's frame (or holding it) closes it
+		return
 	if c == main_ctrl() and n == "trigger_click":
 		use_pointed_stair(c)
 		return
 	if n == "grip_click":
-		var holds := hands != null and not hands.holding(hand_id(c)).is_empty()
+		var holds := hands != null and (not hands.holding(hand_id(c)).is_empty() or pack.hand == ci)
 		if holds and settings["grip"] == "toggle":
 			let_go(c)
 		elif not holds:
