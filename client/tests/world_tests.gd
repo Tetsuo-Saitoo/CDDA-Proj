@@ -89,6 +89,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_light_levels(data)
 	_stairs_settled()
 	_needs(data)
+	_heat_cookware(data)
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -256,6 +257,63 @@ class _FakeStairs extends RefCounted:
 	func use_stairs(pos: Vector3i, dir: int) -> bool:
 		calls.append([pos, dir])
 		return answer
+
+
+## Heat squares and the cookware on them (block L9): optional, read with their limits, anything odd refused.
+func _heat_cookware(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var sm: Dictionary = (d["submaps"] as Array)[0]
+	var at := Vector3i(int(sm["pos"][0]), int(sm["pos"][1]), int(sm["pos"][2]))
+	var sq := CddaCoords.sm_to_ms(at) + Vector3i(3, 2, 0)   # tile 27
+	var none := Snapshot.from_data(d)
+	_check.call(none.is_valid() and none.heat_at(sq).is_empty() and none.cookware_at(sq).is_empty(),
+			"heat: none when not sent")
+	sm["heat"] = [[27, 1, 40, 2, 120, 1], [5, 0, 0, 3, 0, false]]
+	sm["cookware"] = [{"tile": 27, "uid": 900, "type": 41, "contents": [[901, 42, 1], [902, 43, 250]],
+			"craft_result": 44, "craft_recipe": "soup_veggy", "craft_progress": 375}]
+	var s := Snapshot.from_data(d)
+	var cw: Array = s.cookware_at(sq) if s.is_valid() else []
+	var ok: bool = s.is_valid() and s.heat_at(sq) == {"source": 1, "tool": 40, "fire": 2, "charges": 120, "lit": true} \
+			and s.heat_at(CddaCoords.sm_to_ms(at) + Vector3i(5, 0, 0)).get("lit") == false and cw.size() == 1
+	if ok:
+		var c: Snapshot.Cookware = cw[0]
+		ok = c.uid == 900 and c.type == 41 and c.contents == PackedInt64Array([901, 42, 1, 902, 43, 250]) \
+				and c.craft_result == 44 and c.craft_recipe == "soup_veggy" and c.craft_progress == 375
+	_check.call(ok, "heat: a lit stove and a pot on it with its contents and craft " + s.error)
+	var many_heat := []
+	for i in Snapshot.MAX_HEAT_PER_SUBMAP + 1:
+		many_heat.append([i, 0, 0, 1, 0, 1])
+	var many_items := []
+	for i in Snapshot.MAX_COOK_CONTENTS + 1:
+		many_items.append([1000 + i, 42, 1])
+	var bad := {
+		"heat on a tile twice": func() -> void: sm["heat"] = [[27, 1, 40, 2, 120, 1], [27, 0, 0, 1, 0, 1]],
+		"heat source unknown": func() -> void: sm["heat"] = [[27, 7, 40, 2, 120, 1]],
+		"fire past 3": func() -> void: sm["heat"] = [[27, 0, 0, 9, 0, 1]],
+		"charges past int32": func() -> void: sm["heat"] = [[27, 1, 40, 2, 1e12, 1]],
+		"heat entry short": func() -> void: sm["heat"] = [[27, 1, 40]],
+		"too many heat squares": func() -> void: sm["heat"] = many_heat,
+		"cookware off the heat": func() -> void: sm["cookware"][0]["tile"] = 28,
+		"cookware uid 0": func() -> void: sm["cookware"][0]["uid"] = 0,
+		"contents holding the pot": func() -> void: sm["cookware"][0]["contents"] = [[900, 42, 1]],
+		"contents uid twice": func() -> void: sm["cookware"][0]["contents"] = [[901, 42, 1], [901, 43, 1]],
+		"too much in the pot": func() -> void: sm["cookware"][0]["contents"] = many_items,
+		"progress past 1000": func() -> void: sm["cookware"][0]["craft_progress"] = 1001,
+		"recipe with a control character": func() -> void: sm["cookware"][0]["craft_recipe"] = "soup\nrm",
+		"recipe too long": func() -> void: sm["cookware"][0]["craft_recipe"] = "x".repeat(Snapshot.MAX_NAME_LEN + 1),
+		"recipe not text": func() -> void: sm["cookware"][0]["craft_recipe"] = 5,
+		"cookware not an object": func() -> void: sm["cookware"] = [[27, 900, 41]],
+	}
+	var refused := []
+	for what: String in bad:
+		var keep_heat: Variant = (sm["heat"] as Array).duplicate(true)
+		var keep_cw: Variant = (sm["cookware"] as Array).duplicate(true)
+		(bad[what] as Callable).call()
+		if Snapshot.from_data(d).is_valid():
+			refused.append(what)
+		sm["heat"] = keep_heat
+		sm["cookware"] = keep_cw
+	_check.call(refused.is_empty(), "heat: odd heat and cookware entries are refused %s" % str(refused))
 
 
 ## Stamina and needs for the HUD: optional, clamped, wrong types rejected.

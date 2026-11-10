@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Snapshot reads the bridge's cooking fields (heat squares, cookware with contents and craft progress) with caps and checks; `heat_at` / `cookware_at` for VR; client tests pass.
 - 2026-11-10 — First-person eyes and creature figures follow stair flights and ramps (`WorldView.ground_y`) instead of staying at floor height; client tests pass; not tried live.
 - 2026-11-10 — Live stairs go through the bridge's own stairs action when the build has it (step + `<`/`>` stand-in otherwise); client tests pass; not tried live.
 - 2026-11-10 — Furniture doors, drawers and lids open (L8 world side): model markers become Grabbable parts, items on their surfaces move with them; door angles are checked as numbers; main merged; client tests pass; not live, not VR.
