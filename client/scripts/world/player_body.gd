@@ -26,14 +26,17 @@ const PARTS := {
 	"foot_r": [Vector3(0.1, 0.04, -0.04), Vector3(0.11, 0.08, 0.26)],
 }
 const SHOULDER_Y := 1.45
-const ARM_REACH := 0.62         # shoulder to hand centre, metres
+const UPPER_ARM := 0.29         # shoulder to elbow, metres (the arm box spans shoulder .. wrist)
+const FOREARM := 0.27           # elbow to wrist
+const ELBOW_Y := SHOULDER_Y - UPPER_ARM
+const WRIST_Y := ELBOW_Y - FOREARM
+const ARM_REACH := UPPER_ARM + FOREARM   # shoulder to wrist, arm straight
+## Where an elbow points when the arm bends (body-local, x outward for the side): down, out and back.
+const ELBOW_HINT := Vector3(0.6, -1.0, 0.35)
 const HIP_SLACK := 0.6          # radians the head may turn before the hips follow
 const HIP_RATE := 6.0           # rad/s the hips catch up with
-## Fingers (VR): thumb, index, middle, ring, little; three segments each, metres.
-const FINGER_LEN := [[0.035, 0.03, 0.025], [0.04, 0.025, 0.02], [0.045, 0.028, 0.022], [0.042, 0.026, 0.02],
-		[0.033, 0.02, 0.018]]
-const FINGER_W := 0.016
-const CURL_RAD := 1.25          # bend per joint at full curl
+const ARMS := ["arm_l", "arm_r"]
+const HANDS := ["hand_l", "hand_r"]
 const BLOOD := Color(0.55, 0.02, 0.02)
 const BANDAGE := Color(0.95, 0.95, 0.9)
 const BITE := Color(0.3, 0.1, 0.3)
@@ -49,13 +52,14 @@ var key := ""                   # what it was last built from
 var pieces: Array[Dictionary] = []   # the last plan (tests read it)
 
 var hip_yaw := 0.0              # set by follow_head (VR)
-var show_fingers := false:      # VR only (desktop hands stay boxes)
+## False in VR: the rig draws the hands (VrHand, fingers and all) and the arms reach for their wrists.
+var show_hands := true:
 	set(v):
-		show_fingers = v
-		for side: String in _fingers:
-			(_fingers[side] as Node3D).visible = v
-var _fingers := {}              # "l"/"r" -> Node3D holding 15 segment meshes
+		show_hands = v
+		for n: Node3D in _hand_nodes:
+			n.visible = v
 var _head_nodes: Array[Node3D] = []
+var _hand_nodes: Array[Node3D] = []
 static var _mats := {}
 
 
@@ -83,39 +87,60 @@ func follow_head(head_yaw: float, delta: float) -> void:
 	rotation = Vector3(0, hip_yaw, 0)
 
 
-## VR: points each arm at its controller (global positions; null = the arm hangs). Call after placing the body.
-func reach(left_hand: Variant, right_hand: Variant) -> void:
-	_reach("arm_l", "hand_l", -1.0, left_hand)
-	_reach("arm_r", "hand_r", 1.0, right_hand)
+## VR: each arm reaches for a wrist (global positions; null = the arm hangs), bending at the elbow. Call after
+## placing the body.
+func reach(left_wrist: Variant, right_wrist: Variant) -> void:
+	_reach(0, -1.0, left_wrist)
+	_reach(1, 1.0, right_wrist)
 
 
-## Where the hand centre goes (body-local) for a target, and the arm's turn from hanging down.
-static func arm_pose(side: float, target_local: Vector3) -> Array:
-	var shoulder := Vector3(0.25 * side, SHOULDER_Y, 0)
-	var to := target_local - shoulder
-	if to.length() < 0.05:
-		return [shoulder + Vector3.DOWN * ARM_REACH, Quaternion.IDENTITY]
-	var dir := to.normalized()
-	return [shoulder + dir * minf(to.length(), ARM_REACH), Quaternion(Vector3.DOWN, dir)]
+static func shoulder_of(side: float) -> Vector3:
+	return Vector3(0.25 * side, SHOULDER_Y, 0)
 
 
-func _reach(arm_name: String, hand_name: String, side: float, target: Variant) -> void:
-	var arm := get_node_or_null(arm_name) as Node3D
-	var hand := get_node_or_null(hand_name) as Node3D
-	if target == null:
-		if arm != null:
-			arm.transform = Transform3D.IDENTITY
-		if hand != null:
-			hand.transform = Transform3D.IDENTITY
-		return
-	var pose := arm_pose(side, to_local(target))
-	var shoulder := Vector3(0.25 * side, SHOULDER_Y, 0)
+## Two-bone arm for a wrist target (body-local): [elbow, wrist]. The wrist stops at the arm's length (the arm
+## doesn't stretch); the elbow bends toward ELBOW_HINT.
+static func arm_ik(side: float, target_local: Vector3) -> Array:
+	var s := shoulder_of(side)
+	var to := target_local - s
+	var d := to.length()
+	if d < 0.05:
+		return [s + Vector3.DOWN * UPPER_ARM, s + Vector3.DOWN * ARM_REACH]
+	var dir := to / d
+	var r := clampf(d, absf(UPPER_ARM - FOREARM) + 0.02, ARM_REACH - 0.0001)
+	var a := acos(clampf((UPPER_ARM * UPPER_ARM + r * r - FOREARM * FOREARM) / (2.0 * UPPER_ARM * r), -1.0, 1.0))
+	var hint := Vector3(ELBOW_HINT.x * side, ELBOW_HINT.y, ELBOW_HINT.z)
+	var perp := hint - dir * hint.dot(dir)
+	if perp.length() < 0.001:   # pointing along the hint: bend outward
+		perp = Vector3(side, 0, 0) - dir * dir.x * side
+	perp = perp.normalized()
+	return [s + dir * (UPPER_ARM * cos(a)) + perp * (UPPER_ARM * sin(a)), s + dir * r]
+
+
+## Moves rest point `from` to `to`, turned so that straight down points along `dir`.
+static func _bone(from: Vector3, to: Vector3, dir: Vector3) -> Transform3D:
+	var b := Basis(Quaternion(Vector3.DOWN, dir.normalized())) if dir.length() > 0.0001 else Basis.IDENTITY
+	return Transform3D(b, to - b * from)
+
+
+func _reach(i: int, side: float, target: Variant) -> void:
+	var arm := get_node_or_null(ARMS[i]) as Node3D
+	var fore := arm.get_node_or_null("fore") as Node3D if arm != null else null
+	var hand := get_node_or_null(HANDS[i]) as Node3D
+	var upper_xf := Transform3D.IDENTITY
+	var fore_xf := Transform3D.IDENTITY   # body space
+	if target != null:
+		var ew := arm_ik(side, to_local(target))
+		var s := shoulder_of(side)
+		var e0 := Vector3(s.x, ELBOW_Y, 0)
+		upper_xf = _bone(s, s, (ew[0] as Vector3) - s)
+		fore_xf = _bone(e0, ew[0], (ew[1] as Vector3) - (ew[0] as Vector3))
 	if arm != null:
-		var b := Basis(pose[1] as Quaternion)
-		arm.transform = Transform3D(b, shoulder - b * shoulder)
+		arm.transform = upper_xf
+	if fore != null:
+		fore.transform = upper_xf.affine_inverse() * fore_xf
 	if hand != null:
-		var rest: Vector3 = PARTS[hand_name][0]
-		hand.transform = Transform3D(Basis.IDENTITY, (pose[0] as Vector3) - rest)
+		hand.transform = fore_xf
 
 
 static func key_of(snap: Snapshot) -> String:
@@ -226,6 +251,7 @@ func _build() -> void:
 	for c in get_children():
 		c.free()
 	_head_nodes.clear()
+	_hand_nodes.clear()
 	var nodes := {}
 	for p: Dictionary in pieces:
 		var part: String = p["part"]
@@ -237,98 +263,43 @@ func _build() -> void:
 			if part in HEAD_PARTS:
 				_head_nodes.append(n)
 				n.visible = show_head
-		var mi := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = p["size"]
-		mi.mesh = box
-		mi.position = p["centre"]
-		mi.material_override = _material(p["colour"])
-		(nodes[part] as Node3D).add_child(mi)
-	_build_fingers()
-
-
-## Finger joints for a hand without hand tracking: from the controller's curls (0 open .. 1 fist), thumb
-## first. Body-local; returns 5 lists of 4 points (knuckle .. tip).
-func curled_points(side: float, curls: Array) -> Array:
-	var arm := get_node_or_null("arm_l" if side < 0 else "arm_r") as Node3D
-	var hand := get_node_or_null("hand_l" if side < 0 else "hand_r") as Node3D
-	var b := arm.transform.basis if arm != null else Basis.IDENTITY
-	var palm: Vector3 = PARTS["hand_l" if side < 0 else "hand_r"][0]
-	if hand != null:
-		palm = hand.transform * palm
-	return finger_points(side, b, palm, curls)
-
-
-static func finger_points(side: float, b: Basis, palm: Vector3, curls: Array) -> Array:
-	var fwd := (b * Vector3.DOWN).normalized()      # along the fingers
-	var inward := (b * Vector3(-side, 0, 0)).normalized()   # the palm faces the thigh when the arm hangs
-	var front := (b * Vector3.FORWARD).normalized()
-	var out := []
-	for f in 5:
-		var c := clampf(float(curls[f]) if f < curls.size() else 0.0, 0.0, 1.0)
-		var p: Vector3
-		var dir: Vector3
-		var bend_axis: Vector3
-		if f == 0:   # thumb: from the front of the palm, pointing forward-down, curls across the palm
-			p = palm + front * 0.04 + fwd * 0.01
-			dir = (fwd + front).normalized()
-			bend_axis = fwd.cross(inward).normalized()
+			if part in HANDS:
+				_hand_nodes.append(n)
+				n.visible = show_hands
+			if part in ARMS:   # the forearm bends at the elbow (reach)
+				var fore := Node3D.new()
+				fore.name = "fore"
+				n.add_child(fore)
+		if part in ARMS:
+			for half: Array in split_at_elbow(p["centre"], p["size"]):
+				var holder: Node3D = nodes[part] if half[2] == "upper" else (nodes[part] as Node3D).get_node("fore")
+				holder.add_child(_box(half[0], half[1], p["colour"]))
 		else:
-			p = palm + fwd * 0.06 + front * (0.035 - 0.022 * f)
-			dir = fwd
-			bend_axis = inward.cross(fwd).normalized()
-		var pts := [p]
-		for seg in 3:
-			dir = dir.rotated(bend_axis, -c * CURL_RAD).normalized()
-			p += dir * float(FINGER_LEN[f][seg])
-			pts.append(p)
-		out.append(pts)
+			(nodes[part] as Node3D).add_child(_box(p["centre"], p["size"], p["colour"]))
+
+
+## An arm piece cut at the elbow: [[centre, size, "upper" | "fore"], ...] (one entry when it lies on one side).
+static func split_at_elbow(centre: Vector3, size: Vector3) -> Array:
+	var top := centre.y + size.y * 0.5
+	var bottom := centre.y - size.y * 0.5
+	var out := []
+	if top > ELBOW_Y:
+		var lo := maxf(bottom, ELBOW_Y)
+		out.append([Vector3(centre.x, (top + lo) * 0.5, centre.z), Vector3(size.x, top - lo, size.z), "upper"])
+	if bottom < ELBOW_Y:
+		var hi := minf(top, ELBOW_Y)
+		out.append([Vector3(centre.x, (hi + bottom) * 0.5, centre.z), Vector3(size.x, hi - bottom, size.z), "fore"])
 	return out
 
 
-## Poses the fingers of one hand ("l"/"r") from 5 lists of 4 body-local points.
-func pose_fingers(side: String, points: Array) -> void:
-	var holder := _fingers.get(side) as Node3D
-	if holder == null or points.size() != 5:
-		return
-	var i := 0
-	for f in 5:
-		var pts: Array = points[f]
-		for seg in 3:
-			var mi := holder.get_child(i) as MeshInstance3D
-			i += 1
-			var a: Vector3 = pts[seg]
-			var e: Vector3 = pts[seg + 1]
-			var len := a.distance_to(e)
-			if len < 0.001:
-				mi.visible = false
-				continue
-			mi.visible = true
-			var z := (e - a) / len
-			var up := Vector3.UP if absf(z.y) < 0.95 else Vector3.RIGHT
-			var x := up.cross(z).normalized()
-			mi.transform = Transform3D(Basis(x, z.cross(x), z).scaled_local(Vector3(1, 1, len)), (a + e) * 0.5)
-
-
-func _build_fingers() -> void:
-	_fingers.clear()
-	for side: String in ["l", "r"]:
-		var col := SKIN
-		for p: Dictionary in pieces:
-			if p["part"] == "hand_" + side and p["kind"] in ["skin", "worn"]:
-				col = p["colour"]   # the outermost glove wins
-		var holder := Node3D.new()
-		holder.name = "fingers_" + side
-		holder.visible = show_fingers
-		add_child(holder)
-		var box := BoxMesh.new()
-		box.size = Vector3(FINGER_W, FINGER_W, 1.0)
-		for k in 15:
-			var mi := MeshInstance3D.new()
-			mi.mesh = box
-			mi.material_override = _material(col)
-			holder.add_child(mi)
-		_fingers[side] = holder
+static func _box(centre: Vector3, size: Vector3, col: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	mi.mesh = box
+	mi.position = centre
+	mi.material_override = _material(col)
+	return mi
 
 
 static func _material(c: Color) -> StandardMaterial3D:

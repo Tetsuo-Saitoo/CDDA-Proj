@@ -49,7 +49,12 @@ const ACTIONS := [
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike, left (off) hand", ["1"]],
 	[&"hand_main", "Act", "strike, right (main) hand", ["2"]],
-	[&"use_held", "Act", "use what you hold on what you face / examine it", ["E"]],
+	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it", ["E"]],
+	[&"carry_farther", "Act", "carrying an item: hold it farther away", ["mouse:4"]],
+	[&"carry_closer", "Act", "carrying an item: hold it closer", ["mouse:5"]],
+	[&"carry_turn_left", "Act", "carrying an item: turn it left", ["mouse:Shift+4"]],
+	[&"carry_turn_right", "Act", "carrying an item: turn it right", ["mouse:Shift+5"]],
+	[&"inspect", "Act", "look into a container / your backpack", ["Tab"]],
 	[&"hold_off", "Act", "hold an item in the left (off) hand", ["H"]],
 	[&"stow_off", "Act", "put away the left hand's item", ["Shift+H"]],
 	[&"cdda_examine", "Act", "examine (pick a direction)", ["X"]],
@@ -134,7 +139,7 @@ static func pressed(event: InputEvent, action: StringName) -> bool:
 	return InputMap.has_action(action) and event.is_action_pressed(action, false, true)
 
 
-## Keyboard and mouse bindings of an action (pad ones aren't shown or rebound in the menu).
+## Keyboard and mouse bindings of an action (pad ones: pad_slots).
 static func slots(action: StringName) -> Array[InputEvent]:
 	var out: Array[InputEvent] = []
 	if InputMap.has_action(action):
@@ -158,6 +163,49 @@ static func set_slots(action: StringName, events: Array[InputEvent]) -> void:
 		InputMap.action_erase_event(action, e)
 	for e in events.slice(0, MAX_SLOTS):
 		InputMap.action_add_event(action, e)
+
+
+## How far a stick or trigger must be pushed for the key menu to take it as a binding.
+const PAD_PUSH := 0.6
+
+
+static func is_pad(e: InputEvent) -> bool:
+	return e is InputEventJoypadButton or e is InputEventJoypadMotion
+
+
+## Pad bindings of an action: buttons and stick / trigger directions (the key menu's Pad column).
+static func pad_slots(action: StringName) -> Array[InputEvent]:
+	var out: Array[InputEvent] = []
+	if InputMap.has_action(action):
+		for e in InputMap.action_get_events(action):
+			if is_pad(e):
+				out.append(e)
+	return out
+
+
+## Replaces the pad bindings of an action (keyboard and mouse stay).
+static func set_pad_slots(action: StringName, events: Array[InputEvent]) -> void:
+	if not InputMap.has_action(action):
+		return
+	for e in pad_slots(action):
+		InputMap.action_erase_event(action, e)
+	for e in events.slice(0, MAX_SLOTS):
+		if is_pad(e):
+			InputMap.action_add_event(action, e)
+
+
+## A captured pad press as a binding (the same form keys.json reads back): a button going down, or a stick /
+## trigger pushed past PAD_PUSH one way. null for anything else (releases, small or NaN motion).
+static func pad_binding_from(e: InputEvent) -> InputEvent:
+	if e is InputEventJoypadButton:
+		var b := e as InputEventJoypadButton
+		return parse_event("pad:%d" % b.button_index) if b.pressed else null
+	if e is InputEventJoypadMotion:
+		var m := e as InputEventJoypadMotion
+		if not absf(m.axis_value) >= PAD_PUSH:   # also refuses NaN
+			return null
+		return parse_event("axis:%d%s" % [m.axis, "-" if m.axis_value < 0.0 else "+"])
+	return null
 
 
 ## Other actions bound to exactly this event.
@@ -255,13 +303,29 @@ static func parse_event(t: String) -> InputEvent:
 	return e
 
 
-## Short label for the menu and HUD: "W", "Shift+E", "LMB", "RMB", "Mouse 4".
+## Short label for the menu and HUD: "W", "Shift+E", "LMB", "RMB", "Mouse 4", "Pad A", "Pad R1", "L stick up".
 static func event_label(e: InputEvent) -> String:
 	var t := event_text(e)
 	if e is InputEventMouseButton:
 		var names := {1: "LMB", 2: "RMB", 3: "MMB", 4: "Wheel up", 5: "Wheel down"}
 		var b := (e as InputEventMouseButton).button_index as int
 		return _mods_text(e) + str(names.get(b, "Mouse %d" % b))
+	if e is InputEventJoypadButton:
+		var pad := ["A", "B", "X", "Y", "Back", "Guide", "Start", "L3", "R3", "L1", "R1", "D-pad up", "D-pad down",
+				"D-pad left", "D-pad right"]
+		var i := (e as InputEventJoypadButton).button_index as int
+		if i < 0 or i >= pad.size():
+			return "Pad %d" % i
+		return "Pad " + pad[i]
+	if e is InputEventJoypadMotion:
+		var m := e as InputEventJoypadMotion
+		var neg := m.axis_value < 0.0
+		var axes := ["L stick " + ("left" if neg else "right"), "L stick " + ("up" if neg else "down"),
+				"R stick " + ("left" if neg else "right"), "R stick " + ("up" if neg else "down"), "L2", "R2"]
+		var a := m.axis as int
+		if a < 0 or a >= axes.size():
+			return "Axis %d%s" % [a, "-" if neg else "+"]
+		return axes[a] + (" -" if a >= 4 and neg else "")   # triggers rest at 0 and push +
 	return t
 
 

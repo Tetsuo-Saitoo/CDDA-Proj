@@ -344,9 +344,76 @@ func _test_rebinding(root: Node) -> void:
 	_check.call(saved is Dictionary and saved["actions"].get("cdda_wield") == ["Ctrl+Y"], "keys menu: each change is saved")
 	menu.take(esc)
 	_check.call(not menu.visible, "keys menu: Esc closes")
+	_test_pad_rebinding(menu, path)
 	menu.free()
 	InputActions.reset_all()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+## The key menu's pad column: pad buttons and pushed sticks bind there (saved, loaded back), nothing else does.
+func _test_pad_rebinding(menu: KeyMenu, path: String) -> void:
+	var pad_texts := func(action: StringName) -> Array:
+		return InputActions.pad_slots(action).map(func(e: InputEvent) -> String: return InputActions.event_text(e))
+	menu.open()
+	menu.start_capture(&"cdda_wield", KeyMenu.PAD_SLOT)
+	var drift := InputEventJoypadMotion.new()
+	drift.axis = JOY_AXIS_RIGHT_X
+	drift.axis_value = 0.2
+	var nan := drift.duplicate() as InputEventJoypadMotion
+	nan.axis_value = NAN
+	var y := InputEventKey.new()
+	y.physical_keycode = KEY_Y
+	y.pressed = true
+	menu.take(drift)
+	menu.take(nan)
+	_check.call(menu.take(y) and pad_texts.call(&"cdda_wield").is_empty() and InputActions.key_of(&"cdda_wield") == "Ctrl+Y",
+			"keys menu pad: stick drift, NaN and keys don't bind in the pad column")
+	var btn := InputEventJoypadButton.new()
+	btn.button_index = JOY_BUTTON_Y
+	btn.pressed = true
+	_check.call(menu.take(btn) and pad_texts.call(&"cdda_wield") == ["pad:3"] and InputActions.key_of(&"cdda_wield") == "Ctrl+Y"
+			and (menu._buttons[&"cdda_wield"][KeyMenu.PAD_SLOT] as Button).text == "Pad Y",
+			"keys menu pad: a pad button binds in the pad column, keys stay")
+	menu.start_capture(&"cdda_wield", 0)
+	_check.call(not menu.take(btn) and InputActions.key_of(&"cdda_wield") == "Ctrl+Y", "keys menu pad: a key slot ignores pad buttons")
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	menu.take(esc)
+	menu.start_capture(&"move_forward", KeyMenu.PAD_SLOT)
+	var push := InputEventJoypadMotion.new()
+	push.axis = JOY_AXIS_RIGHT_Y
+	push.axis_value = -0.9
+	menu.take(push)
+	var pads := InputActions.pad_slots(&"move_forward")
+	_check.call(pad_texts.call(&"move_forward") == ["axis:3-"] and InputActions.key_of(&"move_forward") == "W"
+			and InputActions.event_label(pads[0]) == "R stick up" and InputActions.users_of(pads[0], &"move_forward") == [&"look_up"],
+			"keys menu pad: the right stick pushed up replaces the left stick, W stays (also look up) %s" % [pad_texts.call(&"move_forward")])
+	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check.call(saved is Dictionary and saved["actions"].get("cdda_wield") == ["Ctrl+Y", "pad:3"]
+			and saved["actions"].get("move_forward") == ["W", "axis:3-"], "keys menu pad: saved in the same key file")
+	InputActions.reset_all()
+	_check.call(InputActions.load_bindings(path).is_empty() and pad_texts.call(&"cdda_wield") == ["pad:3"]
+			and pad_texts.call(&"move_forward") == ["axis:3-"] and InputActions.key_of(&"cdda_wield") == "Ctrl+Y",
+			"keys menu pad: loaded back")
+	menu.start_capture(&"move_forward", KeyMenu.PAD_SLOT)
+	var bs := InputEventKey.new()
+	bs.physical_keycode = KEY_BACKSPACE
+	bs.pressed = true
+	menu.take(bs)
+	_check.call(pad_texts.call(&"move_forward").is_empty() and InputActions.key_of(&"move_forward") == "W",
+			"keys menu pad: Backspace clears the pad slot only")
+	var up := btn.duplicate() as InputEventJoypadButton
+	up.pressed = false
+	var big := btn.duplicate() as InputEventJoypadButton
+	big.button_index = 200 as JoyButton
+	_check.call(InputActions.pad_binding_from(up) == null and InputActions.pad_binding_from(big) == null
+			and InputActions.pad_binding_from(y) == null, "keys pad: releases, unknown buttons and keys make no pad binding")
+	_check.call(InputActions.event_label(InputActions.parse_event("pad:10")) == "Pad R1"
+			and InputActions.event_label(InputActions.parse_event("axis:5+")) == "R2"
+			and InputActions.event_label(InputActions.parse_event("pad:20")) == "Pad 20", "keys pad: labels")
+	menu.close()
+	InputActions.reset_all()
 
 
 ## Nearest wall square on p's level with an empty floor square beside it: [wall, floor], or [].
@@ -574,7 +641,7 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	pb.show_head = false
 	var head := pb.get_node_or_null("head") as Node3D
 	var arm := pb.get_node_or_null("arm_l") as Node3D
-	_check.call(built == 14 and head != null and not head.visible and arm.visible,
+	_check.call(built == 12 and head != null and not head.visible and arm.visible,
 			"body: one node per part; own camera hides the head, not the arms")
 	var hips := PlayerBody.next_hip_yaw(0.0, 0.3, 0.1)
 	var turned := PlayerBody.next_hip_yaw(0.0, 1.5, 0.1)
@@ -583,36 +650,44 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 		caught = PlayerBody.next_hip_yaw(caught, 1.5, 1.0 / 60.0)
 	_check.call(hips == 0.0 and turned > 0.0 and turned < 1.5 and absf(1.5 - caught) <= PlayerBody.HIP_SLACK,
 			"body: hips stay for a small head turn, follow a big one (%.2f, %.2f)" % [turned, caught])
-	var far := PlayerBody.arm_pose(-1.0, Vector3(-0.25, 1.45, -2.0))
-	var near := PlayerBody.arm_pose(1.0, Vector3(0.25, 1.2, -0.3))
-	_check.call(absf((far[0] as Vector3).distance_to(Vector3(-0.25, 1.45, 0)) - PlayerBody.ARM_REACH) < 0.001
-			and (far[0] as Vector3).z < -0.6 and (near[0] as Vector3).is_equal_approx(Vector3(0.25, 1.2, -0.3)),
-			"body: hands reach for the controllers, arms don't stretch")
+	var sh := PlayerBody.shoulder_of(1.0)
+	var far := PlayerBody.arm_ik(-1.0, Vector3(-0.25, 1.45, -2.0))
+	var near := PlayerBody.arm_ik(1.0, Vector3(0.25, 1.2, -0.3))
+	var far_w: Vector3 = far[1]
+	var near_e: Vector3 = near[0]
+	var near_w: Vector3 = near[1]
+	_check.call(absf(far_w.distance_to(PlayerBody.shoulder_of(-1.0)) - PlayerBody.ARM_REACH) < 0.001
+			and far_w.z < -0.5 and near_w.is_equal_approx(Vector3(0.25, 1.2, -0.3)),
+			"body: wrists reach for the hands, arms don't stretch")
+	_check.call(absf(near_e.distance_to(sh) - PlayerBody.UPPER_ARM) < 0.001
+			and absf(near_e.distance_to(near_w) - PlayerBody.FOREARM) < 0.001
+			and near_e.x > sh.x and near_e.y < (sh.y + near_w.y) * 0.5 and near_e.z > (sh.z + near_w.z) * 0.5,
+			"body: a bent arm keeps its bone lengths, elbow out, down and back (%s)" % near_e)
+	var cut := PlayerBody.split_at_elbow(Vector3(0.25, 1.17, 0), Vector3(0.1, 0.56, 0.1))
+	var mark := PlayerBody.split_at_elbow(Vector3(0.25, 1.3, -0.06), Vector3(0.03, 0.03, 0.004))
+	_check.call(cut.size() == 2 and is_equal_approx((cut[0][1] as Vector3).y, PlayerBody.UPPER_ARM)
+			and is_equal_approx((cut[1][1] as Vector3).y, PlayerBody.FOREARM) and cut[1][2] == "fore"
+			and mark.size() == 1 and mark[0][2] == "upper",
+			"body: sleeves cut at the elbow, a mark goes to its half")
 	pb.position = Vector3.ZERO
 	pb.rotation = Vector3.ZERO
-	pb.reach(pb.to_global(Vector3(-0.25, 1.45, -2.0)), null)
+	pb.reach(pb.to_global(Vector3(-0.25, 1.3, -0.35)), null)
 	var hl := pb.get_node("hand_l") as Node3D
 	var hr := pb.get_node("hand_r") as Node3D
-	_check.call(hl.position.z < -0.5 and hr.transform == Transform3D.IDENTITY
-			and not (pb.get_node("arm_l") as Node3D).transform.basis.is_equal_approx(Basis.IDENTITY),
-			"body: left arm points forward, right arm hangs")
-	var open_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [0, 0, 0, 0, 0])
-	var fist_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [1, 1, 1, 1, 1])
-	var idx_open: Vector3 = open_pts[1][3]
-	var idx_fist: Vector3 = fist_pts[1][3]
-	_check.call(open_pts.size() == 5 and idx_open.y < 0.7 and idx_fist.y > idx_open.y + 0.03,
-			"body: fingers hang open and curl up into a fist")
-	pb.show_fingers = true
-	pb.pose_fingers("l", pb.curled_points(-1.0, [0.5, 1, 0, 0, 0]))
-	var fl := pb.get_node_or_null("fingers_l") as Node3D
-	_check.call(fl != null and fl.visible and fl.get_child_count() == 15
-			and (fl.get_child(3) as Node3D).position.distance_to(pb.get_node("hand_l").position) < 1.0,
-			"body: 15 finger segments per hand, shown in VR")
-	pb.show_fingers = false
-	_check.call(not fl.visible and VrHands.JOINTS.size() == 5, "body: no fingers on the desktop")
+	var al := pb.get_node("arm_l") as Node3D
+	var fore := al.get_node_or_null("fore") as Node3D
+	var ik := PlayerBody.arm_ik(-1.0, Vector3(-0.25, 1.3, -0.35))
+	var fore_mid := al.transform * fore.transform * (fore.get_child(0) as Node3D).position
+	_check.call((hl.transform * (PlayerBody.PARTS["hand_l"][0] as Vector3)).z < -0.3 and hr.transform == Transform3D.IDENTITY
+			and fore != null and fore.get_child_count() > 0 and not fore.transform.basis.is_equal_approx(Basis.IDENTITY)
+			and fore_mid.distance_to(((ik[0] as Vector3) + (ik[1] as Vector3)) * 0.5) < 0.01,
+			"body: left arm bends to reach forward, forearm between elbow and wrist, right arm hangs")
+	pb.show_hands = false
+	_check.call(not hl.visible and not hr.visible and al.visible, "body: VR hides the body's hands, keeps the arms")
+	pb.show_hands = true
 	var k := pb.key
 	pb.apply(snap, tables)
-	_check.call(pb.key == k and pb.get_child_count() == 14, "body: same snapshot, no rebuild")
+	_check.call(pb.key == k and pb.get_child_count() == 12, "body: same snapshot, no rebuild")
 	pb.free()
 	var bad: Dictionary = (data as Dictionary).duplicate(true)
 	bad["player"]["bleed"] = [1, 2]

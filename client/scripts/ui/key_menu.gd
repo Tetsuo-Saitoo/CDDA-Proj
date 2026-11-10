@@ -1,8 +1,8 @@
 class_name KeyMenu
 extends PanelContainer
-## Key menu (F1): every action with two key slots. Click a slot, then press a key or mouse button (modifiers
-## count: Shift+E is its own key; a modifier alone binds when let go). Esc cancels, Backspace clears the
-## slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
+## Key menu (F1): every action with two key slots and a pad slot. Click a key slot, then press a key or mouse
+## button (modifiers count: Shift+E is its own key; a modifier alone binds when let go); click the pad slot,
+## then press a pad button or push a stick / trigger one way. Esc cancels, Backspace clears the slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
 ## kept on both and named in the status line. While open the menu takes every key, so nothing reaches the game.
 ## With add_hud_settings() it also has the HUD row (compass opacity slider), saved in user://hud.cfg.
 
@@ -10,10 +10,11 @@ signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
 
 const SLOTS := 2
+const PAD_SLOT := SLOTS   # slot index of the pad column (one pad binding shown; more show as +N)
 const WARN := Color(1.0, 0.75, 0.3)
 
 var save_path := InputActions.FILE
-var _buttons := {}            # action -> [Button, Button]
+var _buttons := {}            # action -> [key Button, key Button, pad Button]
 var _status: Label
 var _capture: Array = []      # [action, slot] while waiting for a key
 var _pending_mod := KEY_NONE  # a modifier pressed while capturing, bound alone if let go first
@@ -39,14 +40,15 @@ func _init() -> void:
 	_box = box
 	add_child(box)
 	var title := Label.new()
-	title.text = "Keys: click a slot, then press a key or mouse button.  Esc cancels  Backspace clears  F1 / Esc closes"
+	title.text = ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
+			+ "Esc cancels  Backspace clears  F1 / Esc closes")
 	box.add_child(title)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	var grid := GridContainer.new()
-	grid.columns = 1 + SLOTS
+	grid.columns = 2 + SLOTS
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(grid)
 	var group := ""
@@ -55,7 +57,7 @@ func _init() -> void:
 			group = a[1]
 			for i in grid.columns:
 				var h := Label.new()
-				h.text = group if i == 0 else ""
+				h.text = group if i == 0 else ("pad" if i == grid.columns - 1 else "")
 				h.add_theme_color_override("font_color", WARN)
 				grid.add_child(h)
 		var l := Label.new()
@@ -63,7 +65,7 @@ func _init() -> void:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		grid.add_child(l)
 		var row: Array[Button] = []
-		for s in SLOTS:
+		for s in SLOTS + 1:
 			var b := Button.new()
 			b.custom_minimum_size = Vector2(140, 0)
 			b.focus_mode = Control.FOCUS_NONE
@@ -148,14 +150,20 @@ func refresh() -> void:
 			b.text = InputActions.event_label(keys[s]) if s < keys.size() else "-"
 			if s == SLOTS - 1 and keys.size() > SLOTS:
 				b.text += " +%d" % (keys.size() - SLOTS)
+		var pads := InputActions.pad_slots(a)
+		var p: Button = _buttons[a][PAD_SLOT]
+		p.text = InputActions.event_label(pads[0]) if not pads.is_empty() else "-"
+		if pads.size() > 1:
+			p.text += " +%d" % (pads.size() - 1)
 
 
 func start_capture(action: StringName, slot: int) -> void:
 	_capture = [action, slot]
 	_pending_mod = KEY_NONE
 	refresh()
-	(_buttons[action][slot] as Button).text = "press a key..."
-	_status.text = "Press a key or mouse button for \"%s\". Esc cancels, Backspace clears." % InputActions.info(action)[2]
+	(_buttons[action][slot] as Button).text = "press a key..." if slot < SLOTS else "press a pad button..."
+	_status.text = "Press %s for \"%s\". Esc cancels, Backspace clears." % [
+			"a key or mouse button" if slot < SLOTS else "a pad button or push a stick", InputActions.info(action)[2]]
 
 
 func reset_all() -> void:
@@ -164,7 +172,8 @@ func reset_all() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if visible and (event is InputEventKey or (not _capture.is_empty() and event is InputEventMouseButton)):
+	if visible and (event is InputEventKey or (not _capture.is_empty() and (event is InputEventMouseButton
+			or InputActions.is_pad(event)))):
 		take(event)
 		get_viewport().set_input_as_handled()
 
@@ -177,8 +186,11 @@ func take(event: InputEvent) -> bool:
 			close()
 			return true
 		return false
+	var pad: bool = _capture[1] >= SLOTS
+	if InputActions.is_pad(event):   # pad presses only go in the pad column
+		return _bind(InputActions.pad_binding_from(event)) if pad else false
 	if k != null and not k.pressed:
-		if _pending_mod != KEY_NONE and k.physical_keycode == _pending_mod:
+		if not pad and _pending_mod != KEY_NONE and k.physical_keycode == _pending_mod:
 			return _bind(InputActions.binding_from(k))   # a modifier let go alone: bind it bare
 		return false
 	if k != null and k.echo:
@@ -199,8 +211,12 @@ func take(event: InputEvent) -> bool:
 				_status.text = "F1 opens this menu and can't be bound."
 				return true
 			KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META:
-				_pending_mod = k.physical_keycode
-				return true
+				if not pad:
+					_pending_mod = k.physical_keycode
+					return true
+	if pad:
+		_status.text = "Press a pad button or push a stick or trigger. Esc cancels, Backspace clears."
+		return true
 	return _bind(InputActions.binding_from(event))
 
 
@@ -214,9 +230,12 @@ func _bind(e: InputEvent) -> bool:
 func _set_slot(e: InputEvent) -> bool:
 	var action: StringName = _capture[0]
 	var slot: int = _capture[1]
+	var pad := slot >= SLOTS
+	if pad:
+		slot -= SLOTS
 	_capture = []
 	_pending_mod = KEY_NONE
-	var keys := InputActions.slots(action)
+	var keys := InputActions.pad_slots(action) if pad else InputActions.slots(action)
 	if e != null:
 		for i in range(keys.size() - 1, -1, -1):   # the same key twice in one action: keep one
 			if InputActions.event_text(keys[i]) == InputActions.event_text(e):
@@ -225,7 +244,10 @@ func _set_slot(e: InputEvent) -> bool:
 		keys.remove_at(slot)
 	if e != null:
 		keys.insert(mini(slot, keys.size()), e)
-	InputActions.set_slots(action, keys)
+	if pad:
+		InputActions.set_pad_slots(action, keys)
+	else:
+		InputActions.set_slots(action, keys)
 	var msg := "%s: %s" % [InputActions.info(action)[2], InputActions.event_label(e) if e != null else "cleared"]
 	if e != null:
 		var others := PackedStringArray()

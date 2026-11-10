@@ -9,14 +9,21 @@ extends XROrigin3D
 ## - vive (trackpad wands): left pad touched moves; right pad clicked: left / right half snap turns, up half
 ##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
 ## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
-## `save_path`). Hands (VrHand) show finger tracking when the runtime gives it, else fingers from the buttons.
+## `save_path`), with a laser pointer from the main hand. Hands (VrHand) show finger tracking when the runtime
+## gives it, else fingers from the buttons; they are the only hands: the player's body hides its own and
+## reaches its arms for their wrists (drive_body).
+## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs, it aims the
+## teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist.
+## Seated play: the origin stands `height` over the level's floor (floor_y), so the head rises by it; the menu
+## can set it from the head's height now ("Calibrate height").
 ## Grip near a door (Grabbable, outlined when in reach) grabs it; it swings with the hand (block L2).
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
 
 signal level_changed(z: int)
-## The right trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's actions.
+## The main-hand trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's
+## actions.
 signal stair_used(stair: Dictionary)
 
 const DEADZONE := 0.2
@@ -30,6 +37,9 @@ const VIGNETTE_OPEN := 0.3    # hole radius at VIGNETTE_DIST with strength 0 (ab
 const VIGNETTE_SHUT := 0.07   # ... and with strength 1
 const DEFAULTS := VrSettings.DEFAULTS
 const HAND_TRACKERS := [&"/user/hand_tracker/left", &"/user/hand_tracker/right"]
+const POINTER_MAX := 4.0      # metres: the menu pointer reaches this far
+const POINTER_LEN := 1.0      # the pointer's length when it misses the panel
+const POINTER_R := 0.0015     # its radius
 
 var world: WorldView
 var walk: VrWalk
@@ -57,11 +67,18 @@ var menu: VrMenu          # created on first open
 var left_hand: VrHand
 var right_hand: VrHand
 var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
+const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controller space
+var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
+var _glove_key := "-"     # body.key the hand colours were taken from
+var compass: VrCompass    # wrist rose / belt ring (place_compass)
 const GRAB_REACH := 0.12  # metres from a hand to a door leaf it can grip
 var grab_ok := Callable() # square -> bool: may a hand open the door there (live: next to the player)
 var grabs: Array = [null, null]   # Grabbable held by the left / right hand
 var near: Array = [null, null]    # Grabbable each hand could grip (outlined)
 var _lit: Array = []
+var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
+var pointer_dot: MeshInstance3D   # ... and its dot on the panel
+var _held := {}                   # the last show_held, shown again when the main hand changes
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -99,6 +116,24 @@ func _turn_ctrl() -> XRController3D:
 	return left if settings["swap_sticks"] else right
 
 
+## The controller of CDDA's main hand (setting main_hand): stairs, teleport arc, menu pointer, wielded item.
+func main_ctrl() -> XRController3D:
+	return left if settings["main_hand"] == "left" else right
+
+
+func off_ctrl() -> XRController3D:
+	return right if settings["main_hand"] == "left" else left
+
+
+func main_hand_model() -> VrHand:
+	return left_hand if settings["main_hand"] == "left" else right_hand
+
+
+## The off hand's model: the wrist compass sits on it.
+func off_hand_model() -> VrHand:
+	return right_hand if settings["main_hand"] == "left" else left_hand
+
+
 func _init(w: WorldView, s := {}) -> void:
 	world = w
 	walk = VrWalk.new(w)
@@ -127,6 +162,8 @@ func _build() -> void:
 	right_hand = VrHand.new(false)
 	add_child(left_hand)
 	add_child(right_hand)
+	compass = VrCompass.new()
+	add_child(compass)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -149,6 +186,30 @@ func _build() -> void:
 	_marker.top_level = true
 	_marker.visible = false
 	add_child(_marker)
+	var rod := CylinderMesh.new()   # radius 1, height 1 along Y: scaled to the ray (_segment)
+	rod.top_radius = 1.0
+	rod.bottom_radius = 1.0
+	rod.height = 1.0
+	rod.radial_segments = 6
+	rod.rings = 1
+	rod.material = _overlay_mat(Color(0.45, 0.8, 1.0, 0.8), 112)   # over the menu (110, 111)
+	pointer = MeshInstance3D.new()
+	pointer.name = "MenuPointer"
+	pointer.mesh = rod
+	var dot := SphereMesh.new()
+	dot.radius = 0.007
+	dot.height = 0.014
+	dot.radial_segments = 8
+	dot.rings = 4
+	dot.material = _overlay_mat(Color(1.0, 1.0, 1.0, 0.95), 113)
+	pointer_dot = MeshInstance3D.new()
+	pointer_dot.name = "MenuPointerDot"
+	pointer_dot.mesh = dot
+	for n: MeshInstance3D in [pointer, pointer_dot]:
+		n.top_level = true   # placed in world space
+		n.visible = false
+		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(n)
 	_update_visuals()
 
 
@@ -179,19 +240,66 @@ func _process(delta: float) -> void:
 		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
 				settings["turn"] == "smooth")
 	step(delta, inp)
+	update_pointer()
 	update_grabs()
 	pose_hands()
+	drive_body()
+	place_compass()
+
+
+## The compass on the off-hand wrist and/or the belt (settings `compass`); main.gd feeds its blips.
+func place_compass() -> void:
+	compass.mode = settings["compass"]
+	compass.heading_deg = Compass.heading_of(camera.global_basis)
+	compass.place(self)
+
+
+## One hand system: VrHand draws the hands (fingers from tracking or buttons), the player's body draws the arms,
+## which reach for the hands' wrists; the body's own hand boxes hide and the hands take the glove's colour.
+## Runs after main.gd placed the body under the head this frame.
+func drive_body() -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	body.show_hands = false
+	if body.key != _glove_key:
+		_glove_key = body.key
+		left_hand.set_colour(hand_colour(body.pieces, "hand_l"))
+		right_hand.set_colour(hand_colour(body.pieces, "hand_r"))
+	body.reach(wrist(0), wrist(1))
+
+
+## Hand i's wrist (global), or null when neither the hand nor its box shows (the arm hangs then).
+func wrist(i: int) -> Variant:
+	var h: VrHand = left_hand if i == 0 else right_hand
+	if h.visible and h.joints.size() == VrHand.JOINTS:
+		return global_transform * h.wrist()
+	if _boxes[i].visible:
+		var c: XRController3D = left if i == 0 else right
+		return c.global_transform * BOX_WRIST
+	return null
+
+
+## The outermost skin or worn piece on a hand part (PlayerBody.plan lists inner to outer), else bare skin.
+static func hand_colour(pieces: Array[Dictionary], part: String) -> Color:
+	var col := VrHand.SKIN
+	for p: Dictionary in pieces:
+		if p.get("part") == part and p.get("kind") in ["skin", "worn"]:
+			col = p["colour"]
+	return col
 
 
 ## Held doors follow their hand; free hands outline the door they could grip. `all_hands`: count hands the
 ## runtime doesn't track (tests).
 func update_grabs(all_hands := false) -> void:
+	for i in 2:   # entries are read untyped: a leaf can be freed under a hand (submap dropped, door gone)
+		if not is_instance_valid(grabs[i]):   # a freed object compares equal to null: test validity only
+			grabs[i] = null
+		if not is_instance_valid(near[i]):
+			near[i] = null
+	_lit = _lit.filter(func(x: Variant) -> bool: return is_instance_valid(x))
 	for i in 2:
 		var c: XRController3D = left if i == 0 else right
-		var g: Grabbable = grabs[i]
-		if g != null and not is_instance_valid(g):
-			grabs[i] = null
-			g = null
+		var g := grabs[i] as Grabbable
 		if g != null:
 			g.drag_hand(c.global_position)
 			near[i] = g
@@ -199,12 +307,12 @@ func update_grabs(all_hands := false) -> void:
 			near[i] = world.grabbable_near(c.global_position, GRAB_REACH, grab_ok)
 		else:
 			near[i] = null
-	for g: Grabbable in _lit:
-		if is_instance_valid(g) and g not in near:
-			g.set_highlight(false)
-	_lit = near.filter(func(g: Variant) -> bool: return g != null)
-	for g: Grabbable in _lit:
-		g.set_highlight(true)
+	for g: Variant in _lit:
+		if g not in near:
+			(g as Grabbable).set_highlight(false)
+	_lit = near.filter(func(g: Variant) -> bool: return is_instance_valid(g))
+	for g: Variant in _lit:
+		(g as Grabbable).set_highlight(true)
 
 
 func release(c: XRController3D, n: String) -> void:
@@ -247,7 +355,8 @@ static func _stick(c: XRController3D) -> Vector2:
 func step(delta: float, inp: Dictionary) -> void:
 	var moving := false
 	if menu_open():
-		menu.nav(inp.get("move", Vector2.ZERO))
+		if menu.nav(inp.get("move", Vector2.ZERO)):
+			_settings_changed()
 	elif world.snapshot != null:
 		var mv := _dead(inp.get("move", Vector2.ZERO))
 		if settings["move"] == "smooth" and mv != Vector2.ZERO:
@@ -307,13 +416,14 @@ func _aim(tv: Vector2) -> void:
 		aiming = true
 	if not aiming:
 		return
-	arc = walk.teleport_arc(right.global_position, -right.global_basis.z, z)
+	var c := _turn_ctrl()   # the arc leaves the hand whose stick aims it
+	arc = walk.teleport_arc(c.global_position, -c.global_basis.z, z)
 	if tv.y < AIM_OFF:
 		aiming = false
 		if arc.get("valid", false):
 			teleport_to(arc["pos"])
 		else:
-			_buzz(right)
+			_buzz(c)
 		arc = {}
 
 
@@ -362,9 +472,39 @@ func use_pointed_stair(c: XRController3D) -> Dictionary:
 
 func go_to_square(sq: Vector3i) -> void:
 	z = sq.z
-	global_position.y = VrWalk.floor_y(z)
+	place_height()
 	teleport_to(world.coords.ms_center_to_world(sq))
 	level_changed.emit(z)
+
+
+## The floor of the rig's level (world y): where the body stands. The origin is `height` above it.
+func floor_y() -> float:
+	return VrWalk.floor_y(z)
+
+
+## Stands the origin `height` over the level's floor: a seated player (head 0.4 m lower) with height 0.4
+## sees from standing eye height. Every vertical placement of the rig goes through here.
+func place_height() -> void:
+	global_position.y = floor_y() + float(settings["height"])
+
+
+## The height setting that puts a head now `head_y` over the tracking floor at standing eye height
+## (FirstPersonCamera.EYE_H), snapped to the menu's step and clamped; null for a bad reading.
+static func calibrated_height(head_y: float) -> Variant:
+	if not is_finite(head_y):
+		return null
+	var spec: Array = VrSettings.SPEC["height"]
+	return VrSettings.clean("height", snappedf(FirstPersonCamera.EYE_H - head_y, spec[2]))
+
+
+## The menu's "Calibrate height": the head's height now becomes standing eye height.
+func calibrate_height() -> void:
+	var h: Variant = calibrated_height(camera.position.y)
+	if h == null:
+		_buzz(main_ctrl())
+		return
+	settings["height"] = h
+	_settings_changed()
 
 
 ## Stands on a free square next to the player (CDDA square p), facing them.
@@ -389,14 +529,88 @@ func toggle_menu() -> void:
 		menu = VrMenu.new(settings)
 		add_child(menu)
 		menu.visible = false
+		menu.action.connect(_menu_action)
 	menu.visible = not menu.visible
 	aiming = false
 	arc = {}
 	if menu.visible:
 		menu.place(camera.transform)
 		menu.refresh()
-	elif not save_path.is_empty() and not VrSettings.save_file(settings, save_path):
-		push_warning("VR settings: couldn't save " + save_path)
+	else:
+		update_pointer()
+		if not save_path.is_empty() and not VrSettings.save_file(settings, save_path):
+			push_warning("VR settings: couldn't save " + save_path)
+
+
+func _menu_action(key: String) -> void:
+	if key == "calibrate":
+		calibrate_height()
+
+
+## A menu change takes effect now: the height, and the held items when the main hand changed sides.
+func _settings_changed() -> void:
+	place_height()
+	if left_held != null:
+		show_held(_held)
+	if menu != null:
+		menu.refresh()
+
+
+## Where controller c's ray meets the open menu's plane, in menu space (z = 0), or null (menu closed, pointing
+## away, past POINTER_MAX, or from behind the panel).
+func pointer_at(c: XRController3D) -> Variant:
+	if not menu_open() or not is_inside_tree():
+		return null
+	return ray_on_plane(menu.global_transform, c.global_position, -c.global_basis.z, POINTER_MAX)
+
+
+## A ray (from, dir) on the plane z = 0 of `plane`, seen from its +Z side: the point in plane space, or null.
+static func ray_on_plane(plane: Transform3D, from: Vector3, dir: Vector3, max_len: float) -> Variant:
+	var inv := plane.affine_inverse()
+	var o := inv * from
+	var d := (inv.basis * dir).normalized()
+	if not o.is_finite() or not d.is_finite() or o.z <= 0.0 or d.z > -0.001:
+		return null
+	var t := -o.z / d.z
+	if t > max_len:
+		return null
+	var p := o + d * t
+	p.z = 0.0
+	return p
+
+
+## The settings menu's laser pointer from the main hand: a ray to the panel with a dot where it meets it (a
+## short ray when it misses), and the row under the dot picked. Hidden when the menu is closed. `all_hands`:
+## draw it for a controller the runtime doesn't track (tests).
+func update_pointer(all_hands := false) -> void:
+	var c := main_ctrl()
+	var on := menu_open() and is_inside_tree() and (all_hands or c.get_is_active())
+	pointer.visible = on
+	pointer_dot.visible = false
+	if not on:
+		if menu != null:
+			menu.hover(null)
+		return
+	var p: Variant = pointer_at(c)
+	var hit := p is Vector3 and VrMenu.on_panel(p)
+	menu.hover(p if hit else null)
+	var from := c.global_position
+	var to: Vector3 = menu.global_transform * (p as Vector3) if hit else from - c.global_basis.z.normalized() * POINTER_LEN
+	pointer.global_transform = _segment(from, to, POINTER_R)
+	if hit:
+		pointer_dot.global_position = to
+		pointer_dot.visible = true
+
+
+## A unit cylinder (radius 1, height 1 along Y) stretched from a to b with radius r.
+static func _segment(a: Vector3, b: Vector3, r: float) -> Transform3D:
+	var d := b - a
+	var l := d.length()
+	if l < 0.0001:
+		return Transform3D(Basis.from_scale(Vector3.ZERO), a)
+	var y := d / l
+	var x := y.cross(Vector3.UP if absf(y.y) < 0.9 else Vector3.RIGHT).normalized()
+	return Transform3D(Basis(x * r, y * l, x.cross(y) * r), (a + b) * 0.5)
 
 
 ## A controller button (signal, or tests). `pad`: the Vive trackpad position, read from the controller when
@@ -407,11 +621,16 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return
 	if menu_open():
 		if n == "trigger_click":
-			menu.click()
+			# The main hand's trigger presses where its pointer meets the panel; off the panel (or the other
+			# trigger) it changes the row the stick picked.
+			var p: Variant = pointer_at(c) if c == main_ctrl() else null
+			var changed := menu.click_at(p) if p is Vector3 and VrMenu.on_panel(p) else menu.click()
+			if changed:
+				_settings_changed()
 		return
 	if world.snapshot == null:
 		return
-	if c == right and n == "trigger_click":
+	if c == main_ctrl() and n == "trigger_click":
 		use_pointed_stair(c)
 		return
 	var hand := 0 if c == left else 1
@@ -446,8 +665,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 				change_level(1 if v.y >= 0.0 else -1)
 
 
-## Live game: what the hands hold (CddaSim.get_held) on the controllers, left = off hand, right = main hand.
-## A buzz in both hands when a fill ends.
+## Live game: what the hands hold (CddaSim.get_held) on the controllers: CDDA's main hand on the main
+## controller (right unless left-handed), the off hand on the other. A buzz in both hands when a fill ends.
 func show_held(held: Dictionary) -> void:
 	if left == null or right == null:
 		return
@@ -456,9 +675,12 @@ func show_held(held: Dictionary) -> void:
 		left.add_child(left_held)
 		right_held = VrHeld.new("Right")
 		right.add_child(right_held)
+	_held = held
+	var main_held := left_held if main_ctrl() == left else right_held
+	var off_held := right_held if main_held == left_held else left_held
 	var filling := str(held.get("activity", "")) == HandsPanel.FILL_ACTIVITY
-	left_held.show_hand(held.get("off") if held.get("off") is Dictionary else {}, filling)
-	right_held.show_hand(held.get("main") if held.get("main") is Dictionary else {}, filling)
+	off_held.show_hand(held.get("off") if held.get("off") is Dictionary else {}, filling)
+	main_held.show_hand(held.get("main") if held.get("main") is Dictionary else {}, filling)
 	if _was_filling and not filling:
 		_buzz(left)
 		_buzz(right)
