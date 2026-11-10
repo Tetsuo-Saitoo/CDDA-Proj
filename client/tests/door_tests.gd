@@ -253,13 +253,24 @@ func _test_asks() -> void:
 	var p := Vector3i(10, 10, 0)
 	_check.call(ctl.want(p + Vector3i(3, 0, 0), true, p, 0) == "" and ctl.ask.is_empty(), "doors: no ask for a far door")
 	_check.call(ctl.want(p + Vector3i(1, -1, 0), true, p, 1000) == "open", "doors: open queued for a door next to you")
-	var req := {"id": 7, "kind": "direction", "text": "Open where?"}
+	var req := {"id": 7, "kind": "direction", "text": "Open where?", "origin": p}
 	_check.call(GrabController.answer_for(ctl.ask, req, 2000) == {"id": 7, "pos": Vector3i(1, -1, 0)},
 			"doors: CDDA's 'Open where?' gets the door's direction")
-	_check.call(GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Close where?"}, 2000).is_empty()
-			and GrabController.answer_for(ctl.ask, {"id": 7, "kind": "menu", "text": "Open where?"}, 2000).is_empty()
+	var moved := {"id": 7, "kind": "direction", "text": "Open where?", "origin": p + Vector3i(1, 0, 0)}
+	_check.call(GrabController.answer_for(ctl.ask, moved, 2000) == {"id": 7, "pos": Vector3i(0, -1, 0)},
+			"doors: the answer follows where the prompt says you stand")
+	_check.call(GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Open where?",
+			"origin": p + Vector3i(-1, 0, 0)}, 2000).is_empty()
+			and GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Open where?",
+			"origin": p + Vector3i(1, -1, 0)}, 2000).is_empty()
+			and GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Open where?",
+			"origin": p + Vector3i(0, 0, 1)}, 2000).is_empty()
+			and GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Open where?"}, 2000).is_empty(),
+			"doors: no answer when the door isn't next to the prompt's origin, or there is none")
+	_check.call(GrabController.answer_for(ctl.ask, {"id": 7, "kind": "direction", "text": "Close where?", "origin": p}, 2000).is_empty()
+			and GrabController.answer_for(ctl.ask, {"id": 7, "kind": "menu", "text": "Open where?", "origin": p}, 2000).is_empty()
 			and GrabController.answer_for(ctl.ask, req, 1000 + GrabController.ASK_MS + 1).is_empty()
-			and GrabController.answer_for(ctl.ask, {"id": "7", "kind": "direction", "text": "Open where?"}, 2000).is_empty(),
+			and GrabController.answer_for(ctl.ask, {"id": "7", "kind": "direction", "text": "Open where?", "origin": p}, 2000).is_empty(),
 			"doors: other prompts, late ones and bad ids are left alone")
 	ctl.world.free()
 	ctl.free()

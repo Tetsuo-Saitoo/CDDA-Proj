@@ -567,6 +567,10 @@ func _test_chargen() -> void:
 	_check.call(not w.pick("Traits", 99), "chargen widget: bad index ignored")
 	w.change_stat("int", 1)
 	_check.call(w.model.stats["int"] == 9, "chargen widget: stat button")
+	w.model.char_name = "[img]res://x.tres[/img][font=x]"
+	w.refresh_points()
+	_check.call(not w._summary.text.contains("[img]") and not w._summary.text.contains("[font")
+			and w._summary.text.contains("[lb]img]"), "chargen widget: names are text, not markup")
 	var e := InputEventKey.new()
 	e.keycode = KEY_ENTER
 	e.pressed = true
@@ -607,6 +611,19 @@ func _test_main_menu() -> void:
 	m.show_page("new")
 	m._world_edit.text = "World"
 	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
+	m._world_edit.text = "wORLD"
+	_check.call(not m.start_new() and got.is_empty(), "menu: nor one whose name differs only in case")
+	var many := PackedStringArray()
+	for i in MainMenu.MAX_LISTED + 5:
+		many.append("w%d" % i)
+	m.setup(many, func(_w: String) -> PackedStringArray: return PackedStringArray())
+	m.show_page("new")
+	m._world_edit.text = "W%d" % (MainMenu.MAX_LISTED + 2)
+	_check.call(m.worlds.size() == MainMenu.MAX_LISTED and not m.start_new() and got.is_empty(),
+			"menu: nor one past the listed worlds")
+	m.setup(PackedStringArray(["World", "bad/name", "Other"]),
+			func(w: String) -> PackedStringArray: return PackedStringArray(["Ann"]) if w == "Other" else PackedStringArray())
+	m.show_page("new")
 	m._world_edit.text = "Fresh"
 	_check.call(m.start_new() and got[-1] == ["new", "Fresh", true, true, true], "menu: new world with chargen and setup")
 	m.show_page("load")
@@ -676,6 +693,10 @@ func _test_world_setup() -> void:
 	_check.call(wd.set_option("I", 3) and not wd.set_option("I", 99), "world widget: setting")
 	var row := wd._mod_ids.find("addon")
 	_check.call(wd.pick_mod(row) and wd.model.picked_mods.has("base"), "world widget: tick a mod")
+	wd.model.mods["base"]["name"] = "[img]res://x.tres[/img]"
+	wd._show_mod(row)
+	_check.call(not wd._mod_detail.text.contains("[img]") and wd._mod_detail.text.contains("Needs: [lb]img]"),
+			"world widget: names in Needs are text, not markup")
 	var e := InputEventKey.new()
 	e.keycode = KEY_ENTER
 	e.pressed = true

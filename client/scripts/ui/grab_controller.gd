@@ -104,22 +104,34 @@ func release() -> void:
 
 
 ## A leaf crossed its threshold in a live game: the main-loop action to queue ("" when the door isn't next to
-## the player), remembering the prompt that will follow.
+## the player), remembering the prompt that will follow (the door's own square: the answer is worked out from
+## where the prompt says the player stands then).
 func want(square: Vector3i, open: bool, player: Vector3i, now: int) -> String:
-	var d := square - player
-	if d.z != 0 or absi(d.x) > 1 or absi(d.y) > 1:
+	if not adjacent(square - player):
 		return ""
-	ask = {"word": "open" if open else "close", "pos": Vector3i(d.x, d.y, 0), "until": now + ASK_MS}
+	ask = {"word": "open" if open else "close", "square": square, "until": now + ASK_MS}
 	return "open" if open else "close"
 
 
-## The answer to CDDA's direction prompt when it is the one `a` waits for, else {}.
+## The answer to CDDA's direction prompt when it is the one `a` waits for, else {}: the door's square relative
+## to the prompt's `origin`, and only when that is one of the eight squares around it on the same level.
 static func answer_for(a: Dictionary, req: Dictionary, now: int) -> Dictionary:
 	if a.is_empty() or now > int(a["until"]) or req.get("kind", "") != "direction" or not req.get("id") is int:
 		return {}
 	if not str(req.get("text", "")).to_lower().contains(a["word"]):
 		return {}
-	return {"id": req["id"], "pos": a["pos"]}
+	var o: Variant = req.get("origin")
+	if not o is Vector3i or not a.get("square") is Vector3i:
+		return {}
+	var d: Vector3i = a["square"] - (o as Vector3i)
+	if not adjacent(d):
+		return {}
+	return {"id": req["id"], "pos": d}
+
+
+## One of the eight squares around, same level.
+static func adjacent(d: Vector3i) -> bool:
+	return d.z == 0 and absi(d.x) <= 1 and absi(d.y) <= 1 and d != Vector3i.ZERO
 
 
 ## The pointer: a dot while the mouse looks around, an open hand over something to grab, a fist while dragging.

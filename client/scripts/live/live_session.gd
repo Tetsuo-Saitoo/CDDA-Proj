@@ -35,6 +35,8 @@ var _held_seq := 0
 ## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
 var _snap_task := -1
 var _snap_job: SnapJob
+## () -> bool: the world is still putting the last snapshot on screen (WorldView.busy); no new fetch meanwhile.
+var busy := Callable()
 
 
 static func available() -> bool:
@@ -211,7 +213,9 @@ func _poll_snapshot() -> bool:
 		WorkerThreadPool.wait_for_task_completion(_snap_task)
 		_snap_task = -1
 		var snap := _snap_job.snap
-		snapshot_seq = _snap_job.seq
+		# the fetch may have got a newer snapshot than the seq read before it: count that one as shown, so it
+		# isn't fetched and shown a second time
+		snapshot_seq = maxi(_snap_job.seq, snap.seq) if snap.is_valid() else _snap_job.seq
 		if snap.is_valid() and snap.ids_generation != ids_generation:
 			_use_id_tables(snap.ids_generation, _snap_job.tables)
 		if snap.is_valid():
@@ -222,6 +226,8 @@ func _poll_snapshot() -> bool:
 	var seq: int = _sim.get_snapshot_seq()
 	if seq == snapshot_seq:
 		return true
+	if busy.is_valid() and busy.call():
+		return false   # the world still shows the last one: fetch the newest when it is done, not each in between
 	_snap_job = SnapJob.new(_sim, seq, ids_generation)
 	_snap_task = WorkerThreadPool.add_task(_snap_job.run, false, "snapshot parse")
 	return false
