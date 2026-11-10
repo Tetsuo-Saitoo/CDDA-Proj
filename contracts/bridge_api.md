@@ -45,6 +45,22 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 
 Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the snapshot.
 
+## Test range (K7, fork `fp3d/test_range.h`)
+
+A generated world with every weapon, item, vehicle, monster, terrain and furniture laid out in zones 8 OMT apart, monsters frozen, and a hub. CDDA still decides every outcome. The operations below are queued like cheats and run right before the main loop's next request (also while paused); each call returns the operation's id (1, 2, ...), or 0 when refused before queueing: no game running, cheats not allowed, 32 already waiting, or a malformed argument. The game then refuses anything outside a range game, in the middle of an action, or once the character is dead; the outcome comes back in `get_range_info().results`.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `start_test_range(data_dir, user_dir)` | `String` | Like `start()`, in FP3D's own throwaway world `fp3d-range` (rebuilt every time; a world of that name FP3D didn't make is left alone and `fp3d-range-2`, ... is used). Fixed seed and start (spring, day 2, 10:00), a fixed character in the hub, AI frozen, achievements off, and `set_cheats_allowed(true)`. Once per process. |
+| `range_spawn_item(itype, count, pos)` | `int` | `count` (1..1000) copies or charges of item type `itype` (the id tables' itype index) on square `pos` (absolute, in the reality bubble). |
+| `range_spawn_monster(id, pos)` | `int` | A monster by CDDA id (at most 64 of `a-z A-Z 0-9 _ -`) on a passable, empty square `pos` in the bubble. |
+| `range_teleport(zone)` | `int` | Moves the character to zone index `zone` (`get_range_info().zones`), building it the first time. |
+| `range_set_time(minute)` | `int` | Jumps forward to the next `minute` of the day (0..1439). |
+| `range_advance(minutes)` | `int` | Waits `minutes` (1..10080) as real turns (CDDA's wait; interrupted like any wait). Refused while an activity runs or while driving a moving vehicle. Answer the main loop's next request with `pause` so the wait isn't replaced. |
+| `range_set_ai_frozen(on)` | `int` | Monsters and NPCs skip their turns (they still take damage and die). Not kept in saves. |
+| `range_heal()` | `int` | Full hit points, no pain or bad effects, fed, watered, rested, full stamina. |
+| `get_range_info()` | `Dictionary` | `seq` (bumps when anything below but `results` changes), `range` (a range game), `ai_frozen`, `zones` ([{`id`, `name`, `kind`, `built`}], hub first), `zone` (index the character is in, -1 none), `results` ([{`id`, `error`}], the last 16 operations, oldest first; `error` "" = done). |
+
 ## Behaviour to know
 
 - Recipe queries (L9, `cdda/src/fp3d/cooking.h`): the sim answers them at the main loop's request (right after

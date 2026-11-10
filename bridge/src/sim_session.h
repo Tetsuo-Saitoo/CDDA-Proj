@@ -35,6 +35,9 @@ std::string start( const std::string &data_dir, const std::string &user_dir, con
 // for the world's settings and mods with a `world_setup` request first. Cancelling it ends the session (failed).
 std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                             bool fresh_world, bool chargen, bool world_setup = false );
+// The test range (fork fp3d/test_range.h): a new game in FP3D's own throwaway world `fp3d-range` (or the next free
+// `fp3d-range-N` when someone else's world has that name), rebuilt on every start, with cheats allowed.
+std::string start_test_range( const std::string &data_dir, const std::string &user_dir );
 // Shuts the bridge down and waits for the game thread. While booting that wait lasts until loading finishes.
 void stop();
 state get_state();

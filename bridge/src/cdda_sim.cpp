@@ -22,6 +22,7 @@
 #include "fp3d/cheats.h"
 #include "fp3d/events.h"
 #include "fp3d/held.h"
+#include "fp3d/test_range.h"
 #include "sim_session.h"
 
 using godot::Array;
@@ -198,6 +199,15 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "set_cheats_allowed", "on" ), &CddaSim::set_cheats_allowed );
     ClassDB::bind_method( D_METHOD( "get_cheats" ), &CddaSim::get_cheats );
     ClassDB::bind_method( D_METHOD( "give_test_kit" ), &CddaSim::give_test_kit );
+    ClassDB::bind_method( D_METHOD( "start_test_range", "data_dir", "user_dir" ), &CddaSim::start_test_range );
+    ClassDB::bind_method( D_METHOD( "range_spawn_item", "itype", "count", "pos" ), &CddaSim::range_spawn_item );
+    ClassDB::bind_method( D_METHOD( "range_spawn_monster", "id", "pos" ), &CddaSim::range_spawn_monster );
+    ClassDB::bind_method( D_METHOD( "range_teleport", "zone" ), &CddaSim::range_teleport );
+    ClassDB::bind_method( D_METHOD( "range_set_time", "minute" ), &CddaSim::range_set_time );
+    ClassDB::bind_method( D_METHOD( "range_advance", "minutes" ), &CddaSim::range_advance );
+    ClassDB::bind_method( D_METHOD( "range_set_ai_frozen", "on" ), &CddaSim::range_set_ai_frozen );
+    ClassDB::bind_method( D_METHOD( "range_heal" ), &CddaSim::range_heal );
+    ClassDB::bind_method( D_METHOD( "get_range_info" ), &CddaSim::get_range_info );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
@@ -682,6 +692,125 @@ Dictionary CddaSim::get_cheats() const
 bool CddaSim::give_test_kit()
 {
     return fp3d_session::get_state() == fp3d_session::state::running && fp3d::request_test_kit();
+}
+
+String CddaSim::start_test_range( const String &data_dir, const String &user_dir )
+{
+    try {
+        return to_godot( fp3d_session::start_test_range( to_std( data_dir ), to_std( user_dir ) ) );
+    } catch( const std::exception &e ) {
+        return to_godot( std::string( "start failed: " ) + e.what() );
+    }
+}
+
+namespace
+{
+// The operation's id, 0 when refused (fp3d::request_range_op checks the rest; the game checks the operation).
+int64_t queue_range( const fp3d::range_op &op )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    return static_cast<int64_t>( std::min<uint64_t>( fp3d::request_range_op( op ), INT64_MAX ) );
+}
+
+fp3d::ui_point range_square( const Vector3i &pos )
+{
+    return fp3d::ui_point{ pos.x, pos.y, pos.z };
+}
+} // namespace
+
+int64_t CddaSim::range_spawn_item( int64_t itype, int64_t count, const Vector3i &pos )
+{
+    if( itype <= 0 || itype > UINT32_MAX ) {
+        return 0;
+    }
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::spawn_item;
+    op.itype = static_cast<uint32_t>( itype );
+    op.number = count;
+    op.square = range_square( pos );
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_spawn_monster( const String &id, const Vector3i &pos )
+{
+    if( id.is_empty() || id.length() > static_cast<int64_t>( fp3d::max_monster_id ) ) {
+        return 0;
+    }
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::spawn_monster;
+    op.monster = to_std( id );
+    op.square = range_square( pos );
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_teleport( int64_t zone )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::teleport;
+    op.number = zone;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_set_time( int64_t minute )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::time_of_day;
+    op.number = minute;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_advance( int64_t minutes )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::advance;
+    op.number = minutes;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_set_ai_frozen( bool on )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::ai_frozen;
+    op.number = on ? 1 : 0;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_heal()
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::heal;
+    return queue_range( op );
+}
+
+Dictionary CddaSim::get_range_info() const
+{
+    const fp3d::range_info v = fp3d::latest_range_info();
+    Array zones;
+    for( const fp3d::range_zone_info &z : v.zones ) {
+        Dictionary d;
+        d["id"] = to_godot( z.id );
+        d["name"] = to_godot( z.name );
+        d["kind"] = to_godot( z.kind );
+        d["built"] = z.built;
+        zones.push_back( d );
+    }
+    Array results;
+    for( const fp3d::range_op_result &r : fp3d::latest_range_results() ) {
+        Dictionary d;
+        d["id"] = static_cast<int64_t>( std::min<uint64_t>( r.id, INT64_MAX ) );
+        d["error"] = to_godot( r.error );
+        results.push_back( d );
+    }
+    Dictionary d;
+    d["seq"] = static_cast<int64_t>( std::min<uint64_t>( v.seq, INT64_MAX ) );
+    d["range"] = v.range;
+    d["ai_frozen"] = v.ai_frozen;
+    d["zones"] = zones;
+    d["zone"] = v.zone;
+    d["results"] = results;
+    return d;
 }
 
 Dictionary CddaSim::get_save_status() const

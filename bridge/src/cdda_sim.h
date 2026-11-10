@@ -64,6 +64,16 @@ class CddaSim : public godot::RefCounted
         void set_cheats_allowed( bool on );
         godot::Dictionary get_cheats() const;
         bool give_test_kit();
+        // The test range (contracts/bridge_api.md "Test range").
+        godot::String start_test_range( const godot::String &data_dir, const godot::String &user_dir );
+        int64_t range_spawn_item( int64_t itype, int64_t count, const godot::Vector3i &pos );
+        int64_t range_spawn_monster( const godot::String &id, const godot::Vector3i &pos );
+        int64_t range_teleport( int64_t zone );
+        int64_t range_set_time( int64_t minute );
+        int64_t range_advance( int64_t minutes );
+        int64_t range_set_ai_frozen( bool on );
+        int64_t range_heal();
+        godot::Dictionary get_range_info() const;
 
         int64_t match_recipes( const godot::Dictionary &container );
         godot::String take_query_result( int64_t id );

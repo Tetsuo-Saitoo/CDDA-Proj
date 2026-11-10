@@ -1,7 +1,7 @@
 #!/bin/sh
 # Starts CDDA-3D from its AppImage (tools/build/appimage.sh copies this file in as AppRun).
 #   CDDA-3D-x86_64.AppImage [--vr] [--town] [game options, docs/BUILD.md]
-# The live CDDA game on the desktop by default: it continues the last one (--new starts over; F5 and closing the
+# The live CDDA game on the desktop by default, from CDDA's main menu (new game or a save; F5 and closing the
 # window save); --town shows the mock town instead (no CDDA game).
 # --vr: the VR view through the system's OpenXR runtime. Like tools/vr/play_vr.sh, SteamVR's runtime is preferred
 # when SteamVR is installed in Steam's usual places and XR_RUNTIME_JSON isn't set, and SteamVR is started first.

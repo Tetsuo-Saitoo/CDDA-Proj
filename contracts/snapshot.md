@@ -105,7 +105,11 @@ struct player_view {
     std::vector<uint8> bleed, bandaged, disinfected, bite, infected;   // per body part, effect intensity (0 none)
     std::vector<worn_view> worn;             // inner to outer (CDDA's order), visible items only; cap 64
     std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
+    optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
 };
+struct gun_view { uint32 type /* itype */; int16 dirt /* CDDA's fouling 0..10000; JSON: left out for a NON_FOULING gun */;
+                  int32 rounds /* loaded rounds; JSON: left out for a gun that takes no ammo */;
+                  std::vector<string> faults /* fault ids it has (jams: gun_mechanical_simple ones); cap 16, ids up to 64 bytes */; };
 struct worn_view { uint32 type /* itype */; uint8 layer /* highest layer_level */; uint8 damage /* damage_level 0..5 */;
                    uint8 degradation /* 0..255 of max */; std::vector<uint32> covers /* body_part indices */; };
 struct carried_view { uint64 uid; uint32 type; uint64 parent; int16 pocket; uint8 flags; };   // parent = container's uid (0 on the body); pocket = index into the parent's container pockets (as queue_item_action takes it), -1 on the body; flags: 1 worn, 2 wielded, 4 held in the off hand

@@ -56,7 +56,7 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   that fires on a later turn drops it).
 - With `fly`, each projectile (each round of a burst; a shotgun shell is one, its pellets spread around it) sends
   one `shot` request with the error CDDA rolled (at most 1800 arcmin); the client turns its sight line by it,
-  flies that bullet against the figures it already shows (no new snapshot comes with a `shot` request) and
+  flies that bullet against the figures it already shows (a `shot` request comes with no new snapshot, held update or range operations: the next other request brings them) and
   answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A cancel, a
   missing `shot` or one that fails the checks leaves that projectile to CDDA's own path (the FIRE answer's
   outcome is not used with `fly`).

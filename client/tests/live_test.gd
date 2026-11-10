@@ -84,8 +84,19 @@ func _run() -> void:
 	_check(snap.is_valid(), "live snapshot passes the client's checks (%s)" % snap.error)
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
-	_check(snap.carried.size() >= Snapshot.CARRIED_STRIDE, "carried items with handles (%d)" %
-			(snap.carried.size() / Snapshot.CARRIED_STRIDE))
+	# A random character can start with nothing in container pockets, so the test kit (a worn giant backpack with
+	# items in it, given at the next main-loop request, no turn passes) makes sure something is carried. Builds
+	# with the cheat opt-in (fp3d-bridge f8326cc) refuse kits until the client allows cheats; the first kit also
+	# turns this game's achievements off.
+	if _sim.has_method("set_cheats_allowed"):
+		_sim.set_cheats_allowed(true)
+	_check(_sim.give_test_kit(), "test kit requested")
+	var kit_req := await _main_loop_request(0, TURN_TIMEOUT_MS, int(req["id"]))
+	var kits: int = int((_sim.get_cheats() as Dictionary).get("kits_given", 0))
+	_check(not kit_req.is_empty() and kits >= 1, "test kit given (%d)" % kits)
+	var kit_snap := Snapshot.parse_text(_sim.get_snapshot_json(1, 1))
+	_check(kit_snap.is_valid() and kit_snap.carried.size() >= Snapshot.CARRIED_STRIDE,
+			"carried items with handles (%d)" % (kit_snap.carried.size() / Snapshot.CARRIED_STRIDE))
 	var ids: Variant = JSON.parse_string(_sim.get_id_tables_json())
 	_check(ids is Dictionary and (ids["ter"] as Array).size() > 1000, "id tables parse, >1000 terrain")
 	var clock: Dictionary = _sim.get_clock()
@@ -216,9 +227,10 @@ func _touch(path: String) -> void:
 		f.close()
 
 
-## Waits for a main-loop (timed) request with a turn above `after_turn`, answering anything else the way a
-## player would get out of it (YES to confirmations). {} on timeout or if the game stops.
-func _main_loop_request(after_turn: int, timeout_ms: int) -> Dictionary:
+## Waits for a main-loop (timed) request with a turn above `after_turn` (0: any turn) and an id other than
+## `after_id`, answering anything else the way a player would get out of it (YES to confirmations). {} on timeout
+## or if the game stops.
+func _main_loop_request(after_turn: int, timeout_ms: int, after_id := -1) -> Dictionary:
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	while Time.get_ticks_msec() < deadline:
 		await create_timer(0.05).timeout
@@ -230,7 +242,7 @@ func _main_loop_request(after_turn: int, timeout_ms: int) -> Dictionary:
 		if req.is_empty():
 			continue
 		if req["timed"]:
-			if int(req["turn"]) > after_turn or after_turn == 0:
+			if (int(req["turn"]) > after_turn or after_turn == 0) and int(req["id"]) != after_id:
 				return req
 			continue
 		var a := {"id": req["id"], "cancel": true}
