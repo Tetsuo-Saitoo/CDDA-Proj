@@ -768,6 +768,7 @@ func _setup_hud() -> void:
 	layer.add_child(hands_panel)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
+	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:
