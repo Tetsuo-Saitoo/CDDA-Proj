@@ -1,5 +1,9 @@
 # WORKLOG
 
+- 2026-11-10 — CI (A3): `.github/workflows/` ci.yml (Linux build, fork tests, client tests, live test, perf budget), tsan.yml (weekly/by hand), windows.yml (by hand); steps in tools/build/ci_linux.sh, Godot fetched by checksum (ci_godot.sh); docs/BUILD.md step 9. Nothing has run on GitHub yet (Actions off), Windows workflow untried.
+- 2026-11-10 — Perf budget: `snapshot_bench.gd` checks parse, apply, async step, frame time (main scene, 300 frames) and live turn time against budgets, fails over budget; `--budget-scale`, `--no-budget`. Budgets provisional (measured on a loaded machine).
+- 2026-11-10 — Fork (fp3d-qa): upstream's GitHub workflows dropped; `src/chkjson` added (upstream's .gitignore kept it out, Linux configure failed); version.h in git worktrees no longer empty (version.cmake asks git, falls back to "0.I-fp3d").
+- 2026-11-10 — AppImage build refuses symlinks in shipped folders and the AppDir.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).
 - 2026-11-09 — Taller buildings tried: OVERMAP_HEIGHT 30 builds and passes sim/client tests (region default_oter padded, sim-test submap count fixed); +35-50 % turn time, ~+4 % memory, old saves would break; PZ-style plan in docs/TALL_BUILDINGS.md (the z 30 fork change itself was not kept).
 - 2026-11-09 — Stairs look: a connected block of stair (or ramp) tiles draws as one flight in one direction, its height split along its length (was a full flight per tile, each its own way); `TerrainMesher.stair_flight`, fp_tests check it; not yet looked at in the game.
