@@ -28,6 +28,9 @@ var _height: SpinBox
 var _summary: RichTextLabel
 var _templates: OptionButton
 var _save_edit: LineEdit
+var _delete_button: Button
+## The template the Delete button asks about; a second press deletes it.
+var _delete_armed := ""
 var _rng := RandomNumberGenerator.new()
 
 
@@ -56,7 +59,10 @@ func setup(req: Dictionary) -> void:
 		for t in model.templates:
 			_templates.add_item(t)
 		trow.add_child(_templates)
-		add_button("Start from template", func() -> void: start_template(_templates.selected), trow)
+		add_button("Start", func() -> void: start_template(_templates.selected), trow)
+		add_button("Edit", func() -> void: edit_template(_templates.selected), trow)
+		_delete_button = add_button("Delete", func() -> void: delete_template(_templates.selected), trow)
+		_templates.item_selected.connect(func(_i: int) -> void: _arm_delete(""))
 	tabs = TabContainer.new()
 	tabs.custom_minimum_size.y = PANE_HEIGHT
 	tabs.focus_mode = Control.FOCUS_NONE
@@ -289,6 +295,46 @@ func start_template(i: int) -> bool:
 		return false
 	send({"text": text})
 	return true
+
+
+## Fills the tabs from template number `i` for editing (nothing is sent); true if it loaded.
+func edit_template(i: int) -> bool:
+	if i < 0 or i >= model.templates.size():
+		return false
+	var t: String = model.templates[i]
+	var skipped := model.load_template_choices(t)
+	if skipped.has("the whole template") or skipped.has("scenario"):
+		status_label.text = "Can't open %s: %s" % [t, ", ".join(skipped)]
+		return false
+	refresh_all()
+	status_label.text = ("Opened %s." % t) if skipped.is_empty() else (
+			"Opened %s, but these didn't apply: %s" % [t, ", ".join(skipped)])
+	if _save_edit != null:
+		_save_edit.text = t
+		model.save_template = t
+		refresh_points()
+	return true
+
+
+## First press asks, second press on the same template deletes it (the sim then sends a fresh catalog).
+func delete_template(i: int) -> bool:
+	if i < 0 or i >= model.templates.size():
+		return false
+	var t: String = model.templates[i]
+	if _delete_armed != t:
+		_arm_delete(t)
+		return false
+	var text := model.delete_answer(t)
+	if text.is_empty():
+		return false
+	send({"text": text})
+	return true
+
+
+func _arm_delete(t: String) -> void:
+	_delete_armed = t
+	if _delete_button != null:
+		_delete_button.text = "Delete" if t.is_empty() else "Really delete %s?" % t
 
 
 func handle_input(event: InputEvent) -> bool:

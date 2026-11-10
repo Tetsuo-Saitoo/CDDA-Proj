@@ -25,6 +25,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_hostile()
 	_test_chargen()
 	_test_main_menu()
+	_test_world_setup()
 	ui.free()
 	_test_hands_panel(root)
 
@@ -463,6 +464,9 @@ const CATALOG := {
 	"skill_pool": 2, "max_trait_points": 12, "min_stat": 4, "max_stat": 14, "high_stat": 12, "max_skill": 10,
 	"skill_costs": [0, 1, 1, 2, 4, 6, 9, 12, 16, 20, 25], "min_age": 16, "max_age": 55, "min_height": 145,
 	"max_height": 200, "max_name": 64, "default_scenario": "evacuee", "templates": ["Old hero", "../evil"],
+	"template_choices": {"Old hero": {"scenario": "evacuee", "profession": "cop", "backgrounds": ["hobby_x"],
+			"str": 12, "dex": 8, "int": 8, "per": 8, "traits": ["FAST", "SLOW", "NOPE"], "skills": {"gun": 3},
+			"name": "Hero", "male": false, "age": 40, "height": 160}},
 	"scenarios": [
 		{"id": "evacuee", "name": "Evacuee", "description": "You <color_red>ran</color>.", "points": 0,
 			"start_name": "Shelter", "default_background": true, "professions": ["unemployed", "cop"],
@@ -536,6 +540,17 @@ func _test_chargen() -> void:
 	var ta: Variant = JSON.parse_string(c.template_answer("Old hero"))
 	_check.call(ta is Dictionary and ta["template"] == "Old hero" and c.template_answer("../evil") == "",
 			"chargen: template answer")
+	var c2 := Chargen.parse(JSON.stringify(CATALOG))
+	var skipped := c2.load_template_choices("Old hero")
+	_check.call(c2.profession == "cop" and c2.stats["str"] == 12 and c2.picked_traits == (["FAST"] as Array[String])
+			and c2.skill_levels.get("gun") == 3 and c2.char_name == "Hero" and not c2.male and c2.age == 40
+			and c2.picked_backgrounds == (["hobby_x"] as Array[String]),
+			"chargen: template opened for editing")
+	_check.call(skipped.size() == 2, "chargen: template's forbidden and unknown traits reported (%s)" % skipped)
+	_check.call(c2.load_template_choices("../evil").size() == 1, "chargen: unlisted template not opened")
+	var da: Variant = JSON.parse_string(c2.delete_answer("Old hero"))
+	_check.call(da is Dictionary and da["delete_template"] == "Old hero" and c2.delete_answer("x") == "",
+			"chargen: delete answer")
 	c.save_template = "bad/name"
 	_check.call(not c.problem().is_empty(), "chargen: bad save-template name caught")
 	c.save_template = "My char"
@@ -561,6 +576,13 @@ func _test_chargen() -> void:
 			"chargen widget: Ctrl+Enter sends %s" % [answers])
 	_show(_req("chargen", {"text": JSON.stringify(CATALOG)}))
 	w = ui.widget as ChargenRequestWidget
+	_check.call(w.edit_template(0) and w.model.profession == "cop" and answers.is_empty(),
+			"chargen widget: edit a template sends nothing")
+	_check.call(not w.delete_template(0) and answers.is_empty(), "chargen widget: first Delete only asks")
+	_check.call(w.delete_template(0) and answers.size() == 1 and answers[0]["text"].contains("delete_template"),
+			"chargen widget: second Delete sends")
+	_show(_req("chargen", {"text": JSON.stringify(CATALOG)}))
+	w = ui.widget as ChargenRequestWidget
 	_check.call(w.start_template(0) and answers.size() == 1 and answers[0]["text"].contains("Old hero"),
 			"chargen widget: start from template")
 	_show(_req("chargen", {"text": "not json"}))
@@ -572,7 +594,7 @@ func _test_main_menu() -> void:
 	var m := MainMenu.new()
 	ui.add_child(m)
 	var got := []
-	m.new_game.connect(func(w: String, f: bool, c: bool) -> void: got.append(["new", w, f, c]))
+	m.new_game.connect(func(w: String, f: bool, c: bool, ws: bool) -> void: got.append(["new", w, f, c, ws]))
 	m.load_game.connect(func(w: String, s: String) -> void: got.append(["load", w, s]))
 	m.setup(PackedStringArray(["World", "bad/name", "Other"]),
 			func(w: String) -> PackedStringArray: return PackedStringArray(["Ann"]) if w == "Other" else PackedStringArray())
@@ -584,9 +606,81 @@ func _test_main_menu() -> void:
 	m._world_edit.text = "World"
 	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
 	m._world_edit.text = "Fresh"
-	_check.call(m.start_new() and got[-1] == ["new", "Fresh", true, true], "menu: new world with chargen")
+	_check.call(m.start_new() and got[-1] == ["new", "Fresh", true, true, true], "menu: new world with chargen and setup")
 	m.show_page("load")
 	_check.call(m.select_world("Other") and m.start_load() and got[-1] == ["load", "Other", "Ann"],
 			"menu: load a save")
 	_check.call(m.select_world("World") and not m.start_load(), "menu: world without saves can't load")
 	m.free()
+
+
+const WORLD_CATALOG := {
+	"version": 1,
+	"sliders": [{"id": "city", "name": "Cities", "default": 1, "levels": [{"name": "Few", "description": "a"},
+			{"name": "Some", "description": "b"}, {"name": "Many", "description": "c"}]}, {"id": "bad"}],
+	"options": [
+		{"id": "B", "name": "Bool", "group": "", "tooltip": "", "type": "bool", "value": false},
+		{"id": "I", "name": "Int", "group": "", "tooltip": "", "type": "int", "value": 5, "min": 1, "max": 10},
+		{"id": "S", "name": "Sel", "group": "", "tooltip": "", "type": "string_select", "value": "a",
+			"choices": [["a", "A"], ["b", "B"]]},
+		{"id": "M", "name": "Map", "group": "", "tooltip": "", "type": "int_map", "value": 2,
+			"choices": [[1, "one"], [2, "two"]]},
+		{"id": "X", "type": "weird"}, "junk",
+	],
+	"mods": [
+		{"id": "dda", "name": "Dark Days Ahead", "description": "", "category": "core", "core": true,
+			"dependencies": [], "conflicts": []},
+		{"id": "aftershock", "name": "Aftershock", "description": "", "category": "total", "core": true,
+			"dependencies": [], "conflicts": []},
+		{"id": "base", "name": "Base", "description": "", "category": "c", "core": false, "dependencies": ["dda"],
+			"conflicts": []},
+		{"id": "addon", "name": "Addon", "description": "", "category": "c", "core": false,
+			"dependencies": ["base"], "conflicts": ["rival"]},
+		{"id": "rival", "name": "Rival", "description": "", "category": "c", "core": false,
+			"dependencies": ["dda"], "conflicts": []},
+	],
+	"default_mods": ["dda"],
+}
+
+
+func _test_world_setup() -> void:
+	var w := WorldSetup.parse(JSON.stringify(WORLD_CATALOG))
+	_check.call(w.ok and w.sliders.size() == 1 and w.options.size() == 4 and w.mods.size() == 5,
+			"world: catalog parses, bad entries dropped")
+	_check.call(w.picked_mods == (["dda"] as Array[String]) and w.problem().is_empty(), "world: default mods")
+	_check.call(w.set_level("city", 2) and not w.set_level("city", 3) and not w.set_level("nope", 0),
+			"world: slider levels checked")
+	_check.call(w.set_value("I", 7) and not w.set_value("I", 11) and not w.set_value("I", "x")
+			and w.set_value("B", true) and not w.set_value("S", "z") and w.set_value("S", "b")
+			and w.set_value("M", 1) and not w.set_value("M", 3) and not w.set_value("nope", 1),
+			"world: settings checked by type and range")
+	_check.call(w.toggle_mod("addon") and w.picked_mods == (["dda", "base", "addon"] as Array[String]),
+			"world: ticking adds dependencies")
+	_check.call(not w.toggle_mod("rival") and w.conflict_of("rival") == "addon", "world: conflict blocks")
+	_check.call(w.toggle_mod("base") and w.picked_mods == (["dda"] as Array[String]),
+			"world: unticking drops dependents")
+	_check.call(w.toggle_mod("aftershock") and w.picked_mods == (["aftershock"] as Array[String]),
+			"world: one core mod at a time")
+	w.toggle_mod("aftershock")
+	_check.call(not w.problem().is_empty(), "world: no core mod caught")
+	w.toggle_mod("dda")
+	var a: Variant = JSON.parse_string(w.answer_json())
+	_check.call(a is Dictionary and a["sliders"]["city"] == 2 and a["options"]["I"] == 7 and a["options"]["S"] == "b"
+			and a["mods"] == ["dda"], "world: answer JSON %s" % a)
+	_check.call(_show(_req("world_setup", {"text": JSON.stringify(WORLD_CATALOG), "title": "New world: X",
+			"status": "bad slider"})), "world widget: shows")
+	var wd := ui.widget as WorldSetupRequestWidget
+	_check.call(wd != null and wd.status_label.text.contains("bad slider"), "world widget: sim status shown")
+	_check.call(wd.set_option("I", 3) and not wd.set_option("I", 99), "world widget: setting")
+	var row := wd._mod_ids.find("addon")
+	_check.call(wd.pick_mod(row) and wd.model.picked_mods.has("base"), "world widget: tick a mod")
+	var e := InputEventKey.new()
+	e.keycode = KEY_ENTER
+	e.pressed = true
+	e.ctrl_pressed = true
+	ui.handle_input(e)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["text"].contains("addon"),
+			"world widget: Ctrl+Enter creates")
+	_show(_req("world_setup", {"text": "nope"}))
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "world widget: bad catalog can still cancel")

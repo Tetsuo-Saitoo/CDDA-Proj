@@ -88,6 +88,8 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 			return TargetRequestWidget.new()
 		"chargen":
 			return ChargenRequestWidget.new()
+		"world_setup":
+			return WorldSetupRequestWidget.new()
 	return PopupRequestWidget.new()   # popup; unknown kinds get their text and Cancel
 
 
