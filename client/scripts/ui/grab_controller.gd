@@ -31,11 +31,13 @@ var hands: Hands:
 	set(h):
 		hands = h
 		if h != null:
-			h.picker.reach = func() -> Variant: return reach.call() if reach.is_valid() else null
+			_reach_fn = func() -> Variant: return reach.call() if reach.is_valid() else null
+			h.picker.reach = _reach_fn
 			h.refused.connect(func(id: String, _t: Dictionary, reason: String) -> void:
 				if id == "mouse":
 					flash(reason, true))
 var item_hover := {}         # the item target under the pointer (Hands target), {} if none
+var _reach_fn := Callable()  # what this controller gave hands.picker.reach
 var carry_m := 0.8           # how far in front of the camera a carried item floats
 var drop := {}               # carrying: what letting go does now (Hands.drop_on_ray)
 var _flash := ""
@@ -51,8 +53,12 @@ func _init(w: WorldView) -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_PREDELETE and is_instance_valid(icon) and icon.get_parent() == null:
+	if what != NOTIFICATION_PREDELETE:
+		return
+	if is_instance_valid(icon) and icon.get_parent() == null:
 		icon.free()   # never shown (tests)
+	if hands != null and is_instance_valid(hands) and hands.picker.reach == _reach_fn:
+		hands.picker.reach = Callable()   # it calls into this controller
 
 
 ## [Grabbable, hit point] under screen point `pt` on a reachable square, or [].
