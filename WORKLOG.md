@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Item actions `unload` (to a hand or the pack) and `reload` (with an explicit ammo or magazine handle), CDDA's rules and moves, no menus. Sim test `guns`.
+- 2026-11-10 — Cheats and test kits need the client's opt-in (`set_cheats_allowed`), and using them turns achievements off; quick-start worlds: stricter checks. Sim test checks.
 - 2026-11-10 — Chargen templates and world mods: stricter checks (names, saving, mod order, file size up to 4 MiB, parsed templates cached); "Character to Template" templates keep their setup as in CDDA. Chargen test checks.
 - 2026-11-10 — Snapshots: per-submap `lights` (seen squares that add light: terrain/furniture, item, field; brightest 16) and top-level `z_levels`; new `use_stairs(pos, dir)` action for stairs on or next to the player. Sim test `stairs`, cooking test checks lights.
 - 2026-11-10 — L9 cooking base merged: heat sources and cookware (with contents and craft progress) in snapshots, recipe matching from a container's contents (`match_recipes` / `take_query_result`, CDDA's rules); explosion events now name the item behind a queued blast (grenades, C4 gave none). Sim test `cooking`, events test checks.
