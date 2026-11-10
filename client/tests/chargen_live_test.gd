@@ -1,10 +1,12 @@
 extends SceneTree
 ## Headless check of character creation through the bridge: start_new_game with chargen, the `chargen`
 ## request's catalog read by the client's Chargen model, a bad answer re-asked with `status`, a good one
-## reaching the main loop with that character. Needs the DLL and ../cdda data. ~1 min. From the repo root:
+## reaching the main loop with that character; then a fresh start under the taken name (and in upper case),
+## each in a child process, must fail without touching the world. Needs the DLL and ../cdda data. ~2 min.
+## From the repo root:
 ##   godot --headless --path client --script res://tests/chargen_live_test.gd
 
-const WORLD := "fp3d-chargen-test"
+const WORLD := "qa-chargen-test"   # fp3d- names are kept for quick starts (a new game refuses them)
 const TIMEOUT_MS := 240000
 ## The run's own scratch folder (shared user:// otherwise collides between parallel runs).
 const TestDir := preload("res://tests/test_dir.gd")
@@ -14,6 +16,10 @@ var _sim: RefCounted
 
 
 func _initialize() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--taken="):
+			_run_taken(a.trim_prefix("--taken="))
+			return
 	_run()
 
 
@@ -64,7 +70,66 @@ func _run() -> void:
 	_check(snap.is_valid(), "snapshot valid")
 	_check(FileAccess.file_exists(user_dir.path_join("save/%s/worldoptions.json" % WORLD)), "world saved with its settings")
 	_sim.stop()
+	# A fresh start under a taken name (also in other letter case) must fail and leave the world alone. CDDA
+	# boots once per process, so each try is its own process (same scratch folder, --test-run).
+	var world_dir := user_dir.path_join("save").path_join(WORLD)
+	var before := _tree(world_dir)
+	for name: String in [WORLD, WORLD.to_upper()]:
+		var out := []
+		var args := PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+				"--script", "res://tests/chargen_live_test.gd", "--", "--taken=" + name, TestDir.child_arg()])
+		var code := OS.execute(OS.get_executable_path(), args, out, true)
+		for chunk: String in out:
+			print(chunk.strip_edges(false, true).indent("  | "))
+		_check(code == 0, "a fresh start as %s is refused (exit %d)" % [name, code])
+	_check(not before.is_empty() and _tree(world_dir) == before,
+			"the taken world's files are untouched (%d files)" % before.size())
 	_finish()
+
+
+## Child run (--taken=<name>): a fresh start_new_game as <name> in run 1's folder ends in `failed`, "exists".
+func _run_taken(name: String) -> void:
+	_check(TestDir.use_parent(OS.get_cmdline_user_args()), "run 1 named its folder (--test-run)")
+	_check(ClassDB.class_exists("CddaSim"), "extension loaded")
+	if _failed > 0:
+		_finish()
+		return
+	_sim = ClassDB.instantiate("CddaSim")
+	var data_dir := ProjectSettings.globalize_path("res://").path_join("../cdda").simplify_path()
+	var user_dir := TestDir.global("cdda-chargen-test")
+	var why: String = _sim.start_new_game(data_dir, user_dir, name, true, true, true)
+	var deadline := Time.get_ticks_msec() + TIMEOUT_MS
+	var req := {}
+	while Time.get_ticks_msec() < deadline and req.is_empty() and _sim.get_state() in ["booting", "running"]:
+		await create_timer(0.05).timeout
+		_sim.drain_events()
+		req = _sim.get_request()
+	_check(why.is_empty() and req.is_empty() and _sim.get_state() == "failed"
+			and String(_sim.get_error()).contains("exists"),
+			"%s: refused before any request (%s, state %s, %s, request %s)"
+			% [name, why, _sim.get_state(), _sim.get_error(), req.get("kind", "none")])
+	_sim.stop()
+	_finish(false)
+
+
+## Every file under `path` (relative path -> [size, modified time]).
+func _tree(path: String) -> Dictionary:
+	var files := {}
+	var todo := PackedStringArray([""])
+	while not todo.is_empty():
+		var rel := todo[todo.size() - 1]
+		todo.remove_at(todo.size() - 1)
+		var d := DirAccess.open(path.path_join(rel))
+		if d == null:
+			continue
+		d.include_hidden = true
+		for f in d.get_files():
+			var p := path.path_join(rel).path_join(f)
+			var fa := FileAccess.open(p, FileAccess.READ)
+			files[rel.path_join(f)] = [fa.get_length() if fa != null else -1, FileAccess.get_modified_time(p)]
+		for sub in d.get_directories():
+			todo.append(rel.path_join(sub))
+	return files
 
 
 ## Waits for a request matching `want`, answering others like live_test (YES / any key / cancel).
@@ -95,8 +160,9 @@ func _wait(want: Callable) -> Dictionary:
 	return {}
 
 
-func _finish() -> void:
-	if _failed == 0:
+## `clean`: false in a child run, which shares run 1's folder.
+func _finish(clean := true) -> void:
+	if _failed == 0 and clean:
 		TestDir.clean()   # a failed run keeps its files to look at; the next run's clean() removes them
 	print("chargen live tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)

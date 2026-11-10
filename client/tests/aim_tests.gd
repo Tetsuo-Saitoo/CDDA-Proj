@@ -251,6 +251,27 @@ func _test_grime(root: Node, tables: IdTables) -> void:
 	vm.set_dirt(8001)
 	_check.call(kept == 0.123 and is_equal_approx(m0.get_shader_parameter("grime"), 0.8001),
 			"grime: the uniform is set only when the dirt changes (%s)" % [kept])
+
+	# set_faults: a jam opens the slide / bolt, shows the hint, survives a rebuild; junk and other faults ignored
+	_check.call(VM.jam_of([1, null, "fault_gun_dirt", "fault_stovepipe", "fault_double_feed"]) == "fault_stovepipe"
+			and VM.jam_of([]) == "" and VM.jam_of(["x".repeat(64)]) == "" and VM.jam_hint("fault_stovepipe") == "Stovepipe: R to clear"
+			and VM.jam_hint("nope") == "", "jam: the first jam among the faults, junk ignored")
+	vm.set_item(pistol, tables)
+	var slide: Node3D = vm._root.get_node("Slide")
+	var shut := slide.position
+	vm.set_faults(["fault_stovepipe"])
+	var open_ok := is_equal_approx(slide.position.z - shut.z, VM.JAM_BACK) and vm._jam_label != null and vm._jam_label.visible \
+			and vm._jam_label.text == "Stovepipe: R to clear"
+	vm.set_item(rifle, tables)
+	var bolt: Node3D = vm._root.get_node("Bolt")
+	var bolt_open := bolt.has_meta("rest") and is_equal_approx(bolt.position.z - (bolt.get_meta("rest") as Vector3).z, VM.JAM_BACK)
+	vm.set_item(knife, tables)
+	var knife_hidden := not vm._jam_label.visible and vm.jam == "fault_stovepipe"
+	vm.set_item(pistol, tables)
+	slide = vm._root.get_node("Slide")
+	vm.set_faults([])
+	var shut_again := slide.position.is_equal_approx(slide.get_meta("rest")) and not vm._jam_label.visible
+	_check.call(open_ok and bolt_open and knife_hidden and shut_again, "jam: slide / bolt open and the hint while jammed, shut when cleared")
 	vm.free()
 
 
