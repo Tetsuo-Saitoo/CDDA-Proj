@@ -68,7 +68,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	fv.view_z_max = int(sm0["pos"][2]) - 1
 	fv.apply(snap, world)
 	_check.call(fv.count() == 0 and fv.get_node_or_null("flame") == null, "fields: cut away above the view level")
-	fv.view_z_max = CddaCoords.Z_MAX
+	fv.view_z_max = CddaCoords.Z_LIMIT
 	fv.max_per_look = 1
 	fv.apply(snap, world)
 	_check.call(fv.count(L.GAS) == 1 and fv.count(L.SWARM) == 1, "fields: instances per look are capped")

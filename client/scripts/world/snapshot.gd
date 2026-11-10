@@ -10,7 +10,6 @@ extends RefCounted
 const CONTRACT_VERSION := 0
 const TILES := 144
 const MAX_FILE_BYTES := 16 << 20          # a full 21-level bubble is ~6 MB of JSON
-const MAX_SUBMAPS := 11 * 11 * 21
 const MAX_ID := 1 << 20                   # CDDA has ~1.1k terrain ids; anything larger is garbage
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
@@ -69,6 +68,9 @@ var error := ""
 var turn := 0
 var seq := 0
 var ids_generation := -1   # -1: the snapshot doesn't say
+## The map's whole z range (`z_levels`, CddaCoords defaults when absent). Every z in the snapshot is inside it.
+var z_min := CddaCoords.Z_MIN_DEFAULT
+var z_max := CddaCoords.Z_MAX_DEFAULT
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
@@ -182,7 +184,9 @@ func _read(data: Variant) -> void:
 	seq = _int(d.get("seq"), 0, MAX_TURN, "seq")
 	if d.has("ids_generation"):
 		ids_generation = _int(d["ids_generation"], 0, 0xFFFFFFFF, "ids_generation")
-	bubble_origin = _vec3i(d.get("bubble_origin"), MAX_ABS_SM, "bubble_origin")
+	if d.has("z_levels"):
+		_read_z_levels(d["z_levels"])
+	bubble_origin =_vec3i(d.get("bubble_origin"), MAX_ABS_SM, "bubble_origin")
 	if is_valid() and bubble_origin.z != 0:
 		_fail("bubble_origin z must be 0")
 	_read_player(d.get("player"))
@@ -190,6 +194,25 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
+
+
+## [min, max]: the map's z range. It must hold z 0 and stay within CddaCoords.Z_LIMIT either way.
+func _read_z_levels(v: Variant) -> void:
+	if not is_valid():
+		return
+	if not v is Array or (v as Array).size() != 2:
+		_fail("z_levels: expected [min, max]")
+		return
+	var lo := _int(v[0], -CddaCoords.Z_LIMIT, 0, "z_levels min")
+	var hi := _int(v[1], 0, CddaCoords.Z_LIMIT, "z_levels max")
+	if is_valid():
+		z_min = lo
+		z_max = hi
+
+
+## The most submaps a snapshot can list: the whole bubble on every level of its z range.
+func max_submaps() -> int:
+	return CddaCoords.MAPSIZE * CddaCoords.MAPSIZE * (z_max - z_min + 1)
 
 
 func _read_player(v: Variant) -> void:
@@ -339,8 +362,8 @@ func _read_submaps(v: Variant) -> void:
 		_fail("submaps is not a list")
 		return
 	var list: Array = v
-	if list.size() > MAX_SUBMAPS:
-		_fail("%d submaps, cap is %d" % [list.size(), MAX_SUBMAPS])
+	if list.size() > max_submaps():
+		_fail("%d submaps, cap is %d" % [list.size(), max_submaps()])
 		return
 	var lo := bubble_origin
 	for i in list.size():
@@ -355,7 +378,7 @@ func _read_submaps(v: Variant) -> void:
 			return
 		var rel := sm.pos - lo
 		if rel.x < 0 or rel.x >= CddaCoords.MAPSIZE or rel.y < 0 or rel.y >= CddaCoords.MAPSIZE \
-				or sm.pos.z < CddaCoords.Z_MIN or sm.pos.z > CddaCoords.Z_MAX:
+				or sm.pos.z < z_min or sm.pos.z > z_max:
 			_fail("%s.pos %s is outside the bubble" % [what, sm.pos])
 			return
 		if submaps.has(sm.pos):
@@ -418,7 +441,7 @@ func _vec3i(v: Variant, limit: int, what: String) -> Vector3i:
 		return Vector3i.ZERO
 	var a: Array = v
 	return Vector3i(_int(a[0], -limit, limit, what + ".x"), _int(a[1], -limit, limit, what + ".y"),
-			_int(a[2], CddaCoords.Z_MIN, CddaCoords.Z_MAX, what + ".z"))
+			_int(a[2], z_min, z_max, what + ".z"))
 
 
 ## 144 CDDA int ids. Ids with no name in the table are allowed; they render as unknown boxes.

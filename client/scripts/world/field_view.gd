@@ -43,7 +43,7 @@ const KINDS := {
 	"fd_bee_swarm": [Look.SWARM, Color(0.16, 0.12, 0.04, 0.95)],
 }
 
-var view_z_max := CddaCoords.Z_MAX
+var view_z_max := CddaCoords.Z_LIMIT
 ## Instances per look at most (tests lower it).
 var max_per_look := MAX_PER_LOOK
 var _layers := {}      # Look -> MultiMeshInstance3D

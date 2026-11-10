@@ -1,6 +1,7 @@
 class_name WorldView
 extends Node3D
-## Shows the newest snapshot: one node per submap per z, holding "terrain", "roof" and "caps" meshes
+## Shows the newest snapshot: one node per submap per z that has anything to draw (open sky gets none),
+## holding "terrain", "roof" and "caps" meshes
 ## (TerrainMesher) and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher:
 ## furniture, traps, item piles; models are one MultiMeshInstance3D per model part).
 ## Terrain is rebuilt when a submap's revision differs from the one built (any difference, not only an
@@ -24,11 +25,14 @@ var _job_props: PropCatalog
 var _job_key := []
 var tables: IdTables
 var snapshot: Snapshot
-## Levels above this are hidden (cutaway). Clamped to the loaded levels.
-var view_z_max := CddaCoords.Z_MAX
+## Levels above this are hidden (cutaway). Clamped to the levels with something drawn (set_view_z_max).
+var view_z_max := CddaCoords.Z_LIMIT
 var roofs_visible := true
 var z_min_loaded := 0
 var z_max_loaded := 0
+## The lowest and highest level with something drawn (the loaded levels when none has).
+var z_min_content := 0
+var z_max_content := 0
 var vertex_count := 0
 var props_built := 0      # submaps whose props the last apply rebuilt
 var prop_counts := {"furniture": 0, "items": 0, "traps": 0, "glyphs": 0, "models": 0}
@@ -40,7 +44,12 @@ var grabbables := {}
 var door_state := {}
 var door_local := true
 var door_open := {}
-var _built := {}   # Vector3i absolute submap -> {"rev", "detail", "node", "verts", "pverts", "counts"}
+## Vector3i absolute submap -> {"rev", "detail", "verts", "pverts", "counts", "terrain", "props"}: every submap
+## built, drawn or not ("terrain" / "props": that part has something to draw).
+var _built := {}
+var _nodes := {}   # Vector3i absolute submap -> Node3D, only for the submaps with something drawn
+var _content_levels := PackedInt32Array()   # the levels with a node, ascending
+var _view_want := CddaCoords.Z_LIMIT        # the cutaway asked for; Z_LIMIT: every level
 
 
 ## Emitted on the main thread when a snapshot given to submit() is shown; `rebuilt` as apply_snapshot returns.
@@ -211,10 +220,12 @@ func _commit(job: Job, budget_us: int) -> bool:
 		job.next = 0
 		catalog.set_snapshot(snap)
 		props.set_snapshot(snap)
+		coords.z_min = snap.z_min
+		coords.z_max = snap.z_max
 		if snapshot == null or snap.bubble_origin != snapshot.bubble_origin:
 			coords.set_bubble_origin(snap.bubble_origin)
-			for pos: Vector3i in _built:
-				(_built[pos]["node"] as Node3D).position = coords.sm_to_world(pos)
+			for pos: Vector3i in _nodes:
+				(_nodes[pos] as Node3D).position = coords.sm_to_world(pos)
 		for pos in job.drops:
 			if _built.has(pos):
 				_drop(pos)
@@ -232,8 +243,8 @@ func _commit(job: Job, budget_us: int) -> bool:
 	snapshot = snap
 	tables_mismatch = tables != null and snap.ids_generation >= 0 and snap.ids_generation != tables.generation
 	props_built = job.detail.size()
-	z_min_loaded = CddaCoords.Z_MAX
-	z_max_loaded = CddaCoords.Z_MIN
+	z_min_loaded = snap.z_max
+	z_max_loaded = snap.z_min
 	vertex_count = 0
 	for k: String in prop_counts:
 		prop_counts[k] = 0
@@ -244,12 +255,60 @@ func _commit(job: Job, budget_us: int) -> bool:
 		vertex_count += b["verts"] + b["pverts"]
 		for k: String in prop_counts:
 			prop_counts[k] += b["counts"].get(k, 0)
-	set_view_z_max(view_z_max)
+	if _built.is_empty():
+		z_min_loaded = 0
+		z_max_loaded = 0
+	var levels := {}
+	for pos: Vector3i in _nodes:
+		levels[pos.z] = true
+	_content_levels = PackedInt32Array(levels.keys())
+	_content_levels.sort()
+	z_min_content = _content_levels[0] if not _content_levels.is_empty() else z_min_loaded
+	z_max_content = _content_levels[-1] if not _content_levels.is_empty() else z_max_loaded
+	_apply_view()
 	return true
 
 
+## Hides the levels above z (cutaway), within the levels that have something drawn. A z at or above the top one
+## means every level, and keeps meaning it when later snapshots draw higher levels.
 func set_view_z_max(z: int) -> void:
-	view_z_max = clampi(z, z_min_loaded, z_max_loaded)
+	_view_want = CddaCoords.Z_LIMIT if z >= z_max_content else z
+	_apply_view()
+
+
+## Moves the cutaway to the next level up (dir > 0) or down that has something drawn, jumping over empty sky
+## or rock; stays put at the top or bottom one.
+func step_view_z(dir: int) -> void:
+	if dir > 0:
+		for z in _content_levels:
+			if z > view_z_max:
+				set_view_z_max(z)
+				return
+	elif dir < 0:
+		for i in range(_content_levels.size() - 1, -1, -1):
+			if _content_levels[i] < view_z_max:
+				set_view_z_max(_content_levels[i])
+				return
+
+
+## The levels with something drawn, ascending (from the last apply).
+func levels_with_content() -> PackedInt32Array:
+	return _content_levels
+
+
+## The cutaway for what isn't terrain (creatures, gore, the player's body): with the view at the top level with
+## something drawn nothing is cut, so a bird above the last roof still shows.
+func things_z_max() -> int:
+	return coords.z_max if view_z_max >= z_max_content else view_z_max
+
+
+## "level 1 (-1..3)": the cutaway level and the range of levels with something drawn, for the HUD.
+func level_text() -> String:
+	return "level %d (%d..%d)" % [view_z_max, z_min_content, z_max_content]
+
+
+func _apply_view() -> void:
+	view_z_max = clampi(_view_want, z_min_content, z_max_content)
 	_update_visibility()
 
 
@@ -262,8 +321,9 @@ func built_revision(pos: Vector3i) -> int:
 	return _built[pos]["rev"] if _built.has(pos) else -1
 
 
+## The submap's node; null when it isn't loaded or has nothing to draw.
 func node_of(pos: Vector3i) -> Node3D:
-	return _built[pos]["node"] if _built.has(pos) else null
+	return _nodes.get(pos)
 
 
 func _mark_around(dirty: Dictionary, pos: Vector3i) -> void:
@@ -274,26 +334,48 @@ func _mark_around(dirty: Dictionary, pos: Vector3i) -> void:
 
 
 func _drop(pos: Vector3i) -> void:
-	_drop_doors(pos, {})
-	(_built[pos]["node"] as Node3D).free()
+	_free_node(pos)
 	_built.erase(pos)
 
 
-func _build(pos: Vector3i, r: TerrainMesher.Result, snap: Snapshot) -> void:
-	var b: Dictionary = _built.get(pos, {})
-	var node: Node3D = b.get("node")
-	if node == null:
+## The submap's node, made when `make` and it has none yet.
+func _node(pos: Vector3i, make: bool) -> Node3D:
+	var node: Node3D = _nodes.get(pos)
+	if node == null and make:
 		node = Node3D.new()
 		node.name = "sm_%d_%d_%d" % [pos.x, pos.y, pos.z]
 		node.position = coords.sm_to_world(pos)
+		node.visible = pos.z <= view_z_max
 		add_child(node)
-		b = {"node": node, "pverts": 0, "counts": {}}
+		_nodes[pos] = node
+	return node
+
+
+## Door leaves live under their submap's node, so a submap without one has none to drop.
+func _free_node(pos: Vector3i) -> void:
+	var node: Node3D = _nodes.get(pos)
+	if node == null:
+		return
+	_drop_doors(pos, {})
+	node.free()
+	_nodes.erase(pos)
+
+
+## Terrain first, then props (every terrain rebuild is followed by a props one, which frees an empty node).
+func _build(pos: Vector3i, r: TerrainMesher.Result, snap: Snapshot) -> void:
+	var b: Dictionary = _built.get(pos, {})
+	if b.is_empty():
+		b = {"pverts": 0, "counts": {}, "props": false}
 		_built[pos] = b
-	for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps]]:
-		_set_mesh(node, part[0], part[1])
-	_build_doors(node, pos, r.doors)
+	var drawn := r.terrain != null or r.roof != null or r.caps != null or not r.doors.is_empty()
+	var node := _node(pos, drawn)
+	if node != null:
+		for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps]]:
+			_set_mesh(node, part[0], part[1])
+		_build_doors(node, pos, r.doors)
 	b["rev"] = (snap.submaps[pos] as Snapshot.Submap).revision
 	b["verts"] = r.vertices
+	b["terrain"] = drawn
 
 
 ## Leaves stay the same nodes across rebuilds (a grabbed one keeps its grab); new ones are made, gone ones freed.
@@ -357,24 +439,30 @@ func grabbable_on_ray(origin: Vector3, dir: Vector3, centre: Vector3i, max_d: fl
 
 func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	var b: Dictionary = _built[pos]
-	var node: Node3D = b["node"]
-	_set_mesh(node, "props", r.props)
-	_set_mesh(node, "roof_props", r.roof_props)
-	_set_models(node, "models", r.models)
-	_set_models(node, "roof_models", r.roof_models)
-	var old := node.get_node_or_null("glyphs")
-	if old:
-		old.free()
-	if not r.glyphs.is_empty():
-		var g := Node3D.new()
-		g.name = "glyphs"
-		for e: Array in r.glyphs:
-			g.add_child(_glyph(e[0], e[1], e[2]))
-		node.add_child(g)
+	var drawn := r.props != null or r.roof_props != null or not r.models.is_empty() \
+			or not r.roof_models.is_empty() or not r.glyphs.is_empty()
+	var node := _node(pos, drawn)
+	if node != null:
+		_set_mesh(node, "props", r.props)
+		_set_mesh(node, "roof_props", r.roof_props)
+		_set_models(node, "models", r.models)
+		_set_models(node, "roof_models", r.roof_models)
+		var old := node.get_node_or_null("glyphs")
+		if old:
+			old.free()
+		if not r.glyphs.is_empty():
+			var g := Node3D.new()
+			g.name = "glyphs"
+			for e: Array in r.glyphs:
+				g.add_child(_glyph(e[0], e[1], e[2]))
+			node.add_child(g)
 	b["detail"] = (snap.submaps[pos] as Snapshot.Submap).detail_revision
 	b["pverts"] = r.vertices
 	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size(),
 			"models": r.model_props}
+	b["props"] = drawn
+	if not drawn and not b.get("terrain", false):
+		_free_node(pos)   # nothing left to draw: open sky keeps no node
 
 
 ## Step 5 of the fallback chain: the CDDA symbol in its colour, facing the camera.
@@ -429,8 +517,8 @@ static func _set_mesh(node: Node3D, part: String, mesh: ArrayMesh) -> void:
 
 
 func _update_visibility() -> void:
-	for pos: Vector3i in _built:
-		var node: Node3D = _built[pos]["node"]
+	for pos: Vector3i in _nodes:
+		var node: Node3D = _nodes[pos]
 		node.visible = pos.z <= view_z_max
 		for part in ["roof", "roof_props", "roof_models"]:
 			var roof := node.get_node_or_null(part) as Node3D

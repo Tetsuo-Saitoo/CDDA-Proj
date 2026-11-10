@@ -28,7 +28,7 @@ const KINDS := {
 	"fd_rubble": ["chunks", Color(0.5, 0.48, 0.45)],
 }
 
-var view_z_max := CddaCoords.Z_MAX
+var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden; main.gd sets WorldView.things_z_max()
 var _layers := {}     # field id -> MultiMeshInstance3D
 var _count := 0
 

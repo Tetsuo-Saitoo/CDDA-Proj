@@ -33,6 +33,7 @@ func _initialize() -> void:
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
 	preload("res://tests/world_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/level_tests.gd").new().run(root, _check, data, tables)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 
@@ -122,11 +123,18 @@ func _test_mock(data: Variant, tables: IdTables) -> void:
 	var back := Snapshot.from_data(data)
 	_check(world.apply_snapshot(back) == 7, "a lower revision (submap came back) rebuilds too")
 
+	var up: Node3D = null   # a z 1 submap with something drawn (roofs); open sky has no node
+	for pos: Vector3i in back.submaps:
+		if pos.z == 1 and world.node_of(pos) != null:
+			up = world.node_of(pos)
+	print("        %d of 363 submaps have a node, levels with content %s" % [world.get_child_count(), world.levels_with_content()])
+	_check(world.node_of(Vector3i(16, 32, 1)) == null and world.built_revision(Vector3i(16, 32, 1)) >= 0,
+			"open sky over (16, 32): built, no node")
 	world.view_z_max = 1
 	world.set_view_z_max(0)
-	_check(not world.node_of(Vector3i(16, 32, 1)).visible and world.node_of(Vector3i(16, 32, 0)).visible, "cutaway hides z 1")
+	_check(up != null and not up.visible and world.node_of(Vector3i(16, 32, 0)).visible, "cutaway hides z 1")
 	world.set_view_z_max(99)
-	_check(world.view_z_max == 1, "cutaway clamps to loaded levels")
+	_check(world.view_z_max == 1, "cutaway clamps to the levels with content")
 
 	# Bubble moves one submap east: column x=11 leaves, x=22 isn't sent; nothing else changed.
 	var moved: Dictionary = (data as Dictionary).duplicate(true)
