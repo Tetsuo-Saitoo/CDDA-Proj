@@ -14,6 +14,9 @@ const MAX_S := 2.0
 const MAX_M := 130.0           # past the loaded bubble's edge
 const ZERO_M := 25.0
 const SEGMENT_REACH := 1.5     # figures within this of a segment are tested
+const NEAR_MAX := 64           # a flight tests at most this many figures, the nearest along its line
+const NEAR_MARGIN_M := 2.0     # ... within this of the launch line, plus the drop at MAX_M
+const NEAR_DROP_CAP_M := 40.0  # (that drop capped here: slow arrows and grenades)
 
 ## Ammo type (CDDA ammotype id, gun_ammo in the id tables) -> [muzzle speed m/s, drag k 1/m]. First match by
 ## substring of the id (the longest key wins); DEFAULT otherwise. Values are typical, not CDDA's (CDDA has no speeds).
@@ -61,6 +64,40 @@ static func launch_dir(sight_dir: Vector3, speed: float) -> Vector3:
 	var angle := atan2(0.5 * G * t * t, ZERO_M)
 	var axis := d.cross(Vector3.UP)
 	return d.rotated(axis.normalized(), angle) if axis.length() > 0.001 else d
+
+
+## The figures a flight can reach (keeps hordes cheap): those whose centre lies within NEAR_MARGIN_M + the
+## drop at MAX_M for `speed` (capped at NEAR_DROP_CAP_M) + their height of the straight line from `origin`
+## along `dir` (the launch direction), in front of the origin and not past MAX_M; at most NEAR_MAX, the nearest
+## along the line. `shooter_uid`, hidden and freed figures are left out. uid -> CreatureFigure, like `figures`.
+static func figures_near_line(figures: Dictionary, origin: Vector3, dir: Vector3, speed: float,
+		shooter_uid := 1) -> Dictionary:
+	var out := {}
+	if not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 1e-12:
+		return out
+	var d := dir.normalized()
+	var t := MAX_M / (clampf(speed, 1.0, 1e5) if is_finite(speed) else 1.0)
+	var margin := NEAR_MARGIN_M + minf(0.5 * G * t * t, NEAR_DROP_CAP_M)
+	var near := []   # [distance along the line, uid]
+	for uid: Variant in figures:
+		if not uid is int or uid == shooter_uid:
+			continue
+		var f: Variant = figures[uid]
+		if not is_instance_valid(f) or not f is CreatureFigure:
+			continue
+		var fig: CreatureFigure = f
+		if not fig.visible or not fig.is_inside_tree():
+			continue
+		var h := clampf(fig.top, 0.0, 20.0) if is_finite(fig.top) else 1.0
+		var rel := fig.global_position + Vector3(0, h * 0.5, 0) - origin
+		var along := rel.dot(d)
+		if along < -h or along > MAX_M + h or (rel - d * along).length() > margin + h:
+			continue
+		near.append([along, uid])
+	near.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	for i in mini(near.size(), NEAR_MAX):
+		out[near[i][1]] = figures[near[i][1]]
+	return out
 
 
 ## Flies a bullet. `figures`: uid -> CreatureFigure; `shooter_uid` is never hit; `look_ray` tests the map

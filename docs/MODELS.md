@@ -52,14 +52,15 @@ owner before making many models, and keep one style across a set.
   that fine).
 
 **Hard limits** (the game refuses the file above these): 32 MB per file, 512 nodes, 60,000 triangles,
-65,536 vertices per mesh primitive (one material of one mesh) and 250,000 in all, 128 markers, 32 drawn
-meshes, 20 m on any side, 16 images of at most 4096 px a side and at most two 2048 x 2048 images' worth
+65,536 vertices per mesh primitive (one material of one mesh) and 250,000 in all, 32 primitives per mesh and
+128 drawn in all (each is a draw call), 128 markers, 32 drawn meshes, 20 m on any side, 16 images of at most 4096 px a side and at most two 2048 x 2048 images' worth
 of pixels in all (PNG or JPEG, embedded), 32 materials. Triangle meshes only; no animations, skins,
 cameras or morph targets; extensions: KHR_texture_transform, KHR_materials_unlit,
 KHR_materials_emissive_strength, KHR_mesh_quantization (and GODOT_single_root from Godot's exporter)
 only. No external files: buffers and textures must
-be inside the `.glb`, and the models folder must not contain links or junctions. All loaded models
-together get 512 MB of decoded textures; past that, further textured models aren't loaded (warning).
+be inside the `.glb`, and the models folder must not contain links or junctions. Names and other text in the
+file must be plain ASCII; images need their mimeType, textures a source, rotations unit quaternions, and 1-, 2-, 3- or 6-byte vertex attributes a byteStride. All loaded models together get 512 MB of decoded textures and 6 million triangles
+(tinted copies included); past that, further models aren't loaded or tinted (warning).
 
 ## Named points (markers)
 
