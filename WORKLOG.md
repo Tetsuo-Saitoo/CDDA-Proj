@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — HUD data layer for screen and VR (API agreed with lead-vr): `HudData` in client/scripts/hud/ (body parts, needs with CDDA's words, held items, cleaned message feed, warnings); hud_tests; not wired or drawn yet; client tests pass (910).
 - 2026-11-10 — UI leftovers: target candidates show creature name, attitude and health; compass marks creatures on other levels (hollow, chevrons; `Compass.level_blips` for VR); F1 key menu rebinds pad buttons and stick/trigger directions; `Hands.move` for drag and drop without a held item; client tests pass (897).
 - 2026-11-10 — E6 items by mouse: shared hands layer in client/scripts/interaction/ (ItemRef, ItemActions, MockItems, DropTarget, ItemPicker, ItemVisual, Hands; API agreed with lead-vr); piles draw one item per handle; crosshair outlines one item, E takes, hold LMB carries (wheel, Shift+wheel, Esc), release puts in a container / on a surface at its spot; mock mode works without the bridge; client tests pass (874); not played by hand or live.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).
