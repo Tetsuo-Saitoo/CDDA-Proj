@@ -22,10 +22,11 @@ func run(root: Node, check: Callable) -> void:
 			"key menu pad: the first push picks the first action's pad slot, highlighted")
 	menu.take(_button(JOY_BUTTON_DPAD_DOWN))
 	menu.take(_button(JOY_BUTTON_DPAD_DOWN, false))   # releases don't move
+	menu.take(_button(JOY_BUTTON_DPAD_RIGHT))
 	menu.take(_button(JOY_BUTTON_DPAD_RIGHT))          # already the last column
 	menu.take(_button(JOY_BUTTON_DPAD_UP))
 	menu.take(_button(JOY_BUTTON_DPAD_UP))             # already the first row
-	_check.call(menu.cursor == Vector2i(0, KeyMenu.PAD_SLOT), "key menu pad: the pick stays inside the list (%s)" % [menu.cursor])
+	_check.call(menu.cursor == Vector2i(0, KeyMenu.LAST_SLOT), "key menu pad: the pick stays inside the list (%s)" % [menu.cursor])
 	menu.take(_stick(JOY_AXIS_LEFT_Y, 0.9))
 	menu.take(_stick(JOY_AXIS_LEFT_Y, 0.95))   # still held: no second step
 	menu.take(_stick(JOY_AXIS_LEFT_Y, 0.1))
@@ -33,17 +34,18 @@ func run(root: Node, check: Callable) -> void:
 	menu.take(_stick(JOY_AXIS_LEFT_X, -0.9))
 	menu.take(_stick(JOY_AXIS_LEFT_X, NAN))
 	menu.take(_stick(JOY_AXIS_RIGHT_Y, 0.9))   # the right stick doesn't move the pick
-	_check.call(menu.cursor == Vector2i(2, KeyMenu.PAD_SLOT - 1), "key menu pad: the stick steps once per push (%s)" % [menu.cursor])
+	_check.call(menu.cursor == Vector2i(2, KeyMenu.PAD_SLOT), "key menu pad: the stick steps once per push (%s)" % [menu.cursor])
 	var action: StringName = InputActions.ACTIONS[2][0]
 	menu.take(_stick(JOY_AXIS_LEFT_X, 0.9))
 	menu.take(_button(JOY_BUTTON_A))
-	_check.call(menu._capture == [action, KeyMenu.PAD_SLOT], "key menu pad: A starts setting the picked slot")
+	_check.call(menu._capture == [action, KeyMenu.PAD_SLOT + 1], "key menu pad: A starts setting the picked slot")
 	menu.take(_button(JOY_BUTTON_A, false))   # A let go: not a binding
-	_check.call(menu._capture == [action, KeyMenu.PAD_SLOT], "key menu pad: letting go of A binds nothing")
+	_check.call(menu._capture == [action, KeyMenu.PAD_SLOT + 1], "key menu pad: letting go of A binds nothing")
 	menu.take(_button(JOY_BUTTON_X))
-	var pads := InputActions.pad_slots(action)
-	_check.call(menu._capture.is_empty() and not pads.is_empty() and InputActions.event_text(pads[0]) == "pad:%d" % JOY_BUTTON_X,
-			"key menu pad: the next pad button binds there")
+	var texts: Array = InputActions.pad_slots(action).map(func(e: InputEvent) -> String: return InputActions.event_text(e))
+	var shown := (menu._buttons[action][KeyMenu.PAD_SLOT + 1] as Button).text
+	_check.call(menu._capture.is_empty() and texts.size() == 2 and texts[1] == "pad:%d" % JOY_BUTTON_X and shown == "Pad X",
+			"key menu pad: the next pad button binds in the second pad column (%s, %s)" % [texts, shown])
 	menu.start_capture(&"cdda_wield", 1)
 	_check.call(menu.cursor == Vector2i(_row(&"cdda_wield"), 1), "key menu pad: a clicked slot becomes the pick")
 	var esc := InputEventKey.new()

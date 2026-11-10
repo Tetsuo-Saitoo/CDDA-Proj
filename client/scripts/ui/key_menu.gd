@@ -13,11 +13,13 @@ signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
 
 const SLOTS := 2
-const PAD_SLOT := SLOTS   # slot index of the pad column (one pad binding shown; more show as +N)
+const PAD_SLOTS := 2
+const PAD_SLOT := SLOTS   # slot index of the first pad column (more bindings than columns show as +N)
+const LAST_SLOT := SLOTS + PAD_SLOTS - 1
 const WARN := Color(1.0, 0.75, 0.3)
 
 var save_path := InputActions.FILE
-var _buttons := {}            # action -> [key Button, key Button, pad Button]
+var _buttons := {}            # action -> [key Button, key Button, pad Button, pad Button]
 var _status: Label
 var _capture: Array = []      # [action, slot] while waiting for a key
 var _pending_mod := KEY_NONE  # a modifier pressed while capturing, bound alone if let go first
@@ -69,7 +71,7 @@ func _init() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	var grid := GridContainer.new()
-	grid.columns = 2 + SLOTS
+	grid.columns = 1 + SLOTS + PAD_SLOTS
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(grid)
 	var group := ""
@@ -78,7 +80,7 @@ func _init() -> void:
 			group = a[1]
 			for i in grid.columns:
 				var h := Label.new()
-				h.text = group if i == 0 else ("pad" if i == grid.columns - 1 else "")
+				h.text = group if i == 0 else ("pad" if i == 1 + SLOTS else "")
 				h.add_theme_color_override("font_color", WARN)
 				grid.add_child(h)
 		var l := Label.new()
@@ -86,9 +88,9 @@ func _init() -> void:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		grid.add_child(l)
 		var row: Array[Button] = []
-		for s in SLOTS + 1:
+		for s in SLOTS + PAD_SLOTS:
 			var b := Button.new()
-			b.custom_minimum_size = Vector2(140, 0)
+			b.custom_minimum_size = Vector2(140 if s < SLOTS else 110, 0)
 			b.focus_mode = Control.FOCUS_NONE
 			b.pressed.connect(start_capture.bind(a[0], s))
 			grid.add_child(b)
@@ -238,10 +240,11 @@ func refresh() -> void:
 			if s == SLOTS - 1 and keys.size() > SLOTS:
 				b.text += " +%d" % (keys.size() - SLOTS)
 		var pads := InputActions.pad_slots(a)
-		var p: Button = _buttons[a][PAD_SLOT]
-		p.text = InputActions.event_label(pads[0]) if not pads.is_empty() else "-"
-		if pads.size() > 1:
-			p.text += " +%d" % (pads.size() - 1)
+		for s in PAD_SLOTS:
+			var p: Button = _buttons[a][PAD_SLOT + s]
+			p.text = InputActions.event_label(pads[s]) if s < pads.size() else "-"
+			if s == PAD_SLOTS - 1 and pads.size() > PAD_SLOTS:
+				p.text += " +%d" % (pads.size() - PAD_SLOTS)
 	_show_cursor()
 
 
@@ -262,7 +265,7 @@ func move_cursor(step: Vector2i) -> void:
 	if cursor.x < 0:
 		cursor = Vector2i(0, PAD_SLOT)
 	else:
-		cursor = Vector2i(clampi(cursor.x + step.y, 0, InputActions.ACTIONS.size() - 1), clampi(cursor.y + step.x, 0, PAD_SLOT))
+		cursor = Vector2i(clampi(cursor.x + step.y, 0, InputActions.ACTIONS.size() - 1), clampi(cursor.y + step.x, 0, LAST_SLOT))
 	_show_cursor()
 
 
@@ -309,7 +312,7 @@ func start_capture(action: StringName, slot: int) -> void:
 	_pending_mod = KEY_NONE
 	for i in InputActions.ACTIONS.size():   # a clicked slot is the pad's pick too
 		if InputActions.ACTIONS[i][0] == action:
-			cursor = Vector2i(i, clampi(slot, 0, PAD_SLOT))
+			cursor = Vector2i(i, clampi(slot, 0, LAST_SLOT))
 	refresh()
 	(_buttons[action][slot] as Button).text = "press a key..." if slot < SLOTS else "press a pad button..."
 	_status.text = "Press %s for \"%s\". Esc cancels, Backspace clears." % [
