@@ -82,6 +82,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	world.free()
 	_job_catalogs(root, data, tables)
 	_door_leaves(root)
+	_body_limits(data, tables)
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -147,3 +148,46 @@ func _door_leaves(root: Node) -> void:
 	_check.call(not w.grabbables.has(sq) and w.door_state.has(sq) and w._door_squares.is_empty(),
 			"doors: mock keeps the client's own door state")
 	w.free()
+
+
+## Body parts and covers past the caps are left out, not the whole snapshot; worn layers per part are capped.
+func _body_limits(data: Variant, tables: IdTables) -> void:
+	print("body limits")
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pl: Dictionary = d["player"]
+	var ids: Array = pl["body_parts"]
+	var n := ids.size()
+	for key: String in ["body_parts", "hp", "hp_max", "bleed", "bandaged", "disinfected", "bite", "infected"]:
+		if pl.has(key):
+			var col := []
+			for i in Snapshot.MAX_BODY_PARTS + 8:
+				col.append(pl[key][i % n])
+			pl[key] = col
+	var torso := tables.body_parts.find("torso")
+	var arm := tables.body_parts.find("arm_l")
+	var covers := []
+	for i in 200:
+		covers.append(torso)
+	covers.append(arm)   # past the scanned part of the list
+	var worn := []
+	for i in PlayerBody.MAX_LAYERS + 4:
+		worn.append({"type": 1 + i, "layer": 2, "covers": covers})
+	pl["worn"] = worn
+	var snap := Snapshot.from_data(d)
+	_check.call(snap.is_valid() and snap.player_parts.size() == Snapshot.MAX_BODY_PARTS,
+			"body: parts past the cap are left out, the snapshot kept " + snap.error)
+	_check.call(torso >= 0 and snap.player_worn.size() == worn.size()
+			and snap.player_worn[0].covers == PackedInt32Array([torso]), "body: each covered part once, the list bounded")
+	var layers := PlayerBody.plan(snap, tables).filter(func(p: Dictionary) -> bool:
+			return p["part"] == "torso" and p["kind"] == "worn")
+	_check.call(layers.size() == PlayerBody.MAX_LAYERS and layers[-1]["item"] == worn.size()
+			and layers[0]["item"] == worn.size() - PlayerBody.MAX_LAYERS + 1,
+			"body: at most %d layers a part, the outer ones" % PlayerBody.MAX_LAYERS)
+	var pb := PlayerBody.new()
+	pb.apply(snap, tables)
+	var a := pb.get_node("torso").get_child(0) as MeshInstance3D
+	var pb2 := PlayerBody.new()
+	pb2.apply(snap, tables)
+	_check.call(a.mesh == (pb2.get_node("torso").get_child(0) as MeshInstance3D).mesh, "body: same boxes share a mesh")
+	pb.free()
+	pb2.free()

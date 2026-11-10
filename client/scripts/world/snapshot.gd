@@ -237,17 +237,18 @@ func _read_body(d: Dictionary) -> void:
 	var ids: Variant = d.get("body_parts")
 	if ids == null or not is_valid():
 		return
-	if not ids is Array or (ids as Array).size() > MAX_BODY_PARTS:
-		_fail("player.body_parts: expected a list of at most %d" % MAX_BODY_PARTS)
+	if not ids is Array:
+		_fail("player.body_parts: expected a list")
 		return
-	var n := (ids as Array).size()
+	var all := (ids as Array).size()
+	var n := mini(all, MAX_BODY_PARTS)   # parts past the cap (a mod's) aren't drawn
 	var cols := {}
 	for key: String in ["hp", "hp_max", "bleed", "bandaged", "disinfected", "bite", "infected"]:
 		var a: Variant = d.get(key)
 		if a == null:
 			continue   # older bridges: no wounds
-		if not a is Array or (a as Array).size() != n:
-			_fail("player.%s: expected %d values" % [key, n])
+		if not a is Array or (a as Array).size() != all:
+			_fail("player.%s: expected %d values" % [key, all])
 			return
 		cols[key] = a
 	for i in n:
@@ -281,11 +282,13 @@ func _read_worn(v: Variant) -> void:
 		w.damage = _int(r.get("damage", 0), 0, 255, what + ".damage")
 		w.degradation = _int(r.get("degradation", 0), 0, 255, what + ".degradation")
 		var c: Variant = r.get("covers")
-		if not c is Array or (c as Array).size() > MAX_BODY_PARTS:
-			_fail(what + ".covers: expected a list of at most %d" % MAX_BODY_PARTS)
+		if not c is Array:
+			_fail(what + ".covers: expected a list")
 			return
-		for x: Variant in c:
-			w.covers.append(_int(x, 0, MAX_ID, what + ".covers"))
+		for k in mini((c as Array).size(), MAX_BODY_PARTS * 4):   # each part once, at most MAX_BODY_PARTS
+			var x := _int(c[k], 0, MAX_ID, what + ".covers")
+			if w.covers.size() < MAX_BODY_PARTS and not w.covers.has(x):
+				w.covers.append(x)
 		if not is_valid():
 			return
 		player_worn.append(w)

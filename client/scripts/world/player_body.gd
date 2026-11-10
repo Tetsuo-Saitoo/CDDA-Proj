@@ -9,6 +9,8 @@ extends Node3D
 
 const SKIN := Color(0.85, 0.68, 0.55)
 const LAYER_M := 0.016          # each worn layer stands this much farther out
+const MAX_LAYERS := 6           # worn layers drawn per part (the outermost); more would only swell the box
+const MAX_CACHED := 256         # shared materials and box meshes kept (the cache starts over past it)
 const HEAD_PARTS := ["head", "eyes", "mouth"]
 ## body_part id -> [centre, size] in metres (floor origin, facing -Z, the character's left is -X).
 const PARTS := {
@@ -61,6 +63,7 @@ var show_hands := true:
 var _head_nodes: Array[Node3D] = []
 var _hand_nodes: Array[Node3D] = []
 static var _mats := {}
+static var _boxes := {}
 
 
 ## Rebuilds when the player's body or clothes changed.
@@ -160,6 +163,10 @@ static func plan(snap: Snapshot, tables: IdTables) -> Array[Dictionary]:
 	for b: Snapshot.BodyPart in snap.player_parts:
 		by_name[_part_name(tables, b.id)] = b
 	var depth := {}   # part id -> layers drawn so far
+	var skip := {}    # part id -> inner layers left out (past MAX_LAYERS)
+	for w: Snapshot.Worn in snap.player_worn:
+		for part: String in _covered(tables, w):
+			skip[part] = skip.get(part, -MAX_LAYERS) + 1
 	for part: String in PARTS:
 		if not by_name.is_empty() and not by_name.has(part):
 			continue   # the character lacks it (or the bridge sent other parts)
@@ -168,9 +175,11 @@ static func plan(snap: Snapshot, tables: IdTables) -> Array[Dictionary]:
 	for w: Snapshot.Worn in snap.player_worn:
 		var def := tables.def_at("itype", w.type) if tables != null else null
 		var col := worn_color(def, w)
-		for id: int in w.covers:
-			var part := _part_name(tables, id)
+		for part: String in _covered(tables, w):
 			if not depth.has(part):
+				continue
+			if skip.get(part, 0) > 0:
+				skip[part] -= 1
 				continue
 			depth[part] += 1
 			var p := _piece(part, "worn", depth[part], col)
@@ -222,6 +231,16 @@ static func worn_color(def: IdTables.Def, w: Snapshot.Worn) -> Color:
 
 static func _part_name(tables: IdTables, id: int) -> String:
 	return tables.body_part_name(id) if tables != null else ""
+
+
+## The drawn parts a worn item covers, each once.
+static func _covered(tables: IdTables, w: Snapshot.Worn) -> Array[String]:
+	var out: Array[String] = []
+	for id: int in w.covers:
+		var part := _part_name(tables, id)
+		if PARTS.has(part) and not out.has(part):
+			out.append(part)
+	return out
 
 
 static func _piece(part: String, kind: String, layer: int, col: Color) -> Dictionary:
@@ -294,9 +313,14 @@ static func split_at_elbow(centre: Vector3, size: Vector3) -> Array:
 
 static func _box(centre: Vector3, size: Vector3, col: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
+	var k := var_to_str(size.snappedf(0.0005))
+	if not _boxes.has(k):
+		if _boxes.size() >= MAX_CACHED:
+			_boxes.clear()
+		var box := BoxMesh.new()
+		box.size = size
+		_boxes[k] = box
+	mi.mesh = _boxes[k]
 	mi.position = centre
 	mi.material_override = _material(col)
 	return mi
@@ -305,6 +329,8 @@ static func _box(centre: Vector3, size: Vector3, col: Color) -> MeshInstance3D:
 static func _material(c: Color) -> StandardMaterial3D:
 	var k := c.to_html(false)
 	if not _mats.has(k):
+		if _mats.size() >= MAX_CACHED:
+			_mats.clear()   # built bodies keep theirs
 		var m := StandardMaterial3D.new()
 		m.albedo_color = c
 		m.roughness = 0.9
