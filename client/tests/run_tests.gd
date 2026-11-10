@@ -1,5 +1,5 @@
 extends SceneTree
-## Headless checks for blocks C1-C3, E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
+## Headless checks for blocks C1-C3 (models: tests/model_tests.gd), E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
 ##   godot --headless --path client --import          (once, so class names resolve)
 ##   godot --headless --path client --script res://tests/run_tests.gd
 ## Exit code 0 = all passed.
@@ -23,6 +23,7 @@ func _initialize() -> void:
 	_test_registry(tables)
 	_test_bad_registry()
 	_test_props(data, tables)
+	preload("res://tests/model_tests.gd").new().run(_check, data, tables, _scene, _repo)
 	preload("res://tests/ui_tests.gd").new().run(root, _check)
 	await process_frame   # the root is in the tree from here on: the VR rig needs global transforms
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)

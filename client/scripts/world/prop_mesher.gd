@@ -2,14 +2,17 @@ class_name PropMesher
 extends RefCounted
 ## Block C3: builds the props of one submap from a validated Snapshot: furniture, known traps and item
 ## piles, as placeholder shapes (PropShapes) chosen by PropCatalog, in submap-local metres like
-## TerrainMesher. Props on roof terrain go to separate meshes, hidden with the roofs.
+## TerrainMesher, and lists the transforms of props that have a model (ModelLibrary; WorldView draws
+## them as multimeshes). Props on roof terrain go to separate meshes and lists, hidden with the roofs.
 ##
 ## Facing (90° steps): toward a neighbour in one of the prop's `rotates_to` groups (racks face the
 ## room, street lights the road), seats with ALIGN_WORKBENCH toward a table or counter, anything else
 ## with its back to a wall; `random_yaw` props turn freely. Item piles show up to MAX_SHOWN items
 ## (the four largest from the snapshot, small clutter for the rest) at sub-tile slots (4 x 4 per tile)
 ## picked by a hash of the square, so a pile looks the same every rebuild. Items rest on the surfaces
-## of the furniture they share a tile with (tables, shelves) and are hidden in closed containers.
+## of the furniture they share a tile with (tables, shelves) and are hidden in closed containers. A
+## furniture model's `surface_N` planes replace the placeholder's surfaces (items behind a model's doors
+## are drawn there and hidden by the doors).
 
 const K := TerrainCatalog.Kind
 const SEEX := CddaCoords.SEEX
@@ -19,6 +22,8 @@ const MAX_GLYPHS := 144
 const SUB := 4   # sub-tiles per tile side
 ## Facing (index into DIRS) -> yaw that turns a shape's front (-z) that way.
 const YAW: Array[float] = [0.0, -PI / 2, PI, PI / 2]
+## Shapes face -z, models +z (Godot's model front): a half turn about y.
+const MODEL_TURN := Transform3D(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)), Vector3.ZERO)
 const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
 const CLUTTER: Array[Color] = [Color(0.7, 0.68, 0.62), Color(0.45, 0.5, 0.55), Color(0.62, 0.45, 0.3),
 		Color(0.8, 0.8, 0.78), Color(0.5, 0.36, 0.32)]
@@ -28,6 +33,9 @@ class Result:
 	var props: ArrayMesh        # null when empty
 	var roof_props: ArrayMesh
 	var glyphs: Array = []      # [position (submap-local), symbol, colour]
+	var models := {}            # ModelLibrary.Model -> Array of Transform3D (submap-local)
+	var roof_models := {}
+	var model_props := 0
 	var vertices := 0
 	var furniture := 0
 	var items := 0
@@ -66,18 +74,19 @@ func build(sm_pos: Vector3i) -> Result:
 			continue
 		var p := base + Vector3i(i % SEEX, i / SEEX, 0)
 		var b := _builder(sm, i)
+		var md := _models(sm, i, r)
 		if f != 0:
 			var prop := _cat.furniture(f)
 			rng.seed = _hash(p)
 			var xf := _place(p, i, prop, rng)
 			tile_xf[i] = xf
-			_emit(b, prop, xf, _links(p, f, prop, _facing_of(xf)), r, rng)
+			_emit(b, md, prop, xf, _links(p, f, prop, _facing_of(xf)), r, rng)
 			r.furniture += 1
 		if t != 0:
 			var prop := _cat.trap(t)
 			rng.seed = _hash(p) ^ 0x5bd1e995
 			var xf := _tile_xf(i, sm).translated_local(Vector3(0, 0.005, 0))
-			_emit(b, prop, xf, 0, r, rng)
+			_emit(b, md, prop, xf, 0, r, rng)
 			r.traps += 1
 	var piles := sm.items
 	for k in range(0, piles.size(), Snapshot.PILE_STRIDE):
@@ -93,6 +102,17 @@ func _builder(sm: Snapshot.Submap, i: int) -> PropShapes.Builder:
 	if _ter.style_for(sm.ter[i]).kind == K.ROOF:
 		return PropShapes.Builder.new(_roof_solid, _roof_glass)
 	return PropShapes.Builder.new(_solid, _glass)
+
+
+## Model transform list for a tile (roof terrain: the roof list).
+func _models(sm: Snapshot.Submap, i: int, r: Result) -> Dictionary:
+	return r.roof_models if _ter.style_for(sm.ter[i]).kind == K.ROOF else r.models
+
+
+static func _add_model(md: Dictionary, m: ModelLibrary.Model, xf: Transform3D) -> void:
+	if not md.has(m):
+		md[m] = []
+	(md[m] as Array).append(xf)
 
 
 ## Tile centre on its floor (roof terrain is drawn lifted), submap-local.
@@ -157,8 +177,12 @@ func _links(p: Vector3i, f: int, prop: PropCatalog.Prop, facing: int) -> int:
 	return bits
 
 
-func _emit(b: PropShapes.Builder, prop: PropCatalog.Prop, xf: Transform3D, links: int, r: Result,
-		rng: RandomNumberGenerator) -> void:
+func _emit(b: PropShapes.Builder, md: Dictionary, prop: PropCatalog.Prop, xf: Transform3D, links: int,
+		r: Result, rng: RandomNumberGenerator) -> void:
+	if prop.model != null:
+		_add_model(md, prop.model, xf * MODEL_TURN)
+		r.model_props += 1
+		return
 	if prop.shape.is_empty():
 		if r.glyphs.size() < MAX_GLYPHS:
 			r.glyphs.append([xf.origin + Vector3(0, 0.6, 0), prop.symbol, prop.accent])
@@ -172,12 +196,17 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		rng: RandomNumberGenerator) -> int:
 	var placed := pile_transforms(sm, base, pile, tile_xf)
 	var b := _builder(sm, pile[0])
+	var md := _models(sm, pile[0], r)
 	for k in placed.size():
 		var xf: Transform3D = placed[k][0]
 		var itype: int = placed[k][1]
 		var prop := _cat.item(itype)
 		if prop.shape == "item_corpse" and pile[Snapshot.PILE_CORPSE] != 0:
 			continue   # CreatureView lays the body there
+		if prop.model != null and itype != 0:
+			_add_model(md, prop.model, xf)
+			r.model_props += 1
+			continue
 		if prop.shape.is_empty():
 			if r.glyphs.size() < MAX_GLYPHS:
 				r.glyphs.append([xf.origin + Vector3(0, 0.3, 0), prop.symbol, prop.accent])
@@ -191,19 +220,22 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 
 ## Where the items of a pile [tile, count, top0..3] go: one [transform (scaled to the item), itype]
 ## per shown item (itype 0: clutter for the smaller rest of the pile), on the surfaces of the tile's
-## furniture; empty when they are inside a closed container. Deterministic per square.
+## furniture (its model's surface_N planes when it has them); empty when they are inside a closed
+## container. Deterministic per square.
 func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary) -> Array:
 	var out := []
 	var i := pile[0]
 	var count := pile[1]
 	var furn: PropCatalog.Prop = _cat.furniture(sm.furn[i]) if sm.furn[i] != 0 else null
 	var info := PropShapes.info(furn.shape) if furn != null else PropShapes.FLOOR_INFO
-	if count <= 0 or info.get("hide", false):
+	var planes: Array = furn.model.surfaces if furn != null and furn.model != null else []
+	if count <= 0 or (planes.is_empty() and info.get("hide", false)):
 		return out
 	var surfaces: Array = info.get("surfaces", [0.0])
 	var rect: Array = info.get("rect", PropShapes.FLOOR_INFO["rect"])
-	var on: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
-	on = Transform3D(on.basis.orthonormalized(), on.origin)   # items keep their own size
+	var full: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
+	var on := Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
+	var model_xf := full * MODEL_TURN
 	var h := _hash(base + Vector3i(i % SEEX, i / SEEX, 0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = h
@@ -213,10 +245,17 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 		var slot := (start + k * step) % (SUB * SUB)
 		var u := (slot % SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
 		var v := (slot / SUB + 0.5) / SUB + rng.randf_range(-0.04, 0.04)
-		var local := Vector3(lerpf(rect[0], rect[2], u), surfaces[k % surfaces.size()], lerpf(rect[1], rect[3], v))
+		var pos: Vector3
+		if planes.is_empty():
+			pos = on * Vector3(lerpf(rect[0], rect[2], u), surfaces[k % surfaces.size()], lerpf(rect[1], rect[3], v))
+		else:
+			var s: Array = planes[k % planes.size()]
+			var r2: Rect2 = s[1]
+			var local := Vector3(lerpf(r2.position.x, r2.end.x, u), s[2], lerpf(r2.position.y, r2.end.y, v))
+			pos = model_xf * ((s[0] as Transform3D) * local)
 		var itype := pile[2 + k] if k < 4 else 0
 		var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
-		out.append([on * Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), local), itype])
+		out.append([Transform3D(on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos), itype])
 	return out
 
 

@@ -5,8 +5,9 @@ extends RefCounted
 ##
 ## Registry files are hostile input too (mods will ship them): file count, depth, sizes, types and
 ## string lengths are capped; bad files and entries are skipped and listed in [member warnings].
-## Models (.glb) aren't loaded yet (there are none): entries resolve by `mesher` (terrain) or
-## `placeholder` (a procedural shape, see PropShapes); a model-only entry doesn't count as art yet.
+## Art for props is a `model` that loads (ModelLibrary, from assets/models next to the registry folder)
+## or a `placeholder` (a procedural shape, see PropShapes); terrain uses `mesher`. A model that is missing
+## or bad doesn't count: the entry's placeholder takes over, else the chain goes on.
 
 const MAX_FILE_BYTES := 4 << 20
 const MAX_FILES := 256
@@ -43,6 +44,8 @@ class Found:
 
 
 var warnings := PackedStringArray()
+## Models of `model` paths; its root is set by the first load_dir (../models next to the registry).
+var models := ModelLibrary.new()
 var _entries := {}   # id -> {kind -> Entry}
 var _count := 0
 
@@ -51,22 +54,37 @@ func entry(id: String, kind: String) -> Entry:
 	return (_entries.get(id, {}) as Dictionary).get(kind)
 
 
+## Registry warnings and model warnings (models load on first use, so these grow as the world shows).
+func all_warnings() -> PackedStringArray:
+	return warnings + models.warnings
+
+
+## The entry's model, or null when it has none or it doesn't load.
+func model_of(e: Entry) -> ModelLibrary.Model:
+	return null if e == null or e.model.is_empty() else models.get_model(e.model)
+
+
+## Whether the client can show this entry as a prop: a placeholder, or a model that loads.
+func has_art(e: Entry) -> bool:
+	return e != null and (not e.placeholder.is_empty() or model_of(e) != null)
+
+
 ## Follows the chain for a prop-like id: exact entry of this kind, then the `looks_like` chain
-## (an entry of any kind with a placeholder, e.g. a hedge that looks like a terrain shrub), then
+## (an entry of any kind with art, e.g. a hedge that looks like a terrain shrub), then
 ## `generic_<kind>_<category>` for each category in order, then `generic_<kind>`. Steps 4 (billboards)
 ## and 5 (glyph cards) are the caller's. `chain` is the looks_like ids to try, in order.
 func find_prop(kind: String, id: String, chain: PackedStringArray, categories: PackedStringArray) -> Found:
 	var f := Found.new()
 	var e := entry(id, kind)
-	if e != null and not e.placeholder.is_empty():
+	if has_art(e):
 		return _found(f, e, Step.EXACT, id)
 	for link in chain:
 		var by_kind: Dictionary = _entries.get(link, {})
 		e = by_kind.get(kind)
-		if e == null or e.placeholder.is_empty():
+		if not has_art(e):
 			e = null
 			for k: String in by_kind:
-				if not (by_kind[k] as Entry).placeholder.is_empty():
+				if has_art(by_kind[k]):
 					e = by_kind[k]
 					break
 		if e != null:
@@ -74,10 +92,10 @@ func find_prop(kind: String, id: String, chain: PackedStringArray, categories: P
 	for c in categories:
 		var g := "generic_%s_%s" % [kind, c]
 		e = entry(g, kind)
-		if e != null and not e.placeholder.is_empty():
+		if has_art(e):
 			return _found(f, e, Step.GENERIC, g)
 	e = entry("generic_" + kind, kind)
-	if e != null and not e.placeholder.is_empty():
+	if has_art(e):
 		return _found(f, e, Step.GENERIC, "generic_" + kind)
 	return f
 
@@ -91,6 +109,8 @@ func _found(f: Found, e: Entry, step: Step, via: String) -> Found:
 
 ## Loads every *.json under dir (depth and count capped). Missing dir: a warning, no entries.
 func load_dir(dir_path: String) -> void:
+	if models.root.is_empty():
+		models.root = dir_path.simplify_path().get_base_dir().path_join("models")
 	var files := PackedStringArray()
 	_collect(dir_path, 0, files)
 	for f in files:
