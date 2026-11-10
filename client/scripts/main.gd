@@ -60,6 +60,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -159,6 +160,10 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	pour.actions = item_actions
+	pour.held = _held_liquid
+	pour.target = _pour_target
+	pour.tap = _use_tap
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
@@ -940,6 +945,35 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
+func _held_liquid() -> Variant:
+	for h: String in ["main", "off"]:
+		var it: Variant = hud_data.held.get(h)
+		if it is ItemRef and not str(hud_data.held.get(h + "_liquid", "")).is_empty():
+			return it
+	return null
+
+
+## Where holding E pours: into the container under the pointer, else onto the square you face.
+func _pour_target() -> Dictionary:
+	var t := grab.item_hover
+	if not t.is_empty() and t.get("item") is ItemRef and (t["item"] as ItemRef).is_container(world.tables):
+		return {"container": t["item"]}
+	if world.snapshot == null:
+		return {}
+	var s := _screen_step(Vector2(0, 1))
+	return {"square": world.snapshot.player_pos + Vector3i(s.x, s.y, 0)}
+
+
+## E's tap with a liquid in hand: what E does otherwise (take the item under the pointer, else use / examine
+## the square you face).
+func _use_tap() -> void:
+	if grab.take_hover() or live == null or not _in_main_loop():
+		return
+	grab.ask = {}
+	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
+
+
 ## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
 func _can_inspect() -> bool:
 	return _fp_active() and world.snapshot != null and main_menu == null and not request_ui.visible \
@@ -1163,6 +1197,10 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	if typing or vr != null or (live != null and not _in_main_loop()):
+		pour.cancel()   # a menu or prompt took the keys: its release won't come here
+	elif pour.update(Time.get_ticks_msec()) == "refused":
+		grab.flash("You can't pour that there.", true)
 	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	_update_look_line()
@@ -1233,6 +1271,9 @@ func _act_help() -> String:
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
 	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
+	var p := pour.hint(world.tables)
+	if not p.is_empty():
+		parts.append(p)
 	parts.append("%s save" % InputActions.key_of(&"save_game"))
 	return "  ".join(parts)
 
@@ -1258,6 +1299,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and (live == null or _in_main_loop()) and pour.handle(event, Time.get_ticks_msec()):
+		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
 		return   # E on an item you look at takes it (else E uses / examines, below)
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):

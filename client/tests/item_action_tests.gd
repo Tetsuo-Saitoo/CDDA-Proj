@@ -72,6 +72,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_messages_timeout()
 	_test_content_ops()
 	_test_throw_pour()
+	_test_pour_hold()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)
@@ -298,6 +299,56 @@ func _test_content_ops() -> void:
 	_check.call(ItemActions.contents_sig(_snap(1, [], loaded), gun) == PackedInt64Array([32, 31, 0, 33, 32, 0])
 			and ItemActions.contents_sig(_snap(1, [], loaded), floor_gun).size() == 9,
 			"item actions: contents seen are what is inside a carried item, else everything carried")
+	a.free()
+
+
+## Hold E to pour (PourHold): with a liquid in hand a tap still does E's usual thing, a hold pours once onto the
+## square or into the container it is given; no liquid: E isn't touched; a cancelled press sends nothing.
+func _test_pour_hold() -> void:
+	InputActions.ensure(false)
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var s := _snap(5, [], [[43, 32, 0, -1, WIELDED]])
+	s.player_pos = SQ
+	a.on_snapshot(s)
+	var jug := ItemRef.on_player(43, 32, 0, -1, WIELDED, SQ)
+	var p := PourHold.new()
+	p.actions = a
+	var hold: Array = [jug]
+	p.held = func() -> Variant: return hold[0]
+	var next := SQ + Vector3i(1, 0, 0)
+	var where: Array = [{"square": next}]
+	p.target = func() -> Dictionary: return where[0]
+	var taps := [0]
+	p.tap = func() -> void: taps[0] += 1
+	var down := InputActions.slots(&"use_held")[0].duplicate() as InputEventKey
+	down.pressed = true
+	var echo := down.duplicate() as InputEventKey
+	echo.echo = true
+	var release := down.duplicate() as InputEventKey
+	release.pressed = false
+	_check.call(p.handle(down, 0) and p.waiting() and p.update(100) == "" and p.handle(echo, 200) and p.handle(release, 300)
+			and taps[0] == 1 and not p.waiting() and b.calls.is_empty(), "pour hold: a tap does E's usual thing, nothing poured")
+	_check.call(p.hint(null) == "hold %s: pour it out" % InputActions.key_of(&"use_held"), "pour hold: hint (%s)" % p.hint(null))
+	p.handle(down, 1000)
+	_check.call(p.update(1000 + PourHold.HOLD_MS) == "pour" and b.calls[-1] == ["pour", 43.0, 32.0, next]
+			and not p.handle(release, 1600) and taps[0] == 1, "pour hold: held long enough: poured onto the square, no tap")
+	hold[0] = ItemRef.on_player(44, 32, 0, -1, WIELDED, SQ)   # another jug: the first one's pour is still in flight
+	where[0] = {"container": ItemRef.on_square(50, 34, next)}
+	p.handle(down, 2000)
+	_check.call(p.update(2000 + PourHold.HOLD_MS) == "pour_into" and b.calls[-1] == ["pour_into", 44.0, 32.0, 50.0, 34.0, -1],
+			"pour hold: into the container under the pointer")
+	hold[0] = ItemRef.on_player(45, 32, 0, -1, WIELDED, SQ)
+	where[0] = {"square": SQ + Vector3i(3, 0, 0)}
+	var n := b.calls.size()
+	p.handle(down, 3000)
+	_check.call(p.update(3000 + PourHold.HOLD_MS) == "refused" and b.calls.size() == n, "pour hold: too far: refused here")
+	p.handle(down, 4000)
+	p.cancel()
+	_check.call(p.update(9000) == "" and b.calls.size() == n and taps[0] == 1, "pour hold: a cancelled press sends nothing")
+	hold[0] = null
+	_check.call(not p.handle(down, 5000) and not p.waiting() and p.hint(null) == "", "pour hold: no liquid in hand: E isn't touched")
 	a.free()
 
 

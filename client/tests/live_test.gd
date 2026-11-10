@@ -64,6 +64,8 @@ func _run() -> void:
 			[{"end": Vector3i.ZERO, "hit_uid": 1.5}], many]
 	_check(bad_pellets.all(func(b: Variant) -> bool: return not _sim.answer({"id": 1, "shot": shot.merged({"pellets": b})})),
 			"rejects malformed shot pellets")
+	# well formed: taken (no request waits, so the sim drops it)
+	_check(_sim.answer({"id": 1, "shot": shot.merged({"pellets": [{}, shot, shot]})}), "takes well-formed shot pellets")
 	_check(not _sim.queue_action(""), "rejects an empty action")
 	var take := {"op": "take", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)}
 	var bad_items: Array[Dictionary] = [{}, take.merged({"op": "eat"}, true), take.merged({"item": 5.0}, true),
