@@ -5,7 +5,9 @@ extends RefCounted
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
 ## Fields the client doesn't use yet (vehicles) are ignored, not trusted; whoever
-## starts using them adds their checks here. A submap without `trap` or `items` has none.
+## starts using them adds their checks here. A submap without `trap`, `items` or `lights` has none.
+## `env.ambient_light` and per-submap `lights` ([[tile, luminance, kind], ...], block C6) are optional
+## until the bridge sends them.
 
 const CONTRACT_VERSION := 0
 const TILES := 144
@@ -42,6 +44,11 @@ const FIELD_STRIDE := 4                   # fields: tile, type (CDDA field id), 
 const MAX_FIELDS_PER_TILE := 4
 const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
 const MAX_WORN := 64                      # the contract's cap
+const LIGHT_STRIDE := 3                   # lights: tile, luminance, kind
+const MAX_LIGHTS_PER_SUBMAP := 16
+const LIGHT_FIXED := 0                    # kinds (assumed until the contract says): terrain, furniture, vehicle
+const LIGHT_ITEM := 1                     # an item, on the ground or carried
+const LIGHT_FIRE := 2                     # a field: fire, burning things
 
 const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
@@ -62,6 +69,7 @@ class Submap:
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
+	var lights: PackedInt32Array  # LIGHT_STRIDE ints per light source: tile, luminance 0..255, kind (LIGHT_*)
 
 
 var error := ""
@@ -81,6 +89,8 @@ var creatures: Array[Creature] = []        # the ones the player perceives, the 
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
+var ambient_light := -1  # env.ambient_light: CDDA's natural light at the player's z, 0..255; -1 when not sent
+var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
@@ -345,6 +355,8 @@ func _read_env(v: Variant) -> void:
 		sun_alt_deg = _float(e["sun_alt_deg"], -90.0, 90.0, "env.sun_alt_deg")
 	if e.has("sun_az_deg"):
 		sun_az_deg = _float(e["sun_az_deg"], -360.0, 360.0, "env.sun_az_deg")
+	if e.has("ambient_light"):
+		ambient_light = _int(e["ambient_light"], 0, 255, "env.ambient_light")
 
 
 func _read_ids(v: Variant) -> void:
@@ -398,6 +410,9 @@ func _read_submaps(v: Variant) -> void:
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
+		if s.has("lights"):
+			has_lights = true
+			sm.lights = _lights(s["lights"], what + ".lights")
 		if not is_valid():
 			return
 		submaps[sm.pos] = sm
@@ -569,6 +584,28 @@ func _carried(v: Variant, what: String) -> PackedInt64Array:
 		if is_valid() and (uids.has(uid) or (parent != 0 and not uids.has(parent))):
 			_fail("%s: uid %d twice, or its container %d not listed before it" % [w, uid, parent])
 		uids[uid] = true
+		if not is_valid():
+			return out
+	return out
+
+
+## [[tile, luminance, kind], ...]: at most MAX_LIGHTS_PER_SUBMAP light sources.
+func _lights(v: Variant, what: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_LIGHTS_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d lights" % [what, MAX_LIGHTS_PER_SUBMAP])
+		return out
+	for i in (v as Array).size():
+		var l: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not l is Array or (l as Array).size() != LIGHT_STRIDE:
+			_fail(w + ": expected [tile, luminance, kind]")
+			return out
+		out.append(_int(l[0], 0, TILES - 1, w + ".tile"))
+		out.append(_int(l[1], 0, 255, w + ".luminance"))
+		out.append(_int(l[2], LIGHT_FIXED, LIGHT_FIRE, w + ".kind"))
 		if not is_valid():
 			return out
 	return out

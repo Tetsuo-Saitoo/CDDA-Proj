@@ -475,6 +475,7 @@ static func material(name: String) -> StandardMaterial3D:
 		m.roughness = 0.9
 		if name == "glass":
 			m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			m.render_priority = WorldLighting.UNDER_PRIORITY   # darkened with what is behind it
 			m.roughness = 0.1
 			m.metallic_specular = 0.8
 		_materials[name] = m

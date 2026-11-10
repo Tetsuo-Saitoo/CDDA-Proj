@@ -93,6 +93,7 @@ func sync(d: Dictionary) -> void:
 		mat.albedo_color = d["color"]
 		if d["glass"]:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass
 		m.material = mat
 		_meshes[key] = m
 	leaf.mesh = _meshes[key]

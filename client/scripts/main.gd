@@ -8,6 +8,7 @@ extends Node3D
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
 ## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
 ## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
+## --no-light: no darkening by CDDA's light and night (WorldLighting, block C6).
 ## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
 ## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
 ## fresh world fp3d-live), --world=/--save= load directly. In the game the
@@ -73,6 +74,7 @@ func _ready() -> void:
 	world = WorldView.new()
 	world.name = "World"
 	world.catalog.load_registry_dir(_repo_path("assets/registry"))
+	world.lighting.enabled = not _args.has("no-light")
 	for w in world.catalog.warnings:
 		push_warning(w)
 	add_child(world)
@@ -269,6 +271,7 @@ func _set_first_person(on: bool) -> void:
 		fp.set_look(camera.rotation.y, 0.0)   # keep facing the same way
 		world.set_view_z_max(world.coords.z_max)   # ceilings back
 	first_person = on
+	world.lighting.min_brightness = 0.0 if on else WorldLighting.OUTSIDE_MIN   # the map stays readable
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	camera.set_process_unhandled_input(not on)
 	fp.set_process_unhandled_input(on)
@@ -301,6 +304,7 @@ func _start_vr() -> void:
 		var p: Variant = _reach_square()
 		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
+	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
@@ -737,13 +741,16 @@ func _setup_environment() -> void:
 	_aim_sun(45.0, 0.0)
 
 
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp).
+## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
+## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
 func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var alt := deg_to_rad(maxf(alt_deg, 8.0))
+	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
+	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
 	var az := deg_to_rad(az_deg)
 	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
 	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else 0.15
+	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
+	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
 
 
 func _setup_hud() -> void:

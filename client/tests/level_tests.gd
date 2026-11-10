@@ -79,7 +79,7 @@ func _test_empty_levels(world: WorldView) -> void:
 	_check.call(world.apply_snapshot(s) == 8, "levels: all 8 submaps built")
 	_check.call(world.node_of(Vector3i(0, 0, 1)) == null and world.node_of(Vector3i(1, 0, 3)) == null
 			and world.node_of(Vector3i(0, 0, 0)) != null and world.node_of(Vector3i(1, 0, 2)) != null
-			and world.get_child_count() == 4, "levels: open sky gets no node, floors do (4 nodes for 8 submaps)")
+			and world.node_count() == 4, "levels: open sky gets no node, floors do (4 nodes for 8 submaps)")
 	_check.call(world.built_revision(Vector3i(0, 0, 1)) == 1 and world.built_revision(Vector3i(1, 0, 3)) == 1,
 			"levels: an empty submap still counts as built")
 	_check.call(world.apply_snapshot(s) == 0, "levels: same revisions, nothing rebuilt (empty ones included)")
@@ -113,7 +113,7 @@ func _test_stepping(world: WorldView) -> void:
 			"levels: a level that gets a floor gets nodes; a cut view stays cut")
 	world.set_view_z_max(3)
 	world.apply_snapshot(_snap({0: [_floor, 1], 1: [_air, 3], 2: [_floor, 1], 3: [_air, 3]}))
-	_check.call(world.node_of(Vector3i(0, 0, 1)) == null and world.get_child_count() == 4 and world.view_z_max == 2
+	_check.call(world.node_of(Vector3i(0, 0, 1)) == null and world.node_count() == 4 and world.view_z_max == 2
 			and world.levels_with_content() == PackedInt32Array([0, 2]), "levels: back to sky: nodes freed, view comes down")
 	world.apply_snapshot(grown)
 	_check.call(world.view_z_max == 3, "levels: a view at the top follows the top up")
@@ -138,7 +138,7 @@ func _test_tall_sky(world: WorldView) -> void:
 	var levels := {}
 	for z in range(-10, 11):
 		levels[z] = [_floor if z == 0 else _air, 5]
-	_check.call(world.apply_snapshot(_snap(levels)) > 0 and world.get_child_count() == 2
+	_check.call(world.apply_snapshot(_snap(levels)) > 0 and world.node_count() == 2
 			and world.z_min_loaded == -10 and world.z_max_loaded == 10 and world.level_text() == "level 0 (0..0)",
 			"levels: 21 levels of sky around one floor: 2 nodes")
 	world.step_view_z(1)
