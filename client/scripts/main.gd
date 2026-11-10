@@ -199,8 +199,7 @@ func _place_player_body() -> void:
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
-		player_body.reach(vr.left.global_position if vr.left.get_is_active() else null,
-				vr.right.global_position if vr.right.get_is_active() else null)
+		VrHands.drive(player_body, vr)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
 	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max

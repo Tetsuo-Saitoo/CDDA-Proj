@@ -511,7 +511,7 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	pb.show_head = false
 	var head := pb.get_node_or_null("head") as Node3D
 	var arm := pb.get_node_or_null("arm_l") as Node3D
-	_check.call(built == 12 and head != null and not head.visible and arm.visible,
+	_check.call(built == 14 and head != null and not head.visible and arm.visible,
 			"body: one node per part; own camera hides the head, not the arms")
 	var hips := PlayerBody.next_hip_yaw(0.0, 0.3, 0.1)
 	var turned := PlayerBody.next_hip_yaw(0.0, 1.5, 0.1)
@@ -533,9 +533,23 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call(hl.position.z < -0.5 and hr.transform == Transform3D.IDENTITY
 			and not (pb.get_node("arm_l") as Node3D).transform.basis.is_equal_approx(Basis.IDENTITY),
 			"body: left arm points forward, right arm hangs")
+	var open_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [0, 0, 0, 0, 0])
+	var fist_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [1, 1, 1, 1, 1])
+	var idx_open: Vector3 = open_pts[1][3]
+	var idx_fist: Vector3 = fist_pts[1][3]
+	_check.call(open_pts.size() == 5 and idx_open.y < 0.7 and idx_fist.y > idx_open.y + 0.03,
+			"body: fingers hang open and curl up into a fist")
+	pb.show_fingers = true
+	pb.pose_fingers("l", pb.curled_points(-1.0, [0.5, 1, 0, 0, 0]))
+	var fl := pb.get_node_or_null("fingers_l") as Node3D
+	_check.call(fl != null and fl.visible and fl.get_child_count() == 15
+			and (fl.get_child(3) as Node3D).position.distance_to(pb.get_node("hand_l").position) < 1.0,
+			"body: 15 finger segments per hand, shown in VR")
+	pb.show_fingers = false
+	_check.call(not fl.visible and VrHands.JOINTS.size() == 5, "body: no fingers on the desktop")
 	var k := pb.key
 	pb.apply(snap, tables)
-	_check.call(pb.key == k and pb.get_child_count() == 12, "body: same snapshot, no rebuild")
+	_check.call(pb.key == k and pb.get_child_count() == 14, "body: same snapshot, no rebuild")
 	pb.free()
 	var bad: Dictionary = (data as Dictionary).duplicate(true)
 	bad["player"]["bleed"] = [1, 2]

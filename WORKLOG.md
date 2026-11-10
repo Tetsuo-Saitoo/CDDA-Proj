@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — VR fingers: 15 segments per hand from OpenXR hand tracking, or curled from trigger/grip on controllers; fp_tests checks; untested in a headset.
 - 2026-11-09 — VR player body: arms point at the controllers (no stretch), hips follow the head only past 0.6 rad; fp_tests checks.
 - 2026-11-08 — Player body and clothes: snapshot sends worn items and wounds; client PlayerBody draws parts, layered clothes, damage, bandages, blood; head hidden in first person/VR.
 - 2026-11-08 — Linux AppImage: `tools/build/appimage.sh` builds one `CDDA-3D-x86_64.AppImage` in WSL (exported client, stripped bridge with RPATH `$ORIGIN/libs`, CDDA data + tilesets, bundled SDL2 closure, licences); desktop live game by default, `--vr`, `--town`; tested in WSL (town, live game, VR fallback); release `v0.4.0`.

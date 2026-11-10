@@ -29,6 +29,11 @@ const SHOULDER_Y := 1.45
 const ARM_REACH := 0.62         # shoulder to hand centre, metres
 const HIP_SLACK := 0.6          # radians the head may turn before the hips follow
 const HIP_RATE := 6.0           # rad/s the hips catch up with
+## Fingers (VR): thumb, index, middle, ring, little; three segments each, metres.
+const FINGER_LEN := [[0.035, 0.03, 0.025], [0.04, 0.025, 0.02], [0.045, 0.028, 0.022], [0.042, 0.026, 0.02],
+		[0.033, 0.02, 0.018]]
+const FINGER_W := 0.016
+const CURL_RAD := 1.25          # bend per joint at full curl
 const BLOOD := Color(0.55, 0.02, 0.02)
 const BANDAGE := Color(0.95, 0.95, 0.9)
 const BITE := Color(0.3, 0.1, 0.3)
@@ -44,6 +49,12 @@ var key := ""                   # what it was last built from
 var pieces: Array[Dictionary] = []   # the last plan (tests read it)
 
 var hip_yaw := 0.0              # set by follow_head (VR)
+var show_fingers := false:      # VR only (desktop hands stay boxes)
+	set(v):
+		show_fingers = v
+		for side: String in _fingers:
+			(_fingers[side] as Node3D).visible = v
+var _fingers := {}              # "l"/"r" -> Node3D holding 15 segment meshes
 var _head_nodes: Array[Node3D] = []
 static var _mats := {}
 
@@ -233,6 +244,91 @@ func _build() -> void:
 		mi.position = p["centre"]
 		mi.material_override = _material(p["colour"])
 		(nodes[part] as Node3D).add_child(mi)
+	_build_fingers()
+
+
+## Finger joints for a hand without hand tracking: from the controller's curls (0 open .. 1 fist), thumb
+## first. Body-local; returns 5 lists of 4 points (knuckle .. tip).
+func curled_points(side: float, curls: Array) -> Array:
+	var arm := get_node_or_null("arm_l" if side < 0 else "arm_r") as Node3D
+	var hand := get_node_or_null("hand_l" if side < 0 else "hand_r") as Node3D
+	var b := arm.transform.basis if arm != null else Basis.IDENTITY
+	var palm: Vector3 = PARTS["hand_l" if side < 0 else "hand_r"][0]
+	if hand != null:
+		palm = hand.transform * palm
+	return finger_points(side, b, palm, curls)
+
+
+static func finger_points(side: float, b: Basis, palm: Vector3, curls: Array) -> Array:
+	var fwd := (b * Vector3.DOWN).normalized()      # along the fingers
+	var inward := (b * Vector3(-side, 0, 0)).normalized()   # the palm faces the thigh when the arm hangs
+	var front := (b * Vector3.FORWARD).normalized()
+	var out := []
+	for f in 5:
+		var c := clampf(float(curls[f]) if f < curls.size() else 0.0, 0.0, 1.0)
+		var p: Vector3
+		var dir: Vector3
+		var bend_axis: Vector3
+		if f == 0:   # thumb: from the front of the palm, pointing forward-down, curls across the palm
+			p = palm + front * 0.04 + fwd * 0.01
+			dir = (fwd + front).normalized()
+			bend_axis = fwd.cross(inward).normalized()
+		else:
+			p = palm + fwd * 0.06 + front * (0.035 - 0.022 * f)
+			dir = fwd
+			bend_axis = inward.cross(fwd).normalized()
+		var pts := [p]
+		for seg in 3:
+			dir = dir.rotated(bend_axis, -c * CURL_RAD).normalized()
+			p += dir * float(FINGER_LEN[f][seg])
+			pts.append(p)
+		out.append(pts)
+	return out
+
+
+## Poses the fingers of one hand ("l"/"r") from 5 lists of 4 body-local points.
+func pose_fingers(side: String, points: Array) -> void:
+	var holder := _fingers.get(side) as Node3D
+	if holder == null or points.size() != 5:
+		return
+	var i := 0
+	for f in 5:
+		var pts: Array = points[f]
+		for seg in 3:
+			var mi := holder.get_child(i) as MeshInstance3D
+			i += 1
+			var a: Vector3 = pts[seg]
+			var e: Vector3 = pts[seg + 1]
+			var len := a.distance_to(e)
+			if len < 0.001:
+				mi.visible = false
+				continue
+			mi.visible = true
+			var z := (e - a) / len
+			var up := Vector3.UP if absf(z.y) < 0.95 else Vector3.RIGHT
+			var x := up.cross(z).normalized()
+			mi.transform = Transform3D(Basis(x, z.cross(x), z).scaled_local(Vector3(1, 1, len)), (a + e) * 0.5)
+
+
+func _build_fingers() -> void:
+	_fingers.clear()
+	for side: String in ["l", "r"]:
+		var col := SKIN
+		for p: Dictionary in pieces:
+			if p["part"] == "hand_" + side and p["kind"] in ["skin", "worn"]:
+				col = p["colour"]   # the outermost glove wins
+		var holder := Node3D.new()
+		holder.name = "fingers_" + side
+		holder.visible = show_fingers
+		add_child(holder)
+		var box := BoxMesh.new()
+		box.size = Vector3(FINGER_W, FINGER_W, 1.0)
+		for k in 15:
+			var mi := MeshInstance3D.new()
+			mi.mesh = box
+			mi.material_override = _material(col)
+			holder.add_child(mi)
+		_fingers[side] = holder
 
 
 static func _material(c: Color) -> StandardMaterial3D:
