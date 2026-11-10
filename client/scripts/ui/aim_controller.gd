@@ -17,7 +17,8 @@ extends Node3D
 ## Newer bridges (target requests carry `dispersion`, arcmin) then roll CDDA's error per projectile and send a
 ## `shot` request (shot_error arcmin, shot_angle degrees): on_request() turns the kept sight line by it
 ## (ShotError), flies that bullet, draws its tracer and answers at once with the outcome, or cancels so CDDA
-## rolls it. While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
+## rolls it. A shotgun shell's request names each pellet's spread (`pellets`): every pellet is flown and answered
+## (pellet_turns). Bullets fly through furniture (soft cover, BulletPhysics). While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
 ## Shot requests have no time limit and no UI: main.gd sends their answer through send_shot(), which cancels
 ## instead when the bridge refuses it, so CDDA never waits on one. Answers hold exactly the bridge's types
 ## (shot_answer()).
@@ -38,6 +39,7 @@ const MAX_TRACERS := 32
 const LIVE_AIM_REACH := 4.0       # m: a live_aim pose farther than this from the kept origin is refused
 const MAX_PART_BYTES := 64        # the bridge's cap on a shot answer's `part`
 const MAX_QUALITY := 0.99         # the bridge's range for a shot answer's `quality` is 0..0.99
+const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's, at most (the bridge's cap)
 
 var world: WorldView
 var request_ui: RequestUI
@@ -304,10 +306,34 @@ func on_request(req: Dictionary) -> Dictionary:
 		origin = pose["origin"]
 		sight = pose["sight"]
 	var dir := ShotError.apply(sight, _finite(req.get("shot_error")), _finite(req.get("shot_angle")))
-	var shot := fly_from(origin, dir, str(shot_aim.get("ammo", "")))
+	var ammo := str(shot_aim.get("ammo", ""))
+	var turns := pellet_turns(req.get("pellets"))
+	var shot := fly_from(origin, dir, ammo, turns.is_empty())
 	if shot.is_empty():
 		return cancel
-	return {"id": int(id), "shot": shot["answer"]}
+	if turns.is_empty():
+		return {"id": int(id), "shot": shot["answer"]}
+	# a shell: each pellet flown along the shell's line turned by its spread ({}: not flown, CDDA rolls that one)
+	var answer: Dictionary = (shot["answer"] as Dictionary).duplicate()
+	var pellets: Array = []
+	for t: float in turns:
+		var p := fly_from(origin, ShotError.apply(dir, absf(t), 90.0 if t >= 0.0 else 270.0), ammo)
+		pellets.append(p["answer"] if not p.is_empty() else {})
+	answer["pellets"] = pellets
+	return {"id": int(id), "shot": answer}
+
+
+## A shot request's `pellets` (a shotgun shell): each pellet's turn off the shot's line, arcmin, + to the right. At
+## most MAX_PELLETS finite numbers within ShotError.MAX_ERROR_ARCMIN; anything else gives [] (one bullet).
+static func pellet_turns(v: Variant) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	if not (v is Array or v is PackedFloat32Array or v is PackedFloat64Array) or v.size() > MAX_PELLETS:
+		return out
+	for x: Variant in v:
+		if not (x is float or x is int) or not is_finite(float(x)) or absf(float(x)) > ShotError.MAX_ERROR_ARCMIN:
+			return PackedFloat32Array()
+		out.append(float(x))
+	return out
 
 
 ## A `shot` answer of exactly the types the bridge takes (contracts/bridge_api.md `answer`): end Vector3i,

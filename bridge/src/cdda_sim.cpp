@@ -114,6 +114,13 @@ Dictionary request_dict( const fp3d::ui_request &r )
         d["shot_error"] = std::isfinite( r.shot_error ) ? r.shot_error : 0.0f;
         d["shot_angle"] = std::isfinite( r.shot_angle ) ? r.shot_angle : 0.0f;
         d["dispersion"] = std::isfinite( r.dispersion ) ? r.dispersion : 0.0f;
+        if( !r.pellets.empty() ) {
+            Array pellets;
+            for( size_t i = 0; i < r.pellets.size() && i < fp3d::max_shot_pellets; i++ ) {
+                pellets.push_back( std::isfinite( r.pellets[i] ) ? r.pellets[i] : 0.0f );
+            }
+            d["pellets"] = pellets;
+        }
     }
     return d;
 }
@@ -374,30 +381,69 @@ bool CddaSim::answer( const Dictionary &d )
         return false;
     }
     if( d.has( "shot" ) ) {
-        // {end: Vector3i, hit_uid: int, part: String, quality: float}; the sim checks it again.
+        // {end: Vector3i, hit_uid: int, part: String, quality: float}, also each of `pellets`; the sim checks
+        // them again.
+        const auto point = []( const Dictionary & s, fp3d::pellet_answer & out ) {
+            Variant e;
+            Variant u;
+            Variant p;
+            Variant q;
+            if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) ||
+                !field( s, "hit_uid", Variant::INT, u ) || !field( s, "part", Variant::STRING, p ) ||
+                !field( s, "quality", Variant::FLOAT, q ) ) {
+                return false;
+            }
+            const Vector3i end = e;
+            out.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
+                                      std::clamp( end.y, -max_abs_coord, max_abs_coord ),
+                                      std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
+            out.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
+            out.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
+            const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
+            if( !std::isfinite( quality ) ) {
+                return false;
+            }
+            out.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
+            return true;
+        };
         const Dictionary s = v;
-        Variant e;
-        Variant u;
-        Variant p;
-        Variant q;
-        if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) || !field( s, "hit_uid", Variant::INT, u ) ||
-            !field( s, "part", Variant::STRING, p ) || !field( s, "quality", Variant::FLOAT, q ) ) {
+        fp3d::pellet_answer main;
+        if( !point( s, main ) ) {
             return false;
         }
         fp3d::shot_answer sa;
-        const Vector3i end = e;
-        sa.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
-                                 std::clamp( end.y, -max_abs_coord, max_abs_coord ),
-                                 std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
-        sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
-        sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
-        const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
-        if( !std::isfinite( quality ) ) {
-            return false;
-        }
-        sa.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
+        sa.end = main.end;
+        sa.hit_uid = main.hit_uid;
+        sa.part = std::move( main.part );
+        sa.quality = main.quality;
         // `fly` (target answers): a bool; anything else counts as false.
         sa.fly = s.has( "fly" ) && s["fly"].get_type() == Variant::BOOL && static_cast<bool>( s["fly"] );
+        // `pellets` (shot answers): an Array of at most max_shot_pellets Dictionaries, {} for a pellet not flown.
+        Variant ps;
+        if( !field( s, "pellets", Variant::ARRAY, ps ) ) {
+            return false;
+        }
+        if( s.has( "pellets" ) ) {
+            const Array arr = ps;
+            if( arr.size() > static_cast<int64_t>( fp3d::max_shot_pellets ) ) {
+                return false;
+            }
+            for( int64_t i = 0; i < arr.size(); i++ ) {
+                if( arr[i].get_type() != Variant::DICTIONARY ) {
+                    return false;
+                }
+                const Dictionary pd = arr[i];
+                if( pd.is_empty() ) {
+                    sa.pellets.emplace_back();
+                    continue;
+                }
+                fp3d::pellet_answer pa;
+                if( !point( pd, pa ) ) {
+                    return false;
+                }
+                sa.pellets.emplace_back( std::move( pa ) );
+            }
+        }
         a.shot = sa;
     }
     fp3d::answer( std::move( a ) );
