@@ -106,7 +106,13 @@ struct player_view {
     std::vector<worn_view> worn;             // inner to outer (CDDA's order), visible items only; cap 64
     std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
     optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
+    std::vector<effect_view> effects;        // what CDDA's @ screen lists (effects with no display name left out); cap 64
 };
+struct effect_view { string id /* effect_type id, e.g. drunk, bleed; up to 64 bytes */;
+                     string name /* CDDA's display name for this intensity, color tags removed; up to 40 columns */;
+                     uint32 body_part /* body_part index, 0 = whole body */; uint8 intensity;
+                     int8 rating /* -1 bad, 0 neutral, 1 good, 2 mixed */; int32 seconds_left /* -1 permanent */; };
+// JSON: "effects":[{"id":"stunned","name":"Stunned","body_part":0,"intensity":1,"rating":-1,"seconds_left":300}]
 struct gun_view { uint32 type /* itype */; int16 dirt /* CDDA's fouling 0..10000; JSON: left out for a NON_FOULING gun */;
                   int32 rounds /* loaded rounds; JSON: left out for a gun that takes no ammo */;
                   std::vector<string> faults /* fault ids it has (jams: gun_mechanical_simple ones); cap 16, ids up to 64 bytes */; };
