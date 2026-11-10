@@ -2,7 +2,7 @@ class_name HudView
 extends Control
 ## G1: the flat-screen view of HudData. Left edge, middle: the body (one bar per main body part, coloured by
 ## level) and the needs CDDA has words for, the message feed under them (the look panel keeps the bottom left); top centre: warnings, worst first, pulsing while one is
-## bad. It only draws what HudData decided (VR draws the same data on the wrist, vr/). All text is plain Label
+## bad; top right: an orange marker while any testing cheat is on. It only draws what HudData decided (VR draws the same data on the wrist, vr/). All text is plain Label
 ## text or draw_string, never BBCode.
 
 const FEED_LINES := 6
@@ -10,6 +10,7 @@ const WARN_LINES := 3
 const BAR_W := 90.0
 const ROW_H := 16.0
 const FONT_SIZE := 14
+const CHEAT_COLOR := Color(1.0, 0.55, 0.1)
 
 var data: HudData:
 	set(d):
@@ -18,10 +19,11 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_on_changed(PackedStringArray(["body", "needs", "messages", "warnings"]))
+		_on_changed(PackedStringArray(["body", "needs", "messages", "warnings", "cheats"]))
 
 var feed: Label
 var warn: Label
+var cheat_mark: Label
 var _body: Control
 var _pulse := 0.0
 
@@ -39,6 +41,12 @@ func _init() -> void:
 	warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	warn.position = Vector2(-300, 40)
 	warn.size = Vector2(600, WARN_LINES * 20)
+	cheat_mark = _label("Cheats", HORIZONTAL_ALIGNMENT_RIGHT)
+	cheat_mark.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	cheat_mark.position = Vector2(-612, 8)
+	cheat_mark.size = Vector2(600, 20)
+	cheat_mark.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cheat_mark.add_theme_color_override("font_color", CHEAT_COLOR)
 	_body = Control.new()
 	_body.name = "Body"
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -94,10 +102,21 @@ func need_lines() -> PackedStringArray:
 	return out
 
 
+## "CHEATS: invincible, night vision" for the names on, "" for none.
+static func cheat_text(names: PackedStringArray) -> String:
+	if names.is_empty():
+		return ""
+	var words := PackedStringArray()
+	for n in names:
+		words.append(n.replace("_", " "))
+	return "CHEATS: " + ", ".join(words)
+
+
 func _on_changed(parts: PackedStringArray) -> void:
 	if data == null:
 		feed.text = ""
 		warn.text = ""
+		cheat_mark.text = ""
 		_body.queue_redraw()
 		return
 	if "messages" in parts:
@@ -112,6 +131,8 @@ func _on_changed(parts: PackedStringArray) -> void:
 		warn.text = "\n".join(lines)
 		var worst: int = data.warnings[0]["level"] if not data.warnings.is_empty() else HudData.OK
 		warn.add_theme_color_override("font_color", HudData.level_color(worst))
+	if "cheats" in parts:
+		cheat_mark.text = cheat_text(data.cheats)
 	if "body" in parts or "needs" in parts:
 		_body.queue_redraw()
 
