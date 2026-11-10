@@ -12,9 +12,9 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 
 | Method | Returns | Notes |
 |---|---|---|
-| `start(data_dir, user_dir, world)` | `String` | "" when started, otherwise why not. `data_dir`: absolute, holds `data/json` (the `cdda/` folder). `user_dir`: absolute, made if missing; config, saves and `config/debug.log` go there. `world`: 1-32 of `A-Z a-z 0-9 _ -`; **an existing world of that name is deleted** and a new game with a random character starts. Once per process. |
+| `start(data_dir, user_dir, world)` | `String` | "" when started, otherwise why not. `data_dir`: absolute, holds `data/json` (the `cdda/` folder). `user_dir`: absolute, made if missing; config, saves and `config/debug.log` go there. `world`: 1-32 of `A-Z a-z 0-9 _ -`; a new world with a random character starts. **An existing world of exactly that name is deleted first if the name starts with `fp3d-`** (FP3D's throwaway worlds: `--quick`, the tests); any other name in use, ignoring case, makes the start fail (state `failed`, "world <name> exists"). Once per process. |
 | `start_load(data_dir, user_dir, world, save)` | `String` | Like `start`, but loads the saved character `save` from the existing `world` (CDDA's main-menu load path). **Deletes nothing.** `world` and `save` must be names `list_worlds` / `list_saves` give for `user_dir`; anything else is refused at once. Once per process (either `start` or `start_load`). |
-| `start_new_game(data_dir, user_dir, world, fresh_world, chargen, world_setup = false)` | `String` | `world_setup` (fresh worlds only): ask for the world's settings and mods with a `world_setup` request first. A new game. `fresh_world` true: like `start` (world `world` is made, replacing one of that name; the client's MainMenu refuses taken names). False: a new character in the existing `world` (a name `list_worlds` gives; nothing deleted). `chargen` true: the character comes from a `chargen` request (ui_requests.md) instead of CDDA's random "play now" one. Once per process. |
+| `start_new_game(data_dir, user_dir, world, fresh_world, chargen, world_setup = false)` | `String` | `world_setup` (fresh worlds only): ask for the world's settings and mods with a `world_setup` request first. A new game. `fresh_world` true: world `world` is made; never replaces one: a name in use, ignoring case and whether or not `list_worlds` shows it, makes the start fail ("world <name> exists"; the client's MainMenu should refuse taken names first, ignoring case). Nothing is written before the world setup is answered. False: a new character in the existing `world` (a name `list_worlds` gives; nothing deleted). `chargen` true: the character comes from a `chargen` request (ui_requests.md) instead of CDDA's random "play now" one. Once per process. |
 | `list_worlds(user_dir)` | `PackedStringArray` | Worlds in `user_dir/save/` (folders holding `worldoptions.json` or `master.gsav`), sorted, max 256. Reads the folders directly, so it works before a start. Skips symlinks/junctions and names that aren't plain UTF-8 text or could be paths (`/ \ : * ? " < > |`, leading `.`/space, trailing `.`/space, > 128 bytes). A missing folder gives `[]`; a relative path gives `[]` and an error. |
 | `list_saves(user_dir, world)` | `PackedStringArray` | Characters saved in `world` (the save id CDDA shows), sorted, max 256. Only files named `#<CDDA base64>.sav` or `.sav.zzip` whose name decodes to plain text (no control characters, not starting with `#`) and encodes back to the same file. |
 | `stop()` | | Shuts the game down and waits for its thread. While booting this waits until loading is done (up to ~30 s). The extension calls it on unload. No restart afterwards (once per process). |
@@ -29,16 +29,46 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `get_id_tables_json()` | `String` | `id_tables.md` JSON; "" before the data has loaded. Fetch again when a snapshot's `ids_generation` changes. |
 | `drain_events()` | `Array` | Events since the last call (`events.md`), each a Dictionary: `kind` (sound, message, attack, damage, projectile, explosion, death, anim, turn_end), `turn`, `seq`, `uid`, `other`, `pos` (Vector3i), `amount`, `heard`, `type`, `detail`, `text`, `path` (Array of Vector3i). Drain every frame: the queue holds 4096. |
 | `get_events_dropped()` | `int` | Events lost to overflow since start. |
-| `get_clock()` | `Dictionary` | `real_time`, `timescale`, `paused`, `pause_reason`. |
+| `get_clock()` | `Dictionary` | `real_time`, `timescale`, `paused`, `pause_reason`, `auto_pause` (bool, the setting below). |
 | `set_real_time(on)` / `set_timescale(s)` / `set_paused(on)` / `interrupt()` | | The clock (`ui_requests.md`); timescale clamps to 0.25-16. |
+| `set_auto_pause(on)` | | Real time pauses itself ("hostile spotted") when a new hostile comes into view. On by default; only acts in real time. Its own setting: CDDA's safe mode is off in FP3D games (the `safemode` action, Shift+1, still toggles it). |
 | `save_game(only_if_changed = false)` | `bool` | Saves the game where it stands and plays on (CDDA's quicksave, no popup). The sim saves at the main loop's next request, even while paused; in another prompt or a long activity it waits for that. `only_if_changed` (autosave) skips it when nothing happened since the last save. False unless the game is `running`. |
 | `get_held()` | `Dictionary` | What the hands hold: `seq` (bumps on every update: before each request but `shot` and once per turn, also during activities), `turn`, `main` and `off` (`{}` when empty, else `id`, `name`, `liquid` ("" none), `ml` and `capacity_ml` (0: not a container)), `activity` (the avatar's activity id, "" none). Names are capped at 128 bytes. |
+| `set_cheat(name, on)` | `bool` | Turns a testing cheat on or off for the character (`fp3d/cheats.h`; applied at the main loop's next request, also while paused; message "Cheat <name> on/off."). Names: `invincible` (takes no damage, can't die), `no_needs` (hunger, thirst, sleepiness held), `no_weight_limit`, `unlimited_ammo` (the wielded gun refills every turn), `stamina`, `no_temperature`, `night_vision` (also reveals the map). All off until turned on; they stay with the character in its save. False for any other name, while no game runs, or after shutdown. |
+| `get_cheats()` | `Dictionary` | `seq` (bumps before every request and once per turn), `cheats` ({name: bool} for every name above), `kits_given` (test kits handed out since start). |
+| `give_test_kit()` | `bool` | Gives the character the test loadout at the main loop's next request: a big backpack worn, a loaded Glock 19, Remington 870 and SCAR-L with spare magazines and ammo, machete, combat knife, crowbar, hammer, screwdrivers, multitool, lighter, flashlight, pot, bandages, 4 MREs, 3 bottles of water; what doesn't fit lands at its feet. False while no game runs. |
+| `use_stairs(pos, dir)` | `bool` | Use the stairs at absolute square `pos` (Vector3i): `dir` 1 up, -1 down. The player must stand on that square or next to it on the same level; from next to it they step onto it first (CDDA's step), then CDDA's own stairs move (its costs, prompts and messages). Refused with a message, nothing done: too far, another level, no stairs that way there, a creature on the square, riding (except a mech) or inside a vehicle. Out-of-range `pos` (z outside -10..10) or another `dir` → `false`, nothing queued; also false when the queue is full. Shares the action queue. |
+| `match_recipes(container)` | `int` | L9: asks what a container's contents can become and how long, without blocking (see "Recipe queries" below). `container`: `uid` + `type` (the handle and itype index from the snapshot, ints) and `pos` (Vector3i, the square it lies on; the avatar's square also finds carried containers). Returns the query id (≥ 1), or 0 when refused: a missing key, a wrong type or anything out of range (uid 1..2^53−1, type ≥ 1), 8 queries pending already, or no game running. |
+| `take_query_result(id)` | `String` | The query's result as JSON (once; a second call gives ""), "" while it is pending or for an unknown id. Results wait until taken; beyond 16 the oldest is dropped. Each ≤ 64 KB. |
 | `get_save_status()` | `Dictionary` | `pending` (asked, not finished), `done` (saves finished since start, skipped ones too), `ok` (the last one). The message log also gets "Game saved." or "The game could not be saved." |
 
 Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the snapshot.
 
 ## Behaviour to know
 
+- Recipe queries (L9, `cdda/src/fp3d/cooking.h`): the sim answers them at the main loop's request (right after
+  the snapshot, and at once when one is posted while it waits there, also while paused) and once per turn
+  during activities; one posted during another prompt (a menu, a popup) waits for the main loop. Poll
+  `take_query_result` each frame until it gives text. Queries are read-only (nothing in the game changes).
+  Result: `{"id": N, "ok": true, "error": "", "container": uid, "matches": [...]}`. Refused: `ok` false, `error`
+  one of `out of reach` (not on the avatar's level within CDDA's crafting reach: 6 squares with a clear path, as
+  crafting_inventory uses; checked first, so a query can't probe unreachable squares), `not found` (no item with
+  that uid **and** itype on that square: gone, moved, or a stale handle), `not a container`, plus `internal` and
+  `too large` (shouldn't happen), `matches` empty. Matching uses CDDA's rules: components come **only** from the
+  container's contents (its CONTAINER pockets and what's nested in them); tools and qualities from the avatar's
+  crafting inventory (what CDDA's craft menu sees in reach: carried, the ground, furniture, vehicles, fires) plus
+  the container itself emptied (CDDA counts BOIL only on an empty pot). Only recipes that need heat (a tool of
+  CDDA's `surface_heat` / `water_boiling_heat`) and take one of the contents as a component are looked at; a
+  recipe matches when every component group is covered by the contents for a batch of 1. Each match:
+  `recipe` (id), `result` (itype id), `name` (plain text, ≤ 128 bytes), `batch_max` (largest batch the
+  contents cover, ≤ 20), `time_s` (CDDA's time for this character to craft one batch now, game seconds, with
+  their crafting speed: light, morale, limbs, pain, helpers), `known` (the character can use the recipe: learned,
+  or in a book in reach, or known by a helper, like CDDA's craft menu), `skills_ok` (skill levels the recipe asks
+  for), `tools_ok` (tools and qualities there), `missing` (≤ 8 short texts: a missing tool group "fire or
+  hotplate or ...", a quality "boiling 1", a skill "cooking 3", a required proficiency), `can_start` (known,
+  tools there and required proficiencies; low skill does **not** block it, as in CDDA, where it only adds a
+  failure chance). Order: `can_start` first, then the recipes using the most of the contents' kinds, then the
+  largest batch, then by id. At most 32 matches.
 - Boot takes ~30 s (data load, new game). The first snapshot arrives with the first request.
 - Saving: `save_game()`, then watch `get_save_status().done` go up. Or queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process

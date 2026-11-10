@@ -42,6 +42,17 @@ static func find(world: WorldView, sq: Vector3i, from_z: int) -> Dictionary:
 	return {"dz": dz, "stand": Vector3i(sq.x, sq.y, from_z), "to": Vector3i(sq.x, sq.y, from_z + dz)}
 
 
+## Uses stair `s` (from `find`) through the bridge's own stairs action (CddaSim.use_stairs: from next to them
+## it steps on first, and it checks reach itself, so the snapshot needn't be settled). 1 queued, 0 refused,
+## -1 the bridge has no such action (older builds: `live_actions` instead).
+static func use_live(sim: Object, s: Dictionary) -> int:
+	if sim == null or not sim.has_method("use_stairs"):
+		return -1
+	if typeof(s.get("stand")) != TYPE_VECTOR3I or typeof(s.get("dz")) != TYPE_INT or not (s["dz"] in [1, -1]):
+		return 0
+	return 1 if sim.use_stairs(s["stand"], s["dz"]) else 0
+
+
 ## CDDA actions that take the player at `player` along stair `s` (from `find`); empty when it is too far.
 static func live_actions(player: Vector3i, s: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()

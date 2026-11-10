@@ -235,15 +235,23 @@ func _resolve(done: Array) -> void:
 func _where(e: Dictionary, snap: Snapshot) -> Where:
 	var item: ItemRef = e["item"]
 	var row := carried_row(snap, item.uid, item.type)
+	# The snapshot lists the first MAX_CARRIED carried items only: past that, missing from the list isn't moved.
+	var full := snap.carried.size() / Snapshot.CARRIED_STRIDE >= Snapshot.MAX_CARRIED
 	match e["op"]:
 		"take":
 			return Where.MOVED if row >= 0 else _on_square(snap, item)
 		"drop":
-			return Where.STILL if row >= 0 else Where.MOVED
+			if row >= 0:
+				return Where.STILL
+			if not full:
+				return Where.MOVED
+			var at := item.duplicate_ref()   # its handle on the square it was dropped on: it landed
+			at.square = e["target"]
+			return Where.MOVED if _on_square(snap, at) == Where.STILL else Where.UNKNOWN
 		"put":
 			# Gone from carried counts too: into a container on the ground, or merged into a stack (new uid).
 			if row < 0:
-				return Where.MOVED
+				return Where.UNKNOWN if full else Where.MOVED
 			var i := row * Snapshot.CARRIED_STRIDE
 			var same: bool = snap.carried[i + 2] == item.parent and snap.carried[i + 3] == item.pocket
 			return Where.STILL if same else Where.MOVED

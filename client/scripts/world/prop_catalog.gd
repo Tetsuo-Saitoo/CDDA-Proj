@@ -37,6 +37,12 @@ class Prop:
 	var align_workbench := false
 	var flat_surf := false
 	var blocks := false        # impassable
+	## Furniture with CDDA's open / closed pair (its `open` or `close` field): both ids, and whether this one
+	## is the open state; "" when it has none (its doors and drawers open in the client only).
+	var open_id := ""
+	var close_id := ""
+	var is_open := false
+	var locked := false        # furniture with CDDA's LOCKED flag
 
 
 var registry: AssetRegistry
@@ -129,6 +135,14 @@ func _make(table: String, index: int) -> Prop:
 			for fc: Array in FURNITURE_CATEGORIES:
 				if d.has(fc[0]):
 					cats.append(fc[1])
+			p.locked = d.has("LOCKED")
+			if not d.close.is_empty():   # the open state (as terrain doors: a `close` link means open)
+				p.open_id = d.id
+				p.close_id = d.close
+				p.is_open = true
+			elif not d.open.is_empty():
+				p.open_id = d.open
+				p.close_id = d.id
 		elif table == "itype" and not d.category.is_empty():
 			cats.append(d.category)
 	p.main = p.accent

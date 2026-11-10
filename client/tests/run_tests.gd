@@ -40,11 +40,18 @@ func _initialize() -> void:
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/part_tests.gd").new().run(root, _check, data, tables, _repo)
 	preload("res://tests/item_action_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/item_pick_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/hands_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/vr_hands_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/vr_hud_tests.gd").new().run(root, _check, tables)
+	preload("res://tests/vr_cheats_tests.gd").new().run(root, _check)
+	preload("res://tests/inspect_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
+	preload("res://tests/hud_tests.gd").new().run(_check, tables)
+	preload("res://tests/cheat_tests.gd").new().run(_check)
 	preload("res://tests/world_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/level_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/light_tests.gd").new().run(root, _check, data)
@@ -68,22 +75,32 @@ func _test_error_catch() -> void:
 	_check(_errors.take_matching("Trying to cast a freed object") == 1, "a runtime script error is caught")
 
 
-## The run's scratch folder (tests/test_dir.gd): one per process, and clean() removes it and the folders of
-## runs whose process is gone.
+## The run's scratch folder (tests/test_dir.gd): one per process, and clean() removes it and stale folders of
+## other runs (no stamp, or old), never a folder another checkout's run is still using.
 func _test_test_dir() -> void:
 	print("test folder")
 	var mine := TestDir.path("probe.txt")
-	_check(mine.begins_with("%s/%d/" % [TestDir.ROOT, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
-	var dead := 4000000
-	while OS.is_process_running(dead):
-		dead += 4
-	var stale := TestDir.ROOT.path_join(str(dead))
+	_check(mine.begins_with("%s/%s%d/" % [TestDir.ROOT, TestDir.PREFIX, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
+	# A stale run's folder (stamped long ago) goes; another live run's folder (fresh stamp, or just made and not
+	# stamped yet) stays. Fake ids are 10^9 + pid*10 + k: unique per run, and never a real pid (Linux caps at 2^22).
+	var stale := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 1))
 	DirAccess.make_dir_recursive_absolute(stale.path_join("save/w"))
 	FileAccess.open(stale.path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
+	TestDir.stamp(stale, 1)
+	var other := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 3))
+	DirAccess.make_dir_recursive_absolute(other)
+	TestDir.stamp(other)
+	var fresh := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 5))
+	DirAccess.make_dir_recursive_absolute(fresh)
 	FileAccess.open(mine, FileAccess.WRITE).store_string("x")
 	TestDir.clean()
 	_check(not DirAccess.dir_exists_absolute(stale) and not FileAccess.file_exists(mine),
-			"clean() removes this run's folder and a dead run's")
+			"clean() removes this run's folder and a stale run's")
+	_check(DirAccess.dir_exists_absolute(other) and DirAccess.dir_exists_absolute(fresh),
+			"clean() keeps folders other runs are still using (stamped, or not stamped yet)")
+	DirAccess.remove_absolute(other.path_join(TestDir.STAMP))
+	DirAccess.remove_absolute(other)
+	DirAccess.remove_absolute(fresh)
 
 
 func _cast_freed() -> void:

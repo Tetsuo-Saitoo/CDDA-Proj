@@ -19,6 +19,7 @@
 #include <godot_cpp/variant/vector3i.hpp>
 
 #include "fp3d/bridge.h"
+#include "fp3d/cheats.h"
 #include "fp3d/events.h"
 #include "fp3d/held.h"
 #include "sim_session.h"
@@ -176,6 +177,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
     ClassDB::bind_method( D_METHOD( "queue_item_action", "action" ), &CddaSim::queue_item_action );
+    ClassDB::bind_method( D_METHOD( "use_stairs", "pos", "dir" ), &CddaSim::use_stairs );
     ClassDB::bind_method( D_METHOD( "clear_actions" ), &CddaSim::clear_actions );
     ClassDB::bind_method( D_METHOD( "get_queued_actions" ), &CddaSim::get_queued_actions );
     ClassDB::bind_method( D_METHOD( "get_snapshot_seq" ), &CddaSim::get_snapshot_seq );
@@ -191,6 +193,12 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "save_game", "only_if_changed" ), &CddaSim::save_game, DEFVAL( false ) );
     ClassDB::bind_method( D_METHOD( "get_save_status" ), &CddaSim::get_save_status );
     ClassDB::bind_method( D_METHOD( "get_held" ), &CddaSim::get_held );
+    ClassDB::bind_method( D_METHOD( "set_auto_pause", "on" ), &CddaSim::set_auto_pause );
+    ClassDB::bind_method( D_METHOD( "set_cheat", "name", "on" ), &CddaSim::set_cheat );
+    ClassDB::bind_method( D_METHOD( "get_cheats" ), &CddaSim::get_cheats );
+    ClassDB::bind_method( D_METHOD( "give_test_kit" ), &CddaSim::give_test_kit );
+    ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
+    ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
 void CddaSim::stop_session()
@@ -371,7 +379,11 @@ bool CddaSim::answer( const Dictionary &d )
                                  std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
         sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
         sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
-        sa.quality = s.has( "quality" ) ? std::clamp( static_cast<float>( static_cast<double>( q ) ), 0.0f, 0.99f ) : 0.3f;
+        const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
+        if( !std::isfinite( quality ) ) {
+            return false;
+        }
+        sa.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
         // `fly` (target answers): a bool; anything else counts as false.
         sa.fly = s.has( "fly" ) && s["fly"].get_type() == Variant::BOOL && static_cast<bool>( s["fly"] );
         a.shot = sa;
@@ -429,7 +441,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
     }
     if( d.has( "pos" ) ) {
         const Vector3i p = v;
-        if( std::abs( p.x ) > max_abs_coord || std::abs( p.y ) > max_abs_coord || std::abs( p.z ) > max_abs_coord ) {
+        const auto out = []( int32_t c ) {
+            return c < -max_abs_coord || c > max_abs_coord;
+        };
+        if( out( p.x ) || out( p.y ) || out( p.z ) ) {
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
@@ -479,6 +494,17 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.spot_y = permille( s.y );
     }
     return fp3d::queue_item_action( a );
+}
+
+bool CddaSim::use_stairs( const Vector3i &pos, int64_t dir )
+{
+    if( dir != 1 && dir != -1 ) {
+        return false;
+    }
+    fp3d::stairs_action a;
+    a.pos = fp3d::ui_point{ pos.x, pos.y, pos.z };
+    a.dir = static_cast<int>( dir );
+    return fp3d::queue_stairs_action( a );   // checks the square's range and the queue
 }
 
 void CddaSim::clear_actions()
@@ -542,6 +568,7 @@ Dictionary CddaSim::get_clock() const
     d["real_time"] = c.mode == fp3d::clock_mode::real_time;
     d["timescale"] = c.timescale;
     d["paused"] = c.paused;
+    d["auto_pause"] = c.auto_pause_hostiles;
     d["pause_reason"] = to_godot( c.pause_reason );
     return d;
 }
@@ -561,6 +588,11 @@ void CddaSim::set_paused( bool on )
     fp3d::set_paused( on );
 }
 
+void CddaSim::set_auto_pause( bool on )
+{
+    fp3d::set_auto_pause_hostiles( on );
+}
+
 void CddaSim::interrupt()
 {
     fp3d::interrupt();
@@ -570,6 +602,70 @@ bool CddaSim::save_game( bool only_if_changed )
 {
     // Only while a game runs: the sim takes it at the main loop.
     return fp3d_session::get_state() == fp3d_session::state::running && fp3d::request_save( only_if_changed );
+}
+
+// L9: what a container's contents can become (fp3d/cooking.h, contracts/bridge_api.md "Recipe queries"). Hostile
+// input: every key is checked for type and range; anything wrong is refused whole (0) and nothing is posted.
+int64_t CddaSim::match_recipes( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    Variant u;
+    Variant t;
+    Variant p;
+    if( !d.has( "uid" ) || !d.has( "type" ) || !d.has( "pos" ) || !field( d, "uid", Variant::INT, u ) ||
+        !field( d, "type", Variant::INT, t ) || !field( d, "pos", Variant::VECTOR3I, p ) ) {
+        return 0;
+    }
+    const int64_t uid = u;
+    const int64_t type = t;
+    const Vector3i pos = p;
+    if( uid <= 0 || uid > static_cast<int64_t>( fp3d::max_item_uid ) || type <= 0 || type > INT32_MAX ||
+        pos.x < -max_abs_coord || pos.x > max_abs_coord || pos.y < -max_abs_coord || pos.y > max_abs_coord ||
+        pos.z < -max_abs_coord || pos.z > max_abs_coord ) {
+        return 0;
+    }
+    const fp3d::item_ref ref{ static_cast<uint64_t>( uid ), static_cast<uint32_t>( type ) };
+    return static_cast<int64_t>( fp3d::post_recipe_query( ref, fp3d::ui_point{ pos.x, pos.y, pos.z } ) );
+}
+
+String CddaSim::take_query_result( int64_t id )
+{
+    if( id <= 0 ) {
+        return String();
+    }
+    const std::optional<std::string> result = fp3d::take_query_result( static_cast<uint64_t>( id ) );
+    return result ? to_godot( *result ) : String();
+}
+
+bool CddaSim::set_cheat( const String &name, bool on )
+{
+    // Hostile input: only the exact names in fp3d/cheats.h, and only while a game runs.
+    if( name.length() > 32 || fp3d_session::get_state() != fp3d_session::state::running ) {
+        return false;
+    }
+    const std::optional<fp3d::cheat> c = fp3d::cheat_from_name( to_std( name ) );
+    return c && fp3d::request_cheat( *c, on );
+}
+
+Dictionary CddaSim::get_cheats() const
+{
+    const fp3d::cheats_view v = fp3d::latest_cheats();
+    Dictionary on;
+    for( size_t i = 0; i < fp3d::cheat_count; i++ ) {
+        on[String( fp3d::cheat_name( static_cast<fp3d::cheat>( i ) ) )] = ( v.on >> i & 1U ) != 0;
+    }
+    Dictionary d;
+    d["seq"] = static_cast<int64_t>( std::min<uint64_t>( v.seq, INT64_MAX ) );
+    d["kits_given"] = static_cast<int64_t>( std::min<uint64_t>( v.kits_given, INT64_MAX ) );
+    d["cheats"] = on;
+    return d;
+}
+
+bool CddaSim::give_test_kit()
+{
+    return fp3d_session::get_state() == fp3d_session::state::running && fp3d::request_test_kit();
 }
 
 Dictionary CddaSim::get_save_status() const

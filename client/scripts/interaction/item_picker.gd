@@ -54,6 +54,11 @@ func in_reach(square: Vector3i) -> bool:
 	return d.z == 0 and absi(d.x) <= 1 and absi(d.y) <= 1
 
 
+## The square reach is measured from (Vector3i), or null without a snapshot.
+func centre() -> Variant:
+	return _centre()
+
+
 ## Everything the player carries (Snapshot.carried, containers before their contents).
 func carried() -> Array[ItemRef]:
 	var out: Array[ItemRef] = []

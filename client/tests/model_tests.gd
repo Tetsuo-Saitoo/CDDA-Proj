@@ -545,8 +545,12 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	cat.set_snapshot(snap)
 	var pm := PropMesher.new(snap, terrain, cat)
 	var r := pm.build(sm.pos)
-	var xfs: Array = r.models.get(cupboard.model, [])
-	_check.call(r.model_props == 3 and xfs.size() == 3, "model props listed: the cupboard and two books (%d)" % r.model_props)
+	# The cupboard's door_1 opens (a Grabbable part): the furniture draws the model without it (`still`).
+	var xfs: Array = r.models.get(cupboard.model.still, []) if cupboard.model.still != null else []
+	_check.call(r.model_props == 3 and xfs.size() == 1 and (r.models.get(cupboard.model, []) as Array).size() == 2
+			and r.parts.size() == 1, "model props listed: the cupboard (still, its door a part) and two books (%d)" % r.model_props)
+	if xfs.is_empty():
+		return
 	var base := CddaCoords.sm_to_ms(sm.pos)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = PropMesher._hash(base + Vector3i(5, 5, 0))
@@ -570,8 +574,11 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	world.apply_snapshot(snap)
 	var holder := world.node_of(sm.pos).get_node_or_null("models")
 	var mms := holder.get_children() if holder else []
-	_check.call(mms.size() == 3 and (mms[0] as MultiMeshInstance3D).multimesh.instance_count == 3 and world.prop_counts["models"] >= 3,
-			"the world draws one multimesh per model part, an instance per prop")
+	var counts := mms.map(func(n: Node) -> int: return (n as MultiMeshInstance3D).multimesh.instance_count)
+	var door_sq := base + Vector3i(5, 5, 0)
+	_check.call(counts == [1, 2, 2, 2] and world.prop_counts["models"] >= 3
+			and world.parts.has("%d_%d_%d/door_1" % [door_sq.x, door_sq.y, door_sq.z]),
+			"the world draws one multimesh per model part, an instance per prop (the cupboard's still body; books) " + str(counts))
 	world.free()
 
 
