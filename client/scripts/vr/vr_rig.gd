@@ -61,6 +61,7 @@ var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
 const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controller space
 var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
 var _glove_key := "-"     # body.key the hand colours were taken from
+var compass: VrCompass    # wrist rose / belt ring (place_compass)
 const GRAB_REACH := 0.12  # metres from a hand to a door leaf it can grip
 var grab_ok := Callable() # square -> bool: may a hand open the door there (live: next to the player)
 var grabs: Array = [null, null]   # Grabbable held by the left / right hand
@@ -131,6 +132,8 @@ func _build() -> void:
 	right_hand = VrHand.new(false)
 	add_child(left_hand)
 	add_child(right_hand)
+	compass = VrCompass.new()
+	add_child(compass)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -186,6 +189,14 @@ func _process(delta: float) -> void:
 	update_grabs()
 	pose_hands()
 	drive_body()
+	place_compass()
+
+
+## The compass on the left wrist and/or the belt (settings `compass`); main.gd feeds its blips.
+func place_compass() -> void:
+	compass.mode = settings["compass"]
+	compass.heading_deg = Compass.heading_of(camera.global_basis)
+	compass.place(self)
 
 
 ## One hand system: VrHand draws the hands (fingers from tracking or buttons), the player's body draws the arms,

@@ -14,6 +14,7 @@ func run(root: Node, check: Callable, world: WorldView) -> void:
 	_test_layouts()
 	_test_hand()
 	_test_rig(root, world)
+	_test_compass(root, world)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP))
 
 
@@ -111,6 +112,53 @@ func _test_hand() -> void:
 	_check.call(not r.pose_from_tracker(t) and r.joints == want, "vr hand: a lost joint keeps the last pose")
 	r.free()
 	l.free()
+
+
+## The VR compass: a rose turned to north on the left wrist or a belt ring, Compass's blips on it.
+func _test_compass(root: Node, world: WorldView) -> void:
+	var flat := VrCompass.face_north(Vector3.UP, Vector3.FORWARD)
+	var side := VrCompass.face_north(Vector3(1, 0.2, 0), Vector3.FORWARD)
+	var odd := VrCompass.face_north(Vector3.FORWARD, Vector3.UP)
+	_check.call(flat.is_equal_approx(Basis()) and (-side.z).is_equal_approx(Vector3.FORWARD)
+			and side.y.is_equal_approx(Vector3(1, 0.2, 0).normalized()) and odd.is_conformal()
+			and odd.y.is_equal_approx(Vector3.FORWARD), "vr compass: the rose faces its normal, north stays north")
+	_check.call(VrCompass.dir_of(0).is_equal_approx(Vector3.FORWARD) and VrCompass.dir_of(90).is_equal_approx(Vector3.RIGHT),
+			"vr compass: bearings on the rose (north -Z, east +X)")
+	var list: Array[Vector3] = [Vector3(90, 2, Snapshot.Creature.HOSTILE), Vector3(270, 35, Snapshot.Creature.HOSTILE),
+			Vector3(180, 50, Snapshot.Creature.NEUTRAL), Vector3(0, 5, Snapshot.Creature.FRIENDLY)]
+	var lay := VrCompass.layout(list, 1.0)
+	_check.call(lay.size() == 4 and lay[0][0] == "arrow" and (lay[0][1] as Vector3).x > 1.0 and lay[0][2] > lay[1][2]
+			and (lay[0][3] as Color).a > (lay[1][3] as Color).a and lay[2][0] == "dot" and (lay[2][1] as Vector3).z > 0.5
+			and (lay[3][3] as Color).g > 0.9, "vr compass: hostile arrows on the rim (nearer bigger), dots inside")
+	var rig := VrRig.new(world, {"compass": "wrist", "hands": "boxes"})
+	root.add_child(rig)
+	rig.camera.position = Vector3(0, 1.6, 0)
+	rig.left.transform = Transform3D(Basis(), Vector3(-0.2, 1.1, -0.3))
+	rig.compass.set_blips(list)
+	rig.pose_hands()
+	rig.place_compass()
+	var wr := rig.compass.wrist
+	_check.call(wr.visible and not rig.compass.belt.visible and wr.arrow_count() == 2 and wr.dot_count() == 2
+			and wr.global_position.distance_to(rig.left.global_position) < 0.25 and wr.global_basis.y.x < -0.9,
+			"vr compass: on the back of the left wrist (box hand), creatures shown")
+	rig.settings["compass"] = "belt"
+	rig.place_compass()
+	var head := rig.camera.global_position
+	var bt := rig.compass.belt
+	_check.call(bt.visible and not wr.visible and is_equal_approx(bt.global_position.y, head.y - VrCompass.BELT_DROP)
+			and bt.global_basis.is_equal_approx(Basis()), "vr compass: belt ring level, under the head")
+	rig.compass.opacity = 0.0
+	rig.place_compass()
+	_check.call(not bt.visible and not wr.visible, "vr compass: opacity 0 hides it")
+	rig.compass.opacity = 1.0
+	rig.settings["compass"] = "wrist"
+	rig.settings["hands"] = "auto"
+	rig.pose_hands()
+	rig.place_compass()
+	_check.call(not wr.visible, "vr compass: no tracked left hand, no wrist compass")
+	_check.call(VrSettings.from_args({"vr-compass": "both"})["compass"] == "both"
+			and VrSettings.from_args({"vr-compass": "hat"})["compass"] == "wrist", "vr compass: setting and option checked")
+	rig.free()
 
 
 ## One hand system: the rig's hands are the only hands; the body's arms reach for their wrists.

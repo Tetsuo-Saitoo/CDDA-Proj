@@ -289,6 +289,7 @@ func _start_vr() -> void:
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
+	vr.compass.opacity = hud_settings.compass_opacity
 	add_child(vr)
 	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
 		var p: Variant = _reach_square()
@@ -870,6 +871,9 @@ func _process(_delta: float) -> void:
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+				world.coords.ms_center_to_world))
+	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
+		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
