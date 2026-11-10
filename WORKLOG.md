@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Block 2 leftovers (fork fp3d-combat): a shotgun shell's pellets are each flown by the client and rolled as their own projectiles; bullets go on through bodies with damage to spare and may glance off walls at shallow angles (FP3D games); the client's bullet flies through furniture. Sim, client and live tests pass.
 - 2026-11-10 — Jams apply to the wielded gun only (turret guns and jams that can't be cleared keep CDDA's behaviour); sim check fires a jammed gun nobody holds.
 - 2026-11-10 — lead-qa review fixes (UI): the F1 menu's text fields keep their keys (CDDA prompts wait while it is open); shoulder and top views aim, grab and look from in front of the player and fly bullets from the eyes, top-down mouse-look aims along the facing; range info read once a second unless ops wait, at most 16 ops waiting; B backs out of a key slot set from the pad; the jam hint names the bound reload key. Client tests pass.
 - 2026-11-10 — Shot review leftovers (fork fp3d-combat): the client's body part / weak point only weights CDDA's pick (roll against its chance times up to 4), and a `fly` trigger pull asks for at most 8 rounds (long bursts no longer stall); sim checks, contract.
