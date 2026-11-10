@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Linux boot hang (tester): boot phases printed with times, CDDA errors on the console and never a prompt, `get_boot_info()`, a stalled boot (180 s, not waiting on the client) fails with its phase; CDDA's hidden window uses no GPU, display server or gamepads in FP3D games. Not reproduced in WSL.
 - 2026-11-10 — Bridge: item actions `throw` and `pour` through `queue_item_action` (pour goes to exactly one place: a square or a container); `range_rebuild_zone(zone)` for lead-qa's rebuild op; wielded_gun lists every fault the gun has; main, fp3d and QA's range slice 2 merged into the bridge branches.
 - 2026-11-10 — Snapshot `player.effects` {id, name, body_part, intensity, rating, seconds_left} for the HUD; id tables: item types' container `pockets` {name, volume_ml, max_weight_g, max_item_ml, flags}; sim test's real-time check tolerates a loaded machine. Snapshot and id-table test checks.
 - 2026-11-10 — Jams apply to the wielded gun only (turret guns and jams that can't be cleared keep CDDA's behaviour); sim check fires a jammed gun nobody holds.
