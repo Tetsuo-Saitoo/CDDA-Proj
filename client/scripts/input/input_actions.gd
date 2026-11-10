@@ -39,8 +39,8 @@ const ACTIONS := [
 	[&"look_right", "View", "look right", ["axis:2+"]],
 	[&"look_at", "View", "look at what you point at; aiming: pick a target, again to fire", ["mouse:1"]],
 	[&"view_toggle", "View", "first person / outside", ["V"]],
-	[&"fly_up", "View", "fly up (outside)", ["E", "Space"]],
-	[&"fly_down", "View", "fly down (outside)", ["Q", "Ctrl"]],
+	[&"fly_up", "View", "fly up (outside)", ["Space"]],   # not E / Q: take / use and CDDA's wield
+	[&"fly_down", "View", "fly down (outside)", ["Ctrl"]],
 	[&"cutaway_up", "View", "show a level more", ["PageUp"]],
 	[&"cutaway_down", "View", "show a level less", ["PageDown"]],
 	[&"roofs_toggle", "View", "roofs on / off", ["Y"]],

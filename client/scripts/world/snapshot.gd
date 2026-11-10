@@ -51,6 +51,17 @@ const MAX_LIGHTS_PER_SUBMAP := 16
 const LIGHT_FIXED := 0                    # kinds (assumed until the contract says): terrain, furniture, vehicle
 const LIGHT_ITEM := 1                     # an item, on the ground or carried
 const LIGHT_FIRE := 2                     # a field: fire, burning things
+## Heat for CDDA's crafting (block L9, optional per-submap `heat`): HEAT_STRIDE ints per square.
+const HEAT_STRIDE := 6                    # heat: tile, source (HEAT_*), tool (itype index, 0 a fire only), fire 0..3, charges, lit 0/1
+const MAX_HEAT_PER_SUBMAP := 32
+const HEAT_FIRE := 0                      # a fire alone (fd_fire, or terrain / furniture usable as one)
+const HEAT_FURNITURE := 1                 # fireplace, wood stove, oven, smoker
+const HEAT_VEHICLE := 2                   # a vehicle part's heat tool (kitchen unit, oven appliance)
+const MAX_CHARGES := 0x7FFFFFFF           # int32 in the contract
+## Cookware on heat squares (block L9, optional per-submap `cookware`).
+const MAX_COOKWARE_PER_SUBMAP := 16
+const COOK_ITEM_STRIDE := 3               # Cookware.contents: uid, itype, count (charges, or 1)
+const MAX_COOK_CONTENTS := 16
 
 const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
@@ -72,6 +83,20 @@ class Submap:
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
 	var lights: PackedInt32Array  # LIGHT_STRIDE ints per light source: tile, luminance 0..255, kind (LIGHT_*)
+	var heat: PackedInt32Array    # HEAT_STRIDE ints per square that heats (seen tiles only), distinct tiles
+	var cookware: Array = []      # Cookware on those squares
+
+
+## An item with CDDA's COOK or BOIL quality lying on a heat square (block L9): its handle, what is in it (one
+## level) and a CDDA craft in progress among its contents.
+class Cookware:
+	var tile := 0
+	var uid := 0
+	var type := 0                         # itype index
+	var contents := PackedInt64Array()    # COOK_ITEM_STRIDE per item: uid, itype, count
+	var craft_result := 0                 # itype index of what is being made, 0 none
+	var craft_recipe := ""                # CDDA recipe id, "" none
+	var craft_progress := 0               # permille
 
 
 var error := ""
@@ -357,6 +382,35 @@ func creatures_moved() -> void:
 	_creature_at.clear()
 
 
+## What heats square p for CDDA's crafting (block L9): {source (HEAT_*), tool (itype index, 0 a fire only),
+## fire (0..3), charges, lit (bool)}; {} where nothing does (or the square isn't seen).
+func heat_at(p: Vector3i) -> Dictionary:
+	var sm: Submap = submaps.get(CddaCoords.ms_to_sm(p))
+	if sm == null:
+		return {}
+	var l := CddaCoords.ms_to_local(p)
+	var tile := l.y * CddaCoords.SEEX + l.x
+	for j in range(0, sm.heat.size(), HEAT_STRIDE):
+		if sm.heat[j] == tile:
+			return {"source": sm.heat[j + 1], "tool": sm.heat[j + 2], "fire": sm.heat[j + 3],
+					"charges": sm.heat[j + 4], "lit": sm.heat[j + 5] == 1}
+	return {}
+
+
+## The cookware lying on square p (Cookware, the bridge's order); empty where none is.
+func cookware_at(p: Vector3i) -> Array:
+	var out: Array = []
+	var sm: Submap = submaps.get(CddaCoords.ms_to_sm(p))
+	if sm == null:
+		return out
+	var l := CddaCoords.ms_to_local(p)
+	var tile := l.y * CddaCoords.SEEX + l.x
+	for cw: Cookware in sm.cookware:
+		if cw.tile == tile:
+			out.append(cw)
+	return out
+
+
 ## The creature (not the player) standing on square p, or null.
 func creature_at(p: Vector3i) -> Creature:
 	if _creature_at.is_empty():
@@ -436,6 +490,8 @@ func _read_submaps(v: Variant) -> void:
 		if s.has("lights"):
 			has_lights = true
 			sm.lights = _lights(s["lights"], what + ".lights")
+		sm.heat = _heat(s.get("heat"), what + ".heat")
+		sm.cookware = _cookware(s.get("cookware"), sm.heat, what + ".cookware")
 		if not is_valid():
 			return
 		submaps[sm.pos] = sm
@@ -632,6 +688,116 @@ func _lights(v: Variant, what: String) -> PackedInt32Array:
 		if not is_valid():
 			return out
 	return out
+
+
+## [[tile, source, tool, fire, charges, lit], ...]: at most MAX_HEAT_PER_SUBMAP squares, each once.
+func _heat(v: Variant, what: String) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_HEAT_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d heat squares" % [what, MAX_HEAT_PER_SUBMAP])
+		return out
+	var tiles := {}
+	for i in (v as Array).size():
+		var h: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not h is Array or (h as Array).size() != HEAT_STRIDE:
+			_fail(w + ": expected [tile, source, tool, fire, charges, lit]")
+			return out
+		var tile := _int(h[0], 0, TILES - 1, w + ".tile")
+		out.append(tile)
+		out.append(_int(h[1], HEAT_FIRE, HEAT_VEHICLE, w + ".source"))
+		out.append(_int(h[2], 0, MAX_ID, w + ".tool"))
+		out.append(_int(h[3], 0, 3, w + ".fire"))
+		out.append(_int(h[4], 0, MAX_CHARGES, w + ".charges"))
+		var lit: Variant = h[5]
+		out.append(int(lit) if lit is bool else _int(lit, 0, 1, w + ".lit"))
+		if is_valid() and tiles.has(tile):
+			_fail("%s: tile %d twice" % [w, tile])
+		tiles[tile] = true
+		if not is_valid():
+			return out
+	return out
+
+
+## [{tile, uid, type, contents, craft_result, craft_recipe, craft_progress}, ...]: at most
+## MAX_COOKWARE_PER_SUBMAP, each on a square of `heat`, distinct uids.
+func _cookware(v: Variant, heat: PackedInt32Array, what: String) -> Array:
+	var out: Array = []
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_COOKWARE_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d cookware" % [what, MAX_COOKWARE_PER_SUBMAP])
+		return out
+	var heated := {}
+	for j in range(0, heat.size(), HEAT_STRIDE):
+		heated[heat[j]] = true
+	var uids := {}
+	for i in (v as Array).size():
+		var w := "%s[%d]" % [what, i]
+		if not v[i] is Dictionary:
+			_fail(w + " is not an object")
+			return out
+		var d: Dictionary = v[i]
+		var cw := Cookware.new()
+		cw.tile = _int(d.get("tile"), 0, TILES - 1, w + ".tile")
+		cw.uid = _int(d.get("uid"), 1, MAX_UID - 1, w + ".uid")
+		cw.type = _int(d.get("type"), 1, MAX_ID, w + ".type")
+		cw.craft_result = _int(d.get("craft_result", 0), 0, MAX_ID, w + ".craft_result")
+		cw.craft_progress = _int(d.get("craft_progress", 0), 0, 1000, w + ".craft_progress")
+		cw.craft_recipe = _text_id(d.get("craft_recipe", ""), w + ".craft_recipe")
+		cw.contents = _cook_contents(d.get("contents", []), cw.uid, w + ".contents")
+		if is_valid() and (not heated.has(cw.tile) or uids.has(cw.uid)):
+			_fail("%s: tile %d has no heat entry, or uid %d twice" % [w, cw.tile, cw.uid])
+		uids[cw.uid] = true
+		if not is_valid():
+			return out
+		out.append(cw)
+	return out
+
+
+## [[uid, type, count], ...]: at most MAX_COOK_CONTENTS, distinct uids, none the container's own.
+func _cook_contents(v: Variant, container: int, what: String) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	if not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_COOK_CONTENTS:
+		_fail("%s: expected a list of at most %d items" % [what, MAX_COOK_CONTENTS])
+		return out
+	var uids := {container: true}
+	for i in (v as Array).size():
+		var c: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not c is Array or (c as Array).size() != COOK_ITEM_STRIDE:
+			_fail(w + ": expected [uid, type, count]")
+			return out
+		var uid := _int(c[0], 1, MAX_UID - 1, w + ".uid")
+		out.append(uid)
+		out.append(_int(c[1], 1, MAX_ID, w + ".type"))
+		out.append(_int(c[2], 0, MAX_CHARGES, w + ".count"))
+		if is_valid() and uids.has(uid):
+			_fail("%s: uid %d twice" % [w, uid])
+		uids[uid] = true
+		if not is_valid():
+			return out
+	return out
+
+
+## A CDDA id sent as text: at most MAX_NAME_LEN characters, no control characters.
+func _text_id(v: Variant, what: String) -> String:
+	if not is_valid():
+		return ""
+	if not v is String or (v as String).length() > MAX_NAME_LEN:
+		_fail("%s: expected text of at most %d characters" % [what, MAX_NAME_LEN])
+		return ""
+	var t: String = v
+	for i in t.length():
+		var ch := t.unicode_at(i)
+		if ch < 32 or ch == 127:
+			_fail(what + ": control character")
+			return ""
+	return t
 
 
 ## [[tile, type, intensity, age], ...]: at most MAX_FIELDS_PER_TILE per tile.
