@@ -101,6 +101,21 @@ func _test_needs() -> void:
 	h.update(s, null)
 	_check.call(h.needs["thirst"]["level"] == HudData.UNKNOWN and h.needs["stamina"]["level"] == HudData.UNKNOWN,
 			"hud: needs unknown while the snapshot doesn't carry them")
+	s.player_stamina = 5
+	s.player_stamina_max = 100
+	s.player_needs = {"thirst": 300, "sleepiness": 200, "pain": 0, "morale": -60, "hunger": 500}
+	h.update(s, null)
+	var texts: Array = h.warnings.map(func(w: Dictionary) -> String: return w["text"])
+	_check.call(h.needs["stamina"] == {"value": 5, "word": "", "level": HudData.BAD}
+			and h.needs["thirst"] == {"value": 300, "word": "Dehydrated", "level": HudData.BAD}
+			and h.needs["sleepiness"]["word"] == "Tired" and h.needs["sleepiness"]["level"] == HudData.HURT
+			and h.needs["pain"]["level"] == HudData.OK and h.needs["morale"]["level"] == HudData.BAD
+			and h.needs["hunger"]["level"] == HudData.UNKNOWN and h.needs["hunger"]["value"] == 500
+			and "Dehydrated" in texts and "Out of breath" in texts and "Miserable" in texts,
+			"hud: needs from the snapshot with CDDA's words; bad ones warn (%s)" % [texts])
+	s.player_stamina = -1
+	h.update(s, null)
+	_check.call(h.needs["stamina"]["level"] == HudData.UNKNOWN, "hud: stamina not sent: unknown")
 
 
 func _test_messages() -> void:
