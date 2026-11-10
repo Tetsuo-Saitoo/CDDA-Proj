@@ -1,0 +1,4 @@
+# ThreadSanitizer suppressions for `TSAN=1 bash tools/build/ci_linux.sh` (B5). Suppress only code that isn't
+# built with TSan (system libraries) or a race that was looked at and found harmless; say why on each line.
+# SDL2 comes from the system, uninstrumented; its timer/event threads only talk to CDDA through SDL's own locks.
+called_from_lib:libSDL2-2.0.so.0

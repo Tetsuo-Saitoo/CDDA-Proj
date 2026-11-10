@@ -24,7 +24,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_compass()
 	_test_look_ray(world)
 	_test_stairs(world)
-	_test_stair_flights()
+	_test_stair_flights(world, data, tables)
 	_test_cdda_keys()
 	_test_rebinding(root)
 	_test_creatures(root, world, data, tables)
@@ -266,7 +266,7 @@ func _test_cdda_keys() -> void:
 
 ## Rebinding: hostile key files, save/load, and the key menu.
 func _test_rebinding(root: Node) -> void:
-	var path := "user://keys_test.json"
+	var path := preload("res://tests/test_dir.gd").path("keys_test.json")
 	InputActions.reset_all()
 	for t: String in ["", "Nope", "mouse:0", "mouse:99", "pad:-1", "pad:x", "axis:9+", "axis:1*", "Shift+",
 			"Shift+Nope", "w", "A".repeat(50)]:
@@ -585,7 +585,7 @@ func _test_stairs(world: WorldView) -> void:
 
 
 ## Stair blocks draw as one flight: every square of a 2x2 block rises the same way, split along its length.
-func _test_stair_flights() -> void:
+func _test_stair_flights(world: WorldView, data: Variant, tables: IdTables) -> void:
 	var K := TerrainCatalog.Kind
 	var map := {}
 	for x in range(-1, 3):
@@ -604,6 +604,174 @@ func _test_stair_flights() -> void:
 	_check.call(fs[2].y == 0 and fs[0].y == 1, "stairs look: the south row is the bottom half, the north row the top")
 	var single := TerrainMesher.stair_flight(Vector3i(0, 2, 0), func(q: Vector3i) -> int: return K.STAIRS_UP if q == Vector3i(0, 2, 0) else K.FLOOR, K.STAIRS_UP, walk)
 	_check.call(single.y == 0 and single.z == 1, "stairs look: a lone stair is a whole flight")
+	# The level above decides: entered from the west with a wall to the east, the old terms say east, but upstairs
+	# the east side is a railing and the north side the floor you step onto.
+	var o := Vector3i(10, 10, 0)
+	var up := Vector3i(0, 0, 1)
+	var lone := {o: K.STAIRS_UP, o + Vector3i(-1, 0, 0): K.FLOOR, o + Vector3i(1, 0, 0): K.WALL,
+			o + Vector3i(0, -1, 0): K.FLOOR, o + Vector3i(0, 1, 0): K.FLOOR}
+	var no_above := TerrainMesher.stair_flight(o, func(q: Vector3i) -> int: return lone.get(q, -1), K.STAIRS_UP, walk)
+	_check.call(no_above.x == 1, "stairs look: without the level above, the old terms rise toward the wall (%s)" % no_above)
+	lone.merge({o + up: K.STAIRS_DOWN, o + up + Vector3i(1, 0, 0): K.FENCE, o + up + Vector3i(0, -1, 0): K.FLOOR,
+			o + up + Vector3i(-1, 0, 0): K.WALL, o + up + Vector3i(0, 1, 0): K.WALL})
+	var with_above := TerrainMesher.stair_flight(o, func(q: Vector3i) -> int: return lone.get(q, -1), K.STAIRS_UP, walk)
+	_check.call(with_above.x == 0, "stairs look: with it, they rise north onto the floor upstairs (%s)" % with_above)
+	_test_mock_stairs(world)
+	_test_ramp_runs(world)
+	_test_ramp_mesh(world, data, tables)
+	_test_stair_pick(world)
+
+
+## Every staircase of the mock town rises toward a floor on the level above (both did not before).
+func _test_mock_stairs(world: WorldView) -> void:
+	var K := TerrainCatalog.Kind
+	var kind_at := TerrainMesher.kind_lookup(world.snapshot, world.catalog)
+	var walk := func(k: int) -> bool: return k in TerrainMesher.WALKABLE
+	var bad := []
+	var n := 0
+	for pos: Vector3i in world.snapshot.submaps:
+		var sm: Snapshot.Submap = world.snapshot.submaps[pos]
+		for i in Snapshot.TILES:
+			if world.catalog.style_for(sm.ter[i]).kind != K.STAIRS_UP:
+				continue
+			var p := CddaCoords.sm_to_ms(pos) + Vector3i(i % CddaCoords.SEEX, i / CddaCoords.SEEX, 0)
+			var f := TerrainMesher.stair_flight(p, kind_at, K.STAIRS_UP, walk)
+			var off: int = kind_at.call(p + TerrainMesher.DIRS[f.x] * (f.z - f.y) + Vector3i(0, 0, 1))
+			n += 1
+			if not walk.call(off):
+				bad.append([p, f])
+	_check.call(n >= 3 and bad.is_empty(), "stairs look: the mock's %d stairs all lead onto a floor upstairs %s" % [n, bad])
+
+
+## Ramp runs on the mock's L-shaped sewer ramp (cs_open_sewer: a high column rising west, a high row rising south,
+## the low ends inside the L) and on small made-up maps.
+func _test_ramp_runs(world: WorldView) -> void:
+	var K := TerrainCatalog.Kind
+	var cat := world.catalog
+	_check.call(cat.style_for_id("t_earth_ramp_up_low").ramp_low and cat.style_for_id("t_ramp_up_low").ramp_low
+			and cat.style_for_id("t_railroad_ramp_up_low").ramp_low and not cat.style_for_id("t_earth_ramp_up_high").ramp_low
+			and not cat.style_for_id("t_earth_ramp_down_low").ramp_low and not cat.style_for_id("t_dirt").ramp_low,
+			"ramps: low ends are known by their id only")
+	var kind_at := TerrainMesher.kind_lookup(world.snapshot, world.catalog)
+	var low_at := TerrainMesher.low_lookup(world.snapshot, world.catalog)
+	var place := func(x: int, y: int) -> Vector3i: return TerrainMesher.ramp_place(Vector3i(x, y, -1), kind_at, low_at)
+	_check.call(place.call(176, 324) == Vector3i(3, 1, 2) and place.call(177, 324) == Vector3i(3, 0, 2)
+			and place.call(176, 326) == Vector3i(3, 1, 2) and place.call(177, 325) == Vector3i(3, 0, 2),
+			"ramps: the west leg rises west from its low ends, low then high (%s %s)" % [place.call(176, 324), place.call(177, 324)])
+	_check.call(place.call(180, 327) == Vector3i(2, 1, 2) and place.call(180, 326) == Vector3i(2, 0, 2)
+			and place.call(189, 327) == Vector3i(2, 1, 2) and place.call(178, 326) == Vector3i(2, 0, 2),
+			"ramps: the south leg rises south (%s %s)" % [place.call(180, 327), place.call(178, 326)])
+	_check.call(place.call(176, 327) == TerrainMesher.RAMP_CORNER and place.call(177, 326) == TerrainMesher.RAMP_CORNER,
+			"ramps: where the legs meet are corners")
+	var hip := TerrainMesher.ramp_heights(Vector3i(176, 327, -1), kind_at, low_at)
+	var dip := TerrainMesher.ramp_heights(Vector3i(177, 326, -1), kind_at, low_at)
+	var H := CddaCoords.LEVEL_M
+	_check.call(hip == PackedFloat32Array([H, H / 2, H, H]) and dip == PackedFloat32Array([H / 2, 0, H / 2, H / 2]),
+			"ramps: the outer corner is a hip at the top, the inner one dips to the ditch (%s %s)" % [hip, dip])
+	_check.call(place.call(185, 324) == TerrainMesher.NOT_RAMP and place.call(176, 324).x >= 0,
+			"ramps: the ditch itself is no ramp")
+	# Made up: a 3 wide ramp rising north, one low row and two high rows.
+	var map := {}
+	var lows := {}
+	for x in 3:
+		lows[Vector3i(x, 3, 0)] = true
+		map[Vector3i(x, 3, 0)] = K.FLOOR
+		map[Vector3i(x, 2, 0)] = K.RAMP_UP
+		map[Vector3i(x, 1, 0)] = K.RAMP_UP
+	lows[Vector3i(8, 8, 0)] = true   # a ramp-named floor far from any ramp
+	lows[Vector3i(1, 6, 0)] = true   # one behind the ramp but with plain floor between
+	var ka := func(q: Vector3i) -> int: return map.get(q, K.FLOOR if q.z == 0 else -1)
+	var la := func(q: Vector3i) -> bool: return lows.has(q)
+	var wide := []
+	for q in [Vector3i(0, 3, 0), Vector3i(1, 2, 0), Vector3i(2, 1, 0)]:
+		wide.append(TerrainMesher.ramp_place(q, ka, la))
+	_check.call(wide == [Vector3i(0, 0, 3), Vector3i(0, 1, 3), Vector3i(0, 2, 3)],
+			"ramps: low then two high rows are one run in thirds (%s)" % [wide])
+	_check.call(TerrainMesher.ramp_place(Vector3i(8, 8, 0), ka, la) == TerrainMesher.NOT_RAMP
+			and TerrainMesher.ramp_place(Vector3i(1, 6, 0), ka, la) == TerrainMesher.NOT_RAMP,
+			"ramps: a low-end id away from a RAMP_UP run, or cut off from it by plain floor, stays plain floor")
+	var bare := TerrainMesher.ramp_place(Vector3i(1, 2, 0), ka, func(_q: Vector3i) -> bool: return false)
+	_check.call(bare.x >= 0 and bare.z == 2, "ramps: without low ends the high end still rises as one flight (%s)" % bare)
+
+
+## A 1 + 1 ramp meshed from a small snapshot (the mock's ramp is L-shaped): one slope over both squares, sides, no
+## bottom; and on the mock, nothing drawn over its ramp on the level above.
+func _test_ramp_mesh(world: WorldView, data: Variant, tables: IdTables) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var sm: Dictionary = d["submaps"][0]
+	var floor_id := tables.index_of("ter", "t_floor")
+	for i in 144:
+		sm["ter"][i] = floor_id
+		sm["furn"][i] = 0
+		sm["flags"][i] = 1
+	sm["items"] = []
+	sm["ter"][6 * 12 + 5] = tables.index_of("ter", "t_earth_ramp_up_low")
+	sm["ter"][5 * 12 + 5] = tables.index_of("ter", "t_earth_ramp_up_high")
+	sm["ter"][9 * 12 + 9] = tables.index_of("ter", "t_ramp_up_low")   # alone: a plain floor
+	var snap := Snapshot.from_data(d)
+	_check.call(snap.is_valid(), "ramp mesh: test snapshot (%s)" % snap.error)
+	if not snap.is_valid():
+		return
+	var pos := Vector3i(sm["pos"][0], sm["pos"][1], sm["pos"][2])
+	var r := TerrainMesher.new(snap, world.catalog).build(pos)
+	var arr := r.terrain.surface_get_arrays(0)
+	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var nrm: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+	var H := CddaCoords.LEVEL_M
+	var tops := 0
+	var sides := 0
+	var bottoms := 0
+	var heights_ok := true
+	var facing_ok := true
+	var lone_flat := true
+	for t in range(0, v.size(), 3):
+		var c := (v[t] + v[t + 1] + v[t + 2]) / 3.0
+		if c.x > 9 and c.x < 10 and c.z > 9 and c.z < 10:
+			lone_flat = lone_flat and absf(c.y) < 0.001
+		if c.x < 5 or c.x > 6 or c.z < 5 or c.z > 7:
+			continue
+		var n := nrm[t]
+		facing_ok = facing_ok and (v[t + 1] - v[t]).cross(v[t + 2] - v[t]).dot(n) < 0.0   # front faces wind clockwise
+		if n.y < -0.5:
+			bottoms += 1
+		elif n.y > 0.5:
+			tops += 1
+			facing_ok = facing_ok and n.z > 0.1   # rising north: the slope looks south, down it
+			for k in 3:
+				heights_ok = heights_ok and absf(v[t + k].y - H * (7.0 - v[t + k].z) / 2.0) < 0.001
+		else:
+			sides += 1
+	_check.call(tops == 4 and heights_ok, "ramp mesh: one slope, floor at the low end's back, H/2 between, H at the top (%d tops)" % tops)
+	_check.call(bottoms == 0 and sides >= 4 and facing_ok, "ramp mesh: side faces, no bottom, faces look out (%d sides)" % sides)
+	_check.call(lone_flat, "ramp mesh: a low-end id away from a ramp is a flat floor")
+	# The mock's ramp tops (RAMP_DOWN and see-through squares at x 176..179, y 324..327 on level 0) draw nothing
+	# that could cut through the slope below them.
+	var top := TerrainMesher.new(world.snapshot, world.catalog).build(Vector3i(14, 27, 0))
+	var tv: PackedVector3Array = top.terrain.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var over := 0
+	for t in range(0, tv.size(), 3):
+		var c := (tv[t] + tv[t + 1] + tv[t + 2]) / 3.0
+		if c.x > 8 and c.x < 12 and c.z > 0 and c.z < 4:
+			over += 1
+	_check.call(over == 0, "ramp mesh: nothing is drawn over the ramp on the level above (%d triangles)" % over)
+
+
+## Pointing at stairs or a ramp picks the square their surface is drawn on, not what lies behind them.
+func _test_stair_pick(world: WorldView) -> void:
+	var lr := LookRay.new(world)
+	var stair := Vector3i(228, 428, 0)   # rises north: from 0 on its south edge to 3 m on its north edge
+	var eye := world.coords.ms_center_to_world(stair + Vector3i(-3, 0, 0)) + Vector3(0, 1.6, 0)
+	var at := world.coords.ms_center_to_world(stair) + Vector3(0, 1.2, 0)
+	var h := lr.cast(eye, at - eye)
+	_check.call(h["hit"] and h["square"] == stair and h["what"] == "stairs",
+			"stairs pick: a look at the middle step meets the stairs, not the wall behind (%s)" % h)
+	if h["hit"]:
+		_check.call(StairUse.find(world, h["square"], 0).get("dz") == 1, "stairs pick: and StairUse takes them up")
+	var eye2 := world.coords.ms_center_to_world(Vector3i(182, 324, -1)) + Vector3(0, 1.6, 0)
+	var at2 := world.coords.ms_center_to_world(Vector3i(182, 327, -1)) + Vector3(0, 2.0, 0)
+	var h2 := lr.cast(eye2, at2 - eye2)
+	_check.call(h2["hit"] and h2["what"] == "ramp" and h2["square"].y >= 326,
+			"stairs pick: looking across the ditch meets the ramp's slope (%s)" % h2)
 
 ## The player's body: parts from the snapshot, worn items inner to outer each a layer larger, wounds on top,
 ## head hidden for the own camera, hostile player data rejected.

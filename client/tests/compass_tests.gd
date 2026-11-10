@@ -2,7 +2,9 @@ extends RefCounted
 ## Compass checks, run by run_tests.gd: bearings, creatures from the snapshot (attitude, malformed input),
 ## hostile and other markers (kind, order, caps), and the opacity setting (HudSettings, the F1 slider, user://).
 
-const TEST_FILE := "user://test_hud.cfg"
+const TestDir := preload("res://tests/test_dir.gd")
+
+var _hud_file := TestDir.path("test_hud.cfg")
 
 var _check: Callable
 
@@ -131,14 +133,14 @@ func _write(path: String, text: String) -> void:
 
 
 func _test_opacity(root: Node) -> void:
-	_remove(TEST_FILE)
+	_remove(_hud_file)
 	var s := HudSettings.new()
-	_check.call(s.load_file(TEST_FILE) == "" and s.compass_opacity == HudSettings.DEFAULT_COMPASS_OPACITY,
+	_check.call(s.load_file(_hud_file) == "" and s.compass_opacity == HudSettings.DEFAULT_COMPASS_OPACITY,
 			"compass: no settings file, default opacity")
 	s.compass_opacity = 0.35
-	_check.call(s.save_file(TEST_FILE) == OK, "compass: opacity saved")
+	_check.call(s.save_file(_hud_file) == OK, "compass: opacity saved")
 	var back := HudSettings.new()
-	_check.call(back.load_file(TEST_FILE) == "" and is_equal_approx(back.compass_opacity, 0.35), "compass: opacity loads back")
+	_check.call(back.load_file(_hud_file) == "" and is_equal_approx(back.compass_opacity, 0.35), "compass: opacity loads back")
 	_check.call(HudSettings.clamp_opacity(3.0) == 1.0 and HudSettings.clamp_opacity(-2.0) == 0.0
 			and HudSettings.clamp_opacity(NAN) == HudSettings.DEFAULT_COMPASS_OPACITY, "compass: opacity clamped, NaN -> default")
 	var cases := {
@@ -149,22 +151,23 @@ func _test_opacity(root: Node) -> void:
 		"[compass]\nopacity=0.2\n" + " ".repeat(HudSettings.MAX_FILE_BYTES): HudSettings.DEFAULT_COMPASS_OPACITY,
 	}
 	for text: String in cases:
-		_write(TEST_FILE, text)
+		_write(_hud_file, text)
 		var h := HudSettings.new()
-		var why := h.load_file(TEST_FILE)
+		var why := h.load_file(_hud_file)
 		_check.call(is_equal_approx(h.compass_opacity, cases[text]), "compass: settings file %s -> %.2f (%s)" % [
 				text.left(30).c_escape(), h.compass_opacity, why])
 	# The F1 menu's slider: changes the setting, saves it, tells main.gd.
-	_remove(TEST_FILE)
+	_remove(_hud_file)
 	var menu := KeyMenu.new()
+	menu.save_path = TestDir.path("keys_unused.json")   # never the player's own key file
 	root.add_child(menu)
 	var settings := HudSettings.new()
-	menu.add_hud_settings(settings, TEST_FILE)
+	menu.add_hud_settings(settings, _hud_file)
 	var told := [0]
 	menu.hud_changed.connect(func() -> void: told[0] += 1)
 	menu.compass_slider.value_changed.emit(0.4)   # Godot 4.7: setting value from a script doesn't emit
 	var again := HudSettings.new()
-	again.load_file(TEST_FILE)
+	again.load_file(_hud_file)
 	_check.call(is_equal_approx(settings.compass_opacity, 0.4) and told[0] == 1 and is_equal_approx(again.compass_opacity, 0.4),
 			"compass: the F1 slider sets, saves and reports the opacity")
 	menu.open()
@@ -174,4 +177,4 @@ func _test_opacity(root: Node) -> void:
 	cmp.opacity = 0.3
 	_check.call(is_equal_approx(cmp.modulate.a, 0.3), "compass: opacity fades the strip")
 	cmp.free()
-	_remove(TEST_FILE)
+	_remove(_hud_file)

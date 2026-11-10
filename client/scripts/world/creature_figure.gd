@@ -279,6 +279,7 @@ func _pool(parent: Node3D, r: float) -> void:
 	c.radial_segments = 20
 	var mi := _gore_part(parent, c, Vector3(0, 0.012, 0), BLOOD_POOL)
 	(mi.material_override as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	(mi.material_override as StandardMaterial3D).render_priority = WorldLighting.UNDER_PRIORITY
 	mi.scale = Vector3(1.0, 1.0, 0.7)
 
 

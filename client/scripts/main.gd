@@ -8,6 +8,7 @@ extends Node3D
 ## fly camera; starts outside unless --view says otherwise) --screenshot=<png> (save one frame, quit)
 ## --keys (start with the key menu open) --creatures=snap (creatures jump from square to square instead of
 ## walking) --demo-creatures (mock town: monsters and an NPC near the player that walk and attack).
+## --no-light: no darkening by CDDA's light and night (WorldLighting, block C6).
 ## --live plays CDDA through the bridge instead (--cdda=<absolute dir> overrides ../cdda), starting at CDDA's main
 ## menu (MainMenu: new game with character creation, or load); --quick skips it (a random character in a
 ## fresh world fp3d-live), --world=/--save= load directly. In the game the
@@ -44,6 +45,7 @@ var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
 var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows the player (_update_look_line)
 var gore: GoreView               # blood, gibs and bile fields on the ground
+var fields_view: FieldView       # fire, sparks, smoke and gas fields
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
@@ -76,6 +78,7 @@ func _ready() -> void:
 	world = WorldView.new()
 	world.name = "World"
 	world.catalog.load_registry_dir(_repo_path("assets/registry"))
+	world.lighting.enabled = not _args.has("no-light")
 	for w in world.catalog.warnings:
 		push_warning(w)
 	add_child(world)
@@ -100,6 +103,9 @@ func _ready() -> void:
 	gore = GoreView.new()
 	add_child(gore)
 	world.coords.origin_shifted.connect(gore.shift)
+	fields_view = FieldView.new()
+	add_child(fields_view)
+	world.coords.origin_shifted.connect(fields_view.shift)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -221,15 +227,17 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
-	gore.view_z_max = world.view_z_max
+	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
+	fields_view.view_z_max = world.things_z_max()
+	fields_view.apply(snap, world)
 	player_body.apply(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
 	if vr != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)   # first person: every level, ceilings included
+		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
 
 func _frame_player() -> void:
@@ -275,7 +283,7 @@ func _place_player_body() -> void:
 		# the rig poses the hands and the arms after this (VrRig.drive_body)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
-	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
+	player_body.visible = own or world.snapshot.player_pos.z <= world.things_z_max()
 
 
 func _fp_active() -> bool:
@@ -286,8 +294,9 @@ func _fp_active() -> bool:
 func _set_first_person(on: bool) -> void:
 	if on and not first_person:
 		fp.set_look(camera.rotation.y, 0.0)   # keep facing the same way
-		world.set_view_z_max(CddaCoords.Z_MAX)   # ceilings back
+		world.set_view_z_max(world.coords.z_max)   # ceilings back
 	first_person = on
+	world.lighting.min_brightness = 0.0 if on else WorldLighting.OUTSIDE_MIN   # the map stays readable
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	camera.set_process_unhandled_input(not on)
 	fp.set_process_unhandled_input(on)
@@ -320,6 +329,7 @@ func _start_vr() -> void:
 		var p: Variant = _reach_square()
 		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
+	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
@@ -338,7 +348,7 @@ func _start_vr() -> void:
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)
+		world.set_view_z_max(world.coords.z_max)
 	print("VR on: %s" % vr.settings)
 
 
@@ -649,6 +659,9 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 	if s.is_empty():
 		return false
 	if live != null:
+		if not stairs_settled(live.queued_actions(), world.busy(), live.snapshot_seq, world.snapshot.seq):
+			status = "stairs: wait for the last move to finish"
+			return false
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
@@ -664,6 +677,12 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		return false
 	status = "level %d" % (vr.z if from_vr else fp.z)
 	return true
+
+
+## The steps toward a stair come from where the shown snapshot puts the player, so they are worked out only
+## when nothing is queued and the world shows the newest snapshot.
+static func stairs_settled(queued: int, world_busy: bool, fetched_seq: int, shown_seq: int) -> bool:
+	return queued == 0 and not world_busy and fetched_seq == shown_seq
 
 
 func _clear_look() -> void:
@@ -784,13 +803,16 @@ func _setup_environment() -> void:
 	_aim_sun(45.0, 0.0)
 
 
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp).
+## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
+## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
 func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var alt := deg_to_rad(maxf(alt_deg, 8.0))
+	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
+	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
 	var az := deg_to_rad(az_deg)
 	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
 	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else 0.15
+	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
+	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
 
 
 func _setup_hud() -> void:
@@ -924,7 +946,7 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
-	creature_view.view_z_max = world.view_z_max
+	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
@@ -937,8 +959,8 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()
-	var lines := PackedStringArray([status, "%s  camera square %s  view z <= %d  roofs %s  %d fps" % [
-			view, tile, world.view_z_max, "on" if world.roofs_visible else "off",
+	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
+			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
 	if vr != null:
 		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
@@ -1041,9 +1063,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
 		_clear_look()
 	elif InputActions.pressed(event, &"cutaway_up"):
-		world.set_view_z_max(world.view_z_max + 1)
+		world.step_view_z(1)
 	elif InputActions.pressed(event, &"cutaway_down"):
-		world.set_view_z_max(world.view_z_max - 1)
+		world.step_view_z(-1)
 	elif InputActions.pressed(event, &"roofs_toggle"):
 		world.set_roofs_visible(not world.roofs_visible)
 	elif InputActions.pressed(event, &"reload"):

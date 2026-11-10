@@ -7,10 +7,17 @@ extends RefCounted
 ## Shapes are built in tile-local metres: the tile centre on the floor is the origin, x and z run
 ## -0.5..0.5, y up, and the front faces -z (north); the caller turns the builder to face another way.
 ## Item shapes are built at unit size and scaled by the item's size.
+##
+## Joined tiles (`links`, from PropMesher) draw as one piece: beds, tables, benches, counters, sofas,
+## shelves and bathtubs reach the tile edge on linked sides without seams there, with legs only at the
+## piece's outer corners; a bed's headboard and pillow go on its head row, the blanket's fold over the
+## foot on its foot row (a 2 x 2 block is one double bed with two pillows).
 
 const ALL := TerrainMesher.ALL
 const NY := TerrainMesher.NY
 const SIDES := ALL & ~NY   # props stand on something: no bottom faces
+const X_LINKS := 2 | 8     # shape-local link bits of the +x and -x sides
+const Z_LINKS := 1 | 4     # front (-z) and back (+z)
 
 const DARK := Color(0.12, 0.12, 0.13)
 const METAL := Color(0.6, 0.62, 0.64)
@@ -23,6 +30,8 @@ const LINEN := Color(0.9, 0.88, 0.84)
 const TERRACOTTA := Color(0.62, 0.35, 0.22)
 const LEAF := Color(0.24, 0.43, 0.19)
 const LAMP := Color(0.98, 0.94, 0.78)
+const PILLOW := Color(0.94, 0.94, 0.94)
+const BATH_WATER := Color(0.55, 0.68, 0.78)
 
 ## Where items rest on a shape: `surfaces` heights (items spread over them, largest first, lowest
 ## first), `rect` the area in shape-local x0, z0, x1, z1, `hide` true when items are inside (closed
@@ -157,47 +166,53 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			for x: float in [-0.42, 0.28]:
 				b.box(Vector3(x, 0.42, -0.36), Vector3(x + 0.14, 0.66, 0.26), accent.darkened(0.04))
 		"sofa":
-			_legs(b, 0.44, 0.36, 0.1, 0.05, WOOD_DARK)
-			b.box(Vector3(-0.5, 0.1, -0.38), Vector3(0.5, 0.42, 0.42), accent)
+			var xl := links & X_LINKS
+			_legs(b, 0.44, 0.36, 0.1, 0.05, WOOD_DARK, xl)
+			_jbox(b, xl, Vector3(-0.5, 0.1, -0.38), Vector3(0.5, 0.42, 0.42), accent)
 			b.box(Vector3(-0.47, 0.42, -0.36), Vector3(0.47, 0.53, 0.22), accent.lightened(0.08))
-			b.box(Vector3(-0.5, 0.42, 0.22), Vector3(0.5, 0.95, 0.42), accent.darkened(0.08))
+			_jbox(b, xl, Vector3(-0.5, 0.42, 0.22), Vector3(0.5, 0.95, 0.42), accent.darkened(0.08))
 			if not (links & 8):
 				b.box(Vector3(-0.5, 0.42, -0.38), Vector3(-0.38, 0.68, 0.24), accent.darkened(0.04))
 			if not (links & 2):
 				b.box(Vector3(0.38, 0.42, -0.38), Vector3(0.5, 0.68, 0.24), accent.darkened(0.04))
 		"bench":
-			for x: float in [-0.42, 0.36]:
+			var xl := links & X_LINKS
+			for x: float in _ends(xl, -0.42, 0.36):
 				b.box(Vector3(x, 0, -0.16), Vector3(x + 0.06, 0.42, 0.16), main.darkened(0.15))
-			_slats(b, -0.48, 0.48, 0.42, 0.46, -0.18, 0.18, 3, main)
+			_slats(b, -0.48, 0.48, 0.42, 0.46, -0.18, 0.18, 3, main, xl)
 		"park_bench":
-			for x: float in [-0.44, 0.38]:
+			var xl := links & X_LINKS
+			for x: float in _ends(xl, -0.44, 0.38):
 				b.box(Vector3(x, 0, -0.2), Vector3(x + 0.06, 0.42, 0.18), METAL_DARK)
 				b.box(Vector3(x, 0.42, 0.14), Vector3(x + 0.06, 0.9, 0.2), METAL_DARK)
-			_slats(b, -0.5, 0.5, 0.42, 0.46, -0.2, 0.12, 3, main)
+			_slats(b, -0.5, 0.5, 0.42, 0.46, -0.2, 0.12, 3, main, xl)
 			for y: float in [0.58, 0.76]:
-				b.box(Vector3(-0.5, y, 0.17), Vector3(0.5, y + 0.1, 0.2), main)
+				b.box(Vector3(-0.5, y, 0.17), Vector3(0.5, y + 0.1, 0.2), main, _unlinked(xl, ALL))
 		"table":
-			_legs(b, 0.38, 0.38, 0.72, 0.06, main.darkened(0.1))
-			b.box(Vector3(-0.4, 0.64, -0.4), Vector3(0.4, 0.72, 0.4), main.darkened(0.06))
-			b.box(Vector3(-0.46, 0.72, -0.46), Vector3(0.46, 0.77, 0.46), main, ALL)
+			_legs(b, 0.38, 0.38, 0.72, 0.06, main.darkened(0.1), links)
+			_jbox(b, links, Vector3(-0.4, 0.64, -0.4), Vector3(0.4, 0.72, 0.4), main.darkened(0.06))
+			_jbox(b, links, Vector3(-0.46, 0.72, -0.46), Vector3(0.46, 0.77, 0.46), main, ALL)
 		"coffee_table":
 			_legs(b, 0.38, 0.26, 0.36, 0.05, main.darkened(0.1))
 			b.box(Vector3(-0.42, 0.36, -0.3), Vector3(0.42, 0.41, 0.3), main, ALL)
 			b.box(Vector3(-0.36, 0.1, -0.24), Vector3(0.36, 0.13, 0.24), main.darkened(0.1))
 		"desk":
+			var xl := links & X_LINKS
 			b.box(Vector3(0.08, 0, -0.36), Vector3(0.46, 0.73, 0.36), main.darkened(0.08))
 			for y: float in [0.22, 0.46]:
 				b.box(Vector3(0.1, y, -0.37), Vector3(0.44, y + 0.012, -0.36), DARK)
 			for y: float in [0.1, 0.34, 0.58]:
 				b.box(Vector3(0.22, y, -0.38), Vector3(0.32, y + 0.025, -0.36), METAL)
-			for z: float in [-0.36, 0.3]:
-				b.box(Vector3(-0.46, 0, z), Vector3(-0.4, 0.73, z + 0.06), main.darkened(0.1))
-			b.box(Vector3(-0.44, 0.1, 0.32), Vector3(0.08, 0.6, 0.35), main.darkened(0.12))
-			b.box(Vector3(-0.48, 0.73, -0.38), Vector3(0.48, 0.77, 0.38), main, ALL)
+			if not (xl & 8):   # a desk joined on its left shares the neighbour's drawers for support
+				for z: float in [-0.36, 0.3]:
+					b.box(Vector3(-0.46, 0, z), Vector3(-0.4, 0.73, z + 0.06), main.darkened(0.1))
+			_jbox(b, xl, Vector3(-0.44, 0.1, 0.32), Vector3(0.08, 0.6, 0.35), main.darkened(0.12))
+			_jbox(b, xl, Vector3(-0.48, 0.73, -0.38), Vector3(0.48, 0.77, 0.38), main, ALL)
 		"workbench":
-			_legs(b, 0.42, 0.34, 0.85, 0.07, main.darkened(0.12))
-			b.box(Vector3(-0.44, 0.18, -0.34), Vector3(0.44, 0.21, 0.34), main.darkened(0.1))
-			b.box(Vector3(-0.48, 0.85, -0.4), Vector3(0.48, 0.93, 0.4), main, ALL)
+			var xl := links & X_LINKS
+			_legs(b, 0.42, 0.34, 0.85, 0.07, main.darkened(0.12), xl)
+			_jbox(b, xl, Vector3(-0.44, 0.18, -0.34), Vector3(0.44, 0.21, 0.34), main.darkened(0.1))
+			_jbox(b, xl, Vector3(-0.48, 0.85, -0.4), Vector3(0.48, 0.93, 0.4), main, ALL)
 			b.box(Vector3(0.28, 0.93, -0.42), Vector3(0.44, 1.02, -0.3), METAL_DARK)
 		"counter":
 			_counter(b, main, links)
@@ -207,20 +222,22 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			b.box(Vector3(-0.19, 0.95, -0.25), Vector3(0.19, 0.951, 0.07), METAL_DARK, TerrainMesher.PY)
 			b.box(Vector3(-0.02, 0.95, 0.2), Vector3(0.02, 1.15, 0.24), METAL)
 			b.box(Vector3(-0.02, 1.11, 0.04), Vector3(0.02, 1.15, 0.24), METAL)
-		"shelf":
-			for x: float in [-0.48, 0.44]:
+		"shelf":   # joined on +x: the neighbour's posts hold the shared end
+			var xl := links & X_LINKS
+			for x: float in [-0.48] if xl & 2 else [-0.48, 0.44]:
 				for z: float in [-0.12, 0.43]:
 					b.box(Vector3(x, 0, z), Vector3(x + 0.04, 1.8, z + 0.04), main.darkened(0.15))
 			for y: float in [0.1, 0.55, 1.0, 1.45, 1.77]:
-				b.box(Vector3(-0.48, y, -0.12), Vector3(0.48, y + 0.03, 0.47), main, ALL)
-			b.box(Vector3(-0.46, 0.13, 0.45), Vector3(0.46, 1.77, 0.46), main.darkened(0.25))
+				_jbox(b, xl, Vector3(-0.48, y, -0.12), Vector3(0.48, y + 0.03, 0.47), main, ALL)
+			_jbox(b, xl, Vector3(-0.46, 0.13, 0.45), Vector3(0.46, 1.77, 0.46), main.darkened(0.25))
 		"bookcase":
-			for x: float in [-0.48, 0.44]:
+			var xl := links & X_LINKS
+			for x: float in [-0.48] if xl & 2 else [-0.48, 0.44]:
 				b.box(Vector3(x, 0, -0.14), Vector3(x + 0.04, 1.9, 0.48), main)
-			b.box(Vector3(-0.44, 0, 0.44), Vector3(0.44, 1.9, 0.48), main.darkened(0.2))
-			b.box(Vector3(-0.5, 1.9, -0.16), Vector3(0.5, 1.95, 0.48), main.darkened(0.06), ALL)
+			_jbox(b, xl, Vector3(-0.44, 0, 0.44), Vector3(0.44, 1.9, 0.48), main.darkened(0.2))
+			_jbox(b, xl, Vector3(-0.5, 1.9, -0.16), Vector3(0.5, 1.95, 0.48), main.darkened(0.06), ALL)
 			for y: float in [0.0, 0.5, 0.95, 1.4]:
-				b.box(Vector3(-0.44, y, -0.12), Vector3(0.44, y + 0.08 if y == 0.0 else y + 0.03, 0.44), main)
+				_jbox(b, xl, Vector3(-0.44, y, -0.12), Vector3(0.44, y + 0.08 if y == 0.0 else y + 0.03, 0.44), main)
 		"cabinet_tall":
 			_cabinet(b, Vector3(-0.46, 0, -0.3), Vector3(0.46, 2.0, 0.46), main, 2, 0)
 		"dresser":
@@ -275,17 +292,17 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			b.box(Vector3(-0.2, 0.42, -0.32), Vector3(0.2, 0.44, 0.18), accent)
 			b.box(Vector3(-0.22, 0.3, 0.24), Vector3(0.22, 0.78, 0.42), CERAMIC)
 			b.box(Vector3(-0.23, 0.78, 0.23), Vector3(0.23, 0.81, 0.43), CERAMIC.darkened(0.05))
-		"bathtub":
-			b.box(Vector3(-0.5, 0, -0.42), Vector3(0.5, 0.08, 0.45), main)
+		"bathtub":   # walls on the outer sides only; floor and water run on into a joined tile
+			_jbox(b, links, Vector3(-0.5, 0, -0.42), Vector3(0.5, 0.08, 0.45), main)
 			if not (links & 1):
-				b.box(Vector3(-0.5, 0, -0.42), Vector3(0.5, 0.55, -0.34), main)
+				_jbox(b, links & X_LINKS, Vector3(-0.5, 0, -0.42), Vector3(0.5, 0.55, -0.34), main)
 			if not (links & 4):
-				b.box(Vector3(-0.5, 0, 0.37), Vector3(0.5, 0.55, 0.45), main)
+				_jbox(b, links & X_LINKS, Vector3(-0.5, 0, 0.37), Vector3(0.5, 0.55, 0.45), main)
 			if not (links & 8):
-				b.box(Vector3(-0.5, 0, -0.42), Vector3(-0.42, 0.55, 0.45), main)
+				_jbox(b, links & Z_LINKS, Vector3(-0.5, 0, -0.42), Vector3(-0.42, 0.55, 0.45), main)
 			if not (links & 2):
-				b.box(Vector3(0.42, 0, -0.42), Vector3(0.5, 0.55, 0.45), main)
-			b.box(Vector3(-0.42, 0.08, -0.34), Vector3(0.42, 0.1, 0.37), Color(0.55, 0.68, 0.78))
+				_jbox(b, links & Z_LINKS, Vector3(0.42, 0, -0.42), Vector3(0.5, 0.55, 0.45), main)
+			_jbox(b, links, Vector3(-0.42, 0.08, -0.34), Vector3(0.42, 0.1, 0.37), BATH_WATER)
 		"shower":
 			b.box(Vector3(-0.48, 0, -0.48), Vector3(0.48, 0.08, 0.48), CERAMIC)
 			b.box(Vector3(-0.03, 0.08, 0.42), Vector3(0.03, 2.0, 0.46), METAL)
@@ -293,13 +310,7 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			b.pane(Vector3(-0.48, 0.08, -0.48), Vector3(0.48, 2.0, -0.46))
 			b.pane(Vector3(-0.48, 0.08, -0.46), Vector3(-0.46, 2.0, 0.48))
 		"bed":
-			_legs(b, 0.44, 0.44, 0.15, 0.06, main.darkened(0.1))
-			b.box(Vector3(-0.48, 0.15, -0.48), Vector3(0.48, 0.32, 0.48), main)
-			b.box(Vector3(-0.46, 0.32, -0.46), Vector3(0.46, 0.52, 0.46), LINEN)
-			b.box(Vector3(-0.47, 0.5, -0.47), Vector3(0.47, 0.58, 0.22), accent)
-			b.box(Vector3(-0.3, 0.52, 0.26), Vector3(0.3, 0.64, 0.42), Color.WHITE.darkened(0.06))
-			if not (links & 4):
-				b.box(Vector3(-0.48, 0, 0.42), Vector3(0.48, 1.0, 0.5), main.darkened(0.08), ALL & ~NY)
+			_bed(b, main, accent, links)
 		"crate":
 			b.box(Vector3(-0.4, 0, -0.4), Vector3(0.4, 0.75, 0.4), main)
 			_battens(b, 0.4, 0.75, main.darkened(0.25))
@@ -547,28 +558,83 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			b.box(Vector3(-0.42, h - 0.05, -0.42), Vector3(0.42, h, 0.42), main.darkened(0.15), ALL)
 
 
-static func _legs(b: Builder, x: float, z: float, h: float, t: float, col: Color) -> void:
+## Four legs at (±x, ±z), except at corners on a linked side (only a joined piece's outer corners).
+static func _legs(b: Builder, x: float, z: float, h: float, t: float, col: Color, links := 0) -> void:
 	for sx: float in [-1.0, 1.0]:
+		if links & (2 if sx > 0 else 8):
+			continue
 		for sz: float in [-1.0, 1.0]:
+			if links & (4 if sz > 0 else 1):
+				continue
 			var c := Vector3(sx * x, 0, sz * z)
 			b.box(c - Vector3(t / 2, 0, t / 2), c + Vector3(t / 2, h, t / 2), col)
 
 
-static func _slats(b: Builder, x0: float, x1: float, y0: float, y1: float, z0: float, z1: float, n: int, col: Color) -> void:
+## The x of a bench's end supports: the low (-x) and high (+x) one, except on a linked side.
+static func _ends(xl: int, lo: float, hi: float) -> Array:
+	var out := []
+	if not (xl & 8):
+		out.append(lo)
+	if not (xl & 2):
+		out.append(hi)
+	return out
+
+
+static func _slats(b: Builder, x0: float, x1: float, y0: float, y1: float, z0: float, z1: float, n: int, col: Color,
+		links := 0) -> void:
 	var w := (z1 - z0) / n
 	for i in n:
-		b.box(Vector3(x0, y0, z0 + i * w), Vector3(x1, y1, z0 + (i + 0.8) * w), col.darkened(0.05 * (i % 2)), ALL)
+		_jbox(b, links, Vector3(x0, y0, z0 + i * w), Vector3(x1, y1, z0 + (i + 0.8) * w), col.darkened(0.05 * (i % 2)), ALL)
 
 
-## A kitchen counter run: cabinets with doors, kick plate and a stone top; neighbours on the same
-## run (links) lose their end panels' seams.
-static func _counter(b: Builder, main: Color, _links: int) -> void:
-	b.box(Vector3(-0.5, 0, -0.34), Vector3(0.5, 0.08, 0.5), DARK.lightened(0.1))
-	b.box(Vector3(-0.5, 0.08, -0.42), Vector3(0.5, 0.88, 0.5), main)
+## A box stretched to the tile edge on linked sides, without faces there (no seam inside a joined
+## piece). `links` in shape-local bits (1 front -z, 2 +x, 4 back +z, 8 -x); mask it to stretch one axis.
+static func _jbox(b: Builder, links: int, lo: Vector3, hi: Vector3, col: Color, faces := SIDES) -> void:
+	var l := Vector3(-0.5 if links & 8 else lo.x, lo.y, -0.5 if links & 1 else lo.z)
+	var h := Vector3(0.5 if links & 2 else hi.x, hi.y, 0.5 if links & 4 else hi.z)
+	b.box(l, h, col, _unlinked(links, faces))
+
+
+## `faces` without the sides that touch a linked neighbour.
+static func _unlinked(links: int, faces: int) -> int:
+	if links & 1:
+		faces &= ~TerrainMesher.NZ
+	if links & 2:
+		faces &= ~TerrainMesher.PX
+	if links & 4:
+		faces &= ~TerrainMesher.PZ
+	if links & 8:
+		faces &= ~TerrainMesher.NX
+	return faces
+
+
+## A bed tile (see the class notes): frame, mattress and blanket run on into joined tiles, legs at the
+## bed's outer corners, headboard and pillow on the head row (nothing joined behind), the blanket hanging
+## over the foot end on the foot row (nothing joined in front).
+static func _bed(b: Builder, main: Color, accent: Color, links: int) -> void:
+	var xl := links & X_LINKS
+	_legs(b, 0.44, 0.44, 0.15, 0.06, main.darkened(0.1), links)
+	_jbox(b, links, Vector3(-0.48, 0.15, -0.48), Vector3(0.48, 0.32, 0.48), main)
+	_jbox(b, links, Vector3(-0.46, 0.32, -0.46), Vector3(0.46, 0.52, 0.46), LINEN)
+	var head := not (links & 4)
+	_jbox(b, links, Vector3(-0.47, 0.5, -0.47), Vector3(0.47, 0.58, 0.22 if head else 0.47), accent)
+	if not (links & 1):
+		_jbox(b, xl, Vector3(-0.47, 0.3, -0.49), Vector3(0.47, 0.58, -0.47), accent.darkened(0.06))
+	if head:
+		b.box(Vector3(-0.3, 0.52, 0.26), Vector3(0.3, 0.64, 0.42), PILLOW)
+		_jbox(b, xl, Vector3(-0.48, 0, 0.42), Vector3(0.48, 1.0, 0.5), main.darkened(0.08), ALL & ~NY)
+
+
+## A kitchen counter run: cabinets with doors, kick plate and a stone top. Joined neighbours (links)
+## share one top that runs on to them (round an L corner too) and lose the end panels' seams.
+static func _counter(b: Builder, main: Color, links: int) -> void:
+	var xl := links & X_LINKS
+	_jbox(b, xl, Vector3(-0.5, 0, -0.34), Vector3(0.5, 0.08, 0.5), DARK.lightened(0.1))
+	_jbox(b, xl, Vector3(-0.5, 0.08, -0.42), Vector3(0.5, 0.88, 0.5), main)
 	b.box(Vector3(-0.005, 0.12, -0.425), Vector3(0.005, 0.84, -0.42), main.darkened(0.3))
 	for x: float in [-0.08, 0.06]:
 		b.box(Vector3(x, 0.66, -0.44), Vector3(x + 0.02, 0.78, -0.42), METAL)
-	b.box(Vector3(-0.5, 0.88, -0.47), Vector3(0.5, 0.93, 0.5), STONE_TOP, ALL)
+	_jbox(b, links, Vector3(-0.5, 0.88, -0.47), Vector3(0.5, 0.93, 0.5), STONE_TOP, ALL)
 
 
 ## A closed cabinet: body, `doors` vertical door seams (1: a single door with a handle on the right,

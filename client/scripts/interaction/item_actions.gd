@@ -272,7 +272,7 @@ func _ok_ref(r: ItemRef) -> bool:
 ## A square inside the range snapshots allow.
 static func ok_square(p: Vector3i) -> bool:
 	var lim := Snapshot.MAX_ABS_SM * CddaCoords.SEEX
-	return absi(p.x) <= lim and absi(p.y) <= lim and p.z >= CddaCoords.Z_MIN and p.z <= CddaCoords.Z_MAX
+	return absi(p.x) <= lim and absi(p.y) <= lim and absi(p.z) <= CddaCoords.Z_LIMIT
 
 
 func _queued() -> int:
