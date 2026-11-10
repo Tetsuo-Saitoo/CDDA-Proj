@@ -25,7 +25,7 @@ request, wait for the answer". The client shows a generic widget (block E3) and 
 | `menu` | `uilist::query` (entry id = retval) | `entry` or cancel |
 | `popup` | `query_popup::query` (covers `query_yn`, `popup`) | `action` (one of `actions`) or cancel |
 | `string` | `string_input_popup::query_string` (default text in `entries[0].label`) | `text` (control chars stripped, capped) or cancel |
-| `item_select` | `inventory_pick_selector::execute` (eat, wield, read, …) | `entry` or cancel |
+| `item_select` | `inventory_pick_selector::execute` (eat, wield, read, …), `ammo_inventory_selector::execute` (the ammo to reload with) | `entry` or cancel |
 | `item_multi` | `pickup_selector`, `inventory_drop_selector`, `inventory_multiselector` `execute` | `picks` [(entry, count 0 = all)] or cancel |
 | `direction` | `choose_direction` / `choose_adjacent` (`text` = "Open where?", `origin`, `allow_vertical`) | `pos` = relative vector, each axis −1..1 (z 0 unless vertical); anything else = cancel |
 | `target` | `game::look_around` (`mode` look / zone / peek) and `target_ui::run` (`mode` fire / throw / throw_blind / turrets / turret_manual / reach / spell / select) | `pos` = absolute square (clamped by CDDA's cursor rules) and/or `action` from `actions` (FIRE, AIM, STOPAIM, aim shots, SWITCH_MODE, …); a square with no action asks again with the new `status`; cancel = abort |
@@ -45,26 +45,32 @@ line of fire.
 Client-flown shots (`cdda/src/fp3d/shot.h`). Fire-mode target requests with a gun also carry `dispersion`
 (arcmin: the max error after aiming in the current aim mode, as CDDA's aim panel predicts it),
 `dispersion_typical` (arcmin, the average; both only when > 0) and `weapon_wielded` (the gun is the avatar's
-wielded item; the client flies shots only then). A FIRE (or aim-and-shoot) answer may carry `shot` = {end:
+wielded item and its current mode fires the gun itself, not a gunmod; the client flies shots only then). A FIRE (or aim-and-shoot) answer may carry `shot` = {end:
 Vector3i (absolute square where the bullet stopped), hit_uid (creature hit, 0 = miss), part (character body
 part id like head / arm_l, or monster weak point id like head / eye / leg; "" = CDDA picks), quality (float 0
 dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll decides every projectile:
-- The answer's outcome applies to the trigger pull's first projectile only, on the game turn of the answer (an
-  aimed shot that fires on a later turn drops it). It is stored only for a fire-mode answer that fires the
-  avatar's wielded gun and isn't a cancel; throws, turrets, spells and NPCs never use it.
+- The answer is stored only for a fire-mode answer that fires the avatar's wielded gun and isn't a cancel, and
+  holds only for a trigger pull of that gun at that answer's square; throws, turrets, spells, gunmod modes and
+  NPCs never use it. Aiming that ends without a shot (cancelled, interrupted, aborted) drops it. Without `fly`,
+  its outcome applies to the trigger pull's first projectile only, on the game turn of the answer (an aimed shot
+  that fires on a later turn drops it).
 - With `fly`, each projectile (each round of a burst; a shotgun shell is one, its pellets spread around it) sends
-  one `shot` request with the error CDDA rolled; the client turns its sight line by it, flies that bullet and
+  one `shot` request with the error CDDA rolled (at most 1800 arcmin); the client turns its sight line by it,
+  flies that bullet against the figures it already shows (no new snapshot comes with a `shot` request) and
   answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A cancel, a
-  missing `shot` or one that fails the checks falls back to the FIRE answer's outcome (first projectile, same
-  turn) or CDDA's own path.
+  missing `shot` or one that fails the checks leaves that projectile to CDDA's own path (the FIRE answer's
+  outcome is not used with `fly`).
 - Checks: quality finite (clamped 0..0.99); a hit names the cursor creature or a candidate, alive and seen now
   (the bullet stops at its square); a miss's `end` is in the bubble; the square is on the shooter's z, in
   front of it, within the gun's range for the avatar, and near the line: within 1 square of the line to the
   cursor (FIRE answer) or 1.5 squares of CDDA's deviated line (shot answer: the line turned by
   shot_error * sin(shot_angle) to the shooter's right). Anything else is ignored and CDDA's own path runs.
-- Outcome: a client hit counts only if CDDA's roll hits too, with goodhit = max(CDDA's missed_by, quality); a
-  client miss stops the bullet at `end`; a client hit with a CDDA miss runs CDDA's miss path. Other creatures
-  on the path get CDDA's unintended-hit roll. The client can make a shot worse, never better.
+- Outcome: a client hit counts only if the creature's own roll hits: CDDA's roll for the aimed square's creature;
+  for another creature, CDDA's rolled error over the distance to it against its ranged size (a HARDTOHIT
+  character: the worse of two rolls, as CDDA does). goodhit = max(that roll, quality); when the roll misses,
+  CDDA's own path runs. A client miss flies to `end` and, unless `end` is impassable (wall, closed door, solid
+  furniture), on as CDDA's overshoot would. Other creatures on the path get CDDA's rolls, the aimed one no better
+  than CDDA's own (a CDDA miss stays a miss). The client can make a shot worse, never better.
 - Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
   lands only if goodhit <= sqrt(hit chance / 100) (weak point: `weakpoint::hit_chance`; body part: its share of
   the body's hit size), else CDDA picks. Ignored on other requests.
