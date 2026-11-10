@@ -19,7 +19,7 @@ const KINDS := {
 	"fd_gibs_invertebrate": ["chunks", Color(0.3, 0.35, 0.5)],
 }
 
-var view_z_max := CddaCoords.Z_MAX
+var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden; main.gd sets WorldView.things_z_max()
 var _layers := {}     # field id -> MultiMeshInstance3D
 var _count := 0
 

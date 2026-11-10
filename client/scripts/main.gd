@@ -196,7 +196,7 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
-	gore.view_z_max = world.view_z_max
+	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	player_body.apply(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
@@ -204,7 +204,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 			world.prop_counts["furniture"], world.prop_counts["items"]]
 	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
 	if vr != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)   # first person: every level, ceilings included
+		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
 
 func _frame_player() -> void:
@@ -250,7 +250,7 @@ func _place_player_body() -> void:
 		VrHands.drive(player_body, vr)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
-	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
+	player_body.visible = own or world.snapshot.player_pos.z <= world.things_z_max()
 
 
 func _fp_active() -> bool:
@@ -261,7 +261,7 @@ func _fp_active() -> bool:
 func _set_first_person(on: bool) -> void:
 	if on and not first_person:
 		fp.set_look(camera.rotation.y, 0.0)   # keep facing the same way
-		world.set_view_z_max(CddaCoords.Z_MAX)   # ceilings back
+		world.set_view_z_max(world.coords.z_max)   # ceilings back
 	first_person = on
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	camera.set_process_unhandled_input(not on)
@@ -311,7 +311,7 @@ func _start_vr() -> void:
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
-		world.set_view_z_max(CddaCoords.Z_MAX)
+		world.set_view_z_max(world.coords.z_max)
 	print("VR on: %s" % vr.settings)
 
 
@@ -864,7 +864,7 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
-	creature_view.view_z_max = world.view_z_max
+	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
@@ -873,8 +873,8 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()
-	var lines := PackedStringArray([status, "%s  camera square %s  view z <= %d  roofs %s  %d fps" % [
-			view, tile, world.view_z_max, "on" if world.roofs_visible else "off",
+	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
+			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
 	if vr != null:
 		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
@@ -974,9 +974,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
 		_clear_look()
 	elif InputActions.pressed(event, &"cutaway_up"):
-		world.set_view_z_max(world.view_z_max + 1)
+		world.step_view_z(1)
 	elif InputActions.pressed(event, &"cutaway_down"):
-		world.set_view_z_max(world.view_z_max - 1)
+		world.step_view_z(-1)
 	elif InputActions.pressed(event, &"roofs_toggle"):
 		world.set_roofs_visible(not world.roofs_visible)
 	elif InputActions.pressed(event, &"reload"):

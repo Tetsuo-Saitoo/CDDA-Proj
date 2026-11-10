@@ -14,11 +14,17 @@ const TILE_M := 1.0
 const LEVEL_M := 3.0
 const SEEX := 12        # squares per submap side
 const MAPSIZE := 11     # submaps per bubble side
-const Z_MIN := -10
-const Z_MAX := 10
+## The map's z range when a snapshot doesn't send `z_levels` (CDDA's OVERMAP_DEPTH / OVERMAP_HEIGHT today).
+const Z_MIN_DEFAULT := -10
+const Z_MAX_DEFAULT := 10
+## No z range may reach past this either way (Snapshot rejects one that does); also "above every level".
+const Z_LIMIT := 64
 
 ## Absolute square at Godot (0, 0, 0). Its z stays 0, so level z always sits at y = z * LEVEL_M.
 var origin_ms := Vector3i.ZERO
+## The map's whole z range, from the snapshot shown last (WorldView sets it on the main thread).
+var z_min := Z_MIN_DEFAULT
+var z_max := Z_MAX_DEFAULT
 
 
 ## Rebases on the bubble's corner submap. Returns the offset applied to existing Godot positions.
