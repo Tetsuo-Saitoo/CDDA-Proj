@@ -236,6 +236,6 @@ func _show_mod(i: int) -> void:
 	var m: Dictionary = model.mods[_mod_ids[i]]
 	var deps := PackedStringArray()
 	for d: String in m["dependencies"]:
-		deps.append(model.mods[d]["name"] if model.mods.has(d) else d)
+		deps.append(CddaText.to_bbcode(model.mods[d]["name"] if model.mods.has(d) else d))
 	_mod_detail.text = "[b]%s[/b]  [i]%s[/i]\n\n%s%s" % [CddaText.to_bbcode(m["name"]), CddaText.to_bbcode(m["category"]),
 			CddaText.to_bbcode(m["description"]), ("\n\nNeeds: " + ", ".join(deps)) if not deps.is_empty() else ""]

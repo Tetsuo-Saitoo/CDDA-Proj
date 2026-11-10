@@ -2,7 +2,9 @@ extends RefCounted
 ## Compass checks, run by run_tests.gd: bearings, creatures from the snapshot (attitude, malformed input),
 ## hostile and other markers (kind, order, caps), and the opacity setting (HudSettings, the F1 slider, user://).
 
-const TEST_FILE := "user://test_hud.cfg"
+const TestDir := preload("res://tests/test_dir.gd")
+
+var _hud_file := TestDir.path("test_hud.cfg")
 
 var _check: Callable
 
@@ -76,6 +78,21 @@ func _test_hostiles(data: Variant) -> void:
 		ok = ok and blips[i].is_equal_approx(want[i])
 	_check.call(ok, "compass: markers at bearing and distance, hostiles then others, nearest first %s" % [blips])
 	_check.call(Compass.creature_blips(null, from, coords.ms_center_to_world).is_empty(), "compass: no snapshot, no markers")
+	# Other levels: level_blips / creature_blip_levels add the level offset, in creature_blips' order.
+	var lb := Compass.level_blips(snap, from, coords.ms_center_to_world)
+	var levels := Compass.creature_blip_levels(snap, from, coords.ms_center_to_world)
+	var same := lb.size() == blips.size() and levels.size() == blips.size()
+	for i in mini(lb.size(), mini(blips.size(), levels.size())):
+		same = same and Vector3(lb[i].x, lb[i].y, lb[i].z) == blips[i] and int(lb[i].w) == levels[i]
+	_check.call(same and levels == PackedInt32Array([0, 0, 1, 0, 0, 0]),
+			"compass: level offsets in the markers' order, the zombie one up is +1 %s" % [levels])
+	_check.call(Compass.level_blips(null, from, coords.ms_center_to_world).is_empty()
+			and Compass.creature_blip_levels(null, from, coords.ms_center_to_world).is_empty(), "compass: no snapshot, no levels")
+	var up := Compass.level_ticks(Vector2(10, 10), 1)
+	var down := Compass.level_ticks(Vector2(10, 10), -3)
+	_check.call(Compass.level_ticks(Vector2(10, 10), 0).is_empty() and up.size() == 1 and down.size() == 2
+			and up[0][1].y < up[0][0].y and down[0][1].y > down[0][0].y and down[1][1].y > down[0][1].y,
+			"compass: no chevron on your level, one up for above, two down for 2+ below")
 	var many := [me]
 	for i in Compass.MAX_BLIPS + 20:
 		many.append(_creature(100 + i, M, p + Vector3i(i + 1, 0, 0)))
@@ -96,8 +113,11 @@ func _test_hostiles(data: Variant) -> void:
 		_check.call(not Snapshot.from_data(d).is_valid(), "compass: attitude %s refused" % str(bad))
 	var cmp := Compass.new()
 	var list: Array[Vector3] = [Vector3(10, 2, 0), Vector3(30, 5, 2)]
+	var with_levels: Array[Vector4] = [Vector4(10, 2, 0, -1), Vector4(30, 5, 2, 0)]
+	cmp.set_level_blips(with_levels)
+	_check.call(cmp.blips == list and cmp.blip_levels == PackedInt32Array([-1, 0]), "compass: takes markers with levels")
 	cmp.set_blips(list)
-	_check.call(cmp.blips == list, "compass: takes the markers")
+	_check.call(cmp.blips == list and cmp.blip_levels.is_empty(), "compass: takes the markers (all on your level)")
 	cmp.free()
 
 
@@ -113,14 +133,14 @@ func _write(path: String, text: String) -> void:
 
 
 func _test_opacity(root: Node) -> void:
-	_remove(TEST_FILE)
+	_remove(_hud_file)
 	var s := HudSettings.new()
-	_check.call(s.load_file(TEST_FILE) == "" and s.compass_opacity == HudSettings.DEFAULT_COMPASS_OPACITY,
+	_check.call(s.load_file(_hud_file) == "" and s.compass_opacity == HudSettings.DEFAULT_COMPASS_OPACITY,
 			"compass: no settings file, default opacity")
 	s.compass_opacity = 0.35
-	_check.call(s.save_file(TEST_FILE) == OK, "compass: opacity saved")
+	_check.call(s.save_file(_hud_file) == OK, "compass: opacity saved")
 	var back := HudSettings.new()
-	_check.call(back.load_file(TEST_FILE) == "" and is_equal_approx(back.compass_opacity, 0.35), "compass: opacity loads back")
+	_check.call(back.load_file(_hud_file) == "" and is_equal_approx(back.compass_opacity, 0.35), "compass: opacity loads back")
 	_check.call(HudSettings.clamp_opacity(3.0) == 1.0 and HudSettings.clamp_opacity(-2.0) == 0.0
 			and HudSettings.clamp_opacity(NAN) == HudSettings.DEFAULT_COMPASS_OPACITY, "compass: opacity clamped, NaN -> default")
 	var cases := {
@@ -131,22 +151,23 @@ func _test_opacity(root: Node) -> void:
 		"[compass]\nopacity=0.2\n" + " ".repeat(HudSettings.MAX_FILE_BYTES): HudSettings.DEFAULT_COMPASS_OPACITY,
 	}
 	for text: String in cases:
-		_write(TEST_FILE, text)
+		_write(_hud_file, text)
 		var h := HudSettings.new()
-		var why := h.load_file(TEST_FILE)
+		var why := h.load_file(_hud_file)
 		_check.call(is_equal_approx(h.compass_opacity, cases[text]), "compass: settings file %s -> %.2f (%s)" % [
 				text.left(30).c_escape(), h.compass_opacity, why])
 	# The F1 menu's slider: changes the setting, saves it, tells main.gd.
-	_remove(TEST_FILE)
+	_remove(_hud_file)
 	var menu := KeyMenu.new()
+	menu.save_path = TestDir.path("keys_unused.json")   # never the player's own key file
 	root.add_child(menu)
 	var settings := HudSettings.new()
-	menu.add_hud_settings(settings, TEST_FILE)
+	menu.add_hud_settings(settings, _hud_file)
 	var told := [0]
 	menu.hud_changed.connect(func() -> void: told[0] += 1)
 	menu.compass_slider.value_changed.emit(0.4)   # Godot 4.7: setting value from a script doesn't emit
 	var again := HudSettings.new()
-	again.load_file(TEST_FILE)
+	again.load_file(_hud_file)
 	_check.call(is_equal_approx(settings.compass_opacity, 0.4) and told[0] == 1 and is_equal_approx(again.compass_opacity, 0.4),
 			"compass: the F1 slider sets, saves and reports the opacity")
 	menu.open()
@@ -156,4 +177,4 @@ func _test_opacity(root: Node) -> void:
 	cmp.opacity = 0.3
 	_check.call(is_equal_approx(cmp.modulate.a, 0.3), "compass: opacity fades the strip")
 	cmp.free()
-	_remove(TEST_FILE)
+	_remove(_hud_file)

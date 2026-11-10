@@ -13,6 +13,8 @@ const BOOT_TIMEOUT_MS := 240000
 const TURN_TIMEOUT_MS := 60000
 ## What run 1 saved, for run 2 (in the test's user dir).
 const EXPECT_FILE := "live_test_expect.json"
+## The run's own scratch folder (shared user:// otherwise collides between parallel runs); run 2 uses run 1's.
+const TestDir := preload("res://tests/test_dir.gd")
 
 var _failed := 0
 var _sim: RefCounted
@@ -25,11 +27,13 @@ var _user_dir := ""
 
 func _initialize() -> void:
 	_data_dir = _repo("cdda")
-	_user_dir = OS.get_user_data_dir().path_join("cdda-test")
 	if "--load" in OS.get_cmdline_user_args():
 		_run_name = "live tests (load run)"
+		_check(TestDir.use_parent(OS.get_cmdline_user_args()), "run 1 named its folder (--test-run)")
+		_user_dir = TestDir.global("cdda-test")
 		_run_load()
 	else:
+		_user_dir = TestDir.global("cdda-test")
 		_run()
 
 
@@ -139,7 +143,7 @@ func _run() -> void:
 	print("  second run: load %s at turn %d, %s" % [saves[0], saved_turn, saved_pos])
 	var out := []
 	var args := PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
-			"--script", "res://tests/live_test.gd", "--", "--load"])
+			"--script", "res://tests/live_test.gd", "--", "--load", TestDir.child_arg()])
 	var code := OS.execute(OS.get_executable_path(), args, out, true)
 	for chunk: String in out:
 		print(chunk.strip_edges(false, true).indent("  | "))
@@ -184,7 +188,7 @@ func _run_load() -> void:
 ## list_worlds / list_saves on a crafted user dir: only real world folders with plain names, only save files
 ## whose names decode the way CDDA writes them.
 func _check_listing() -> void:
-	var root := OS.get_user_data_dir().path_join("cdda-list-test")
+	var root := TestDir.global("cdda-list-test")
 	var w := root.path_join("save/listed")
 	DirAccess.make_dir_recursive_absolute(w)
 	_touch(w.path_join("worldoptions.json"))
@@ -261,6 +265,13 @@ func _drain() -> void:
 
 
 func _finish() -> void:
+	# Run 1 owns the folder (run 2 has finished by now). A failed run keeps it to look at; the next run's
+	# clean() removes it.
+	if not "--load" in OS.get_cmdline_user_args():
+		if _failed == 0:
+			TestDir.clean()
+		else:
+			print("  files kept in " + ProjectSettings.globalize_path(TestDir.dir()))
 	print(_run_name + ": " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 

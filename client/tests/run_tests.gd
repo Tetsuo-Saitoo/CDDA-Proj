@@ -1,16 +1,26 @@
 extends SceneTree
-## Headless checks for blocks C1-C3 (models: tests/model_tests.gd), E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
+## Headless checks for blocks C1-C3 (models: tests/model_tests.gd), C6 (tests/light_tests.gd), E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
 ##   godot --headless --path client --import          (once, so class names resolve)
 ##   godot --headless --path client --script res://tests/run_tests.gd
-## Exit code 0 = all passed.
+## Exit code 0 = all passed and no unexpected ERROR / SCRIPT ERROR line was printed (tests/error_catch.gd).
 
 const MOCK := "contracts/mock/snapshot_town.json"
 const IDS := "contracts/mock/id_tables.json"
+const ErrorCatch := preload("res://tests/error_catch.gd")
+const TestDir := preload("res://tests/test_dir.gd")
+## Error lines the negative tests cause on purpose: bad JSON and ConfigFile text fed to the parsers.
+const EXPECTED_ERRORS := ["Parse JSON failed", "ConfigFile parse error"]
 
 var _failed := 0
+var _errors: ErrorCatch
 
 
 func _initialize() -> void:
+	_errors = ErrorCatch.new()
+	_errors.allowed = PackedStringArray(EXPECTED_ERRORS)
+	OS.add_logger(_errors)
+	_test_error_catch()
+	_test_test_dir()
 	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
@@ -30,10 +40,57 @@ func _initialize() -> void:
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/item_action_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/item_pick_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/hands_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
+	preload("res://tests/world_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/level_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/light_tests.gd").new().run(root, _check, data)
+	TestDir.clean()
+	var errs := _errors.take()
+	OS.remove_logger(_errors)
+	_check(errs.is_empty(), "no unexpected ERROR / SCRIPT ERROR lines (%d)" % errs.size())
+	for e in errs:
+		printerr("        " + e)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
+
+
+## The catcher itself: a push_error and a runtime script error (a cast of a freed object, which also stops
+## the function it is in) are both seen. The ERROR and SCRIPT ERROR lines this prints are on purpose.
+func _test_error_catch() -> void:
+	print("error catcher (the next ERROR and SCRIPT ERROR lines are on purpose)")
+	push_error("fp3d error-catch probe")
+	_cast_freed()
+	_check(_errors.take_matching("fp3d error-catch probe") == 1, "push_error is caught")
+	_check(_errors.take_matching("Trying to cast a freed object") == 1, "a runtime script error is caught")
+
+
+## The run's scratch folder (tests/test_dir.gd): one per process, and clean() removes it and the folders of
+## runs whose process is gone.
+func _test_test_dir() -> void:
+	print("test folder")
+	var mine := TestDir.path("probe.txt")
+	_check(mine.begins_with("%s/%d/" % [TestDir.ROOT, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
+	var dead := 4000000
+	while OS.is_process_running(dead):
+		dead += 4
+	var stale := TestDir.ROOT.path_join(str(dead))
+	DirAccess.make_dir_recursive_absolute(stale.path_join("save/w"))
+	FileAccess.open(stale.path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
+	FileAccess.open(mine, FileAccess.WRITE).store_string("x")
+	TestDir.clean()
+	_check(not DirAccess.dir_exists_absolute(stale) and not FileAccess.file_exists(mine),
+			"clean() removes this run's folder and a dead run's")
+
+
+func _cast_freed() -> void:
+	var n := Node.new()
+	n.free()
+	var v: Variant = n
+	var _x := v as Node
 
 
 ## Every script under res://scripts and res://tests must compile: a parse error elsewhere otherwise only
@@ -121,11 +178,18 @@ func _test_mock(data: Variant, tables: IdTables) -> void:
 	var back := Snapshot.from_data(data)
 	_check(world.apply_snapshot(back) == 7, "a lower revision (submap came back) rebuilds too")
 
+	var up: Node3D = null   # a z 1 submap with something drawn (roofs); open sky has no node
+	for pos: Vector3i in back.submaps:
+		if pos.z == 1 and world.node_of(pos) != null:
+			up = world.node_of(pos)
+	print("        %d of 363 submaps have a node, levels with content %s" % [world.get_child_count(), world.levels_with_content()])
+	_check(world.node_of(Vector3i(16, 32, 1)) == null and world.built_revision(Vector3i(16, 32, 1)) >= 0,
+			"open sky over (16, 32): built, no node")
 	world.view_z_max = 1
 	world.set_view_z_max(0)
-	_check(not world.node_of(Vector3i(16, 32, 1)).visible and world.node_of(Vector3i(16, 32, 0)).visible, "cutaway hides z 1")
+	_check(up != null and not up.visible and world.node_of(Vector3i(16, 32, 0)).visible, "cutaway hides z 1")
 	world.set_view_z_max(99)
-	_check(world.view_z_max == 1, "cutaway clamps to loaded levels")
+	_check(world.view_z_max == 1, "cutaway clamps to the levels with content")
 
 	# Bubble moves one submap east: column x=11 leaves, x=22 isn't sent; nothing else changed.
 	var moved: Dictionary = (data as Dictionary).duplicate(true)
@@ -157,7 +221,7 @@ func _test_malformed(data: Variant) -> void:
 	_reject(Snapshot.parse_text("[1, 2, 3]"), "a list at top level")
 	_reject(Snapshot.parse_text("[".repeat(100000)), "100k nested lists")
 	_reject(Snapshot.load_file(_repo("contracts/mock/does_not_exist.json")), "missing file")
-	var big := OS.get_user_data_dir().path_join("big_snapshot.json")
+	var big := TestDir.global("big_snapshot.json")
 	var f := FileAccess.open(big, FileAccess.WRITE)
 	f.store_buffer(_spaces(Snapshot.MAX_FILE_BYTES + 1))
 	f.close()
@@ -310,7 +374,7 @@ func _test_id_tables(t: IdTables) -> void:
 
 
 func _test_bad_registry() -> void:
-	var dir := OS.get_user_data_dir().path_join("bad_registry")
+	var dir := TestDir.global("bad_registry")
 	DirAccess.make_dir_recursive_absolute(dir)
 	FileAccess.open(dir.path_join("a.json"), FileAccess.WRITE).store_string("{not json")
 	FileAccess.open(dir.path_join("b.json"), FileAccess.WRITE).store_string(
@@ -360,7 +424,7 @@ func _test_registry(tables: IdTables) -> void:
 	var g := glyphs.furniture(tables.index_of("furn", "f_chair"))
 	_check(g.shape.is_empty() and g.symbol == "#", "no art at all: a glyph card with the CDDA symbol")
 
-	var dir := OS.get_user_data_dir().path_join("bad_registry2")
+	var dir := TestDir.global("bad_registry2")
 	DirAccess.make_dir_recursive_absolute(dir)
 	FileAccess.open(dir.path_join("c.json"), FileAccess.WRITE).store_string(JSON.stringify([
 		{"type": "fp3d_model", "kind": "furniture", "id": "f_a", "placeholder": "../x"},
@@ -501,3 +565,91 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	_check(face.call(9, 9) == 3, "chair: faces the table (west)")
 	_check(cat.furniture(500000) == cat.furniture(500001) and terrain.style_for(900000) == terrain.style_for(900001),
 			"undefined ids share one cache entry")
+	_test_layout(data, tables, terrain, cat)
+
+
+## Furniture faces the open side it is used from, and joined tiles lay out as one piece: one facing per
+## row or block, one pillow per bed head tile.
+func _test_layout(data: Variant, tables: IdTables, terrain: TerrainCatalog, cat: PropCatalog) -> void:
+	print("furniture layout (facing, joined pieces)")
+	var at := func(x: int, y: int) -> int: return y * 12 + x
+	var cells := func(xys: Array, id: String, into: Dictionary) -> void:
+		for xy: Vector2i in xys:
+			into[at.call(xy.x, xy.y)] = id
+	# Walls #, counters C, benches B, a table T with a chair c, a fridge F, beds: b (1 x 2), D (2 x 2),
+	# d (3 x 2: a dorm row of three single beds).
+	#   x  0123456789AB
+	#   y0  ###
+	#    1 #CCC  #
+	#    2       B#
+	#    3       B# T
+	#    4          c#
+	#    9   b  DD ddd
+	#   10   b FDD ddd
+	#   11   # ### ###
+	var walls := {}
+	cells.call([Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0), Vector2i(0, 1), Vector2i(6, 1), Vector2i(7, 2),
+			Vector2i(7, 3), Vector2i(10, 4), Vector2i(2, 11), Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11),
+			Vector2i(8, 11), Vector2i(9, 11), Vector2i(10, 11)], "t_wall_w", walls)
+	var furn := {}
+	cells.call([Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)], "f_counter", furn)
+	cells.call([Vector2i(6, 2), Vector2i(6, 3)], "f_bench", furn)
+	cells.call([Vector2i(9, 3)], "f_table", furn)
+	cells.call([Vector2i(9, 4)], "f_chair", furn)
+	cells.call([Vector2i(4, 10)], "f_fridge", furn)
+	cells.call([Vector2i(2, 9), Vector2i(2, 10)], "f_bed", furn)
+	cells.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)], "f_bed", furn)
+	cells.call([Vector2i(8, 9), Vector2i(9, 9), Vector2i(10, 9), Vector2i(8, 10), Vector2i(9, 10), Vector2i(10, 10)], "f_bed", furn)
+	var book := tables.index_of("itype", "101_carpentry")
+	var snap := _scene(data, tables, walls, furn, [[at.call(5, 9), 2, [book, book, 0, 0]]])
+	_check(snap.is_valid(), "layout scene valid: " + snap.error)
+	var sm: Snapshot.Submap = null
+	for p: Vector3i in snap.submaps:
+		var s: Snapshot.Submap = snap.submaps[p]
+		if s.furn[at.call(1, 1)] == tables.index_of("furn", "f_counter") and s.furn[at.call(6, 2)] == tables.index_of("furn", "f_bench"):
+			sm = s
+	terrain.set_snapshot(snap)
+	cat.set_snapshot(snap)
+	var pm := PropMesher.new(snap, terrain, cat)
+	var base := CddaCoords.sm_to_ms(sm.pos)
+	var r := pm.build(sm.pos)
+	var faces := func(xys: Array) -> Array:
+		return xys.map(func(xy: Vector2i) -> int:
+			return pm.facing(base + Vector3i(xy.x, xy.y, 0), cat.furniture(sm.furn[at.call(xy.x, xy.y)])))
+	var N := 0
+	var S := 2
+	var W := 3
+	_check(faces.call([Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)]) == [S, S, S],
+			"3 counters along a wall: one facing, across the row, to the floor (the corner one too)")
+	_check(faces.call([Vector2i(6, 2), Vector2i(6, 3)]) == [W, W], "benches between floor and a wall face the floor, not each other")
+	_check(faces.call([Vector2i(9, 4)]) == [N], "a chair at a table faces it, though a wall is beside it")
+	_check(faces.call([Vector2i(4, 10)]) == [N], "a fridge against a wall faces the room")
+	_check(faces.call([Vector2i(2, 9), Vector2i(2, 10)]) == [N, N], "1 x 2 bed: one facing, along it, head at the wall")
+	_check(faces.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)]) == [N, N, N, N],
+			"2 x 2 bed: one facing, head at the wall")
+	_check(faces.call([Vector2i(8, 9), Vector2i(10, 10)]) == [N, N], "a dorm row of beds: heads at the wall")
+	var links := func(x: int, y: int) -> int:
+		var p := base + Vector3i(x, y, 0)
+		var prop := cat.furniture(sm.furn[at.call(x, y)])
+		return pm._links(p, prop, pm.facing(p, prop))
+	_check([links.call(2, 10), links.call(2, 9)] == [1, 4], "1 x 2 bed links: the head row to its foot, the foot row to its head")
+	_check([links.call(5, 10), links.call(6, 9)] == [1 | 2, 4 | 8], "2 x 2 bed links: one wide bed")
+	_check([links.call(9, 10), links.call(8, 9)] == [1, 4], "dorm row: three single beds side by side, not joined")
+	_check(links.call(2, 1) == (2 | 8), "counters: the row joins")
+	var tops := 0   # pillow top faces: 6 vertices each; colours are stored as 8 bits per channel
+	var arrays := r.props.surface_get_arrays(0)
+	var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var P := PropShapes.PILLOW
+	for k in colours.size():
+		var c := colours[k]
+		if normals[k].y > 0.9 and absf(c.r - P.r) < 0.005 and absf(c.g - P.g) < 0.005 and absf(c.b - P.b) < 0.005:
+			tops += 1
+	_check(tops == 6 * 6, "one pillow per bed head tile: 1 + 2 + 3 = %d" % (tops / 6))
+	var face_d: int = pm.facing(base + Vector3i(5, 9, 0), cat.furniture(sm.furn[at.call(5, 9)]))
+	var tile := {at.call(5, 9): Transform3D(Basis(Vector3.UP, PropMesher.YAW[face_d]), Vector3(5.5, 0, 9.5))}
+	var on_bed: Array = pm.pile_transforms(sm, base, sm.items.slice(0, Snapshot.PILE_STRIDE), tile)
+	_check(on_bed.size() == 2 and on_bed.all(func(e: Array) -> bool:
+		var o: Vector3 = (e[0] as Transform3D).origin
+		return absf(o.y - 0.58) < 0.001 and o.x > 5.0 and o.x < 6.0 and o.z > 9.0 and o.z < 10.0),
+			"items on a joined bed lie on its blanket, on their own tile")
