@@ -36,6 +36,13 @@ static func plain(s: String) -> String:
 	return _convert(s, false)
 
 
+## A character that changes how text around it shows without being seen: C1 controls, zero-width and
+## direction marks, direction overrides and isolates. One-line game text drops these.
+static func is_hidden(u: int) -> bool:
+	return (u >= 0x7F and u < 0xA0) or (u >= 0x200B and u <= 0x200F) or (u >= 0x202A and u <= 0x202E) \
+			or (u >= 0x2066 and u <= 0x2069)
+
+
 static func _convert(s: String, bbcode: bool) -> String:
 	if s.length() > MAX_CHARS:
 		s = s.left(MAX_CHARS)
