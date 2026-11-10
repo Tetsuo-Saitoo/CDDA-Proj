@@ -1,15 +1,22 @@
 extends RefCounted
 ## QA checks, run by run_tests.gd: stress and hostile input for the world view. The meshing job against
 ## main-thread catalog lookups, live door leaves across bubble shifts, kept door angles that are not numbers,
-## oversized body part / covers / worn / carried lists, and the player body's shared caches.
+## oversized body part / covers / worn / carried lists, the player body's shared caches, embedded JPEG headers
+## against Godot's own decoder, and model loads and tints from several threads at once.
 ## Members that older versions of the scripts lack are read with get(), so this file compiles against them.
 
+const ModelTests := preload("res://tests/model_tests.gd")
 const REGISTRY := "assets/registry"
 const BODY_SCRIPT := "res://scripts/world/player_body.gd"
 const BIG := 100000
 const PARSE_BUDGET_US := 200000
 const JOB_ROUNDS := 20
 const SHIFT_ROUNDS := 50
+const JPEG_ROUNDS := 400
+const WALK_BUDGET_MS := 5000
+const TINT_WORKERS := 6
+const TINT_ROUNDS := 8
+const TINT_TIMEOUT_MS := 30000
 
 var _check: Callable
 
@@ -23,6 +30,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_covers(data, tables)
 	_worn_and_carried(data, tables)
 	_body_caches(data, tables)
+	_jpeg_headers()
+	_tint_threads()
 
 
 static func _repo(rel: String) -> String:
@@ -636,3 +645,232 @@ func _body_caches(data: Variant, tables: IdTables) -> void:
 			"qa body: the first body keeps its meshes and materials after the caches start over")
 	for b in bodies:
 		b.free()
+
+
+## Embedded JPEG headers: the size the model loader reads (ModelLibrary._image_size) is the size Godot's decoder
+## makes. A real JPEG from Image.save_jpg_to_buffer gets odd segments put in front of its scan (APPn and COM with
+## frames inside their data, a second frame, fill bytes, stuffed bytes, garbage, RSTn / TEM, unknown markers);
+## whenever both read it, the sizes agree. Also: the walk stays inside the image's own bytes, every cut before the
+## frame's end is unreadable, and long runs of fill bytes or tiny segments are walked in time.
+func _jpeg_headers() -> void:
+	print("qa: JPEG headers against the decoder")
+	var src := Image.create(40, 24, false, Image.FORMAT_RGB8)
+	src.fill(Color(0.4, 0.5, 0.6))
+	var jpg := src.save_jpg_to_buffer(0.9)
+	var bounds := PackedInt32Array()   # where a segment starts, from after SOI up to the scan
+	var sof_end := -1
+	var i := 2
+	while i + 4 <= jpg.size() and jpg[i] == 0xFF and jpg[i + 1] != 0xDA:
+		bounds.append(i)
+		if jpg[i + 1] == 0xC0 or jpg[i + 1] == 0xC2:
+			sof_end = i + 2 + ModelLibrary._be(jpg, i + 2, 2)
+		i += 2 + ModelLibrary._be(jpg, i + 2, 2)
+	bounds.append(i)
+	var plain_ok := ModelLibrary._image_size(jpg, 0, jpg.size()) == Vector2i(40, 24) and sof_end > 0 \
+			and i + 1 < jpg.size() and jpg[i + 1] == 0xDA
+	_check.call(plain_ok, "qa jpeg: the encoder's own file reads 40 x 24 (%d segments before the scan)" % (bounds.size() - 1))
+	if not plain_ok:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261110
+	var walked := 0
+	var decoded := 0
+	var differ := PackedStringArray()
+	# The decoder prints an error for each file it can't read; those are expected here, so they're kept out of
+	# the run's error check while the loop runs.
+	var printing := Engine.print_error_messages
+	Engine.print_error_messages = false
+	for r in JPEG_ROUNDS:
+		var at := PackedInt32Array()
+		for k in rng.randi_range(1, 3):
+			at.append(bounds[rng.randi_range(0, bounds.size() - 1)])
+		at.sort()
+		var b := jpg.duplicate()
+		var kinds := PackedStringArray()
+		for k in range(at.size() - 1, -1, -1):
+			var head := b.slice(0, at[k])
+			head.append_array(_odd_segment(rng, kinds))
+			head.append_array(b.slice(at[k]))
+			b = head
+		var claim := ModelLibrary._image_size(b, 0, b.size())
+		if claim == Vector2i(-1, -1):
+			continue
+		walked += 1
+		var img := Image.new()
+		if img.load_jpg_from_buffer(b) != OK:
+			continue
+		decoded += 1
+		if img.get_size() != claim and differ.size() < 4:
+			differ.append("%s: header %s, decoded %s" % [",".join(kinds), claim, img.get_size()])
+	Engine.print_error_messages = printing
+	print("qa jpeg: %d of %d odd headers walked, %d of those decoded" % [walked, JPEG_ROUNDS, decoded])
+	_check.call(differ.is_empty() and decoded >= 20,
+			"qa jpeg: the header size matches the decoded size whenever both read the file " + str(differ))
+	# the walk stays inside the image's view of the buffer
+	var buf := PackedByteArray([1, 2, 3, 4, 5, 6, 7]) + jpg + jpg
+	var view_ok := ModelLibrary._image_size(buf, 7, jpg.size()) == Vector2i(40, 24) \
+			and ModelLibrary._image_size(buf, 7, sof_end - 1) == Vector2i(-1, -1) \
+			and ModelLibrary._image_size(buf, 7, maxi(24, bounds[0])) == Vector2i(-1, -1)
+	_check.call(view_ok, "qa jpeg: read at an offset inside the buffer; a view that ends before the frame's end is unreadable")
+	var cuts_ok := true
+	for n in range(2, sof_end + 1):
+		var want := Vector2i(40, 24) if n >= sof_end else Vector2i(-1, -1)
+		cuts_ok = cuts_ok and ModelLibrary._image_size(jpg, 0, n) == want
+	_check.call(cuts_ok, "qa jpeg: every cut before the frame's end is unreadable, a cut after it reads the frame")
+	# long walks: 256 KiB of fill bytes, then 256 KiB of empty COM segments, before the first segment
+	var fill := PackedByteArray([0xFF])
+	while fill.size() < 1 << 18:
+		fill.append_array(fill)
+	var coms := PackedByteArray([0xFF, 0xFE, 0, 2])
+	while coms.size() < 1 << 18:
+		coms.append_array(coms)
+	for p: Array in [["fill bytes", fill], ["empty COM segments", coms]]:
+		var long := jpg.slice(0, bounds[0])
+		long.append_array(p[1])
+		long.append_array(jpg.slice(bounds[0]))
+		var t0 := Time.get_ticks_msec()
+		var s := ModelLibrary._image_size(long, 0, long.size())
+		var ms := Time.get_ticks_msec() - t0
+		_check.call(s == Vector2i(40, 24) and ms < WALK_BUDGET_MS,
+				"qa jpeg: 256 KiB of %s before the frame: walked in %d ms (budget %d)" % [p[0], ms, WALK_BUDGET_MS])
+	# a small frame inside an APP segment's data is data: the real frame is read, and a big one is refused
+	var hidden := PackedByteArray([0xFF, 0xD8, 0xFF, 0xE1, 0, 15, 0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0,
+			0xFF, 0xC0, 0, 11, 8, 0x13, 0x88, 0x13, 0x88, 1, 1, 0x11, 0, 0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0x3F, 0, 0xFF, 0xD9])
+	var glb := ModelTests.glb_of({"asset": {"version": "2.0"}, "buffers": [{"byteLength": hidden.size()}],
+			"bufferViews": [{"buffer": 0, "byteLength": hidden.size()}],
+			"images": [{"bufferView": 0, "mimeType": "image/jpeg"}]}, hidden)
+	_check.call(ModelLibrary._image_size(hidden, 0, hidden.size()) == Vector2i(5000, 5000)
+			and not ModelLibrary.new().check_glb(glb).is_empty(),
+			"qa jpeg: a frame inside an APP segment's data is skipped; the 5000 x 5000 frame after it is read and refused")
+
+
+## One odd JPEG segment (or run of bytes) to put in front of the scan; appends its kind to `kinds`.
+static func _odd_segment(rng: RandomNumberGenerator, kinds: PackedStringArray) -> PackedByteArray:
+	var w := rng.randi_range(1, 6000)
+	var h := rng.randi_range(1, 6000)
+	var frame := PackedByteArray([0xFF, 0xC0, 0, 11, 8, h >> 8, h & 0xFF, w >> 8, w & 0xFF, 1, 1, 0x11, 0])
+	var kind := rng.randi_range(0, 7)
+	var out := PackedByteArray()
+	match kind:
+		0, 1:   # APPn or COM; half of them carry a frame inside their data
+			var data := PackedByteArray()
+			for k in rng.randi_range(0, 24):
+				data.append(rng.randi_range(0, 255))
+			if rng.randi_range(0, 1) == 1:
+				var at := rng.randi_range(0, data.size())
+				data = data.slice(0, at) + frame + data.slice(at)
+			var mk := 0xE0 + rng.randi_range(0, 15) if kind == 0 else 0xFE
+			out = PackedByteArray([0xFF, mk, (data.size() + 2) >> 8, (data.size() + 2) & 0xFF]) + data
+			kinds.append("APPn" if kind == 0 else "COM")
+		2:
+			for k in rng.randi_range(1, 5):
+				out.append(0xFF)
+			kinds.append("fill")
+		3:
+			out = frame
+			kinds.append("frame %dx%d" % [w, h])
+		4:
+			out = PackedByteArray([0xFF, 0x00])
+			kinds.append("FF00")
+		5:
+			for k in rng.randi_range(1, 3):
+				out.append(rng.randi_range(0, 0xFE))
+			kinds.append("garbage")
+		6:
+			out = PackedByteArray([0xFF, 0x01 if rng.randi_range(0, 3) == 0 else 0xD0 + rng.randi_range(0, 7)])
+			kinds.append("RST/TEM")
+		_:
+			var odd: Array = [0xC8, 0xDE, 0xDF, 0xF0 + rng.randi_range(0, 13), rng.randi_range(0x02, 0xBF)]
+			var mk: int = odd[rng.randi_range(0, odd.size() - 1)]
+			out = PackedByteArray([0xFF, mk, 0, 4, rng.randi_range(0, 255), rng.randi_range(0, 255)])
+			kinds.append("marker %02X" % mk)
+	return out
+
+
+## Several workers load and tint the same two models at once from a fresh library while the main thread keeps
+## asking it: every call finishes, each path (and path + material) gives one object to everyone, and the
+## budgets count each kept model and variant once.
+func _tint_threads() -> void:
+	print("qa: model loads and tints from several threads")
+	var paths := ["furniture/qa_a.glb", "furniture/qa_b.glb"]
+	var mats := ["brick", "wood", "wood_dark", "metal"]
+	var why := ""
+	var spins := 0
+	var ms := 0
+	for rn in TINT_ROUNDS:
+		var lib := SlowLib.new()
+		var out: Array = []
+		out.resize(TINT_WORKERS)
+		var tasks: Array[int] = []
+		for w in TINT_WORKERS:
+			tasks.append(WorkerThreadPool.add_task(func() -> void:
+				var got := []   # [key, object]
+				for r in 2 * mats.size():   # every path with every material, in another order on each worker
+					var p: String = paths[(w + r) % 2]
+					got.append([p, lib.get_model(p)])
+					var mat: String = mats[(w + (r >> 1)) % mats.size()]
+					got.append([p + "|" + mat, lib.get_tinted(p, mat)])
+				out[w] = got))
+		var t0 := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - t0 < TINT_TIMEOUT_MS:
+			var running := false
+			for t in tasks:
+				running = running or not WorkerThreadPool.is_task_completed(t)
+			if not running:
+				break
+			lib.get_warnings()
+			lib.get_model(paths[spins % 2])
+			lib.get_tinted(paths[spins % 2], mats[spins % mats.size()])
+			spins += 1
+			OS.delay_usec(100)
+		ms += Time.get_ticks_msec() - t0
+		var finished := true
+		for t in tasks:
+			finished = finished and WorkerThreadPool.is_task_completed(t)
+		if not finished:
+			why = "round %d: still running after %d ms" % [rn, TINT_TIMEOUT_MS]
+			break
+		for t in tasks:
+			WorkerThreadPool.wait_for_task_completion(t)
+		var one := {}
+		var same := true
+		var tinted := true
+		for got: Variant in out:
+			for e: Array in got:
+				var o: Object = e[1]
+				same = same and o != null and one.get(e[0], o) == o
+				one[e[0]] = o
+				if o != null and (e[0] as String).contains("|"):
+					tinted = tinted and (o as ModelLibrary.Model).tint == (e[0] as String).get_slice("|", 1)
+		for k: String in one:
+			var now: Object = lib.get_tinted(k.get_slice("|", 0), k.get_slice("|", 1)) if k.contains("|") \
+					else lib.get_model(k)
+			same = same and now == one[k]
+		# what's counted toward the budgets: each kept model and variant once, never a copy another thread dropped
+		var tris: int = lib._triangle_total
+		var img: int = lib._image_bytes
+		var want_tris := SlowLib.TRIANGLES * (paths.size() + paths.size() * mats.size())
+		if not (same and tinted and one.size() == 2 + 2 * mats.size() and tris == want_tris
+				and img == SlowLib.IMAGE_BYTES * paths.size()):
+			why = "round %d: %d kept, same %s, tinted %s, triangles %d (want %d), image bytes %d %s" \
+					% [rn, one.size(), same, tinted, tris, want_tris, img, str(lib.get_warnings())]
+			break
+	_check.call(why.is_empty(), ("qa tint: %d rounds of %d workers from a fresh library: all finish, each path and "
+			+ "path + material is one object for every thread, budgets count each once (%d main-thread calls, %d ms) %s")
+			% [TINT_ROUNDS, TINT_WORKERS, spins, ms, why])
+
+
+## A library whose loads make an empty model after a short wait (no file, nothing for the renderer), so threads
+## race on the cache, the tint table and the budgets only. Godot's headless renderer (all client tests) doesn't
+## take textures or meshes from several threads at once, so real .glb loads can't race in a test.
+class SlowLib extends ModelLibrary:
+	const TRIANGLES := 7
+	const IMAGE_BYTES := 1000
+
+	func _load(rel: String) -> ModelLibrary.Model:
+		OS.delay_usec(2000)
+		var m := ModelLibrary.Model.new()
+		m.path = rel
+		m.triangles = TRIANGLES
+		m.image_bytes = IMAGE_BYTES
+		return m

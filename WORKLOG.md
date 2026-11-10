@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — v0.5.0 final AppImage from main b87a485 + fork 281b553 built in WSL (version.h now says the fork rev, not HEAD-HASH-dirty); smoke: town, main menu, `--live --quick`, `--live --vr` without a runtime, live_test and chargen_live_test pass with its bridge. chargen_live_test's world is now qa-chargen-test (new games refuse fp3d- names). QA checks: embedded JPEG header sizes against Godot's decoder, model loads and tints from several threads; client tests pass.
 - 2026-11-10 — Unload / reload in ItemActions (for VR mag release and insert) with LiveSession and MockItems support; the main menu refuses new fp3d- world names and --save alone also looks in fp3d-live-2, -3 ...; client tests pass.
 - 2026-11-10 — Cheats opt-in: LiveSession sends the bridge's `set_cheats_allowed` from the debug switch (or --test / --cheats / test range), again when a game starts; cheats page says the first cheat ends that game's achievements; client tests pass.
 - 2026-11-10 — Model loader: stricter image header and glTF text checks, caps on primitives per mesh and drawn surfaces, a mesh budget across models; loading and tinting no longer hold the library lock (tints made from the importer's copies); client tests pass.

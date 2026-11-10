@@ -6,7 +6,7 @@ extends SceneTree
 ## From the repo root:
 ##   godot --headless --path client --script res://tests/chargen_live_test.gd
 
-const WORLD := "fp3d-chargen-test"
+const WORLD := "qa-chargen-test"   # fp3d- names are kept for quick starts (a new game refuses them)
 const TIMEOUT_MS := 240000
 ## The run's own scratch folder (shared user:// otherwise collides between parallel runs).
 const TestDir := preload("res://tests/test_dir.gd")
