@@ -346,8 +346,7 @@ func _start_vr() -> void:
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
 	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
-	# The debug setting (lead-ui's HudSettings) joins this when it lands.
-	vr.cheats_allowed = _args.has("test") or _args.has("cheats")
+	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
@@ -1027,6 +1026,8 @@ func _process(_delta: float) -> void:
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
 		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
+	if vr != null:   # the VR Cheats page follows the F1 menu's gate (debug switch, --test / --cheats, test range)
+		vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()

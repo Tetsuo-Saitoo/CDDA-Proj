@@ -91,8 +91,10 @@ var cheats_backend: Object:
 		if menu != null:
 			menu.cheats_backend = b
 ## ... and shows only when this is on (main.gd: --test / --cheats).
-var cheats_allowed := false:
+var cheats_allowed := false:   # main.gd sets it every frame from the F1 menu's gate: only a change refreshes
 	set(v):
+		if v == cheats_allowed:
+			return
 		cheats_allowed = v
 		if menu != null:
 			menu.cheats_allowed = v
@@ -364,7 +366,6 @@ func update_hands(delta: float, all_hands := false) -> void:
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
 		var id: String = HAND_IDS[i]
-		_forget_freed(id)
 		var p := hands.proxy(id)
 		if p != null:
 			drawn[i] = p.global_transform
@@ -382,7 +383,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
 		if held.get("kind") == "door":
-			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (_forget_freed)
+			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
 				(n as Grabbable).drag_hand(c.global_position)
 			else:
@@ -390,16 +391,6 @@ func update_hands(delta: float, all_hands := false) -> void:
 		elif drawn[i] is Transform3D:
 			_weigh(i, drawn[i], delta)
 	_sync_held()
-
-
-## D5: a door leaf can be freed under a hand (its submap dropped, the door gone). In Godot 4.7 a freed object
-## compares equal to null and can't be typed, and Hands keeps the leaf in typed variables, so a stale leaf it
-## still holds or outlines becomes null first (Hands then lets go of it as of nothing).
-func _forget_freed(id: String) -> void:
-	var h := hands.hand(id)
-	for t: Dictionary in [h.hover, h.held]:
-		if t.get("kind") == "door" and not is_instance_valid(t.get("node")):
-			t["node"] = null
 
 
 ## The held item of hand i follows its controller by weight: light ones at once, heavy ones eased from where they
@@ -416,13 +407,14 @@ func _weigh(i: int, from: Transform3D, delta: float) -> void:
 		var o := _ctrl(1 - i)
 		var m: XRController3D = c if c == main_ctrl() else o
 		var f: XRController3D = o if m == c else c
-		p.global_transform = two_hand_pose(m.global_position, f.global_position, c.global_basis.y,
-				ItemVisual.grip(it.type, world), p.scale)
+		hands.set_proxy_pose(id, two_hand_pose(m.global_position, f.global_position, c.global_basis.y,
+				ItemVisual.grip(it.type, world), Vector3.ONE))
 		return
 	var to := p.global_transform   # where Hands put it: held rigidly by its grip
 	if both:
 		to = sag(to, c.global_transform, SAG_RAD)
-	p.global_transform = ease_toward(from, to, follow_rate(it.weight_g(world.tables), strength, both), delta, p.scale)
+	hands.set_proxy_pose(id, ease_toward(from, to, follow_rate(it.weight_g(world.tables), strength, both), delta,
+			Vector3.ONE))   # Hands keeps the copy's own scale
 
 
 ## Hand j steadies the two-handed item the other hand holds (drawn at `drawn`): its grip is held, it holds
@@ -448,7 +440,6 @@ func grab_with(c: XRController3D) -> bool:
 		return false
 	var i := 0 if c == left else 1
 	var id: String = HAND_IDS[i]
-	_forget_freed(id)
 	if not hands.holding(id).is_empty():
 		return false
 	var other := hands.proxy(HAND_IDS[1 - i])
@@ -494,7 +485,6 @@ func let_go(c: XRController3D) -> String:
 	if hands == null:
 		return ""
 	var id := hand_id(c)
-	_forget_freed(id)
 	var held := hands.holding(id)
 	if held.is_empty():
 		return ""
