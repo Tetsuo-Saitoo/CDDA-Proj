@@ -4,18 +4,31 @@ extends Node3D
 ## first-person camera. The shape comes from the item's id-table entry: `gun` (the skill the bridge sends for
 ## guns: pistol, smg, rifle, shotgun, archery, launcher, ...), else the category (weapons / tools), else
 ## nothing for empty hands. Brought up while aiming (a target request in an attack mode); `kick()` recoils.
+## `sway_arcmin` (CDDA's dispersion while aiming, 0 otherwise) makes it breathe in a slow figure eight, wider
+## the worse the aim, capped at SWAY_ROT / SWAY_POS. Purely visual: the shot's error is CDDA's roll.
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
 const RAISE_RATE := 10.0
 const KICK_BACK := 0.06
 const KICK_RATE := 14.0
+const SWAY_HZ := 0.3
+const SWAY_FULL_ARCMIN := 900.0       # this much dispersion (15 degrees) or more sways fully
+const SWAY_ROT := 0.02618             # full sway: rotation (radians, 1.5 degrees)
+const SWAY_POS := 0.01                # full sway: offset (m)
+const SWAY_RATE := 1.5                # how fast the sway grows / settles (per second)
 
 var shape := ""          # "" none, "pistol", "long", "bow", "launcher", "melee", "item"
 var aimed := false
+var sway_arcmin := 0.0:
+	set(v):
+		sway_arcmin = clampf(v, 0.0, SWAY_FULL_ARCMIN) if is_finite(v) else 0.0
 var _kick := 0.0
 var _item := -1
 var _root: Node3D
+var _base := REST
+var _sway := 0.0         # 0..1, eased toward sway_arcmin / SWAY_FULL_ARCMIN
+var _sway_t := 0.0
 
 
 func _init() -> void:
@@ -70,8 +83,15 @@ func kick() -> void:
 func _process(delta: float) -> void:
 	_kick = move_toward(_kick, 0.0, KICK_RATE * delta * maxf(_kick, 0.2))
 	var goal := (AIMED if aimed and shape != "melee" else REST) + Vector3(0, 0, KICK_BACK * _kick)
-	position = position.lerp(goal, minf(RAISE_RATE * delta, 1.0))
-	rotation.x = 0.25 * _kick
+	_base = _base.lerp(goal, minf(RAISE_RATE * delta, 1.0))
+	_sway = move_toward(_sway, sway_arcmin / SWAY_FULL_ARCMIN, SWAY_RATE * delta)
+	_sway_t = fmod(_sway_t + delta, 1000.0 / SWAY_HZ)
+	var w := TAU * SWAY_HZ * _sway_t
+	var sx := sin(w)                # side to side
+	var sy := 0.6 * sin(2.0 * w)    # up and down twice as fast: a figure eight
+	position = _base + Vector3(sx, sy, 0.0) * (SWAY_POS * _sway)
+	rotation.x = 0.25 * _kick + sy * SWAY_ROT * _sway
+	rotation.y = -sx * SWAY_ROT * _sway
 
 
 ## The model for a shape, pointing down -z (the camera's forward).

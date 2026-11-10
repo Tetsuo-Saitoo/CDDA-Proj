@@ -456,6 +456,10 @@ func _on_live_request(req: Dictionary) -> void:
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
+	var shot := aim.on_request(req)   # a projectile's shot request: answered at once, no UI
+	if not shot.is_empty():
+		_on_request_answered(shot)
+		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
 	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
@@ -658,6 +662,7 @@ func _update_aim() -> void:
 	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
+	viewmodel.sway_arcmin = aim.shown_dispersion
 	viewmodel.visible = _fp_active()
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
 

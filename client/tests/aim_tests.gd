@@ -121,7 +121,145 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	vm._process(0.016)
 	_check.call(vm.rotation.x > 0.0, "viewmodel: a shot kicks it up")
+	var sway_of := func(arcmin: Variant) -> Array:   # [max |yaw|, max offset from the rest point] over 4 s
+		vm.sway_arcmin = arcmin
+		var most := [0.0, 0.0]
+		for f in 200:
+			vm._process(0.02)
+			most = [maxf(most[0], absf(vm.rotation.y)), maxf(most[1], vm.position.distance_to(vm._base))]
+		return most
+	var mild: Array = sway_of.call(300.0)
+	var wild: Array = sway_of.call(1e9)
+	_check.call(mild[0] > 0.002 and wild[0] > mild[0] and wild[0] <= WeaponViewmodel.SWAY_ROT + 1e-4
+			and wild[1] <= 0.012 and vm.sway_arcmin == WeaponViewmodel.SWAY_FULL_ARCMIN,
+			"viewmodel: sways more with more dispersion, capped (%s %s)" % [mild, wild])
+	vm.sway_arcmin = NAN
+	var nan_ok := vm.sway_arcmin == 0.0
+	var still: Array = sway_of.call(0.0)
+	vm._process(0.02)
+	_check.call(nan_ok and absf(vm.rotation.y) < 1e-4 and vm.position.distance_to(vm._base) < 1e-4,
+			"viewmodel: no sway without dispersion, NaN is none (%s)" % [still])
 	vm.free()
+
+
+## CDDA's dispersion roll as angular error: ShotError, target requests' `dispersion`, `shot` requests answered
+## from the aim kept by the FIRE just before (the camera looks at the zombie's head, a rifle in hand).
+func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: Dictionary, me: Vector3i,
+		zp: Vector3i) -> void:
+	var S := ShotError
+	var fwd := Vector3.FORWARD
+	var up := S.apply(fwd, 120.0, 0.0)
+	var right := S.apply(fwd, 120.0, 90.0)
+	_check.call(absf(rad_to_deg(up.angle_to(fwd)) - 2.0) < 0.001 and up.y > 0.0 and absf(up.x) < 1e-5
+			and absf(rad_to_deg(right.angle_to(fwd)) - 2.0) < 0.001 and right.x > 0.0 and absf(right.y) < 1e-5
+			and is_equal_approx(right.length(), 1.0), "shots: 120' of error turns a level sight 2° up (0) or right (90) (%s %s)" % [up, right])
+	var diag := Vector3(0.6, 0.0, -0.8)
+	var vert := S.apply(Vector3.DOWN, 60.0, 0.0)
+	_check.call(absf(rad_to_deg(S.apply(diag, 300.0, 45.0).angle_to(diag)) - 5.0) < 0.001 and vert.is_finite()
+			and absf(rad_to_deg(vert.angle_to(Vector3.DOWN)) - 1.0) < 0.001, "shots: any sight turns by the error, straight down too")
+	var wild := S.apply(fwd, 1e9, 180.0)
+	_check.call(absf(rad_to_deg(wild.angle_to(fwd)) - 30.0) < 0.001 and wild.y < 0.0, "shots: error capped at 30°, 180 goes down (%s)" % wild)
+	_check.call(S.apply(fwd, NAN, 0.0) == fwd and S.apply(fwd, -50.0, 0.0) == fwd and S.apply(fwd, 60.0, NAN).y > 0.0
+			and S.apply(fwd, 60.0, INF).y > 0.0 and S.apply(Vector3.ZERO, 60.0, 0.0) == Vector3.ZERO
+			and S.apply(Vector3(NAN, 0, 0), 60.0, 0.0) == Vector3.ZERO, "shots: NaN / negative error is none, NaN angle is up, no sight stays none")
+	var px := S.spread_pixels(75.0, 1000.0, 60.0)
+	_check.call(px > 10.0 and px < 13.0 and S.spread_pixels(75.0, 1000.0, 120.0) > px
+			and S.spread_pixels(75.0, 1000.0, 10800.0) == 450.0 and S.spread_pixels(75.0, 1000.0, NAN) == 0.0
+			and S.spread_pixels(NAN, 1000.0, 60.0) == 0.0 and S.spread_pixels(0.0, 1000.0, 60.0) == 0.0
+			and S.spread_pixels(75.0, 1000.0, -5.0) == 0.0 and S.spread_pixels(75.0, INF, 60.0) == 0.0,
+			"shots: spread circle radius from fov and dispersion, capped, junk is 0 (%.2f)" % px)
+
+	# target requests: dispersion remembered, junk ignored
+	var fire_req := req.duplicate()
+	var junk_ok := true
+	for bad: Variant in ["240", NAN, INF, -1.0, 1e9, null, [240], 10801]:
+		fire_req["dispersion"] = bad
+		junk_ok = junk_ok and aim.on_request(fire_req).is_empty() and aim.dispersion == 0.0
+	fire_req["dispersion"] = 300
+	var int_ok := aim.dispersion == 0.0 and aim.on_request(fire_req).is_empty() and aim.dispersion == 300.0
+	fire_req["dispersion"] = 240.0
+	_check.call(junk_ok and int_ok and aim.on_request(fire_req).is_empty() and aim.dispersion == 240.0,
+			"shots: a target request's dispersion is kept, junk is 0 (%s)" % aim.dispersion)
+	ui.show_request(fire_req)
+	aim.first_person = true
+	aim.update(cam, true)
+	var ring := aim.crosshair.spread_px
+	_check.call(aim.shown_dispersion == 240.0 and ring > 1.0, "shots: the crosshair rings the dispersion (%.1f px)" % ring)
+	var look := req.duplicate()
+	look["mode"] = "look"
+	ui.show_request(look)
+	aim.update(cam, true)
+	_check.call(aim.shown_dispersion == 0.0 and aim.crosshair.spread_px == 0.0, "shots: no ring while looking")
+
+	# a newer bridge: FIRE draws no tracer, the shot requests do
+	ui.show_request(fire_req)
+	answers.clear()
+	var tracers := aim._tracers
+	aim.on_fire(cam, Vector2.ZERO, true)
+	var a: Dictionary = answers[0] if not answers.is_empty() else {}
+	_check.call(a.get("action") == "FIRE" and a.get("shot", {}).get("fly") == true and aim._tracers == tracers,
+			"shots: FIRE says fly, its tracer waits for the shot requests (%s)" % [a])
+	var sreq := {"id": 31, "kind": "shot", "shot_error": 0.0, "shot_angle": 0.0, "dispersion": 240.0, "origin": me,
+			"cursor": zp, "range": 10}
+	var r := aim.on_request(sreq)
+	var s: Dictionary = r.get("shot", {})
+	_check.call(r.get("id") == 31 and s.get("hit_uid") == 8589934593 and s.get("part") == "head" and s.get("end") == zp
+			and not s.has("fly") and aim._tracers == tracers + 1 and aim.last_shot["answer"] == s,
+			"shots: no error, the bullet goes along the sight into the head (%s)" % [r])
+	sreq["shot_error"] = 600.0
+	r = aim.on_request(sreq)
+	_check.call(r.get("id") == 31 and r.has("shot") and r["shot"].get("hit_uid") == 0,
+			"shots: 10° high misses the zombie (%s)" % [r])
+	sreq["shot_error"] = 1800.0
+	sreq["shot_angle"] = 135.0
+	r = aim.on_request(sreq)
+	var low: Vector3i = r.get("shot", {}).get("end", Vector3i(0, 0, -99))
+	_check.call(r.get("shot", {}).get("hit_uid") == 0 and low.z == me.z and low != me,
+			"shots: 30° low right hits the floor on our level, not the one below (%s)" % [r])
+	sreq["shot_angle"] = 0.0
+	sreq["shot_error"] = "600"
+	sreq["shot_angle"] = NAN
+	sreq["id"] = 32.0
+	r = aim.on_request(sreq)
+	_check.call(r.get("id") == 32 and r.get("shot", {}).get("hit_uid") == 8589934593,
+			"shots: a string error and a NaN angle count as 0 (%s)" % [r])
+	var bad_ids := []
+	for id: Variant in ["31", -3, 0, 1.5, null]:
+		sreq["id"] = id
+		bad_ids.append(aim.on_request(sreq))
+	_check.call(bad_ids.all(func(x: Dictionary) -> bool: return x.is_empty()), "shots: no usable id, no answer (%s)" % [bad_ids])
+	sreq["id"] = 33
+	var cancel := {"id": 33, "cancel": true}
+	var kept := aim.shot_aim.duplicate()
+	var cancels := []
+	aim.shot_aim = {}
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["time"] = Time.get_ticks_msec() - AimController.AIM_KEEP_MS - 1000
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["sight"] = "junk"
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	aim.shot_aim["sight"] = Vector3.DOWN   # into the floor of our own square
+	cancels.append(aim.on_request(sreq))
+	aim.shot_aim = kept.duplicate()
+	var cv := aim.creature_view
+	aim.creature_view = null
+	cancels.append(aim.on_request(sreq))
+	aim.creature_view = cv
+	_check.call(cancels.all(func(x: Dictionary) -> bool: return x == cancel),
+			"shots: no aim, an old aim, a bad aim, a shot into our own square, no figures: cancel (%s)" % [cancels])
+	_check.call(aim.on_request({"id": 5, "kind": "menu"}).is_empty() and aim.on_request({"id": 5, "kind": 7}).is_empty()
+			and aim.on_request({}).is_empty(), "shots: other requests aren't answered here")
+
+	# an older bridge (no dispersion): FIRE draws its own tracer
+	aim.on_request(req)
+	ui.show_request(req)
+	tracers = aim._tracers
+	aim.on_fire(cam, Vector2.ZERO, true)
+	_check.call(aim.dispersion == 0.0 and aim._tracers == tracers + 1, "shots: without dispersion FIRE draws its tracer as before")
+	ui.clear()
 
 
 func _key(code: Key) -> InputEventKey:
@@ -257,6 +395,9 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	var shot: Dictionary = a.get("shot", {})
 	_check.call(a.get("action") == "FIRE" and shot.get("hit_uid") == 8589934593 and shot.get("part") == "head"
 			and a.get("pos") == zp and shot.get("quality") is float, "bullets: FIRE carries the client's shot (%s)" % [a])
+	_check.call(shot.get("fly") == true and aim.shot_aim.get("sight") is Vector3 and aim.shot_aim.get("ammo") == "223",
+			"shots: a client-flown FIRE says fly and keeps the aim (%s)" % [aim.shot_aim])
+	_test_shot_requests(aim, ui, cam, req, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
