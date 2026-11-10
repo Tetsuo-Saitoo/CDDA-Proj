@@ -236,6 +236,16 @@ Each line: **ID — task.** Done-when. *(depends on)*
 - **K4 — Saves:** load/save both ways with vanilla CDDA.
 - **K5 — Security:** treat saves, mods and downloaded content as hostile (bounds-check sizes and ids, no code
   from data); load DLLs only from the app directory; no secrets in the repo.
+- **K7 — Test range** (user, 2026-11-10): a generated test world with everything in it, laid out in zones:
+  an armory (every gun with its ammo and magazines, melee, throwables), item halls by category (food,
+  cookware, containers, clothing, tools, books, bionics), a vehicle lot (every vehicle), monster pens (every
+  monster, AI frozen, toggleable) and target lanes at set ranges, a furniture and terrain gallery (doors,
+  windows, locked safes, stairs, ramps, a tall building), and a kitchen with lit stoves and fires. Built at run
+  time from the loaded id tables, so mods are covered, and as large as it needs to be. Cheats are on there and
+  toggleable: CDDA's debug traits (no damage, night vision, clairvoyance, speed, hammerspace), spawning,
+  teleport between zones, time control, AI freeze. Elsewhere cheats sit behind a debug setting, off by default.
+  Tests default to the range (fixed seed); live worlds only where live play is what's tested. The main menu
+  gets a "Test range" entry for testing by hand.
 - **K6 — Release:** packaging, CC-BY-SA attribution, per-asset licences, changelog.
 
 ### L. VR — 1 agent; L1 after M1, L2–L7 after M3

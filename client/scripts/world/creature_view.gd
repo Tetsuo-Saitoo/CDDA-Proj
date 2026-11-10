@@ -21,7 +21,7 @@ var show_player := false:     # the player's own figure (the outside view and VR
 		show_player = v
 		if _snap != null and _world != null:
 			apply(_snap, _world)
-var view_z_max := CddaCoords.Z_MAX:
+var view_z_max := CddaCoords.Z_LIMIT:   # levels above are hidden; main.gd sets WorldView.things_z_max()
 	set(z):
 		if z == view_z_max:
 			return

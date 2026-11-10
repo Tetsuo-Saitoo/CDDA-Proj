@@ -100,7 +100,10 @@ static func door(w: WorldView, d: Dictionary) -> Grabbable:
 	g.leaf.add_child(knob)
 	g.sync(d)
 	var st: Dictionary = w.door_state.get(g.square, {})
-	g.angle = st.get("angle", OPEN_REST if g.cdda_open else 0.0)
+	var a: float = st.get("angle", NAN)
+	if is_nan(a) or (absf(a) >= OPEN_AT) != g.cdda_open:   # a kept angle counts only while it agrees
+		a = OPEN_REST if g.cdda_open else 0.0
+	g.angle = a
 	g._apply()
 	g.set_process(false)
 	return g
@@ -303,6 +306,7 @@ func sync(d: Dictionary) -> void:
 		mat.albedo_color = d["color"]
 		if d["glass"]:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass
 		m.material = mat
 		_meshes[key] = m
 	leaf.mesh = _meshes[key]

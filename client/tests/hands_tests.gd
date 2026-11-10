@@ -32,6 +32,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_vr_refused()
 	_test_cancel()
 	_test_mouse(root)
+	_test_move()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -274,3 +275,20 @@ func _test_mouse(root: Node) -> void:
 	_check.call(ctl.icon.text == "You can't do that." and ctl.icon.bad, "hands: a refusal flashes its reason in red")
 	cam.free()
 	ctl.free()
+
+
+## Hands.move (the Tab view's drag and drop): the carried rock into the bag on SE without a hand holding it;
+## malformed drops do nothing.
+func _test_move() -> void:
+	var rock: ItemRef = null
+	for r in _hands.picker.carried():
+		if r.type == _it["rock"]:
+			rock = r
+	var bag := _hands.picker.by_uid(_handle(SE, _it["bag_canvas"]))
+	_check.call(rock != null and bag != null and _hands.move("mouse", rock, {"kind": "container", "container": 5}) == ""
+			and _hands.move("mouse", rock, {"kind": "surface", "square": "here"}) == ""
+			and _hands.move("mouse", rock, {"kind": "none"}) == "" and _hands.move("mouse", null, {"kind": "surface"}) == ""
+			and _actions.pending_count() == 0, "hands: move refuses malformed drops")
+	_seen.clear()
+	_check.call(rock != null and bag != null and _hands.move("mouse", rock, {"kind": "container", "container": bag}) == "put"
+			and _seen == [["confirmed", "mouse", rock.uid, ""]] and not _carried(rock.uid), "hands: move puts a carried item in a bag")

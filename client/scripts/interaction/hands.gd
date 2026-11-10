@@ -277,6 +277,19 @@ func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
 	return op
 
 
+## Moves an item no hand holds (drag and drop in the Tab view) the way letting go would: `drop` as from
+## drop_on_ray / drop_at, or built by the caller ({kind: container, container: ItemRef} or {kind: surface,
+## square, spot}). Returns the action started, "" when none.
+func move(id: String, it: ItemRef, drop: Dictionary) -> String:
+	if it == null or not _usable(it) or not (drop.get("kind", "none") in ["surface", "burner", "container"]):
+		return ""
+	if drop.get("kind") == "container" and not drop.get("container") is ItemRef:
+		return ""
+	if not drop.get("square", Vector3i.ZERO) is Vector3i or not drop.get("spot", Vector2.ZERO) is Vector2:
+		return ""
+	return _move(id, it, drop)
+
+
 ## Cancels a hold: the item goes back, nothing is sent.
 func cancel(id: String) -> void:
 	release(id, {})
