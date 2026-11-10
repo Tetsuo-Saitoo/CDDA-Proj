@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — UI leftovers: target candidates show creature name, attitude and health; compass marks creatures on other levels (hollow, chevrons; `Compass.level_blips` for VR); F1 key menu rebinds pad buttons and stick/trigger directions; `Hands.move` for drag and drop without a held item; client tests pass (897).
 - 2026-11-10 — E6 items by mouse: shared hands layer in client/scripts/interaction/ (ItemRef, ItemActions, MockItems, DropTarget, ItemPicker, ItemVisual, Hands; API agreed with lead-vr); piles draw one item per handle; crosshair outlines one item, E takes, hold LMB carries (wheel, Shift+wheel, Esc), release puts in a container / on a surface at its spot; mock mode works without the bridge; client tests pass (874); not played by hand or live.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).
 - 2026-11-09 — Taller buildings tried: OVERMAP_HEIGHT 30 builds and passes sim/client tests (region default_oter padded, sim-test submap count fixed); +35-50 % turn time, ~+4 % memory, old saves would break; PZ-style plan in docs/TALL_BUILDINGS.md (the z 30 fork change itself was not kept).
