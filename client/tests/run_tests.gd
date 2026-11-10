@@ -511,3 +511,91 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	_check(face.call(9, 9) == 3, "chair: faces the table (west)")
 	_check(cat.furniture(500000) == cat.furniture(500001) and terrain.style_for(900000) == terrain.style_for(900001),
 			"undefined ids share one cache entry")
+	_test_layout(data, tables, terrain, cat)
+
+
+## Furniture faces the open side it is used from, and joined tiles lay out as one piece: one facing per
+## row or block, one pillow per bed head tile.
+func _test_layout(data: Variant, tables: IdTables, terrain: TerrainCatalog, cat: PropCatalog) -> void:
+	print("furniture layout (facing, joined pieces)")
+	var at := func(x: int, y: int) -> int: return y * 12 + x
+	var cells := func(xys: Array, id: String, into: Dictionary) -> void:
+		for xy: Vector2i in xys:
+			into[at.call(xy.x, xy.y)] = id
+	# Walls #, counters C, benches B, a table T with a chair c, a fridge F, beds: b (1 x 2), D (2 x 2),
+	# d (3 x 2: a dorm row of three single beds).
+	#   x  0123456789AB
+	#   y0  ###
+	#    1 #CCC  #
+	#    2       B#
+	#    3       B# T
+	#    4          c#
+	#    9   b  DD ddd
+	#   10   b FDD ddd
+	#   11   # ### ###
+	var walls := {}
+	cells.call([Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0), Vector2i(0, 1), Vector2i(6, 1), Vector2i(7, 2),
+			Vector2i(7, 3), Vector2i(10, 4), Vector2i(2, 11), Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11),
+			Vector2i(8, 11), Vector2i(9, 11), Vector2i(10, 11)], "t_wall_w", walls)
+	var furn := {}
+	cells.call([Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)], "f_counter", furn)
+	cells.call([Vector2i(6, 2), Vector2i(6, 3)], "f_bench", furn)
+	cells.call([Vector2i(9, 3)], "f_table", furn)
+	cells.call([Vector2i(9, 4)], "f_chair", furn)
+	cells.call([Vector2i(4, 10)], "f_fridge", furn)
+	cells.call([Vector2i(2, 9), Vector2i(2, 10)], "f_bed", furn)
+	cells.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)], "f_bed", furn)
+	cells.call([Vector2i(8, 9), Vector2i(9, 9), Vector2i(10, 9), Vector2i(8, 10), Vector2i(9, 10), Vector2i(10, 10)], "f_bed", furn)
+	var book := tables.index_of("itype", "101_carpentry")
+	var snap := _scene(data, tables, walls, furn, [[at.call(5, 9), 2, [book, book, 0, 0]]])
+	_check(snap.is_valid(), "layout scene valid: " + snap.error)
+	var sm: Snapshot.Submap = null
+	for p: Vector3i in snap.submaps:
+		var s: Snapshot.Submap = snap.submaps[p]
+		if s.furn[at.call(1, 1)] == tables.index_of("furn", "f_counter") and s.furn[at.call(6, 2)] == tables.index_of("furn", "f_bench"):
+			sm = s
+	terrain.set_snapshot(snap)
+	cat.set_snapshot(snap)
+	var pm := PropMesher.new(snap, terrain, cat)
+	var base := CddaCoords.sm_to_ms(sm.pos)
+	var r := pm.build(sm.pos)
+	var faces := func(xys: Array) -> Array:
+		return xys.map(func(xy: Vector2i) -> int:
+			return pm.facing(base + Vector3i(xy.x, xy.y, 0), cat.furniture(sm.furn[at.call(xy.x, xy.y)])))
+	var N := 0
+	var S := 2
+	var W := 3
+	_check(faces.call([Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)]) == [S, S, S],
+			"3 counters along a wall: one facing, across the row, to the floor (the corner one too)")
+	_check(faces.call([Vector2i(6, 2), Vector2i(6, 3)]) == [W, W], "benches between floor and a wall face the floor, not each other")
+	_check(faces.call([Vector2i(9, 4)]) == [N], "a chair at a table faces it, though a wall is beside it")
+	_check(faces.call([Vector2i(4, 10)]) == [N], "a fridge against a wall faces the room")
+	_check(faces.call([Vector2i(2, 9), Vector2i(2, 10)]) == [N, N], "1 x 2 bed: one facing, along it, head at the wall")
+	_check(faces.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)]) == [N, N, N, N],
+			"2 x 2 bed: one facing, head at the wall")
+	_check(faces.call([Vector2i(8, 9), Vector2i(10, 10)]) == [N, N], "a dorm row of beds: heads at the wall")
+	var links := func(x: int, y: int) -> int:
+		var p := base + Vector3i(x, y, 0)
+		var prop := cat.furniture(sm.furn[at.call(x, y)])
+		return pm._links(p, prop, pm.facing(p, prop))
+	_check([links.call(2, 10), links.call(2, 9)] == [1, 4], "1 x 2 bed links: the head row to its foot, the foot row to its head")
+	_check([links.call(5, 10), links.call(6, 9)] == [1 | 2, 4 | 8], "2 x 2 bed links: one wide bed")
+	_check([links.call(9, 10), links.call(8, 9)] == [1, 4], "dorm row: three single beds side by side, not joined")
+	_check(links.call(2, 1) == (2 | 8), "counters: the row joins")
+	var tops := 0   # pillow top faces: 6 vertices each; colours are stored as 8 bits per channel
+	var arrays := r.props.surface_get_arrays(0)
+	var colours: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var P := PropShapes.PILLOW
+	for k in colours.size():
+		var c := colours[k]
+		if normals[k].y > 0.9 and absf(c.r - P.r) < 0.005 and absf(c.g - P.g) < 0.005 and absf(c.b - P.b) < 0.005:
+			tops += 1
+	_check(tops == 6 * 6, "one pillow per bed head tile: 1 + 2 + 3 = %d" % (tops / 6))
+	var face_d: int = pm.facing(base + Vector3i(5, 9, 0), cat.furniture(sm.furn[at.call(5, 9)]))
+	var tile := {at.call(5, 9): Transform3D(Basis(Vector3.UP, PropMesher.YAW[face_d]), Vector3(5.5, 0, 9.5))}
+	var on_bed: Array = pm.pile_transforms(sm, base, sm.items.slice(0, Snapshot.PILE_STRIDE), tile)
+	_check(on_bed.size() == 2 and on_bed.all(func(e: Array) -> bool:
+		var o: Vector3 = (e[0] as Transform3D).origin
+		return absf(o.y - 0.58) < 0.001 and o.x > 5.0 and o.x < 6.0 and o.z > 9.0 and o.z < 10.0),
+			"items on a joined bed lie on its blanket, on their own tile")
