@@ -75,6 +75,22 @@ func contents(container_uid: int) -> Array[ItemRef]:
 	return out
 
 
+## Worn items that hold things, outermost first (backpack before shirt pockets): the body slots VR puts items
+## into and the Tab view lists. Until the bridge sends pockets per itype, "holds things" = a container by
+## category (MockItems.is_container) or something carried inside it now; an empty backpack isn't known yet.
+func worn_containers() -> Array[ItemRef]:
+	var all := carried()
+	var has_contents := {}
+	for r in all:
+		has_contents[r.parent] = true
+	var out: Array[ItemRef] = []
+	var tables := world.tables if world != null else null
+	for r in all:
+		if r.is_worn() and r.parent == 0 and (has_contents.has(r.uid) or MockItems.is_container(r.type, tables)):
+			out.push_front(r)   # CDDA lists worn items inner to outer
+	return out
+
+
 ## Item `uid`: carried, or on the ground in the snapshot's handles (drawn: point and size from its slot); null.
 func by_uid(uid: int) -> ItemRef:
 	var snap := _snap()

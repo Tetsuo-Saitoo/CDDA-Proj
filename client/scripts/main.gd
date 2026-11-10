@@ -46,6 +46,9 @@ var gore: GoreView               # blood, gibs and bile fields on the ground
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
+var item_actions: ItemActions     # one-item take / put / drop for mouse and VR hands (E6 / L2 / L8)
+var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
+var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
@@ -114,6 +117,11 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(grab.icon)
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
+	item_actions = ItemActions.new()
+	add_child(item_actions)
+	hands = Hands.new(world, item_actions)
+	add_child(hands)
+	grab.hands = hands
 	world.door_wants.connect(_on_door_wants)
 	world.door_message.connect(func(t: String) -> void: _log.append(t))
 	viewmodel = WeaponViewmodel.new()
@@ -181,9 +189,25 @@ func _reload() -> void:
 	var t1 := Time.get_ticks_msec()
 	if _args.has("demo-creatures"):
 		_add_demo_creatures(snap)
+	_use_mock_items(snap)
 	_show(snap)
 	status = "turn %d seq %d: load %d ms, %s" % [snap.turn, snap.seq, t1 - t0, status]
 	print(status)
+
+
+## Mock mode: the hands take, put and drop items on the client's own copy of the snapshot (MockItems), so E6 can
+## be tried without the bridge; every pile gets item handles first.
+func _use_mock_items(snap: Snapshot) -> void:
+	item_actions.clear()
+	mock_items = MockItems.new(snap, world.tables)
+	mock_items.seed()
+	item_actions.backend = mock_items
+	mock_items.message.connect(func(t: String) -> void:
+		_log.append(t)
+		item_actions.on_events([MockItems.message_event(t)]))
+	mock_items.changed.connect(func(s: Snapshot) -> void:
+		_show(s)
+		item_actions.on_snapshot(s))
 
 
 ## Shows a validated snapshot; `status` gets the rebuild stats.
@@ -337,6 +361,9 @@ func _start_live() -> void:
 		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
+	item_actions.backend = live
+	live.events_arrived.connect(item_actions.on_events)
+	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
@@ -898,7 +925,8 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at, hold on a door and drag to open  " % [k.call(&"look"), k.call(&"look_at")]
+	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
 	if live != null and _fp_active():
 		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
 				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
@@ -948,6 +976,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
+		return   # E on an item you look at takes it (else E uses / examines, below)
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
