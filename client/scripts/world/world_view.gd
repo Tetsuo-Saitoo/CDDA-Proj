@@ -14,8 +14,14 @@ signal door_wants(square: Vector3i, open: bool)
 signal door_message(text: String)
 
 var coords := CddaCoords.new()
+## Main-thread catalogs (VrWalk, LookRay, StairUse...); set to a snapshot only when it is shown (_commit).
 var catalog := TerrainCatalog.new()
 var props := PropCatalog.new(catalog.registry)
+## The meshing job's own catalogs: they share the registry and tables (read-only during a job), so the worker
+## never writes a cache the main thread reads. Made fresh by _prepare when the tables or registry change.
+var _job_catalog: TerrainCatalog
+var _job_props: PropCatalog
+var _job_key := []
 var tables: IdTables
 var snapshot: Snapshot
 ## Levels above this are hidden (cutaway). Clamped to the loaded levels.
@@ -150,6 +156,14 @@ func _step_commit(budget_us: int) -> void:
 
 
 func _prepare(snap: Snapshot) -> Job:
+	var key := [catalog.registry, catalog.registry_revision, tables]
+	if _job_catalog == null or key != _job_key:
+		_job_key = key
+		_job_catalog = TerrainCatalog.new()
+		_job_catalog.registry = catalog.registry
+		_job_catalog.set_tables(tables)
+		_job_props = PropCatalog.new(catalog.registry)
+		_job_props.set_tables(tables)
 	var job := Job.new()
 	job.snap = snap
 	var dirty := {}
@@ -174,13 +188,14 @@ func _prepare(snap: Snapshot) -> Job:
 	return job
 
 
-## Thread-safe as long as the main thread doesn't touch catalog, props or tables meanwhile (set_id_tables
-## and apply_snapshot wait for the job first). ArrayMesh building goes through the thread-safe RenderingServer.
+## Runs on a worker: touches only the job and the job catalogs (the main thread keeps using `catalog` and
+## `props`; set_id_tables and apply_snapshot wait for the job first). ArrayMesh building goes through the
+## thread-safe RenderingServer.
 func _compute(job: Job) -> void:
-	catalog.set_snapshot(job.snap)
-	props.set_snapshot(job.snap)
-	var mesher := TerrainMesher.new(job.snap, catalog)
-	var pmesher := PropMesher.new(job.snap, catalog, props)
+	_job_catalog.set_snapshot(job.snap)
+	_job_props.set_snapshot(job.snap)
+	var mesher := TerrainMesher.new(job.snap, _job_catalog)
+	var pmesher := PropMesher.new(job.snap, _job_catalog, _job_props)
 	for pos in job.dirty:
 		job.terrain[pos] = mesher.build(pos)
 	for pos in job.detail:
@@ -194,6 +209,8 @@ func _commit(job: Job, budget_us: int) -> bool:
 	var snap := job.snap
 	if job.next < 0:
 		job.next = 0
+		catalog.set_snapshot(snap)
+		props.set_snapshot(snap)
 		if snapshot == null or snap.bubble_origin != snapshot.bubble_origin:
 			coords.set_bubble_origin(snap.bubble_origin)
 			for pos: Vector3i in _built:

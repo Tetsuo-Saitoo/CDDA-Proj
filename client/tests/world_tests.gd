@@ -80,3 +80,28 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	gv.free()
 	fv.free()
 	world.free()
+	_job_catalogs(root, data, tables)
+
+
+## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
+func _job_catalogs(root: Node, data: Variant, tables: IdTables) -> void:
+	print("meshing job catalogs")
+	var w := WorldView.new()
+	w.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	root.add_child(w)
+	w.set_id_tables(tables)
+	var snap := Snapshot.from_data(data)
+	w.submit(snap)
+	var mid := w.catalog.style_for(snap.submaps.values()[0].ter[0])   # main thread, while the job may run
+	w.finish_pending()
+	_check.call(mid != null and w._job_catalog != w.catalog and w._job_props != w.props
+			and w._job_catalog.registry == w.catalog.registry and w._job_catalog.tables == tables,
+			"job: own catalogs, same registry and tables")
+	var first := w._job_catalog
+	w.apply_snapshot(snap)
+	_check.call(w._job_catalog == first, "job: catalogs kept while nothing changes")
+	w.set_id_tables(null)
+	w.apply_snapshot(snap)
+	_check.call(w._job_catalog != first and w._job_catalog.tables == null and w.catalog.tables == null,
+			"job: new catalogs when the tables change")
+	w.free()

@@ -44,6 +44,8 @@ class Style:
 
 
 var registry := AssetRegistry.new()
+## Bumped by every load_registry_dir (WorldView remakes its job catalogs on a change).
+var registry_revision := 0
 var tables: IdTables
 ## The registry's warnings (bad files and entries) and its models' (bad or missing .glb files).
 var warnings: PackedStringArray:
@@ -58,6 +60,7 @@ var _fence_bits := 0
 
 func load_registry_dir(dir_path: String) -> void:
 	registry.load_dir(dir_path)
+	registry_revision += 1
 	_styles.clear()
 
 
