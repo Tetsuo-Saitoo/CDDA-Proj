@@ -30,6 +30,7 @@ request, wait for the answer". The client shows a generic widget (block E3) and 
 | `direction` | `choose_direction` / `choose_adjacent` (`text` = "Open where?", `origin`, `allow_vertical`) | `pos` = relative vector, each axis −1..1 (z 0 unless vertical); anything else = cancel |
 | `target` | `game::look_around` (`mode` look / zone / peek) and `target_ui::run` (`mode` fire / throw / throw_blind / turrets / turret_manual / reach / spell / select) | `pos` = absolute square (clamped by CDDA's cursor rules) and/or `action` from `actions` (FIRE, AIM, STOPAIM, aim shots, SWITCH_MODE, …); a square with no action asks again with the new `status`; cancel = abort |
 | `world_setup` | `fp3d::run_world_setup` (`cdda/src/fp3d/worldgen.h`), for a fresh world started with `start_new_game(..., world_setup = true)`, before character creation | `text` = JSON `{"sliders": {id: level}, "options": {id: value}, "mods": [ids]}` (cap 16 KB; omitted parts keep defaults). The request's `text` is the catalog: `sliders` (CDDA's WORLDGEN option sliders: id, name, default, levels with name/description), `options` (shown world settings: id, name, tooltip, type bool/int/int_map/float/string_select/string_input with value, min/max/step or choices or max_length), `mods` (usable, non-obsolete: id, name, description, category, core, dependencies, conflicts) and `default_mods`. Sliders apply first, options on top; hidden options only through sliders; dependencies are added (core first); exactly one core mod; conflicts refused. Bad answers are asked again with `status`; cancel ends the boot (`world creation cancelled`). Client: `WorldSetup` model + `WorldSetupRequestWidget`. |
+| `shot` | `projectile_attack` (ballistics.cpp), once per projectile of a trigger pull whose FIRE answer had `shot.fly` (see below). `shot_error` (arcmin CDDA rolled for this projectile), `shot_angle` (degrees 0..360, which way off the sight line: 0 up, 90 the shooter's right), `dispersion` (arcmin, the max), `origin`, `cursor`, `range` | `shot` = {end, hit_uid, part, quality} where that bullet went, or cancel (CDDA rolls it) |
 | `chargen` | `fp3d::run_chargen` (`cdda/src/fp3d/chargen.h`), at a new game started with `start_new_game(..., chargen = true)`, before `start_game` | `text` = the choices as JSON (cap 16 KB): `scenario`, `profession`, `backgrounds` [ids; omitted = CDDA's default], `str`/`dex`/`int`/`per`, `traits` [ids, besides the locked ones], `skills` {id: level}, `name` ("" = random), `male`, `age`, `height`, optional `save_template` (name: also saves it as a CDDA template). Or just `{"template": name, "name": ""}` to start from a template the catalog's `templates` lists, or `{"delete_template": name}` to delete one (re-asked with a fresh catalog and `status` "deleted template …"). The catalog's `template_choices` gives each template's contents in the answer format, for editing. The request's `text` is the catalog JSON (pool rules, `skill_costs`, ranges, `scenarios` with their `professions`/`backgrounds`/`extra_traits`/`forbidden_traits`/`locked_traits`, `professions`, `backgrounds`, `traits` with `points`/`starting`/`cancels`/`types`, `skills`); invalid choices are asked again with `status` saying why; cancel ends the boot (`failed`, "character creation cancelled"). Points are only enforced with CDDA's `multi_pool` option (default `story_teller` = freeform). Client: `Chargen` model + `ChargenRequestWidget`. |
 
 Target requests carry `origin`, `cursor`, `range`, `status` ("" or bad_target / out_of_ammo / out_of_range)
@@ -41,12 +42,33 @@ second click or F / pad R1 fires); holding RMB in first person aims with a centr
 modes only) and LMB fires with the primary action (FIRE, else CONFIRM / SELECT). CDDA still checks range and
 line of fire.
 
-Client-flown shots: a FIRE answer may carry `shot` = {end: Vector3i (absolute square where the bullet
-stopped), hit_uid (creature hit, 0 = miss), part (character body part id like head / arm_l, or monster weak
-point id like head / eye / leg; "" = CDDA picks), quality (float 0 dead centre .. 0.99)}. For that trigger
-pull CDDA skips its dispersion roll: the projectile stops at `end`, can hit only `hit_uid`, in `part`, with
-`quality` as its goodhit (crits, damage multiplier). Anything else (ammo, recoil, noise, time, damage,
-armour) is CDDA's. Ignored on other requests; the bridge clamps it (part 64 bytes, quality 0..0.99).
+Client-flown shots (`cdda/src/fp3d/shot.h`). Fire-mode target requests with a gun also carry `dispersion`
+(arcmin: the max error after aiming in the current aim mode, as CDDA's aim panel predicts it),
+`dispersion_typical` (arcmin, the average; both only when > 0) and `weapon_wielded` (the gun is the avatar's
+wielded item; the client flies shots only then). A FIRE (or aim-and-shoot) answer may carry `shot` = {end:
+Vector3i (absolute square where the bullet stopped), hit_uid (creature hit, 0 = miss), part (character body
+part id like head / arm_l, or monster weak point id like head / eye / leg; "" = CDDA picks), quality (float 0
+dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll decides every projectile:
+- The answer's outcome applies to the trigger pull's first projectile only, on the game turn of the answer (an
+  aimed shot that fires on a later turn drops it). It is stored only for a fire-mode answer that fires the
+  avatar's wielded gun and isn't a cancel; throws, turrets, spells and NPCs never use it.
+- With `fly`, each projectile (each round of a burst; a shotgun shell is one, its pellets spread around it) sends
+  one `shot` request with the error CDDA rolled; the client turns its sight line by it, flies that bullet and
+  answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A cancel, a
+  missing `shot` or one that fails the checks falls back to the FIRE answer's outcome (first projectile, same
+  turn) or CDDA's own path.
+- Checks: quality finite (clamped 0..0.99); a hit names the cursor creature or a candidate, alive and seen now
+  (the bullet stops at its square); a miss's `end` is in the bubble; the square is on the shooter's z, in
+  front of it, within the gun's range for the avatar, and near the line: within 1 square of the line to the
+  cursor (FIRE answer) or 1.5 squares of CDDA's deviated line (shot answer: the line turned by
+  shot_error * sin(shot_angle) to the shooter's right). Anything else is ignored and CDDA's own path runs.
+- Outcome: a client hit counts only if CDDA's roll hits too, with goodhit = max(CDDA's missed_by, quality); a
+  client miss stops the bullet at `end`; a client hit with a CDDA miss runs CDDA's miss path. Other creatures
+  on the path get CDDA's unintended-hit roll. The client can make a shot worse, never better.
+- Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
+  lands only if goodhit <= sqrt(hit chance / 100) (weak point: `weakpoint::hit_chance`; body part: its share of
+  the body's hit size), else CDDA picks. Ignored on other requests.
+Anything else (ammo, recoil, noise, time, damage, armour) is CDDA's.
 
 Every request carries `turn` (game turns since the cataclysm), `paused` and `pause_reason`. The main game loop's
 request (`game::get_player_input`) is `timed`; every other input loop that polls with a timeout gets `TIMEOUT`

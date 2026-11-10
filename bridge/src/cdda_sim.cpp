@@ -96,6 +96,23 @@ Dictionary request_dict( const fp3d::ui_request &r )
     d["turn"] = static_cast<int64_t>( r.turn );
     d["paused"] = r.paused;
     d["pause_reason"] = to_godot( r.pause_reason );
+    // Client-flown shots (fp3d/shot.h): a fire-mode target request's spread, and a shot request's rolled error.
+    const auto positive = []( float v ) {
+        return std::isfinite( v ) && v > 0.0f;
+    };
+    if( r.kind == fp3d::request_kind::target ) {
+        if( positive( r.dispersion ) ) {
+            d["dispersion"] = r.dispersion;
+        }
+        if( positive( r.dispersion_typical ) ) {
+            d["dispersion_typical"] = r.dispersion_typical;
+        }
+        d["weapon_wielded"] = r.weapon_wielded;
+    } else if( r.kind == fp3d::request_kind::shot ) {
+        d["shot_error"] = std::isfinite( r.shot_error ) ? r.shot_error : 0.0f;
+        d["shot_angle"] = std::isfinite( r.shot_angle ) ? r.shot_angle : 0.0f;
+        d["dispersion"] = std::isfinite( r.dispersion ) ? r.dispersion : 0.0f;
+    }
     return d;
 }
 
@@ -355,6 +372,8 @@ bool CddaSim::answer( const Dictionary &d )
         sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
         sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
         sa.quality = s.has( "quality" ) ? std::clamp( static_cast<float>( static_cast<double>( q ) ), 0.0f, 0.99f ) : 0.3f;
+        // `fly` (target answers): a bool; anything else counts as false.
+        sa.fly = s.has( "fly" ) && s["fly"].get_type() == Variant::BOOL && static_cast<bool>( s["fly"] );
         a.shot = sa;
     }
     fp3d::answer( std::move( a ) );
