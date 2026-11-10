@@ -359,7 +359,11 @@ bool CddaSim::answer( const Dictionary &d )
                                  std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
         sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
         sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
-        sa.quality = s.has( "quality" ) ? std::clamp( static_cast<float>( static_cast<double>( q ) ), 0.0f, 0.99f ) : 0.3f;
+        const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
+        if( !std::isfinite( quality ) ) {
+            return false;
+        }
+        sa.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
         a.shot = sa;
     }
     fp3d::answer( std::move( a ) );
@@ -415,7 +419,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
     }
     if( d.has( "pos" ) ) {
         const Vector3i p = v;
-        if( std::abs( p.x ) > max_abs_coord || std::abs( p.y ) > max_abs_coord || std::abs( p.z ) > max_abs_coord ) {
+        const auto out = []( int32_t c ) {
+            return c < -max_abs_coord || c > max_abs_coord;
+        };
+        if( out( p.x ) || out( p.y ) || out( p.z ) ) {
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Item actions, snapshot lists and new-world start: stricter checks (QA review of the 11-09 merges); a fresh world never takes over an existing world's folder (only `fp3d-` throwaway worlds are replaced, by `start()`); sim test `items` / `worlds` checks for each.
 - 2026-11-10 — Cheats and a test kit for testing: set_cheat / get_cheats / give_test_kit (invincible, no needs, no weight limit, unlimited ammo, stamina, no temperature, night vision; CDDA debug traits plus a carry-weight trait); off until turned on, kept in the save; sim test checks each.
 - 2026-11-10 — CDDA safe mode off by default in FP3D games (new and loaded; Shift+1 still toggles it); auto-pause on a new hostile is its own setting (set_auto_pause, on by default); tests no longer toggle safe mode.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).
