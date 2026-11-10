@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Gun block 3, jams (fork fp3d-combat): a jammed gun isn't aimed (no random quick fix), a burst stops at a jam, R on a jammed gun clears it with CDDA's mend (10 s); viewmodel shows a jam from `player_gun.faults`; sim and client tests pass.
 - 2026-11-10 — Shot review fixes, round 4 (fork fp3d-combat, lead-bridge's review): a client miss or a failed claimed hit leaves the path to CDDA, one roll per creature; CDDA's wild miss keeps its angle and takes the shot request's side; named creatures must still be hostile; sim, client and live tests pass.
 - 2026-11-10 — Shot review fixes, round 3 (fork fp3d-combat, lead-qa's review): CDDA's wild miss places a client miss (distance scatter, heading from the shot roll); off-target hits no better than CDDA's unintended roll; only hostile creatures may be named besides the cursor one; sim, client and live tests pass.
 - 2026-11-10 — Shot review fixes, round 2 (fork fp3d-combat 76b8e81, lead-bridge's review): a client miss keeps CDDA's line (deviated line, aim line, or CDDA's wild miss), its end only stops it at an impassable square on that line; a claimed hit on another creature rolls from its distance off the line; sim checks for both, reload reaches the ammo item_select; sim, client and live tests pass.

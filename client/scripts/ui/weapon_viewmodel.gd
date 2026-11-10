@@ -7,6 +7,8 @@ extends Node3D
 ## `sway_arcmin` (CDDA's dispersion while aiming, 0 otherwise) makes it breathe in a slow figure eight, wider
 ## the worse the aim, capped at SWAY_ROT / SWAY_POS. Purely visual: the shot's error is CDDA's roll.
 ## `set_dirt()` shows the held gun's fouling (CDDA's item var `dirt`) as grime on a gun's parts (grime.gdshader).
+## `set_faults()` shows a jam (CDDA's gun_mechanical_simple faults): slide / bolt held open, the gun canted to show
+## its port, and a small label saying what jammed and that R (reload) clears it (the fork's fp3d::rack_jammed).
 ## A gun's parts are named (Muzzle, Grip, MagWell, Magazine, Slide / Bolt: see build()).
 
 const REST := Vector3(0.22, -0.2, -0.42)
@@ -22,6 +24,12 @@ const SWAY_RATE := 1.5                # how fast the sway grows / settles (per s
 const DIRT_MAX := 10000               # CDDA's most fouling; its fouling symbol steps every 2000
 const GUN_SHAPES: Array[String] = ["pistol", "long", "launcher"]   # the shapes that show grime
 const GRIME_SHADER := preload("res://scripts/combat/grime.gdshader")
+## CDDA's jams (fault type gun_mechanical_simple, data/json/faults/faults_guns.json) and how the label names them.
+const JAMS := {"fault_fail_to_feed": "Failure to feed", "fault_stovepipe": "Stovepipe",
+	"fault_double_feed": "Double feed", "fault_gun_chamber_spent": "Spent case in the chamber"}
+const JAM_BACK := 0.03                # a jammed gun's slide / bolt stands this far open (m)
+const JAM_CANT := 0.5                 # and the gun turns this far on its side (radians about the bore)
+const JAM_RATE := 4.0                 # how fast it turns (per second)
 const METAL := Color(0.18, 0.18, 0.2)
 const WOOD := Color(0.4, 0.26, 0.14)
 const OLIVE := Color(0.25, 0.3, 0.2)
@@ -41,6 +49,9 @@ var _base := REST
 var _sway := 0.0         # 0..1, eased toward sway_arcmin / SWAY_FULL_ARCMIN
 var _sway_t := 0.0
 var _grime_mats: Array[ShaderMaterial] = []
+var jam := ""            # the held gun's jam (a JAMS key), "" none
+var _cant := 0.0         # 0..1, eased toward 1 while jammed
+var _jam_label: Label3D
 
 
 func _init() -> void:
@@ -88,6 +99,7 @@ func set_item(index: int, tables: IdTables) -> void:
 		_root = build(s, grime)
 		add_child(_root)
 		_grime_mats = grime_materials(_root)
+	_pose_jam()
 
 
 ## The held gun's fouling: CDDA's item var `dirt`, 0..DIRT_MAX; negative = no fouling info (a NON-FOULING gun,
@@ -104,6 +116,54 @@ func set_dirt(value: int) -> void:
 	grime = g
 	for m: ShaderMaterial in _grime_mats:
 		m.set_shader_parameter("grime", g)
+
+
+## The held gun's faults (`Snapshot.player_gun.faults`, fault ids): a jam among them shows; kept across
+## set_item (a jam belongs to the gun the snapshot names, and the next snapshot corrects it).
+func set_faults(faults: Array) -> void:
+	var j := jam_of(faults)
+	if j == jam:
+		return
+	jam = j
+	_pose_jam()
+
+
+## The first jam among `faults` (anything else, junk included, ignored), "" for none.
+static func jam_of(faults: Array) -> String:
+	for f: Variant in faults:
+		if f is String and JAMS.has(f):
+			return f
+	return ""
+
+
+## The label for a jam: what jammed and how to clear it; "" for none.
+static func jam_hint(id: String) -> String:
+	return "%s: R to clear" % JAMS[id] if JAMS.has(id) else ""
+
+
+func _pose_jam() -> void:
+	var on := jam != "" and shape in GUN_SHAPES
+	if _root != null:
+		for part: String in ["Slide", "Bolt"]:
+			var n := _root.get_node_or_null(part) as Node3D
+			if n == null:
+				continue
+			if not n.has_meta("rest"):
+				n.set_meta("rest", n.position)
+			n.position = (n.get_meta("rest") as Vector3) + Vector3(0, 0, JAM_BACK if on else 0.0)
+	if on and _jam_label == null:
+		_jam_label = Label3D.new()
+		_jam_label.name = "JamHint"
+		_jam_label.pixel_size = 0.0004
+		_jam_label.font_size = 48
+		_jam_label.outline_size = 12
+		_jam_label.modulate = Color(1.0, 0.75, 0.3)
+		_jam_label.no_depth_test = true
+		_jam_label.position = Vector3(-0.05, 0.07, -0.1)
+		add_child(_jam_label)
+	if _jam_label != null:
+		_jam_label.text = jam_hint(jam) if on else ""
+		_jam_label.visible = on
 
 
 ## CDDA's `dirt` (0..DIRT_MAX, negative none) as the shader's grime, 0..1.
@@ -127,6 +187,8 @@ func _process(delta: float) -> void:
 	position = _base + Vector3(sx, sy, 0.0) * (SWAY_POS * _sway)
 	rotation.x = 0.25 * _kick + sy * SWAY_ROT * _sway
 	rotation.y = -sx * SWAY_ROT * _sway
+	_cant = move_toward(_cant, 1.0 if jam != "" and shape in GUN_SHAPES else 0.0, JAM_RATE * delta)
+	rotation.z = JAM_CANT * _cant
 
 
 ## The model for a shape, pointing down -z (the camera's forward). A gun's parts wear the grime shader at
