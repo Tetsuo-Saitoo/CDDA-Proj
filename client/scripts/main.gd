@@ -330,6 +330,7 @@ func _start_live() -> void:
 	add_child(live)
 	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
+	live.busy = world.busy   # no new snapshot fetch while the last one is still being put on screen
 	world.applied.connect(_on_world_applied)
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)
@@ -455,12 +456,14 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
+	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
+	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
+		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
-	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if not door.is_empty():   # the "Open where?" of a door you dragged: its direction
 		grab.ask = {}
 		request_ui.clear()
@@ -542,6 +545,7 @@ func _live_action(event: InputEvent) -> bool:
 	if act == "":
 		return false
 	if _in_main_loop():
+		grab.ask = {}   # a key's own action: its prompts are the player's to answer
 		live.queue_action(act)
 	return true
 
@@ -683,8 +687,8 @@ func _on_door_wants(square: Vector3i, open: bool) -> void:
 	if live == null or world.snapshot == null or not _in_main_loop():
 		return
 	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
-	if act != "":
-		live.queue_action(act)
+	if act != "" and not live.queue_action(act):
+		grab.ask = {}
 
 
 ## The mouse point grabbing and looking use: the screen centre while the mouse looks around.
