@@ -577,8 +577,16 @@ func _test_stairs(world: WorldView) -> void:
 	_check.call(StairUse.live_actions(up + Vector3i(5, 0, 0), s).is_empty(), "stairs live: too far, nothing")
 	_check.call(StairUse.live_actions(up + Vector3i(0, 0, 1), d) == PackedStringArray(["LEVEL_DOWN"]),
 			"stairs live: on the top end, >")
+	var floor_y := world.coords.ms_to_world(up).y
+	var mid := world.ground_y(world.coords.ms_center_to_world(up), up.z)
+	var me: Vector3i = world.snapshot.player_pos
+	var flat := world.ground_y(world.coords.ms_center_to_world(me), me.z)
+	_check.call(mid > floor_y + 0.1 and mid < floor_y + CddaCoords.LEVEL_M
+			and is_equal_approx(flat, world.coords.ms_to_world(me).y),
+			"ground: a stair flight rises under you (%.2f m at its middle), a floor is flat" % (mid - floor_y))
 	var fp := FirstPersonCamera.new(world)
 	fp.go_to_square(up)
+	_check.call(is_equal_approx(fp.position.y, mid + FirstPersonCamera.EYE_H), "stairs: the camera's eyes ride the flight")
 	_check.call(fp.use_stair(s) and fp.z == up.z + 1, "stairs: the free-walk camera goes up them")
 	_check.call(not fp.use_stair({}), "stairs: no stair, no move")
 	fp.free()

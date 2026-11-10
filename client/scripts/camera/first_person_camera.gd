@@ -71,7 +71,7 @@ func right() -> Vector3:
 ## Free walk: stands on the centre of CDDA square sq.
 func go_to_square(sq: Vector3i) -> void:
 	z = sq.z
-	position = world.coords.ms_center_to_world(sq) + Vector3(0.0, EYE_H, 0.0)
+	position = _eye(world.coords.ms_center_to_world(sq))
 	target = position
 
 
@@ -97,7 +97,7 @@ func use_stair(s: Dictionary) -> bool:
 func follow_square(sq: Vector3i) -> void:
 	follow = true
 	z = sq.z
-	target = world.coords.ms_center_to_world(sq) + Vector3(0.0, EYE_H, 0.0)
+	target = _eye(world.coords.ms_center_to_world(sq))
 	if not _has_target or position.distance_to(target) > SNAP_DIST:
 		position = target
 	_has_target = true
@@ -141,3 +141,9 @@ func step(delta: float, inp: Dictionary) -> void:
 	var n := maxi(ceili(d.length() / MAX_STEP), 1)
 	for i in n:
 		position = walk.slide(position, d / n, z)
+	position = _eye(position)
+
+
+## Eyes EYE_H above what one stands on at p on level z: the floor, or the stair flight or ramp drawn there.
+func _eye(p: Vector3) -> Vector3:
+	return Vector3(p.x, world.ground_y(p, z) + EYE_H, p.z)
