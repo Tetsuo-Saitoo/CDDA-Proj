@@ -87,6 +87,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_door_leaves(root)
 	_body_limits(data, tables)
 	_light_levels(data)
+	_stairs_settled()
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -218,3 +219,11 @@ func _light_levels(data: Variant) -> void:
 	_check.call(snap.is_valid() and m.levels == LightMap.MAX_LEVELS and m.z_lo <= snap.player_pos.z
 			and m.z_lo + m.levels > snap.player_pos.z and m.image.get_height() == LightMap.SIZE * LightMap.MAX_LEVELS,
 			"light: at most %d atlas levels, the player's among them %s" % [LightMap.MAX_LEVELS, snap.error])
+
+
+## Live stairs: the steps are worked out only from a settled world (nothing queued, the newest snapshot shown).
+func _stairs_settled() -> void:
+	var m := preload("res://scripts/main.gd")
+	_check.call(m.stairs_settled(0, false, 5, 5) and not m.stairs_settled(1, false, 5, 5)
+			and not m.stairs_settled(0, true, 5, 5) and not m.stairs_settled(0, false, 6, 5),
+			"stairs: live steps only when nothing is queued and the newest snapshot is shown")

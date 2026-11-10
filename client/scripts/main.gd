@@ -608,6 +608,9 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 	if s.is_empty():
 		return false
 	if live != null:
+		if not stairs_settled(live.queued_actions(), world.busy(), live.snapshot_seq, world.snapshot.seq):
+			status = "stairs: wait for the last move to finish"
+			return false
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
@@ -623,6 +626,12 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		return false
 	status = "level %d" % (vr.z if from_vr else fp.z)
 	return true
+
+
+## The steps toward a stair come from where the shown snapshot puts the player, so they are worked out only
+## when nothing is queued and the world shows the newest snapshot.
+static func stairs_settled(queued: int, world_busy: bool, fetched_seq: int, shown_seq: int) -> bool:
+	return queued == 0 and not world_busy and fetched_seq == shown_seq
 
 
 func _clear_look() -> void:
