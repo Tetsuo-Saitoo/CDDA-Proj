@@ -31,6 +31,14 @@ const CORPSE_SKINNED := 8
 const CORPSE_QUARTERED := 16
 const CORPSE_PULPED := 32
 const CORPSE_GIBBED := 64
+const HANDLE_STRIDE := 5                  # handles: tile, uid, itype, spot x, spot y (permille, -1 none)
+const MAX_HANDLES_PER_TILE := 32
+const CARRIED_STRIDE := 5                 # carried: uid, itype, parent uid (0 on the body), pocket, flags
+const MAX_CARRIED := 256
+const MAX_POCKET := 255
+const CARRIED_WORN := 1
+const CARRIED_WIELDED := 2
+const CARRIED_OFFHAND := 4
 const FIELD_STRIDE := 4                   # fields: tile, type (CDDA field id), intensity, age turns
 const MAX_FIELDS_PER_TILE := 4
 const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
@@ -51,6 +59,7 @@ class Submap:
 	var trap: PackedInt32Array    # CDDA trap ids, 0 = none (only traps the player knows)
 	var items: PackedInt32Array   # piles, PILE_STRIDE ints each: tile, count, top[4] (itype indices, 0 = none), corpse (mtype index, 0 = none)
 	var fields: PackedInt32Array  # FIELD_STRIDE ints each (seen tiles only)
+	var handles: PackedInt64Array # HANDLE_STRIDE ints per item a client can point at (seen tiles only)
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -65,6 +74,7 @@ var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
+var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -197,6 +207,7 @@ func _read_player(v: Variant) -> void:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
 	_read_body((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
+	carried = _carried((v as Dictionary).get("items"), "player.items")
 
 
 func _read_body(d: Dictionary) -> void:
@@ -357,6 +368,7 @@ func _read_submaps(v: Variant) -> void:
 		sm.trap = _ids(s["trap"], what + ".trap") if s.has("trap") else _zeros()
 		sm.items = _piles(s.get("items"), what + ".items")
 		sm.fields = _fields(s.get("fields"), what + ".fields")
+		sm.handles = _handles(s.get("handles"), what + ".handles")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -469,6 +481,68 @@ func _piles(v: Variant, what: String) -> PackedInt32Array:
 			out.append(_int(top[k], 0, MAX_ID, w + ".top") if k < top.size() else 0)
 		out.append(_int(p[3], 0, MAX_ID, w + ".corpse") if (p as Array).size() > 3 else 0)
 		out.append(_int(p[4], 0, 0xffff, w + ".corpse_state") if (p as Array).size() > 4 else 0)
+		if not is_valid():
+			return out
+	return out
+
+
+## [[tile, uid, type, spot_x, spot_y], ...]: at most MAX_HANDLES_PER_TILE per tile, distinct uids.
+func _handles(v: Variant, what: String) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > TILES * MAX_HANDLES_PER_TILE:
+		_fail("%s: expected a list of at most %d handles" % [what, TILES * MAX_HANDLES_PER_TILE])
+		return out
+	var per_tile := {}
+	var uids := {}
+	for i in (v as Array).size():
+		var h: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not h is Array or (h as Array).size() != HANDLE_STRIDE:
+			_fail(w + ": expected [tile, uid, type, spot_x, spot_y]")
+			return out
+		var tile := _int(h[0], 0, TILES - 1, w + ".tile")
+		var uid := _int(h[1], 1, MAX_UID - 1, w + ".uid")
+		out.append(tile)
+		out.append(uid)
+		out.append(_int(h[2], 1, MAX_ID, w + ".type"))
+		out.append(_int(h[3], -1, 999, w + ".spot_x"))
+		out.append(_int(h[4], -1, 999, w + ".spot_y"))
+		per_tile[tile] = per_tile.get(tile, 0) + 1
+		if is_valid() and (per_tile[tile] > MAX_HANDLES_PER_TILE or uids.has(uid)):
+			_fail("%s: more than %d on tile %d, or uid %d twice" % [w, MAX_HANDLES_PER_TILE, tile, uid])
+		uids[uid] = true
+		if not is_valid():
+			return out
+	return out
+
+
+## [[uid, type, parent, pocket, flags], ...]: at most MAX_CARRIED, a container listed before what's in it.
+func _carried(v: Variant, what: String) -> PackedInt64Array:
+	var out := PackedInt64Array()
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_CARRIED:
+		_fail("%s: expected a list of at most %d items" % [what, MAX_CARRIED])
+		return out
+	var uids := {}
+	for i in (v as Array).size():
+		var c: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not c is Array or (c as Array).size() != CARRIED_STRIDE:
+			_fail(w + ": expected [uid, type, parent, pocket, flags]")
+			return out
+		var uid := _int(c[0], 1, MAX_UID - 1, w + ".uid")
+		var parent := _int(c[2], 0, MAX_UID - 1, w + ".parent")
+		out.append(uid)
+		out.append(_int(c[1], 1, MAX_ID, w + ".type"))
+		out.append(parent)
+		out.append(_int(c[3], -1, MAX_POCKET, w + ".pocket"))
+		out.append(_int(c[4], 0, CARRIED_WORN | CARRIED_WIELDED | CARRIED_OFFHAND, w + ".flags"))
+		if is_valid() and (uids.has(uid) or (parent != 0 and not uids.has(parent))):
+			_fail("%s: uid %d twice, or its container %d not listed before it" % [w, uid, parent])
+		uids[uid] = true
 		if not is_valid():
 			return out
 	return out

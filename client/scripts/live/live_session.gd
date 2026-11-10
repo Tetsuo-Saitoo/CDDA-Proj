@@ -123,6 +123,30 @@ func queue_action(action: String) -> bool:
 	return _sim != null and _sim.queue_action(action)
 
 
+## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
+## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
+## Take from square `pos` into hand "pack", "main" or "off".
+func take_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "take", "item": int(uid), "type": int(type),
+			"pos": pos, "hand": hand})
+
+
+## Put a carried item into a container: a carried one (worn, held), else the one on square `pos`;
+## `pocket` -1 = CDDA's choice, else an index as the snapshot's carried items give it.
+func put_item(uid: float, type: float, container: float, container_type: float, pos: Vector3i,
+		pocket := -1) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "put", "item": int(uid), "type": int(type),
+			"container": int(container), "container_type": int(container_type), "pos": pos, "pocket": pocket})
+
+
+## Drop a carried item on square `pos`; `spot` (each 0..1 across the square) places it there, (-1, -1) none.
+func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) -> bool:
+	var a := {"op": "drop", "item": int(uid), "type": int(type), "pos": pos}
+	if spot.x >= 0.0 and spot.y >= 0.0:
+		a["spot"] = spot
+	return _sim != null and _sim.queue_item_action(a)
+
+
 ## Actions waiting in the bridge's queue (0 without a game).
 func queued_actions() -> int:
 	return _sim.get_queued_actions() if _sim != null else 0
