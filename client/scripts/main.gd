@@ -240,7 +240,7 @@ func _place_player_body() -> void:
 	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	var yaw := fp.yaw
 	if vr != null:
-		at = Vector3(vr.camera.global_position.x, vr.global_position.y, vr.camera.global_position.z)
+		at = Vector3(vr.camera.global_position.x, vr.floor_y(), vr.camera.global_position.z)
 		yaw = vr.camera.global_rotation.y
 	elif first_person:
 		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR comfort leftovers: settings menu laser pointer, left-handed mode (`main_hand`), seated height + "Calibrate height" (`height`, `--vr-height`, `--vr-main-hand`); compass on the off wrist; client tests pass; not tried in a headset.
 - 2026-11-10 — VR compass: rose on the left wrist (turned to north, red hostile arrows, creature dots, head tick) and an optional belt ring, from Compass's logic and blips; VR setting `compass` (wrist/belt/both/off), HUD opacity; client tests pass (756); not seen in a headset.
 - 2026-11-10 — One VR hand system: VrHand draws the hands (glove colour from the body), the body hides its hand boxes and its arms bend at an elbow to the hand's wrist (VrRig.drive_body, PlayerBody.arm_ik); VrHands and the body's finger code removed; client tests pass (748); not tried in a headset.
 - 2026-11-09 — Integration: merged the player body, snapshot worker, door drag, item handles and stair use into main (fork fp3d e691dfe); fork rebuilt, all suites rerun; old sessions' leftovers carried over (gun plan notes, tall-buildings study).

@@ -15,7 +15,218 @@ func run(root: Node, check: Callable, world: WorldView) -> void:
 	_test_hand()
 	_test_rig(root, world)
 	_test_compass(root, world)
+	_test_pointer(root, world)
+	_test_main_hand(root, world)
+	_test_height(root, world)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP))
+
+
+func _row_of(key: String) -> int:
+	for i in VrSettings.ROWS.size():
+		if VrSettings.ROWS[i][0] == key:
+			return i
+	return -1
+
+
+## First square on level z whose terrain kind is `kind`.
+func _find_kind(world: WorldView, z: int, kind: int) -> Variant:
+	for pos: Vector3i in world.snapshot.submaps:
+		if pos.z != z:
+			continue
+		var sm: Snapshot.Submap = world.snapshot.submaps[pos]
+		for i in Snapshot.TILES:
+			if world.catalog.style_for(sm.ter[i]).kind == kind:
+				return CddaCoords.sm_to_ms(pos) + Vector3i(i % CddaCoords.SEEX, i / CddaCoords.SEEX, 0)
+	return null
+
+
+## The settings menu's laser pointer: rows under a point, the main hand's ray picking and changing them.
+func _test_pointer(root: Node, world: WorldView) -> void:
+	var n := VrSettings.ROWS.size()
+	var lh := VrMenu.LINE_H
+	_check.call(VrMenu.row_at(Vector3(0, -lh, 0)) == 0 and VrMenu.row_at(Vector3(-0.3, -n * lh + 0.015, 0)) == n - 1
+			and VrMenu.row_at(Vector3(0.3, -3 * lh - 0.018, 0)) == 2, "vr pointer: row_at finds the row under a point")
+	_check.call(VrMenu.row_at(Vector3.ZERO) == -1 and VrMenu.row_at(Vector3(0, -(n + 1) * lh, 0)) == -1
+			and VrMenu.row_at(Vector3(0.5, -lh, 0)) == -1 and VrMenu.row_at(Vector3(0, 0.5, 0)) == -1
+			and VrMenu.row_at(Vector3(NAN, -lh, 0)) == -1 and VrMenu.on_panel(Vector3(0, -lh, 0))
+			and not VrMenu.on_panel(Vector3(0, 0.3, 0)), "vr pointer: title, help line and off the panel are no row")
+	var plane := Transform3D(Basis(), Vector3(0, 1, -1))
+	var hit: Variant = VrRig.ray_on_plane(plane, Vector3(0.1, 1.2, 0), Vector3(0, 0, -1), 4.0)
+	_check.call(hit is Vector3 and (hit as Vector3).is_equal_approx(Vector3(0.1, 0.2, 0))
+			and VrRig.ray_on_plane(plane, Vector3(0, 1, 0), Vector3(0, 0, 1), 4.0) == null
+			and VrRig.ray_on_plane(plane, Vector3(0, 1, -2), Vector3(0, 0, 1), 4.0) == null
+			and VrRig.ray_on_plane(plane, Vector3(0, 1, 9), Vector3(0, 0, -1), 4.0) == null,
+			"vr pointer: ray on the menu plane (not pointing away, from behind or too far)")
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.camera.position = Vector3(0, 1.6, 0)
+	rig.go_to_square(world.snapshot.player_pos)
+	rig.update_pointer(true)
+	_check.call(not rig.pointer.visible and not rig.pointer_dot.visible, "vr pointer: none while the menu is closed")
+	rig.press(rig.left, "menu_button")
+	var aim := func(c: XRController3D, r: int, x: float) -> Vector3:
+		var at := rig.menu.global_transform * Vector3(x, -(r + 1) * lh, 0)
+		c.global_position = at + rig.menu.global_basis.z * 0.6 + Vector3(0.05, -0.3, 0)
+		c.look_at(at, Vector3.UP)
+		return at
+	var speed := _row_of("speed")
+	var at: Vector3 = aim.call(rig.right, speed, 0.2)
+	rig.update_pointer(true)
+	_check.call(rig.pointer.visible and rig.pointer_dot.visible and rig.pointer_dot.global_position.distance_to(at) < 0.001
+			and rig.menu.row == speed, "vr pointer: the main hand's ray picks the row under its dot")
+	rig.press(rig.right, "trigger_click")
+	_check.call(rig.settings["speed"] == 2.5, "vr pointer: trigger on a number's right half steps it up")
+	aim.call(rig.right, speed, -0.2)
+	rig.update_pointer(true)
+	rig.press(rig.right, "trigger_click")
+	rig.press(rig.right, "trigger_click")
+	_check.call(rig.settings["speed"] == 1.5, "vr pointer: ... and on its left half down")
+	var blink := _row_of("blink")
+	aim.call(rig.right, blink, -0.2)
+	rig.update_pointer(true)
+	rig.press(rig.right, "trigger_click")
+	_check.call(rig.menu.row == blink and rig.settings["blink"] == true, "vr pointer: trigger on an on/off row flips it")
+	rig.step(0.1, {"move": Vector2(0, -1)})
+	rig.step(0.1, {})
+	rig.update_pointer(true)
+	_check.call(rig.menu.row == blink + 1, "vr pointer: the sticks still pick rows while it rests")
+	rig.right.look_at(rig.right.global_position + rig.menu.global_basis.z, Vector3.UP)
+	rig.update_pointer(true)
+	_check.call(rig.pointer.visible and not rig.pointer_dot.visible, "vr pointer: pointing away, a short ray and no dot")
+	rig.press(rig.left, "menu_button")
+	_check.call(not rig.pointer.visible and not rig.pointer_dot.visible, "vr pointer: gone when the menu closes")
+	rig.free()
+
+
+## Left-handed mode: the left controller is the main hand, the compass goes to the right wrist.
+func _test_main_hand(root: Node, world: WorldView) -> void:
+	var rig := VrRig.new(world, {"main_hand": "left", "hands": "boxes", "compass": "wrist", "blink": false})
+	root.add_child(rig)
+	rig.camera.position = Vector3(0, 1.6, 0)
+	var player := world.snapshot.player_pos
+	rig.go_to_square(player)
+	_check.call(rig.main_ctrl() == rig.left and rig.off_ctrl() == rig.right and rig.main_hand_model() == rig.left_hand
+			and rig.off_hand_model() == rig.right_hand, "vr left-handed: the left controller is the main hand")
+	var up: Variant = _find_kind(world, 0, TerrainCatalog.Kind.STAIRS_UP)
+	if up != null:
+		var used := []
+		rig.stair_used.connect(func(s: Dictionary) -> void: used.append(s))
+		var at := world.coords.ms_center_to_world(up)
+		for c: XRController3D in [rig.left, rig.right]:
+			c.global_position = at + Vector3(0.6, 1.2, 0.0)
+			c.look_at(at, Vector3.UP)
+		rig.press(rig.right, "trigger_click")
+		var z_right := rig.z
+		rig.press(rig.left, "trigger_click")
+		_check.call(z_right == 0 and used.size() == 1 and rig.z == 1,
+				"vr left-handed: the left trigger uses pointed stairs, the right one doesn't")
+		rig.go_to_square(player)
+	rig.left.transform = Transform3D(Basis.from_euler(Vector3(0.4, 0, 0)), Vector3(-0.2, 1.2, 0))
+	rig.right.transform = Transform3D(Basis.from_euler(Vector3(0.4, PI, 0)), Vector3(0.2, 1.2, 0))
+	rig.step(0.016, {"turn": Vector2(0, 1)})
+	var pts: PackedVector3Array = rig.arc.get("points", PackedVector3Array())
+	_check.call(rig.aiming and pts.size() > 1 and pts[0].is_equal_approx(rig.right.global_position),
+			"vr left-handed: the teleport arc leaves the hand whose stick aims it (right stick)")
+	rig.aiming = false
+	rig.arc = {}
+	rig.settings["swap_sticks"] = true
+	rig.step(0.016, {"turn": Vector2(0, 1)})
+	pts = rig.arc.get("points", PackedVector3Array())
+	_check.call(rig.aiming and pts.size() > 1 and pts[0].is_equal_approx(rig.left.global_position)
+			and (pts[1] - pts[0]).normalized().dot(-rig.left.global_basis.z) > 0.9,
+			"vr left-handed: swapped sticks aim the arc from the left controller")
+	rig.settings["swap_sticks"] = false
+	rig.aiming = false
+	rig.arc = {}
+	rig.show_held({"main": {"name": "knife"}, "off": {}})
+	_check.call(rig.left_held.visible and not rig.right_held.visible, "vr left-handed: the wielded item shows on the left hand")
+	rig.settings["main_hand"] = "right"
+	rig._settings_changed()
+	_check.call(rig.right_held.visible and not rig.left_held.visible, "vr left-handed: switching hands moves the item over")
+	rig.settings["main_hand"] = "left"
+	rig.right.transform = Transform3D(Basis(), Vector3(0.2, 1.1, -0.3))
+	rig.pose_hands()
+	rig.place_compass()
+	var wr := rig.compass.wrist
+	_check.call(wr.visible and wr.global_position.distance_to(rig.right.global_position) < 0.25 and wr.global_basis.y.x > 0.9,
+			"vr left-handed: compass on the back of the right wrist (box hand), face out")
+	rig.settings["hands"] = "buttons"
+	rig._boxes[0].visible = false
+	rig._boxes[1].visible = false
+	var open := VrHand.curls_from_buttons(0.0, false, 0.0, false)
+	rig.right_hand.pose_from_controller(rig.right.transform, open)
+	rig.place_compass()
+	_check.call(wr.visible and wr.global_basis.y.x > 0.9
+			and wr.global_position.distance_to(rig.global_transform * rig.right_hand.wrist()) < 0.05,
+			"vr left-handed: compass on the right finger hand's wrist, face out")
+	rig.settings["main_hand"] = "right"
+	rig.left.transform = Transform3D(Basis(), Vector3(-0.2, 1.1, -0.3))
+	rig.left_hand.pose_from_controller(rig.left.transform, open)
+	rig.place_compass()
+	_check.call(wr.visible and wr.global_basis.y.x < -0.9
+			and wr.global_position.distance_to(rig.global_transform * rig.left_hand.wrist()) < 0.05,
+			"vr compass: on the left finger hand's wrist, face out")
+	rig.free()
+
+
+## Seated play: the origin stands `height` over the level's floor; the menu calibrates it from the head.
+func _test_height(root: Node, world: WorldView) -> void:
+	_check.call(VrSettings.clean("height", 5) == 1.0 and VrSettings.clean("height", "-9") == -0.5
+			and VrSettings.clean("height", "nan") == null and VrSettings.clean("main_hand", "left") == "left"
+			and VrSettings.clean("main_hand", "both") == null and VrSettings.clean("calibrate", true) == null,
+			"vr height / main hand: values checked and clamped")
+	var a := VrSettings.from_args({"vr-height": "0.3", "vr-main-hand": "left"})
+	var bad := VrSettings.from_args({"vr-height": "tall", "vr-main-hand": "both"})
+	_check.call(is_equal_approx(a["height"], 0.3) and a["main_hand"] == "left" and bad["height"] == 0.0
+			and bad["main_hand"] == "right", "vr height / main hand: options read, bad ones ignored")
+	_check.call(VrSettings.label("height", 0.4) == "+0.40 m" and VrSettings.label("height", -0.25) == "-0.25 m"
+			and VrSettings.label("height", 0.0) == "+0.00 m" and VrSettings.label("main_hand", "left").begins_with("left"),
+			"vr height / main hand: labels")
+	_check.call(is_equal_approx(VrSettings.step({"height": 0.95}, "height", 1), 1.0)
+			and VrSettings.step({"height": 1.0}, "height", 1) == 1.0
+			and is_equal_approx(VrSettings.step({"height": 0.0}, "height", -1), -0.05), "vr height: menu steps of 5 cm, stops at the ends")
+	_check.call(is_equal_approx(VrRig.calibrated_height(1.2), 0.4) and VrRig.calibrated_height(0.2) == 1.0
+			and VrRig.calibrated_height(2.5) == -0.5 and VrRig.calibrated_height(NAN) == null
+			and is_equal_approx(VrRig.calibrated_height(1.53), 0.05), "vr height: calibration snapped and clamped")
+	var rig := VrRig.new(world, {"height": 0.4, "blink": false})
+	root.add_child(rig)
+	rig.save_path = TMP
+	rig.camera.position = Vector3(0, 1.2, 0)   # seated
+	var p := world.snapshot.player_pos
+	rig.go_to_square(p)
+	var fy := VrWalk.floor_y(p.z)
+	_check.call(is_equal_approx(rig.floor_y(), fy) and is_equal_approx(rig.global_position.y, fy + 0.4)
+			and is_equal_approx(rig.camera.global_position.y, fy + FirstPersonCamera.EYE_H),
+			"vr height: the origin stands 0.4 m over the floor, the seated head at standing eye height")
+	rig.go_to_square(p + Vector3i(0, 0, 1))
+	_check.call(is_equal_approx(rig.floor_y(), VrWalk.floor_y(p.z + 1))
+			and is_equal_approx(rig.global_position.y, rig.floor_y() + 0.4), "vr height: kept on a level change")
+	rig.go_to_square(p)
+	rig.settings["height"] = 0.0
+	rig.place_height()
+	rig.press(rig.left, "menu_button")
+	rig.menu.row = _row_of("calibrate")
+	rig.press(rig.left, "trigger_click")   # the off hand's trigger: the row the stick picked
+	_check.call(is_equal_approx(rig.settings["height"], 0.4) and is_equal_approx(rig.global_position.y, fy + 0.4)
+			and is_equal_approx(rig.floor_y(), fy), "vr height: calibrate from a seated head (1.2 m -> +0.40 m), the floor stays")
+	rig.camera.position.y = 1.7
+	rig.step(0.1, {"move": Vector2(-1, 0)})
+	rig.step(0.1, {})
+	_check.call(is_equal_approx(rig.settings["height"], 0.4), "vr height: stick left on the calibrate row does nothing")
+	rig.step(0.1, {"move": Vector2(1, 0)})
+	rig.step(0.1, {})
+	_check.call(is_equal_approx(rig.settings["height"], -0.1) and is_equal_approx(rig.global_position.y, fy - 0.1),
+			"vr height: stick right calibrates too (standing tall: -0.10 m)")
+	rig.menu.row = _row_of("height")
+	rig.step(0.1, {"move": Vector2(1, 0)})
+	rig.step(0.1, {})
+	_check.call(is_equal_approx(rig.settings["height"], -0.05) and is_equal_approx(rig.global_position.y, fy - 0.05),
+			"vr height: the menu row moves the origin at once")
+	rig.press(rig.left, "menu_button")
+	var saved := VrSettings.load_file(TMP)
+	_check.call(is_equal_approx(saved["height"], -0.05) and not saved.has("calibrate") and not rig.settings.has("calibrate"),
+			"vr height: saved and loaded; calibrate isn't a setting")
+	rig.free()
 
 
 func _test_values() -> void:
@@ -252,4 +463,13 @@ func _test_rig(root: Node, world: WorldView) -> void:
 	rig.press(rig.right, "primary_click", Vector2(0, -0.9))
 	_check.call(rig.z == (z0 - 1 if below != null else z0), "vr layout: wand right pad click down = level down")
 	rig.settings["layout"] = "quest"
+	var leaf := Grabbable.new()
+	rig.grabs[0] = leaf
+	rig.near[1] = leaf
+	rig._lit = [leaf]
+	leaf.free()
+	rig.update_grabs(true)
+	_check.call(typeof(rig.grabs[0]) == TYPE_NIL and rig._lit.all(func(x: Variant) -> bool: return is_instance_valid(x))
+			and rig.near.all(func(x: Variant) -> bool: return typeof(x) == TYPE_NIL or is_instance_valid(x)),
+			"vr rig: a door that went away under a hand is let go")
 	rig.free()

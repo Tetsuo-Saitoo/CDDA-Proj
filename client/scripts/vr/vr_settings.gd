@@ -6,26 +6,33 @@ extends RefCounted
 
 const FILE := "user://vr.json"
 const MAX_FILE_BYTES := 4096
+## `main_hand`: the controller CDDA's main hand is on (left-handed: "left"); it points (stairs, teleport, menu)
+## and shows the wielded item; the compass is on the other wrist. `height`: metres added to the head (seated
+## play: the rig's origin stands this far over the level's floor).
 const DEFAULTS := {"move": "smooth", "move_dir": "head", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0,
 		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false,
-		"compass": "wrist"}
+		"compass": "wrist", "main_hand": "right", "height": 0.0}
 ## Key -> allowed words, or [min, max, menu step] for numbers. Bools are on/off.
 const SPEC := {
 	"move": ["smooth", "teleport"], "move_dir": ["head", "hand"], "turn": ["snap", "smooth", "off"],
 	"layout": ["auto", "quest", "vive"], "hands": ["auto", "buttons", "boxes"],
-	"compass": ["wrist", "belt", "both", "off"],
+	"compass": ["wrist", "belt", "both", "off"], "main_hand": ["right", "left"],
 	"snap_deg": [15.0, 90.0, 15.0], "turn_speed": [30.0, 360.0, 30.0], "speed": [0.5, 5.0, 0.5],
-	"vignette": [0.0, 1.0, 0.2], "blink": [], "swap_sticks": [],
+	"vignette": [0.0, 1.0, 0.2], "height": [-0.5, 1.0, 0.05], "blink": [], "swap_sticks": [],
 }
 ## Command-line option (after `--`) -> key.
 const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", "vr-snap": "snap_deg",
 		"vr-turn-speed": "turn_speed", "vr-speed": "speed", "vr-vignette": "vignette", "vr-blink": "blink",
-		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass"}
-## Menu rows: key, label.
+		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass",
+		"vr-main-hand": "main_hand", "vr-height": "height"}
+## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
+const ACTIONS := {"calibrate": "press to set from your head"}
+## Menu rows: key (a setting or an action), label.
 const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move speed"], ["turn", "Turn"],
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
-		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["layout", "Controllers"],
-		["hands", "Hands"], ["compass", "Compass"]]
+		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
+		["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"], ["height", "Height"],
+		["calibrate", "Calibrate height"]]
 
 
 ## `value` checked against SPEC: the cleaned value, or null when it isn't allowed. Strings from the command
@@ -97,6 +104,12 @@ static func save_file(s: Dictionary, path := FILE) -> bool:
 	return true
 
 
+## True for a number setting ([min, max, step] in SPEC).
+static func is_number(key: String) -> bool:
+	var spec: Array = SPEC.get(key, [])
+	return not spec.is_empty() and not spec[0] is String
+
+
 ## The next allowed value of `key` (dir +1 / -1), wrapping for words and bools, stopping at the ends for numbers.
 static func step(s: Dictionary, key: String, dir: int) -> Variant:
 	var spec: Array = SPEC[key]
@@ -109,9 +122,16 @@ static func step(s: Dictionary, key: String, dir: int) -> Variant:
 
 
 static func label(key: String, v: Variant) -> String:
+	if ACTIONS.has(key):
+		return ACTIONS[key]
 	if v is bool:
 		return "on" if v else "off"
 	match key:
+		"height":
+			var h := float(v) if v is float or v is int else 0.0
+			return "%+.2f m" % (0.0 if absf(h) < 0.005 else h)
+		"main_hand":
+			return {"right": "right", "left": "left (left-handed)"}.get(v, str(v))
 		"vignette":
 			return "off" if v <= 0.0 else "%d %%" % roundi(v * 100.0)
 		"snap_deg":
@@ -126,6 +146,6 @@ static func label(key: String, v: Variant) -> String:
 		"hands":
 			return {"auto": "finger tracking, else from buttons", "buttons": "fingers from buttons", "boxes": "simple boxes"}[v]
 		"compass":
-			return {"wrist": "on the left wrist", "belt": "belt ring (look down)", "both": "wrist and belt",
+			return {"wrist": "on the off-hand wrist", "belt": "belt ring (look down)", "both": "wrist and belt",
 					"off": "off"}[v]
 	return str(v)

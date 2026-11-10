@@ -4,7 +4,8 @@ extends Node3D
 ## turned to north (CDDA's north is -Z) with the creatures the player perceives at their bearing from the
 ## viewer: hostiles as red arrows on the rim pointing out (nearer = bigger and brighter), others as small dots
 ## inside it (green friendly, pale neutral), and a yellow tick where the head looks. Where (VrSettings
-## `compass`): "wrist" (default) on the back of the left wrist like a watch, turn the wrist to read it; "belt"
+## `compass`): "wrist" (default) on the back of the off-hand wrist like a watch (left, right when left-handed:
+## VrSettings `main_hand`), turn the wrist to read it; "belt"
 ## a ring around the waist that stays level, look down; "both"; "off". Nothing is fixed to the view (comfort).
 ## Opacity is the HUD's compass setting (HudSettings). Blips come from main.gd: Compass.creature_blips, the
 ## same list the flat strip draws. The wrist rose also sits on a box hand or a bare controller.
@@ -53,7 +54,7 @@ func set_blips(list: Array[Vector3]) -> void:
 	belt.show_blips(list)
 
 
-## Places the roses for this frame: the wrist one on the left hand (VrHand joints, else its controller), the
+## Places the roses for this frame: the wrist one on the off hand (VrHand joints, else its controller), the
 ## belt one around the waist under the head. Hidden when off, fully transparent or the hand isn't tracked.
 func place(rig: VrRig) -> void:
 	var on := opacity > 0.01
@@ -69,24 +70,30 @@ func place(rig: VrRig) -> void:
 		belt.set_heading(heading_deg)
 
 
-## Where the wrist rose goes (global), or null when the left hand is neither drawn nor tracked.
+## Where the wrist rose goes (global), or null when the off hand (left unless left-handed) is neither drawn
+## nor tracked.
 static func wrist_frame(rig: VrRig) -> Variant:
-	var h := rig.left_hand
+	var h := rig.off_hand_model()
+	var c := rig.off_ctrl()
+	if h == null or c == null:
+		return null
+	var out := -1.0 if h.left else 1.0   # the back of a hand faces out: -X for the left, +X for the right
 	var xf := rig.global_transform if rig.is_inside_tree() else rig.transform
-	if h != null and h.visible and h.joints.size() == VrHand.JOINTS:
+	if h.visible and h.joints.size() == VrHand.JOINTS:
 		var p := h.joints
 		var along := xf.basis * (p[12] - p[1])   # wrist -> middle knuckle
 		var across := xf.basis * (p[7] - p[22])  # little -> index knuckle
-		var back := across.cross(along)          # back of a left hand (VrHand mirrors the right one)
+		# across x along is the back of a left hand and the palm of a right one (VrHand mirrors the left by x)
+		var back := across.cross(along) * -out
 		if along.length() < 0.001 or back.length() < 0.000001:
 			return null
 		back = back.normalized()
 		return Transform3D(face_north(back, along), xf * p[1] + back * WRIST_LIFT - along.normalized() * 0.01)
-	var c := rig.left
-	if c != null and (c.get_is_active() or rig._boxes[0].visible):
+	var box := 0 if c == rig.left else 1
+	if c.get_is_active() or rig._boxes[box].visible:
 		var g := c.global_transform if c.is_inside_tree() else xf * c.transform
-		var back := -g.basis.x.normalized()      # the back of the left hand faces out to the left
-		return Transform3D(face_north(back, -g.basis.z), g * (VrRig.BOX_WRIST + Vector3(-WRIST_LIFT - 0.01, 0, 0)))
+		var back := g.basis.x.normalized() * out
+		return Transform3D(face_north(back, -g.basis.z), g * (VrRig.BOX_WRIST + Vector3(out * (WRIST_LIFT + 0.01), 0, 0)))
 	return null
 
 
