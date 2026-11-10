@@ -87,6 +87,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 
 	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
 	_test_viewmodel(root, tables)
+	_test_grime(root, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
 	aim.crosshair.free()
@@ -139,6 +140,112 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm._process(0.02)
 	_check.call(nan_ok and absf(vm.rotation.y) < 1e-4 and vm.position.distance_to(vm._base) < 1e-4,
 			"viewmodel: no sway without dispersion, NaN is none (%s)" % [still])
+	vm.free()
+
+
+## Gun fouling on the viewmodel: CDDA's `dirt` (0..10000) as grime on a gun's parts (grime.gdshader).
+func _test_grime(root: Node, tables: IdTables) -> void:
+	var VM := WeaponViewmodel
+	var sh: Shader = load("res://scripts/combat/grime.gdshader")
+	var names := []
+	for u: Dictionary in sh.get_shader_uniform_list() if sh != null else []:
+		names.append(u.get("name"))
+	_check.call(sh != null and sh.get_mode() == Shader.MODE_SPATIAL
+			and ["albedo", "metallic", "roughness", "specular", "grime", "half_extents"].all(func(x: String) -> bool: return x in names),
+			"grime: the shader loads as spatial with its uniforms (%s)" % [names])
+	var probe := ShaderMaterial.new()
+	probe.shader = sh
+	probe.set_shader_parameter("grime", 0.5)
+	_check.call(probe.shader == sh and probe.get_shader_parameter("grime") == 0.5, "grime: a ShaderMaterial takes it")
+
+	# parts: guns wear the shader with their plain look; bows, blades and other items keep plain materials
+	var looks := func(model: Node3D) -> Array:   # [[material, mesh], ...]
+		var out := []
+		for n: Node in model.get_children():
+			var mi := n as MeshInstance3D
+			if mi != null:
+				out.append([(mi.mesh as PrimitiveMesh).material, mi.mesh])
+		return out
+	var plain := {}   # colour -> the plain material it had (melee: metal and wood)
+	for s: String in ["melee", "bow", "item"]:
+		var model := VM.build(s, 0.7)
+		var ps: Array = looks.call(model)
+		_check.call(not ps.is_empty() and ps.all(func(x: Array) -> bool: return x[0] is StandardMaterial3D)
+				and VM.grime_materials(model).is_empty(), "grime: a %s keeps its plain materials" % s)
+		for x: Array in ps:
+			plain[(x[0] as StandardMaterial3D).albedo_color] = x[0]
+		model.free()
+	for s: String in ["pistol", "long", "launcher"]:
+		var model := VM.build(s)
+		var ps: Array = looks.call(model)
+		var same := not ps.is_empty()
+		var parts := []
+		for x: Array in ps:
+			var m := x[0] as ShaderMaterial
+			var c: Variant = m.get_shader_parameter("albedo") if m != null else null
+			var p: StandardMaterial3D = plain.get(c, VM._mat(VM.OLIVE) if c == VM.OLIVE else null)
+			same = (same and m != null and m.shader == sh and m.get_shader_parameter("grime") == 0.0 and p != null
+					and m.get_shader_parameter("metallic") == p.metallic and m.get_shader_parameter("roughness") == p.roughness
+					and m.get_shader_parameter("specular") == p.metallic_specular)
+			parts.append(c)
+		var halves: Array = ps.map(func(x: Array) -> Variant: return (x[0] as ShaderMaterial).get_shader_parameter("half_extents") if x[0] is ShaderMaterial else null)
+		_check.call(same and VM.grime_materials(model).size() == ps.size()
+				and ps.all(func(x: Array) -> bool: return ps.filter(func(y: Array) -> bool: return y[0] == x[0]).size() == 1),
+				"grime: a %s's parts each wear the shader, at 0 with the plain look (%s)" % [s, parts])
+		_check.call(halves.all(func(h: Variant) -> bool: return h is Vector3 and (h as Vector3).x > 0.0 and (h as Vector3).y > 0.0),
+				"grime: each %s part knows its half size (%s)" % [s, halves])
+		model.free()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.04, 0.06, 0.34)
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.012
+	cyl.bottom_radius = 0.012
+	cyl.height = 0.36
+	_check.call(VM._half_size(box).is_equal_approx(Vector3(0.02, 0.03, 0.17)) and VM._half_size(cyl).is_equal_approx(Vector3(0.012, 0.18, 0.012)),
+			"grime: half sizes of a box and a barrel (along y)")
+
+	# set_dirt: CDDA's stages, junk clamped, kept across rebuilds, uniforms touched only on change
+	var stages := []
+	for dd: int in [0, 2000, 4000, 6000, 8000, 10000]:
+		stages.append(VM.grime_for(dd))
+	_check.call(stages == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] and VM.grime_for(-1) == 0.0 and VM.grime_for(-99999) == 0.0
+			and VM.grime_for(99999) == 1.0 and VM.grime_for(1000) == 0.1, "grime: dirt 0..10000 maps to 0..1 (%s)" % [stages])
+	var rifle := tables.index_of("itype", "remington_870")
+	var pistol := tables.index_of("itype", "glock_19")
+	var knife := tables.index_of("itype", "knife_combat")
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	var grimes := func() -> Array:
+		return vm._grime_mats.map(func(m: ShaderMaterial) -> Variant: return m.get_shader_parameter("grime"))
+	vm.set_dirt(6000)
+	var before_gun := vm.grime == 0.6 and vm.dirt == 6000
+	vm.set_item(rifle, tables)
+	var on_rifle: Array = grimes.call()
+	_check.call(rifle > 0 and vm.shape == "long" and before_gun and on_rifle.size() == 4 and on_rifle.all(func(g: Variant) -> bool: return g == 0.6),
+			"grime: dirt set before the gun shows on it once it's held (%s)" % [on_rifle])
+	vm.set_dirt(2000)
+	var light: Array = grimes.call()
+	vm.set_item(pistol, tables)
+	var on_pistol: Array = grimes.call()
+	_check.call(light.all(func(g: Variant) -> bool: return g == 0.2) and vm.shape == "pistol" and on_pistol.size() == 2
+			and on_pistol.all(func(g: Variant) -> bool: return g == 0.2), "grime: a rebuilt gun keeps the grime (%s %s)" % [light, on_pistol])
+	vm.set_item(knife, tables)
+	_check.call(vm.shape == "melee" and vm._grime_mats.is_empty() and vm.grime == 0.2, "grime: a knife shows none, the dirt is kept")
+	vm.set_item(rifle, tables)
+	vm.set_dirt(-500)
+	var none_ok := vm.dirt == -1 and vm.grime == 0.0 and (grimes.call() as Array).all(func(g: Variant) -> bool: return g == 0.0)
+	vm.set_dirt(123456)
+	var max_ok := vm.dirt == 10000 and vm.grime == 1.0 and (grimes.call() as Array).all(func(g: Variant) -> bool: return g == 1.0)
+	vm.set_dirt(-1)
+	_check.call(none_ok and max_ok and vm.grime == 0.0, "grime: negative dirt (NON-FOULING) is clean, over 10000 is 10000")
+	vm.set_dirt(8000)
+	var m0: ShaderMaterial = vm._grime_mats[0]
+	m0.set_shader_parameter("grime", 0.123)   # a marker: set_dirt with the same value leaves it
+	vm.set_dirt(8000)
+	var kept: Variant = m0.get_shader_parameter("grime")
+	vm.set_dirt(8001)
+	_check.call(kept == 0.123 and is_equal_approx(m0.get_shader_parameter("grime"), 0.8001),
+			"grime: the uniform is set only when the dirt changes (%s)" % [kept])
 	vm.free()
 
 

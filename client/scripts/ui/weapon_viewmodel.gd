@@ -6,6 +6,7 @@ extends Node3D
 ## nothing for empty hands. Brought up while aiming (a target request in an attack mode); `kick()` recoils.
 ## `sway_arcmin` (CDDA's dispersion while aiming, 0 otherwise) makes it breathe in a slow figure eight, wider
 ## the worse the aim, capped at SWAY_ROT / SWAY_POS. Purely visual: the shot's error is CDDA's roll.
+## `set_dirt()` shows the held gun's fouling (CDDA's item var `dirt`) as grime on a gun's parts (grime.gdshader).
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
@@ -17,8 +18,17 @@ const SWAY_FULL_ARCMIN := 900.0       # this much dispersion (15 degrees) or mor
 const SWAY_ROT := 0.02618             # full sway: rotation (radians, 1.5 degrees)
 const SWAY_POS := 0.01                # full sway: offset (m)
 const SWAY_RATE := 1.5                # how fast the sway grows / settles (per second)
+const DIRT_MAX := 10000               # CDDA's most fouling; its fouling symbol steps every 2000
+const GUN_SHAPES: Array[String] = ["pistol", "long", "launcher"]   # the shapes that show grime
+const GRIME_SHADER := preload("res://scripts/combat/grime.gdshader")
+const METAL := Color(0.18, 0.18, 0.2)
+const WOOD := Color(0.4, 0.26, 0.14)
+const OLIVE := Color(0.25, 0.3, 0.2)
+const BUNDLE := Color(0.5, 0.45, 0.35)
 
 var shape := ""          # "" none, "pistol", "long", "bow", "launcher", "melee", "item"
+var dirt := -1           # the held gun's fouling as last set (0..DIRT_MAX), -1 none / NON-FOULING
+var grime := 0.0         # dirt as 0..1, on the gun's parts
 var aimed := false
 var sway_arcmin := 0.0:
 	set(v):
@@ -29,6 +39,7 @@ var _root: Node3D
 var _base := REST
 var _sway := 0.0         # 0..1, eased toward sway_arcmin / SWAY_FULL_ARCMIN
 var _sway_t := 0.0
+var _grime_mats: Array[ShaderMaterial] = []
 
 
 func _init() -> void:
@@ -71,9 +82,32 @@ func set_item(index: int, tables: IdTables) -> void:
 	if _root != null:
 		_root.queue_free()
 		_root = null
+	_grime_mats.clear()
 	if s != "":
-		_root = build(s)
+		_root = build(s, grime)
 		add_child(_root)
+		_grime_mats = grime_materials(_root)
+
+
+## The held gun's fouling: CDDA's item var `dirt`, 0..DIRT_MAX; negative = no fouling info (a NON-FOULING gun,
+## or nothing sent), shown clean. A gun's parts show it as grime: 2000 a light film, 4000 visibly dirty, 6000
+## fouled (soot starts), 8000 and up heavily caked. Kept across set_item; the parts change only when it does.
+func set_dirt(value: int) -> void:
+	var d := -1 if value < 0 else mini(value, DIRT_MAX)
+	if d == dirt:
+		return
+	dirt = d
+	var g := grime_for(d)
+	if g == grime:
+		return
+	grime = g
+	for m: ShaderMaterial in _grime_mats:
+		m.set_shader_parameter("grime", g)
+
+
+## CDDA's `dirt` (0..DIRT_MAX, negative none) as the shader's grime, 0..1.
+static func grime_for(d: int) -> float:
+	return float(clampi(d, 0, DIRT_MAX)) / DIRT_MAX
 
 
 func kick() -> void:
@@ -94,12 +128,13 @@ func _process(delta: float) -> void:
 	rotation.y = -sx * SWAY_ROT * _sway
 
 
-## The model for a shape, pointing down -z (the camera's forward).
-static func build(s: String) -> Node3D:
+## The model for a shape, pointing down -z (the camera's forward). A gun's parts wear the grime shader at
+## `grime_level` (0..1), each part its own material (the soot follows its edges); other shapes plain materials.
+static func build(s: String, grime_level := 0.0) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Model"
-	var metal := _mat(Color(0.18, 0.18, 0.2))
-	var wood := _mat(Color(0.4, 0.26, 0.14))
+	var metal := _mat(METAL)
+	var wood := _mat(WOOD)
 	match s:
 		"pistol":
 			_box(root, Vector3(0.035, 0.045, 0.2), Vector3(0, 0, -0.06), metal)
@@ -113,15 +148,57 @@ static func build(s: String) -> Node3D:
 			_box(root, Vector3(0.025, 0.7, 0.03), Vector3(-0.05, 0, -0.2), wood)
 			_cyl(root, 0.004, 0.45, Vector3(0, 0.0, -0.2), wood, true)
 		"launcher":
-			_cyl(root, 0.05, 0.6, Vector3(0, 0.02, -0.15), _mat(Color(0.25, 0.3, 0.2)))
+			_cyl(root, 0.05, 0.6, Vector3(0, 0.02, -0.15), _mat(OLIVE))
 			_box(root, Vector3(0.03, 0.09, 0.04), Vector3(0, -0.07, -0.05), metal, -0.25)
 		"melee":
 			_box(root, Vector3(0.03, 0.03, 0.12), Vector3(0, -0.04, 0.0), wood)
 			_box(root, Vector3(0.04, 0.04, 0.45), Vector3(0, 0, -0.26), metal)
 			root.rotation = Vector3(0.6, 0.2, 0)
 		_:
-			_box(root, Vector3(0.08, 0.08, 0.1), Vector3(0, -0.02, -0.05), _mat(Color(0.5, 0.45, 0.35)))
+			_box(root, Vector3(0.08, 0.08, 0.1), Vector3(0, -0.02, -0.05), _mat(BUNDLE))
+	if s in GUN_SHAPES:
+		for n: Node in root.get_children():
+			var mi := n as MeshInstance3D
+			var pm: PrimitiveMesh = mi.mesh as PrimitiveMesh if mi != null else null
+			var look: StandardMaterial3D = pm.material as StandardMaterial3D if pm != null else null
+			if look != null:
+				pm.material = grime_material(look, _half_size(pm), grime_level)
 	return root
+
+
+## The grime shader with a plain material's look (at grime 0 it renders the same), for a part of this half size.
+static func grime_material(look: StandardMaterial3D, half: Vector3, grime_level: float) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = GRIME_SHADER
+	m.set_shader_parameter("albedo", look.albedo_color)
+	m.set_shader_parameter("metallic", look.metallic)
+	m.set_shader_parameter("roughness", look.roughness)
+	m.set_shader_parameter("specular", look.metallic_specular)
+	m.set_shader_parameter("half_extents", half)
+	m.set_shader_parameter("grime", clampf(grime_level, 0.0, 1.0) if is_finite(grime_level) else 0.0)
+	return m
+
+
+## The grime materials on a built model's parts.
+static func grime_materials(root: Node3D) -> Array[ShaderMaterial]:
+	var out: Array[ShaderMaterial] = []
+	for n: Node in root.get_children():
+		var mi := n as MeshInstance3D
+		var m: ShaderMaterial = (mi.mesh as PrimitiveMesh).material as ShaderMaterial if mi != null and mi.mesh is PrimitiveMesh else null
+		if m != null and m.shader == GRIME_SHADER:
+			out.append(m)
+	return out
+
+
+## A part mesh's half size in its own space (a cylinder stands along y).
+static func _half_size(pm: PrimitiveMesh) -> Vector3:
+	if pm is BoxMesh:
+		return (pm as BoxMesh).size * 0.5
+	if pm is CylinderMesh:
+		var c := pm as CylinderMesh
+		var r := maxf(c.top_radius, c.bottom_radius)
+		return Vector3(r, c.height * 0.5, r)
+	return Vector3.ONE * 0.05
 
 
 static func _mat(c: Color) -> StandardMaterial3D:
