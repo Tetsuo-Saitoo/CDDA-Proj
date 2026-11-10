@@ -43,7 +43,9 @@ struct submap_view {              // parallel arrays, index = y * 12 + x
     std::vector<item_pile_view> items;   // tiles with vis == 2 only (cap 144)
     std::vector<field_view>     fields;  // tiles with vis == 2 only (cap 4 per tile)
 };
-struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state; };   // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
+struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state;    // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
+                        std::vector<item_handle_view> handles; };   // the first 32 items, CDDA's stack order
+struct item_handle_view { uint64 uid; uint32 type; int16 spot_x, spot_y; };   // uid 1..2^53-1 (bridge_api.md "Single items"); type = itype index; spot = where it was placed, permille of the square (x east, y south), -1 none
 struct field_view     { uint8 tile; uint32 type; uint8 intensity; uint16 age_turns; };   // type = CDDA int id
 
 struct creature_view {
@@ -74,7 +76,9 @@ struct player_view {
     int32 stamina, stamina_max;
     int16 hunger, thirst, sleepiness, pain, morale;
     uint32 wielded;
+    std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
 };
+struct carried_view { uint64 uid; uint32 type; uint64 parent; int16 pocket; uint8 flags; };   // parent = container's uid (0 on the body); pocket = index into the parent's container pockets (as queue_item_action takes it), -1 on the body; flags: 1 worn, 2 wielded, 4 held in the off hand
 
 struct environment_view {
     int64 turn_of_day_s; uint8 season; float sun_alt_deg, sun_az_deg; uint8 moon_phase;
@@ -101,7 +105,10 @@ temperature, map memory contents (the client keeps what it last saw on remembere
 ## JSON (mock data)
 
 `fp3d-headless <out.json> [z_below] [z_above]` writes a snapshot of a town with the same field names, submaps
-limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` or `[tile, count, [top4], corpse_mtype, corpse_state]`, fields as
+limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` or `[tile, count, [top4], corpse_mtype, corpse_state]`,
+item handles as a per-submap `handles` list of `[tile, uid, type, spot_x, spot_y]`, carried items as the player's
+`items` list of `[uid, type, parent, pocket, flags]` (both optional; the client checks ranges, caps, distinct uids
+and that a container comes before its contents), fields as
 `[tile, type, intensity, age]`, vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
 `ids_generation` and `ids`: the names of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`). Session tables and
 all definitions are in the id tables JSON (4th argument). Mock: `mock/snapshot_town.json` with

@@ -53,6 +53,16 @@ func _run() -> void:
 	_check(not _sim.answer({}) and not _sim.answer({"id": "1"}) and not _sim.answer({"id": 1, "picks": [[1]]}),
 			"rejects malformed answers")
 	_check(not _sim.queue_action(""), "rejects an empty action")
+	var take := {"op": "take", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)}
+	var bad_items: Array[Dictionary] = [{}, take.merged({"op": "eat"}, true), take.merged({"item": 5.0}, true),
+			take.merged({"item": 0}, true), take.merged({"item": 1 << 53}, true), take.merged({"hand": "tail"}, true),
+			take.merged({"pos": Vector3i(1 << 27, 0, 0)}, true), {"op": "take", "item": 5, "type": 3},
+			{"op": "put", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)},
+			take.merged({"op": "put", "container": 6, "container_type": 3, "pocket": 256}, true),
+			take.merged({"op": "drop", "spot": Vector2(1.5, 0)}, true),
+			take.merged({"op": "drop", "spot": Vector2(NAN, 0)}, true)]
+	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
+			"rejects malformed item actions")
 	_check_listing()
 
 	var why: String = _sim.start(data_dir, user_dir, WORLD)
@@ -70,6 +80,8 @@ func _run() -> void:
 	_check(snap.is_valid(), "live snapshot passes the client's checks (%s)" % snap.error)
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
+	_check(snap.carried.size() >= Snapshot.CARRIED_STRIDE, "carried items with handles (%d)" %
+			(snap.carried.size() / Snapshot.CARRIED_STRIDE))
 	var ids: Variant = JSON.parse_string(_sim.get_id_tables_json())
 	_check(ids is Dictionary and (ids["ter"] as Array).size() > 1000, "id tables parse, >1000 terrain")
 	var clock: Dictionary = _sim.get_clock()

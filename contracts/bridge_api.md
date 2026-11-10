@@ -23,6 +23,7 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `get_request()` | `Dictionary` | The pending UI request, `{}` if none. Fields as in `ui_requests.md`: `id`, `kind` (key, menu, popup, string, item_select, item_multi, direction, target), `context`, `title`, `text`, `entries` (Array of `{id, label, enabled, description}`), `actions` (PackedStringArray), `allow_cancel`, `max_len`, `mode`, `status`, `origin`, `cursor` (Vector3i), `range`, `allow_vertical`, `candidates` (Array of Vector3i), `timed`, `turn`, `paused`, `pause_reason`. Compare `id` to see a new one. |
 | `answer(d)` | `bool` | Answers the pending request. `d`: `id` (int, required), optional `cancel` (bool), `action` (String, ≤64 bytes), `entry` (int), `text` (String, ≤1024 bytes), `picks` (Array of `[entry id, count]`, count 0 = all, ≤4096), `pos` (Vector3i). Any field of the wrong type → `false` and nothing is sent. Strings lose control characters. A stale `id` is ignored by the sim. |
 | `queue_action(action)` / `clear_actions()` / `get_queued_actions()` | `bool` / / `int` | The action queue (`ui_requests.md`): main-loop action names (`UP`, `pause`, `LEVEL_UP`, ...), max 32. |
+| `queue_item_action(d)` | `bool` | One item by its snapshot handle, no menus (see "Single items" below). `d`: `op` ("take", "put", "drop"), `item` + `type` (uid and itype index from the snapshot, ints), `pos` (Vector3i: the square to take from or drop on, or where a put's container lies; required for take and drop), `hand` ("pack" default, "main", "off"; take only), `container` + `container_type` (put, required), `pocket` (put, -1 = CDDA's pick, else 0..255 as the snapshot gives it), `spot` (Vector2, each 0..1 across the square; drop only, optional). A missing key, a wrong type or anything out of range (uid 1..2^53−1) → `false`, nothing queued; also false when the queue is full. Shares the action queue. |
 | `get_snapshot_seq()` | `int` | seq of the newest snapshot, 0 before the first. A snapshot is taken right before every request. |
 | `get_snapshot_json(z_below, z_above)` | `String` | The newest snapshot as `snapshot.md` JSON, levels from the player's z − `z_below` to z + `z_above`. "" before the first. Treat as hostile input like any snapshot (`Snapshot.parse_text`). |
 | `get_id_tables_json()` | `String` | `id_tables.md` JSON; "" before the data has loaded. Fetch again when a snapshot's `ids_generation` changes. |
@@ -57,6 +58,20 @@ Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the s
   container's liquid goes into a vehicle tank there that takes it (refuel); a held container fills from liquid
   there (river, lake, keg, barrel, puddle); anything else is CDDA's examine of that square. A liquid fill (`ACT_FILL_LIQUID`)
   runs one turn per second of wall time in both clock modes, so it can be watched.
+- Single items (`cdda/src/fp3d/item_hands.h`, for VR hands, mouse grabbing and looting): the snapshot lists a
+  handle (uid) for the first 32 items of each seen pile and for every carried item (`snapshot.md`). The uid is
+  kept in the item var `fp3d_uid` (saves keep it; CDDA's stacking ignores it). `queue_item_action` sends one
+  action; the sim finds the item again by uid **and** itype **and** square (or that it is carried) and refuses
+  with a message (an `m_info` message event, no time spent) if it isn't there, out of reach (your square and the
+  eight around it, same z) or CDDA says no: "too big", "too heavy", "can't contain liquid", a full main hand,
+  someone else's item, a worn item ("Take off ... first"), no room on the square. It never opens a CDDA menu.
+  Take: into the inventory (CDDA's best pocket, carry limit as CDDA's pickup), the main hand (CDDA's wield; refused
+  while it holds something) or the off hand (held as `held.h`, kept as its own stack). Put: into a carried
+  container (worn, wielded, held, or nested) or one lying in reach, CDDA's pocket rules and its parents' limits.
+  Drop: on a square in reach; with `spot` the item keeps it in the item var `fp3d_spot` (permille, read back
+  strictly and shown in the snapshot) and the message says "put down"; picking it up forgets it. All take CDDA's
+  move costs (obtain + move cost). A stack counted by charges (ammo, rocks) moves as a whole; put into a pocket it
+  can merge with the same thing and take that stack's uid.
 - CDDA's debug message prompts and "press any key" screens come as `key` requests with context `RAW_KEY` and no
   actions; answer `action: " "`. The message itself is in `debug.log`.
 - CDDA's window still exists, hidden, with SDL's software renderer (B2 tech debt); it is created and destroyed
