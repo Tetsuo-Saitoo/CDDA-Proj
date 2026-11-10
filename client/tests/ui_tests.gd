@@ -253,7 +253,17 @@ func _test_popup() -> void:
 	_show(req)
 	var w := ui.widget as PopupRequestWidget
 	_check.call(w.buttons.size() == 2 and w.buttons[0].text.ends_with("Yes"), "one button per action")
-	_key(KEY_N)
+	var n := InputEventKey.new()
+	n.keycode = KEY_N
+	n.physical_keycode = KEY_N
+	n.pressed = true
+	var menu_open := [true]   # lambdas capture locals by value: an array they share
+	ui.held = func() -> bool: return menu_open[0]
+	ui._input(n)   # typing "n" in the F1 menu's item field
+	_check.call(answers.is_empty() and ui.visible, "a key while the F1 menu holds the keys doesn't answer the prompt")
+	menu_open[0] = false
+	ui._input(n)
+	ui.held = Callable()
 	_expect({"id": 7, "action": "NO"}, "N answers NO")
 	_show(req)
 	_key(KEY_RIGHT)

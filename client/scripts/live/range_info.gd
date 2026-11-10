@@ -40,22 +40,28 @@ static func clean(d: Variant) -> Dictionary:
 	var zv: Variant = src.get("zone", -1)
 	if _whole(zv) and int(zv) >= 0 and int(zv) < zones.size():
 		zone = int(zv)
-	var results: Array = []
-	var rs: Variant = src.get("results", [])
-	if rs is Array:
-		for r: Variant in (rs as Array).slice(-MAX_RESULTS):
-			if not r is Dictionary or not _whole((r as Dictionary).get("id")):
-				continue
-			var rid := int((r as Dictionary)["id"])
-			if rid < 1 or rid > MAX_OP_ID:
-				continue
-			var err: Variant = (r as Dictionary).get("error", "")
-			var text := HudData.clean(err, MAX_ERROR) if err is String else "refused"
-			if err is String and not (err as String).is_empty() and text.is_empty():
-				text = "refused"   # an error made only of tags or control characters still is one
-			results.append({"id": rid, "error": text})
 	return {"range": _flag(src, "range"), "ai_frozen": _flag(src, "ai_frozen"), "zone": zone, "zones": zones,
-			"results": results}
+			"results": results(src)}
+
+
+## Only the results of get_range_info `d` (the last MAX_RESULTS), cleaned: [{id, error}].
+static func results(d: Variant) -> Array:
+	var out: Array = []
+	var rs: Variant = (d as Dictionary).get("results", []) if d is Dictionary else []
+	if not rs is Array:
+		return out
+	for r: Variant in (rs as Array).slice(-MAX_RESULTS):
+		if not r is Dictionary or not _whole((r as Dictionary).get("id")):
+			continue
+		var rid := int((r as Dictionary)["id"])
+		if rid < 1 or rid > MAX_OP_ID:
+			continue
+		var err: Variant = (r as Dictionary).get("error", "")
+		var text := HudData.clean(err, MAX_ERROR) if err is String else "refused"
+		if err is String and not (err as String).is_empty() and text.is_empty():
+			text = "refused"   # an error made only of tags or control characters still is one
+		out.append({"id": rid, "error": text})
+	return out
 
 
 ## A CDDA monster id range_spawn_monster takes: 1..64 of a-z A-Z 0-9 _ -.

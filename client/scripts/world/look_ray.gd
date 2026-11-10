@@ -30,7 +30,9 @@ func _init(w: WorldView) -> void:
 ## {hit: bool, square: Vector3i, point: Vector3, what: "wall" / "door" / "furniture" / "stairs" / "ramp" / "floor" /
 ## "ceiling"}.
 ## `creatures` false: only the map (BulletPhysics tests the figures itself).
-func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true) -> Dictionary:
+## `skip_start` false: the square the ray starts in counts too (top-view picks start at eye height, possibly in
+## the very square clicked); true skips it (the eye's own square: your furniture and stairs).
+func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true, skip_start := true) -> Dictionary:
 	if world.snapshot == null or dir.length() < 0.001:
 		return {"hit": false}
 	dir = dir.normalized()
@@ -48,7 +50,7 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true) -> D
 		if p.z > prev.z and _has_floor(p):
 			return _hit(p, pt, "ceiling")
 		prev = p
-		if p == start:
+		if skip_start and p == start:
 			continue
 		var c := _cell(p)
 		if c.is_empty():

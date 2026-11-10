@@ -106,8 +106,15 @@ func _test_reach_from_eyes() -> void:
 	var o := Vector3(0, 5, 5)
 	var d := Vector3(0, -1, -1).normalized()
 	var e := Vector3(0, 1.6, 1.6)
-	var moved := GrabController.from_eyes(o, d, e)
-	_check.call(_near(moved, e) and _near(GrabController.from_eyes(o, d, null), o)
-			and _near(GrabController.from_eyes(o, d, Vector3(0, 9, 9)), o)
-			and _near(GrabController.from_eyes(o, d, Vector3(NAN, 0, 0)), o),
-			"views: reach starts where the ray passes the eyes (never behind the camera; none: the camera)")
+	var moved := ViewCamera.ray_start("shoulder", o, d, e)
+	_check.call(_near(moved, e) and _near(ViewCamera.ray_start("shoulder", o, d, null), o)
+			and _near(ViewCamera.ray_start("shoulder", o, d, Vector3(0, 9, 9)), o)
+			and _near(ViewCamera.ray_start("shoulder", o, d, Vector3(NAN, 0, 0)), o)
+			and _near(ViewCamera.ray_start("first", o, d, e), o),
+			"views: over the shoulder picks start where the ray passes the eyes (never behind the camera; none: the camera)")
+	# top-down: a click behind the player passes the eyes' point only underground; the ray starts at eye height
+	var top := ViewCamera.ray_start("top", Vector3(0, 14, 10), Vector3(0, -1, -0.2).normalized(), Vector3(0, 1.6, 0))
+	_check.call(is_equal_approx(top.y, 1.6) and top.z > 7.0 and _near(ViewCamera.ray_start("top", o, Vector3.UP, e), o),
+			"views: top-down picks start where the ray comes down to the eyes' height (%s)" % top)
+	_check.call(_near(ViewCamera.facing(0.0), Vector3.FORWARD) and _near(ViewCamera.facing(PI / 2), Vector3.LEFT),
+			"views: the facing follows the yaw (0 north, pi/2 west)")

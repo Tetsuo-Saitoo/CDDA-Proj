@@ -87,6 +87,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(corpse.shape == "item_corpse" and corpse.scale >= 0.9,
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
+	_test_views(world, me, zp, ui, aim, cam, req)
 	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
@@ -547,6 +548,43 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 			"explosions: a boom per kind and size, made once (flashbang shorter)")
 	ev.flash_rect.free()
 	ev.free()
+
+
+## C9 views: over the shoulder the pick still finds what's under the crosshair but the bullet leaves the eyes;
+## top-down (the screen centre is the player) mouse-look aiming follows the facing, a click picks what's under the
+## mouse, and no crosshair shows.
+func _test_views(world: WorldView, me: Vector3i, zp: Vector3i, ui: RequestUI, aim: AimController, cam: Camera3D,
+		req: Dictionary) -> void:
+	var keep := cam.global_transform
+	var eye := world.coords.ms_center_to_world(me) + Vector3(0, 1.5, 0)
+	var east := world.coords.ms_center_to_world(zp) + Vector3(0, 1.2, 0)
+	var facing := ((east - eye) * Vector3(1, 0, 1)).normalized()
+	var mode := ["shoulder"]
+	aim.view = func() -> Dictionary: return {"mode": mode[0], "eye": eye, "facing": facing}
+	aim.first_person = true
+	ui.show_request(req)
+	cam.global_position = eye - facing * ViewCamera.SHOULDER_BACK + Vector3(0, ViewCamera.SHOULDER_UP, 0) \
+			+ facing.cross(Vector3.UP) * ViewCamera.SHOULDER_RIGHT
+	cam.look_at(east)
+	var centre := cam.get_viewport().get_visible_rect().size / 2.0
+	var line := aim.shot_line(cam, centre, true)
+	_check.call(aim.pick(cam, centre, true) == zp and (line[0] as Vector3).is_equal_approx(eye)
+			and (line[1] as Vector3).dot((east - eye).normalized()) > 0.98,
+			"aim views: over the shoulder the crosshair picks the zombie, the bullet leaves the eyes towards it")
+	mode[0] = "top"
+	cam.global_position = eye - facing * 8.0 + Vector3(0, 12, 0)
+	cam.look_at(eye - Vector3(0, 0.8, 0))
+	var top_line := aim.shot_line(cam, centre, true)
+	_check.call(aim.pick(cam, centre, true) == zp and (top_line[0] as Vector3).is_equal_approx(eye)
+			and (top_line[1] as Vector3).is_equal_approx(facing),
+			"aim views: top-down, mouse-look aims along the facing, not at the player under the screen centre")
+	var at_zombie := cam.unproject_position(east)
+	_check.call(aim.pick(cam, at_zombie) == zp, "aim views: top-down, a click on the zombie picks it")
+	aim.update(cam, false)
+	_check.call(not aim.crosshair.visible, "aim views: no crosshair top-down")
+	ui.clear()
+	aim.view = Callable()
+	cam.global_transform = keep
 
 
 func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i, zp: Vector3i, ui: RequestUI,

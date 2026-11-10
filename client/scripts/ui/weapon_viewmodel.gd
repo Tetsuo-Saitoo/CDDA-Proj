@@ -136,9 +136,12 @@ static func jam_of(faults: Array) -> String:
 	return ""
 
 
-## The label for a jam: what jammed and how to clear it; "" for none.
+## The label for a jam: what jammed and how to clear it (the reload key as bound now); "" for none.
 static func jam_hint(id: String) -> String:
-	return "%s: R to clear" % JAMS[id] if JAMS.has(id) else ""
+	if not JAMS.has(id):
+		return ""
+	var k := InputActions.key_of(&"cdda_reload")
+	return "%s: %s to clear" % [JAMS[id], k if k != "-" else "reload"]
 
 
 func _pose_jam() -> void:

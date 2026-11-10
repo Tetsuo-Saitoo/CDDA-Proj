@@ -6,7 +6,8 @@ extends Node3D
 ##   FPS: the square under the crosshair becomes the cursor as you turn (attack modes only), and `aim_fire`
 ##   (LMB / F) shoots at it;
 ## - with a free mouse, `aim_fire` on a creature or square picks it, a second click on the same square shoots.
-## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors). Answers go through
+## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors); in the shoulder and top
+## views it starts in front of the player and bullets fly from the eyes (`view`). Answers go through
 ## TargetRequestWidget (pos + FIRE etc.), so CDDA still checks range, line of fire and ammo.
 ## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera; `fired` kicks it.
 ## Guns (fire mode with a wielded gun): the client flies the bullet (BulletPhysics: speed, drag, drop, sights
@@ -48,6 +49,11 @@ var _marker: MeshInstance3D
 var creature_view: CreatureView   # bullets hit its figures; null = CDDA rolls the shot as before
 var wielded_gun := Callable()     # -> IdTables.Def of the wielded gun, or null (main.gd)
 var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or {}; shot requests fly from it
+## () -> Dictionary: the eyes when the shown camera is away from them (C9 shoulder and top views,
+## main.eyes_view: {mode, eye, facing}); {} otherwise. Picks then start in front of the player
+## (ViewCamera.ray_start), bullets fly from the eyes to what the pick meets, and in the top view, where the
+## screen centre is the player, mouse-look aiming follows the facing (no crosshair).
+var view := Callable()
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
 var dispersion := 0.0             # arcmin, from the last target request (0 = none / old bridge)
@@ -72,12 +78,54 @@ func _init(w: WorldView, ui: RequestUI) -> void:
 	hits.hit_confirmed.connect(_on_hit)
 
 
-## The square a ray through screen point `pos` of camera `cam` meets, or null.
-func pick(cam: Camera3D, pos: Vector2) -> Variant:
+## The square a ray through screen point `pos` of camera `cam` meets, or null. `captured`: mouse-look aiming
+## (the top view then follows the eyes' facing).
+func pick(cam: Camera3D, pos: Vector2, captured := false) -> Variant:
 	if cam == null or world.snapshot == null:
 		return null
-	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	var line := pick_line(cam, pos, captured)
+	var r := look_ray.cast(line[0], line[1], LookRay.MAX_M, true, line[2])
 	return r["square"] if r["hit"] else null
+
+
+func _view() -> Dictionary:
+	var v: Variant = view.call() if view.is_valid() else {}
+	return v if v is Dictionary else {}
+
+
+func _top() -> bool:
+	return _view().get("mode", "") == "top"
+
+
+## [origin, unit direction, skip_start (LookRay.cast)] of a pick through screen point `at` of `cam` (see `view`).
+## Top-down camera rays start at eye height, maybe in the very square clicked: that square counts.
+func pick_line(cam: Camera3D, at: Vector2, captured := false) -> Array:
+	var v := _view()
+	var mode := str(v.get("mode", ""))
+	var eye: Variant = v.get("eye")
+	var f: Variant = v.get("facing")
+	if captured and mode == "top" and eye is Vector3 and f is Vector3 and (eye as Vector3).is_finite() \
+			and (f as Vector3).is_finite() and (f as Vector3).length_squared() > 1e-6:
+		return [eye, (f as Vector3).normalized(), true]
+	var d := cam.project_ray_normal(at)
+	var o := cam.project_ray_origin(at)
+	var s := ViewCamera.ray_start(mode, o, d, eye)
+	return [s, d, not (mode == "top" and s != o)]
+
+
+## [origin, sight] of a client-flown bullet through screen point `at`: the pick line in first person; with the
+## camera away from the eyes, from the eyes to what the pick line meets.
+func shot_line(cam: Camera3D, at: Vector2, captured := false) -> Array:
+	var line := pick_line(cam, at, captured)
+	var eye: Variant = _view().get("eye")
+	if not eye is Vector3 or not (eye as Vector3).is_finite():
+		return line
+	var o: Vector3 = line[0]
+	var d: Vector3 = line[1]
+	var r := look_ray.cast(o, d, LookRay.MAX_M, true, line[2])
+	var p: Vector3 = r["point"] if r["hit"] else o + d * LookRay.MAX_M
+	var sight := p - (eye as Vector3)
+	return [eye, sight.normalized() if sight.length_squared() > 1e-4 else d, true]
 
 
 ## Where the crosshair (or the mouse) points: the screen centre while the mouse is captured.
@@ -89,7 +137,7 @@ func aim_point(cam: Camera3D, mouse: Vector2, captured: bool) -> Vector2:
 func update(cam: Camera3D, captured: bool) -> void:
 	var t := request_ui.target_widget()
 	crosshair.show_cross = t != null
-	crosshair.visible = first_person and (t != null or crosshair.marking())
+	crosshair.visible = first_person and not _top() and (t != null or crosshair.marking())
 	crosshair.aiming = captured
 	shown_dispersion = dispersion if t != null and t.mode == "fire" else 0.0
 	var spread := 0.0
@@ -103,7 +151,7 @@ func update(cam: Camera3D, captured: bool) -> void:
 		_marker.visible = false
 		return
 	if first_person and captured and TargetRequestWidget.is_attack_mode(t.mode):
-		var sq: Variant = pick(cam, aim_point(cam, Vector2.ZERO, true))
+		var sq: Variant = pick(cam, aim_point(cam, Vector2.ZERO, true), true)
 		if sq != null and sq != t.cursor:
 			request_ui.set_target_cursor(sq)
 	_place_marker(t.cursor)
@@ -129,11 +177,12 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 	if t == null:
 		return false
 	var at := aim_point(cam, mouse, captured)
-	var sq: Variant = pick(cam, at)
+	var sq: Variant = pick(cam, at, captured)
 	if captured or (sq != null and sq == t.cursor) or sq == null:
 		if sq != null:
 			request_ui.set_target_cursor(sq)
-		if not _fire_flown(t, cam.project_ray_origin(at), cam.project_ray_normal(at)):
+		var line := shot_line(cam, at, captured)
+		if not _fire_flown(t, line[0], line[1]):
 			if TargetRequestWidget.is_attack_mode(t.mode):
 				fired.emit()
 				shot_aim = {}   # a new trigger pull replaces the kept aim
@@ -177,9 +226,10 @@ func _fire_flown(t: TargetRequestWidget, origin: Vector3, sight: Vector3) -> boo
 	return true
 
 
-## Flies a bullet through screen point `at` of `cam` (see fly_from).
+## Flies a bullet through screen point `at` of `cam` (see fly_from and shot_line).
 func fly_shot(cam: Camera3D, at: Vector2, ammo: String) -> Dictionary:
-	return fly_from(cam.project_ray_origin(at), cam.project_ray_normal(at), ammo)
+	var line := shot_line(cam, at)
+	return fly_from(line[0], line[1], ammo)
 
 
 ## Flies a bullet from world point `origin` with sights along `sight` (the bore is zeroed from it), e.g. the

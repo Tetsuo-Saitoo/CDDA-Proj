@@ -23,9 +23,9 @@ var world: WorldView
 var look_ray: LookRay
 var icon: GrabIcon
 var reach: Callable          # () -> Variant: the square you reach from (Vector3i), or null
-## () -> Variant: where the player's eyes are (Vector3) when the camera is away from them (over the shoulder,
-## top-down), else null. Reach and carrying then count from the eyes, not from the camera.
-var eyes := Callable()
+## () -> Dictionary: the eyes when the shown camera is away from them (main.eyes_view: {mode, eye, facing});
+## {} otherwise. Reach and carrying then count from in front of the player, not from the camera.
+var view := Callable()
 var grabbed: Grabbable
 var hover: Grabbable
 var ask := {}                # {word, pos, until}: the door prompt a queued open / close will bring
@@ -72,25 +72,24 @@ func pick(cam: Camera3D, pt: Vector2, max_m := LookRay.MAX_M) -> Array:
 	var ray := ray_from(cam, pt)
 	var o: Vector3 = ray[0]
 	var d: Vector3 = ray[1]
-	var r := look_ray.cast(o, d, max_m)
+	var r := look_ray.cast(o, d, max_m, true, ray[2])
 	var limit := max_m
 	if r["hit"]:   # nothing behind the first wall; a closed door's leaf stands inside its square
 		limit = o.distance_to(r["point"]) + (1.5 if r["what"] == "door" else 0.3)
 	return world.grabbable_on_ray(o, d, centre, limit)
 
 
-## [origin, direction] of the pointer's ray. With `eyes` set the origin moves along the ray to where it passes
-## closest to the eyes (never back towards the camera), so hover and carry distances count from the player.
+## [origin, direction, skip_start (LookRay.cast)] of the pointer's ray. With `view` set the origin moves along the
+## ray to in front of the player (ViewCamera.ray_start), so hover and carry distances count from the player; a
+## top-down ray then starts at eye height, maybe in the very square pointed at, which counts.
 func ray_from(cam: Camera3D, pt: Vector2) -> Array:
 	var d := cam.project_ray_normal(pt)
-	return [from_eyes(cam.project_ray_origin(pt), d, eyes.call() if eyes.is_valid() else null), d]
-
-
-## Ray origin `o` (direction `d`, unit) moved forward to where the ray passes closest to `e` (a Vector3), else o.
-static func from_eyes(o: Vector3, d: Vector3, e: Variant) -> Vector3:
-	if not e is Vector3 or not (e as Vector3).is_finite():
-		return o
-	return o + d * maxf((e as Vector3 - o).dot(d), 0.0)
+	var o := cam.project_ray_origin(pt)
+	var v: Variant = view.call() if view.is_valid() else {}
+	var vd: Dictionary = v if v is Dictionary else {}
+	var mode := str(vd.get("mode", ""))
+	var s := ViewCamera.ray_start(mode, o, d, vd.get("eye"))
+	return [s, d, not (mode == "top" and s != o)]
 
 
 ## A short line under the pointer for a while (a refusal's reason in red).
