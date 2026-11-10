@@ -12,13 +12,15 @@ the user talks to.
 - Merges finished lead branches and pushes them: the fork's `fp3d` first, then root `main` with the `cdda`
   pointer. It runs the tests on the merged result before pushing and tells the user afterwards (the user
   allowed merging and pushing freely, 2026-11-09).
+- After every `fp3d` merge, rebuilds `fp3d-cdda` in the main checkout. The user's desktop shortcuts ("CDDA 3D"
+  and "CDDA 3D (VR)") run that checkout's client with `--live`, so its `client/bin` DLL must be current.
 - Fixes merge conflicts in shared files and archives sessions that are done.
 
 ## Leads
 
 | Lead | Blocks (PLAN.md) | Owns | Starts with |
 |---|---|---|---|
-| Bridge and fork | B, D (sim side), J | `cdda/src/fp3d/**`, FP3D hooks in `cdda/src/*`, `bridge/**`, `contracts/bridge_api.md`, `contracts/ui_requests.md`, snapshot format | single-item handles and actions (L8/E6 base), recipe matching for L9, weak point hook for combat |
+| Bridge and fork | B, D (sim side), J | `cdda/src/fp3d/**`, FP3D hooks in `cdda/src/*`, `bridge/**`, `contracts/bridge_api.md`, `contracts/ui_requests.md`, snapshot format | recipe matching and heat sources for L9, gun dirt for fouling, weak point ids for combat, vehicle cargo items |
 | World and models | C, H, I | `client/scripts/world/**`, `client/scripts/camera/**`, `assets/**`, `contracts/assets.md`, `docs/MODELS.md`, `tools/coverage/` | model loading follow-ups, Seglectic's models, creatures and bodies, z-levels |
 | Interaction and UI | E, G | `client/scripts/ui/**` (except combat files), `client/scripts/input/**`, `client/scripts/live/**` | E6 hands for mouse and keyboard, prompts, menus, HUD |
 | VR | L | `client/scripts/vr/**` | L2 hands, L8 containers and L9 cooking in VR, headset fixes from the VR tester |
