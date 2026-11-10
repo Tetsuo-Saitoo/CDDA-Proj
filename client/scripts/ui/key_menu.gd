@@ -4,6 +4,7 @@ extends PanelContainer
 ## button (modifiers count: Shift+E is its own key; a modifier alone binds when let go); click the pad slot,
 ## then press a pad button or push a stick / trigger one way. Esc cancels, Backspace clears the slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
 ## kept on both and named in the status line. While open the menu takes every key, so nothing reaches the game.
+## With a pad: the D-pad or left stick picks a slot (highlighted), A starts setting it, B / Back / Start close.
 ## With add_hud_settings() it also has the HUD row (compass opacity slider, the debug-cheats switch), saved in
 ## user://hud.cfg. With add_cheat_page() a "Cheats" button swaps the key list for the CheatPanel; it shows only
 ## while cheats are allowed (the debug switch, or cheats_forced by --test / --cheats).
@@ -12,11 +13,13 @@ signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
 
 const SLOTS := 2
-const PAD_SLOT := SLOTS   # slot index of the pad column (one pad binding shown; more show as +N)
+const PAD_SLOTS := 2
+const PAD_SLOT := SLOTS   # slot index of the first pad column (more bindings than columns show as +N)
+const LAST_SLOT := SLOTS + PAD_SLOTS - 1
 const WARN := Color(1.0, 0.75, 0.3)
 
 var save_path := InputActions.FILE
-var _buttons := {}            # action -> [key Button, key Button, pad Button]
+var _buttons := {}            # action -> [key Button, key Button, pad Button, pad Button]
 var _status: Label
 var _capture: Array = []      # [action, slot] while waiting for a key
 var _pending_mod := KEY_NONE  # a modifier pressed while capturing, bound alone if let go first
@@ -36,8 +39,12 @@ var cheats_forced := false:
 			_update_cheats_button()
 var _title: Label
 var _scroll: ScrollContainer
+## The slot picked with the pad: (row in InputActions.ACTIONS, slot); row -1 = none picked yet.
+var cursor := Vector2i(-1, PAD_SLOT)
+var _axis_held := {}   # stick axis -> -1 / 0 / 1 as last pushed: one step per push
+const PICKED := Color(1.0, 0.8, 0.35)
 const KEYS_TITLE := ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
-		+ "Esc cancels  Backspace clears  F1 / Esc closes")
+		+ "Esc cancels  Backspace clears  F1 / Esc closes.  Pad: D-pad picks, A sets, B closes")
 
 
 func _init() -> void:
@@ -64,7 +71,7 @@ func _init() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	var grid := GridContainer.new()
-	grid.columns = 2 + SLOTS
+	grid.columns = 1 + SLOTS + PAD_SLOTS
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(grid)
 	var group := ""
@@ -73,7 +80,7 @@ func _init() -> void:
 			group = a[1]
 			for i in grid.columns:
 				var h := Label.new()
-				h.text = group if i == 0 else ("pad" if i == grid.columns - 1 else "")
+				h.text = group if i == 0 else ("pad" if i == 1 + SLOTS else "")
 				h.add_theme_color_override("font_color", WARN)
 				grid.add_child(h)
 		var l := Label.new()
@@ -81,9 +88,9 @@ func _init() -> void:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		grid.add_child(l)
 		var row: Array[Button] = []
-		for s in SLOTS + 1:
+		for s in SLOTS + PAD_SLOTS:
 			var b := Button.new()
-			b.custom_minimum_size = Vector2(140, 0)
+			b.custom_minimum_size = Vector2(140 if s < SLOTS else 110, 0)
 			b.focus_mode = Control.FOCUS_NONE
 			b.pressed.connect(start_capture.bind(a[0], s))
 			grid.add_child(b)
@@ -212,6 +219,7 @@ func open() -> void:
 		_update_cheats_button()
 		show_cheats(false)
 	_capture = []
+	_axis_held.clear()
 	_status.text = "Saved in %s" % ProjectSettings.globalize_path(save_path)
 	refresh()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -232,10 +240,69 @@ func refresh() -> void:
 			if s == SLOTS - 1 and keys.size() > SLOTS:
 				b.text += " +%d" % (keys.size() - SLOTS)
 		var pads := InputActions.pad_slots(a)
-		var p: Button = _buttons[a][PAD_SLOT]
-		p.text = InputActions.event_label(pads[0]) if not pads.is_empty() else "-"
-		if pads.size() > 1:
-			p.text += " +%d" % (pads.size() - 1)
+		for s in PAD_SLOTS:
+			var p: Button = _buttons[a][PAD_SLOT + s]
+			p.text = InputActions.event_label(pads[s]) if s < pads.size() else "-"
+			if s == PAD_SLOTS - 1 and pads.size() > PAD_SLOTS:
+				p.text += " +%d" % (pads.size() - PAD_SLOTS)
+	_show_cursor()
+
+
+## Highlights the slot picked with the pad and scrolls it into view.
+func _show_cursor() -> void:
+	var picked: Button = null
+	if cursor.x >= 0 and cursor.x < InputActions.ACTIONS.size():
+		picked = (_buttons[InputActions.ACTIONS[cursor.x][0]] as Array)[cursor.y]
+	for a: StringName in _buttons:
+		for b: Button in _buttons[a]:
+			b.modulate = PICKED if b == picked else Color.WHITE
+	if picked != null and _scroll.is_inside_tree():
+		_scroll.ensure_control_visible(picked)
+
+
+## Moves the pad's pick by `step` (x = slot, y = row); the first move picks the first row's pad slot.
+func move_cursor(step: Vector2i) -> void:
+	if cursor.x < 0:
+		cursor = Vector2i(0, PAD_SLOT)
+	else:
+		cursor = Vector2i(clampi(cursor.x + step.y, 0, InputActions.ACTIONS.size() - 1), clampi(cursor.y + step.x, 0, LAST_SLOT))
+	_show_cursor()
+
+
+## A pad event while nothing is being set: D-pad / left stick move the pick, A sets the picked slot, B / Back /
+## Start close. On the Cheats page only closing works. Always used (nothing reaches the game).
+func _pad_nav(event: InputEvent) -> bool:
+	var step := Vector2i.ZERO
+	var b := event as InputEventJoypadButton
+	if b != null:
+		if not b.pressed:
+			return true
+		match b.button_index:
+			JOY_BUTTON_B, JOY_BUTTON_BACK, JOY_BUTTON_START:
+				close()
+				return true
+			JOY_BUTTON_A:
+				if cursor.x >= 0 and not showing_cheats():
+					start_capture(InputActions.ACTIONS[cursor.x][0], cursor.y)
+				return true
+			JOY_BUTTON_DPAD_UP:
+				step = Vector2i(0, -1)
+			JOY_BUTTON_DPAD_DOWN:
+				step = Vector2i(0, 1)
+			JOY_BUTTON_DPAD_LEFT:
+				step = Vector2i(-1, 0)
+			JOY_BUTTON_DPAD_RIGHT:
+				step = Vector2i(1, 0)
+	var m := event as InputEventJoypadMotion
+	if m != null and m.axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y]:
+		var v := m.axis_value
+		var sgn := 0 if not absf(v) >= InputActions.PAD_PUSH else (1 if v > 0.0 else -1)   # NaN: 0
+		if _axis_held.get(m.axis, 0) != sgn:
+			_axis_held[m.axis] = sgn
+			step = Vector2i(sgn, 0) if m.axis == JOY_AXIS_LEFT_X else Vector2i(0, sgn)
+	if step != Vector2i.ZERO and not showing_cheats():
+		move_cursor(step)
+	return true
 
 
 func start_capture(action: StringName, slot: int) -> void:
@@ -243,6 +310,9 @@ func start_capture(action: StringName, slot: int) -> void:
 		return
 	_capture = [action, slot]
 	_pending_mod = KEY_NONE
+	for i in InputActions.ACTIONS.size():   # a clicked slot is the pad's pick too
+		if InputActions.ACTIONS[i][0] == action:
+			cursor = Vector2i(i, clampi(slot, 0, LAST_SLOT))
 	refresh()
 	(_buttons[action][slot] as Button).text = "press a key..." if slot < SLOTS else "press a pad button..."
 	_status.text = "Press %s for \"%s\". Esc cancels, Backspace clears." % [
@@ -255,10 +325,23 @@ func reset_all() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if visible and (event is InputEventKey or (not _capture.is_empty() and (event is InputEventMouseButton
-			or InputActions.is_pad(event)))):
+	if visible and (event is InputEventKey or InputActions.is_pad(event)
+			or (not _capture.is_empty() and event is InputEventMouseButton)):
+		if _typing(event):
+			return   # a text field on the cheats page gets its keys
 		take(event)
 		get_viewport().set_input_as_handled()
+
+
+## A key for a focused text field on the cheats page (the range's item and monster ids); Esc and F1 still close.
+func _typing(event: InputEvent) -> bool:
+	var k := event as InputEventKey
+	if k == null or not _capture.is_empty() or cheat_page == null or not cheat_page.visible \
+			or k.physical_keycode in [KEY_ESCAPE, InputActions.MENU_KEY]:
+		return false
+	var vp := get_viewport()
+	var f: Control = vp.gui_get_focus_owner() if vp != null else null
+	return f is LineEdit and cheat_page.is_ancestor_of(f)
 
 
 ## One input event while the menu is open (separate from _input so tests can feed it). True if it was used.
@@ -268,6 +351,8 @@ func take(event: InputEvent) -> bool:
 		if k != null and k.pressed and not k.echo and k.physical_keycode in [KEY_ESCAPE, InputActions.MENU_KEY]:
 			close()
 			return true
+		if InputActions.is_pad(event):
+			return _pad_nav(event)
 		return false
 	var pad: bool = _capture[1] >= SLOTS
 	if InputActions.is_pad(event):   # pad presses only go in the pad column

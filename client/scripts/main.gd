@@ -404,6 +404,17 @@ func _start_live() -> void:
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
 	cheat_panel.backend = live
+	live.range_changed.connect(cheat_panel.on_range_changed)
+	live.range_done.connect(cheat_panel.on_range_done)
+	live.id_tables_ready.connect(func(t: IdTables) -> void: cheat_panel.tables = t)
+	cheat_panel.player_square = func() -> Variant:
+		return world.snapshot.player_pos if world.snapshot != null else null
+	# monsters spawn two squares ahead of where the camera looks
+	cheat_panel.ahead_square = func() -> Variant:
+		if world.snapshot == null:
+			return null
+		var s := _screen_step(Vector2(0, 1)) * 2
+		return world.snapshot.player_pos + Vector3i(s.x, s.y, 0)
 	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
