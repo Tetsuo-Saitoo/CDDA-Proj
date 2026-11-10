@@ -239,8 +239,8 @@ func _test_cdda_keys() -> void:
 	var seen := {}
 	var clash := PackedStringArray()
 	for a: Array in InputActions.ACTIONS:
-		if a[0] in [&"fly_up", &"fly_down", &"move_fast"]:
-			continue   # outside view only (E/Q also fly there: TASKS leftover)
+		if a[0] == &"move_fast":
+			continue   # outside view only
 		for t: String in a[3]:
 			if seen.has(t):
 				clash.append("%s: %s and %s" % [t, seen[t], a[0]])
