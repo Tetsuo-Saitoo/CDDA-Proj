@@ -181,6 +181,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "stop" ), &CddaSim::stop );
     ClassDB::bind_method( D_METHOD( "get_state" ), &CddaSim::get_state );
     ClassDB::bind_method( D_METHOD( "get_error" ), &CddaSim::get_error );
+    ClassDB::bind_method( D_METHOD( "get_boot_info" ), &CddaSim::get_boot_info );
     ClassDB::bind_method( D_METHOD( "get_request" ), &CddaSim::get_request );
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
@@ -210,6 +211,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "range_spawn_item", "itype", "count", "pos" ), &CddaSim::range_spawn_item );
     ClassDB::bind_method( D_METHOD( "range_spawn_monster", "id", "pos" ), &CddaSim::range_spawn_monster );
     ClassDB::bind_method( D_METHOD( "range_teleport", "zone" ), &CddaSim::range_teleport );
+    ClassDB::bind_method( D_METHOD( "range_rebuild_zone", "zone" ), &CddaSim::range_rebuild_zone );
     ClassDB::bind_method( D_METHOD( "range_set_time", "minute" ), &CddaSim::range_set_time );
     ClassDB::bind_method( D_METHOD( "range_advance", "minutes" ), &CddaSim::range_advance );
     ClassDB::bind_method( D_METHOD( "range_set_ai_frozen", "on" ), &CddaSim::range_set_ai_frozen );
@@ -308,6 +310,18 @@ String CddaSim::get_state() const
 String CddaSim::get_error() const
 {
     return to_godot( fp3d_session::error() );
+}
+
+Dictionary CddaSim::get_boot_info() const
+{
+    const fp3d::boot_progress p = fp3d::latest_boot_progress();
+    Dictionary d;
+    d["phase"] = to_godot( p.phase );
+    d["seconds"] = p.seconds;
+    d["phase_seconds"] = p.phase_seconds;
+    d["errors"] = static_cast<int64_t>( std::min<uint64_t>( p.errors, INT64_MAX ) );
+    d["last_error"] = to_godot( p.last_error );
+    return d;
 }
 
 Dictionary CddaSim::get_request() const
@@ -477,6 +491,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::reload;
     } else if( op == "clear" ) {
         a.op = fp3d::item_op::clear;
+    } else if( op == "throw" ) {
+        a.op = fp3d::item_op::throw_;
+    } else if( op == "pour" ) {
+        a.op = fp3d::item_op::pour;
     } else {
         return false;
     }
@@ -511,7 +529,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
-    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop ) {
+    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ) {
+        return false;
+    }
+    // pour goes to exactly one place: a container (no pos) or a square (pos, no container and no pocket).
+    if( a.op == fp3d::item_op::pour && ( d.has( "container" ) ? d.has( "pos" ) :
+                                         !d.has( "pos" ) || d.has( "container_type" ) || d.has( "pocket" ) ) ) {
         return false;
     }
     if( !field( d, "hand", Variant::STRING, v ) ) {
@@ -532,7 +555,7 @@ bool CddaSim::queue_item_action( const Dictionary &d )
     if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
-    if( a.op == fp3d::item_op::put ) {
+    if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
         if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
             return false;
         }
@@ -795,6 +818,14 @@ int64_t CddaSim::range_teleport( int64_t zone )
 {
     fp3d::range_op op;
     op.kind = fp3d::range_op_kind::teleport;
+    op.number = zone;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_rebuild_zone( int64_t zone )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::rebuild_zone;
     op.number = zone;
     return queue_range( op );
 }

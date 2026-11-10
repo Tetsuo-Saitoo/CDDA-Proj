@@ -60,6 +60,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -86,7 +87,24 @@ var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
 
 
+## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
+static func _boot_log(what: String) -> void:
+	print("boot: %6d ms  %s" % [Time.get_ticks_msec(), what])
+
+
+func _on_first_frame_drawn() -> void:
+	_boot_log("first frame drawn")
+
+
+func _exit_tree() -> void:
+	# Nothing of ours may stay connected to an engine singleton: a headless run never draws a frame, and the callable
+	# still waiting on frame_post_draw crashed the engine as it shut down.
+	if RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+		RenderingServer.frame_post_draw.disconnect(_on_first_frame_drawn)
+
+
 func _ready() -> void:
+	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
@@ -153,6 +171,10 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	pour.actions = item_actions
+	pour.held = _held_liquid
+	pour.target = _pour_target
+	pour.tap = _use_tap
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
@@ -170,6 +192,7 @@ func _ready() -> void:
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
 	_set_view(start_view(_args, hud_settings.view))
+	_boot_log("client set up")
 	if _args.has("live"):
 		_start_live()
 	else:
@@ -456,7 +479,8 @@ func _start_live() -> void:
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
-		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
+		print("live: " + status)   # in the console too: in VR the HUD isn't in the headset
+		_boot_log("game " + s))
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
@@ -543,6 +567,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
 		_sync_cheats_allowed()
@@ -596,7 +621,8 @@ static func cheat_names(v: String) -> PackedStringArray:
 
 func _after_live_start(ok: bool) -> void:
 	if ok:
-		status = "game booting (~30 s)"
+		_boot_log("game booting")
+		status = LiveSession.boot_text(live.boot_info())
 	else:
 		status = "live mode failed: " + live.error
 		push_error(status)
@@ -645,6 +671,8 @@ func _save_and_quit() -> void:
 ## Live: meshing runs on a worker (WorldView.submit); _on_world_applied shows the rest when it is done.
 func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
+	if _first_live_snapshot:
+		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
 	world.submit(snap)
 
 
@@ -656,6 +684,9 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 	status = "turn %d: %s" % [snap.turn, status]
 	if first:
 		print("live: " + status)
+		_boot_log("first world built")
+		if not RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+			RenderingServer.frame_post_draw.connect(_on_first_frame_drawn, CONNECT_ONE_SHOT)
 		_frame_player()
 
 
@@ -933,6 +964,35 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
+func _held_liquid() -> Variant:
+	for h: String in ["main", "off"]:
+		var it: Variant = hud_data.held.get(h)
+		if it is ItemRef and not str(hud_data.held.get(h + "_liquid", "")).is_empty():
+			return it
+	return null
+
+
+## Where holding E pours: into the container under the pointer, else onto the square you face.
+func _pour_target() -> Dictionary:
+	var t := grab.item_hover
+	if not t.is_empty() and t.get("item") is ItemRef and (t["item"] as ItemRef).is_container(world.tables):
+		return {"container": t["item"]}
+	if world.snapshot == null:
+		return {}
+	var s := _screen_step(Vector2(0, 1))
+	return {"square": world.snapshot.player_pos + Vector3i(s.x, s.y, 0)}
+
+
+## E's tap with a liquid in hand: what E does otherwise (take the item under the pointer, else use / examine
+## the square you face).
+func _use_tap() -> void:
+	if grab.take_hover() or live == null or not _in_main_loop():
+		return
+	grab.ask = {}
+	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
+
+
 ## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
 func _can_inspect() -> bool:
 	return _fp_active() and world.snapshot != null and main_menu == null and not request_ui.visible \
@@ -1156,6 +1216,10 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	if typing or vr != null or (live != null and not _in_main_loop()):
+		pour.cancel()   # a menu or prompt took the keys: its release won't come here
+	elif pour.update(Time.get_ticks_msec()) == "refused":
+		grab.flash("You can't pour that there.", true)
 	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	_update_look_line()
@@ -1172,6 +1236,8 @@ func _process(_delta: float) -> void:
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
 	var help := _help()
+	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
+		status = LiveSession.boot_text(live.boot_info())
 	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
 			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
@@ -1224,6 +1290,9 @@ func _act_help() -> String:
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
 	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
+	var p := pour.hint(world.tables)
+	if not p.is_empty():
+		parts.append(p)
 	parts.append("%s save" % InputActions.key_of(&"save_game"))
 	return "  ".join(parts)
 
@@ -1249,6 +1318,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and (live == null or _in_main_loop()) and pour.handle(event, Time.get_ticks_msec()):
+		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
 		return   # E on an item you look at takes it (else E uses / examines, below)
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):

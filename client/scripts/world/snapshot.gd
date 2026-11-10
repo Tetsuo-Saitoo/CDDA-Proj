@@ -46,6 +46,14 @@ const MAX_STAMINA := 1 << 24
 const NEEDS := ["hunger", "thirst", "sleepiness", "pain", "morale"]   # player_view int16s
 const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
 const MAX_WORN := 64                      # the contract's cap
+const MAX_EFFECTS := 64                   # the contract's cap
+const MAX_EFFECT_ID := 64
+const MAX_EFFECT_NAME := 40
+const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
+const EFFECT_GOOD := 1                    # player.effects rating
+const EFFECT_NEUTRAL := 0
+const EFFECT_BAD := -1
+const EFFECT_MIXED := 2
 const LIGHT_STRIDE := 3                   # lights: tile, luminance, kind
 const MAX_LIGHTS_PER_SUBMAP := 16
 const LIGHT_FIXED := 0                    # kinds (assumed until the contract says): terrain, furniture, vehicle
@@ -116,6 +124,9 @@ var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried ite
 var player_stamina := -1                   # -1: not sent
 var player_stamina_max := -1
 var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
+## player.effects (what CDDA's @ screen lists): {id, name, body_part, intensity, rating, seconds_left}, at most
+## MAX_EFFECTS. HUD-only data: a bad entry is skipped, not a failed snapshot. seconds_left -1 = permanent or unknown.
+var player_effects: Array[Dictionary] = []
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -276,6 +287,51 @@ func _read_player(v: Variant) -> void:
 	_read_needs((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
+	player_effects = effects_from((v as Dictionary).get("effects"))
+
+
+## player.effects, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
+static func effects_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	for e: Variant in (v as Array).slice(0, MAX_EFFECTS):
+		if not e is Dictionary:
+			continue
+		var d: Dictionary = e
+		var id := plain_text(d.get("id"), MAX_EFFECT_ID)
+		var part: Variant = _whole(d.get("body_part", 0), 0, MAX_ID)
+		var level: Variant = _whole(d.get("intensity", 1), 0, 255)
+		var rating: Variant = _whole(d.get("rating", EFFECT_NEUTRAL), EFFECT_BAD, EFFECT_MIXED)
+		if id.is_empty() or part == null or level == null or rating == null:
+			continue
+		var name := plain_text(d.get("name"), MAX_EFFECT_NAME)
+		var secs: Variant = _whole(d.get("seconds_left", -1), 0, MAX_EFFECT_SECONDS)
+		out.append({"id": id, "name": name if not name.is_empty() else id, "body_part": part, "intensity": level,
+				"rating": rating, "seconds_left": secs if secs != null else -1})
+	return out
+
+
+## v as an int when it is a whole number in lo..hi, else null (NaN, infinities, fractions and strings too).
+static func _whole(v: Variant, lo: int, hi: int) -> Variant:
+	if v is int:
+		return v if v >= lo and v <= hi else null
+	if not v is float or is_nan(v) or is_inf(v) or v != floorf(v) or v < lo or v > hi:
+		return null
+	return int(v)
+
+
+## Text from the bridge for one plain line: colour tags removed, control and direction characters dropped, at
+## most `cap` characters.
+static func plain_text(v: Variant, cap: int) -> String:
+	if not v is String:
+		return ""
+	var out := PackedStringArray()
+	for c in CddaText.plain((v as String).left(cap * 4)):
+		var u := c.unicode_at(0)
+		if u >= 0x20 and not CddaText.is_hidden(u):
+			out.append(c)
+	return "".join(out).left(cap).strip_edges()
 
 
 ## player.wielded_gun: {type (itype index), dirt (0..10000, -1 absent), faults (fault ids), rounds (-1 absent)}.

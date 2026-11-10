@@ -30,6 +30,9 @@ class FakeSim extends RefCounted:
 	func range_teleport(zone: int) -> int:
 		return _op("teleport", [zone])
 
+	func range_rebuild_zone(zone: int) -> int:
+		return _op("rebuild", [zone])
+
 	func range_set_time(minute: int) -> int:
 		return _op("time", [minute])
 
@@ -111,7 +114,8 @@ func _test_session() -> void:
 	_check.call(t == 1 and a == 2 and sim.calls == [["teleport", 1], ["advance", 60]] and sim.actions == ["pause"],
 			"range: ops send and return their ids; a wait answers the next request with pause")
 	var n := sim.calls.size()
-	_check.call(ls.range_teleport(-1) == 0 and ls.range_set_time(1440) == 0 and ls.range_advance(0) == 0
+	_check.call(ls.range_teleport(-1) == 0 and ls.range_rebuild_zone(-1) == 0
+			and ls.range_rebuild_zone(RangeInfo.MAX_ZONES) == 0 and ls.range_set_time(1440) == 0 and ls.range_advance(0) == 0
 			and ls.range_advance(10081) == 0 and ls.range_spawn_item(0, 1, Vector3i.ZERO) == 0
 			and ls.range_spawn_item(5, 1001, Vector3i.ZERO) == 0 and ls.range_spawn_monster("a b", Vector3i.ZERO) == 0
 			and ls.range_spawn_item(5, 1, Vector3i(1 << 30, 0, 0)) == 0 and sim.calls.size() == n,
@@ -189,6 +193,10 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	p.wait_hour()
 	_check.call(sim.calls == [["teleport", 1], ["frozen", false], ["time", 1320], ["heal"], ["advance", 60]],
 			"range page: buttons send their ops (%s)" % [sim.calls])
+	p.rebuild_zone()
+	_check.call(sim.calls.pop_back() == ["rebuild", 1] and p.status.text == "Rebuild Guns: asked for.",
+			"range page: Rebuild sends the picked zone (%s)" % p.status.text)
+	p._range_ops.erase(p._range_ops.keys()[-1])
 	var rock := tables.index_of("itype", "rock")
 	p.item_id.text = " rock "
 	p.item_count.value = 5
