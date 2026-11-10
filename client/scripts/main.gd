@@ -46,7 +46,8 @@ var gore: GoreView               # blood, gibs and bile fields on the ground
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
-var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
+var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
+var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
 var vr: VrRig
@@ -75,6 +76,9 @@ func _ready() -> void:
 	creature_view.name = "Creatures"
 	creature_view.smooth = str(_args.get("creatures", "smooth")) != "snap"
 	add_child(creature_view)
+	player_body = PlayerBody.new()
+	player_body.name = "PlayerBody"
+	add_child(player_body)
 	_setup_environment()
 	for problem in InputActions.ensure():
 		push_warning("keys: " + problem)
@@ -176,10 +180,11 @@ func _reload() -> void:
 func _show(snap: Snapshot) -> void:
 	var t0 := Time.get_ticks_msec()
 	var n := world.apply_snapshot(snap)
-	creature_view.show_player = not _fp_active()   # in first person you are the player
+	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
 	gore.view_z_max = world.view_z_max
 	gore.apply(snap, world)
+	player_body.apply(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -210,6 +215,30 @@ func _frame_outside(target: Vector3) -> void:
 	camera.look_from(target + Vector3(-20, 28, 30), target)
 
 
+## First person and VR: the body stands under the eyes and turns with them, head hidden. Outside: on the
+## player's square, facing the way first person last looked.
+func _place_player_body() -> void:
+	if world.snapshot == null:
+		player_body.visible = false
+		return
+	var own := vr != null or first_person
+	player_body.show_head = not own
+	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
+	var yaw := fp.yaw
+	if vr != null:
+		at = Vector3(vr.camera.global_position.x, vr.global_position.y, vr.camera.global_position.z)
+		yaw = vr.camera.global_rotation.y
+	elif first_person:
+		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
+	player_body.position = at
+	if vr != null:
+		player_body.follow_head(yaw, get_process_delta_time())
+		VrHands.drive(player_body, vr)
+	else:
+		player_body.rotation = Vector3(0, yaw, 0)
+	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
+
+
 func _fp_active() -> bool:
 	return vr == null and first_person
 
@@ -224,7 +253,6 @@ func _set_first_person(on: bool) -> void:
 	camera.set_process_unhandled_input(not on)
 	fp.set_process_unhandled_input(on)
 	(fp if on else camera).make_current()
-	creature_view.show_player = not on
 
 
 func _toggle_view() -> void:
@@ -250,7 +278,6 @@ func _start_vr() -> void:
 	vr.camera.make_current()
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
-	creature_view.show_player = true
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
 	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
@@ -744,6 +771,7 @@ func _process(_delta: float) -> void:
 		cam.h_offset = o.x
 		cam.v_offset = o.y
 	creature_view.view_z_max = world.view_z_max
+	_place_player_body()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,

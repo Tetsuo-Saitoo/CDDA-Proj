@@ -77,7 +77,11 @@ struct player_view {
     int32 stamina, stamina_max;
     int16 hunger, thirst, sleepiness, pain, morale;
     uint32 wielded;
+    std::vector<uint8> bleed, bandaged, disinfected, bite, infected;   // per body part, effect intensity (0 none)
+    std::vector<worn_view> worn;             // inner to outer (CDDA's order), visible items only; cap 64
 };
+struct worn_view { uint32 type /* itype */; uint8 layer /* highest layer_level */; uint8 damage /* damage_level 0..5 */;
+                   uint8 degradation /* 0..255 of max */; std::vector<uint32> covers /* body_part indices */; };
 
 struct environment_view {
     int64 turn_of_day_s; uint8 season; float sun_alt_deg, sun_az_deg; uint8 moon_phase;
