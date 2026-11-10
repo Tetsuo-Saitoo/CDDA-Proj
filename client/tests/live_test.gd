@@ -85,7 +85,11 @@ func _run() -> void:
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
 	# A random character can start with nothing in container pockets, so the test kit (a worn giant backpack with
-	# items in it, given at the next main-loop request, no turn passes) makes sure something is carried.
+	# items in it, given at the next main-loop request, no turn passes) makes sure something is carried. Builds
+	# with the cheat opt-in (fp3d-bridge f8326cc) refuse kits until the client allows cheats; the first kit also
+	# turns this game's achievements off.
+	if _sim.has_method("set_cheats_allowed"):
+		_sim.set_cheats_allowed(true)
 	_check(_sim.give_test_kit(), "test kit requested")
 	var kit_req := await _main_loop_request(0, TURN_TIMEOUT_MS, int(req["id"]))
 	var kits: int = int((_sim.get_cheats() as Dictionary).get("kits_given", 0))
