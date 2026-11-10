@@ -430,6 +430,10 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
         if( !new_world_name_ok( world ) ) {
             return "bad world name";
         }
+        // fp3d- names are kept for quick starts and tests, which replace only worlds they made (fp3d/boot.h).
+        if( fp3d::reserved_world_name( world ) && !( replace_world && fp3d::replaceable_world( world ) ) ) {
+            return "world names starting with fp3d- are kept for quick starts and tests";
+        }
     } else if( save.empty() ) {
         // A new character in an existing world: only a world list_worlds offers.
         if( !world_name_ok( world ) ) {
