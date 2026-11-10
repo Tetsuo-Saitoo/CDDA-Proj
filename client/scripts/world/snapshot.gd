@@ -42,6 +42,8 @@ const CARRIED_WIELDED := 2
 const CARRIED_OFFHAND := 4
 const FIELD_STRIDE := 4                   # fields: tile, type (CDDA field id), intensity, age turns
 const MAX_FIELDS_PER_TILE := 4
+const MAX_STAMINA := 1 << 24
+const NEEDS := ["hunger", "thirst", "sleepiness", "pain", "morale"]   # player_view int16s
 const MAX_BODY_PARTS := 32                # CDDA has 12 main parts
 const MAX_WORN := 64                      # the contract's cap
 const LIGHT_STRIDE := 3                   # lights: tile, luminance, kind
@@ -85,6 +87,9 @@ var player_wielded := 0                    # itype index of what the player hold
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
+var player_stamina := -1                   # -1: not sent
+var player_stamina_max := -1
+var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -239,8 +244,26 @@ func _read_player(v: Variant) -> void:
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
 	_read_body((v as Dictionary))
+	_read_needs((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
+
+
+## Stamina and needs for the HUD: optional; numbers out of range are clamped, anything else rejects.
+func _read_needs(d: Dictionary) -> void:
+	if not is_valid():
+		return
+	for key: String in ["stamina", "stamina_max"] + NEEDS:
+		var x: Variant = d.get(key)
+		if x == null:
+			continue
+		if not (x is int or x is float) or is_nan(float(x)):
+			_fail("player.%s is not a number" % key)
+			return
+		if key.begins_with("stamina"):
+			set("player_" + key, int(clampf(float(x), 0.0, MAX_STAMINA)))
+		else:
+			player_needs[key] = int(clampf(float(x), -32768.0, 32767.0))
 
 
 func _read_body(d: Dictionary) -> void:

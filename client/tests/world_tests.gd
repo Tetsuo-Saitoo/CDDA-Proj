@@ -88,6 +88,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_body_limits(data, tables)
 	_light_levels(data)
 	_stairs_settled()
+	_needs(data)
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -227,3 +228,22 @@ func _stairs_settled() -> void:
 	_check.call(m.stairs_settled(0, false, 5, 5) and not m.stairs_settled(1, false, 5, 5)
 			and not m.stairs_settled(0, true, 5, 5) and not m.stairs_settled(0, false, 6, 5),
 			"stairs: live steps only when nothing is queued and the newest snapshot is shown")
+
+
+## Stamina and needs for the HUD: optional, clamped, wrong types rejected.
+func _needs(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pl: Dictionary = d["player"]
+	for k: String in ["stamina", "stamina_max"] + Snapshot.NEEDS:
+		pl.erase(k)
+	var none := Snapshot.from_data(d)
+	_check.call(none.is_valid() and none.player_stamina == -1 and none.player_needs.is_empty(), "needs: absent when not sent")
+	pl["stamina"] = 900
+	pl["stamina_max"] = 1e30
+	pl["hunger"] = 50
+	pl["pain"] = -99999
+	var s := Snapshot.from_data(d)
+	_check.call(s.is_valid() and s.player_stamina == 900 and s.player_stamina_max == Snapshot.MAX_STAMINA
+			and s.player_needs == {"hunger": 50, "pain": -32768}, "needs: read and clamped " + s.error)
+	pl["thirst"] = "very"
+	_check.call(not Snapshot.from_data(d).is_valid(), "needs: a value that is no number is refused")

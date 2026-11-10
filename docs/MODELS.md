@@ -112,12 +112,28 @@ For the combat work. A monster model can mark where a shot hits which part of it
 - Make each region a simple child mesh named `hit_<weak point id>`, for example `hit_head` or `hit_leg`.
   Use CDDA's weak point ids from the monster's JSON (`weakpoints`). The ones the game knows today:
   `head`, `eye`, `abdomen`, `belly`, `arm`, `leg`, `hindleg`, `wing`.
-- One mesh per region. For a region in several pieces (both legs), join the pieces into one mesh: Blender's
-  `.001` suffixes break the name.
-- Keep them simple (boxes or low-poly hulls) and parent them to the bone or part they follow.
+- Humans and NPCs use CDDA's body part ids instead: `hit_head`, `hit_eyes`, `hit_mouth`, `hit_torso`,
+  `hit_arm_l`, `hit_arm_r`, `hit_hand_l`, `hit_hand_r`, `hit_leg_l`, `hit_leg_r`, `hit_foot_l`, `hit_foot_r`.
+- A region in several pieces gets a number per piece: `hit_leg_1`, `hit_leg_2` (rename Blender's `.001`
+  suffixes, they break the name).
+- The region is the mesh's box (its bounding box in its own space), so keep them simple boxes or low-poly
+  hulls, and parent each to the bone or part that moves it.
+- A `hit_` id the monster's JSON doesn't list counts as its body.
 - The game hides these meshes and uses them as hit zones. A monster model without them uses the zones of
   its placeholder figure.
 - The client doesn't read them yet. Adding them now saves redoing the model later.
+
+## Weapons
+
+For reloading by hand in VR. A gun model marks:
+
+- `muzzle`: point marker at the end of the bore, its -Z along the bore.
+- `grip`: point marker where the main hand holds it.
+- `mag_well`: point marker where a magazine snaps in.
+- `magazine`: the detachable magazine as its own mesh (part).
+- `slide` or `bolt`: its own mesh, moving along +Z when racked.
+
+The placeholder gun the game draws uses the same names.
 
 ## Files and the registry
 
