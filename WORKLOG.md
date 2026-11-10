@@ -2,6 +2,7 @@
 
 - 2026-11-10 — Unload / reload in ItemActions (for VR mag release and insert) with LiveSession and MockItems support; the main menu refuses new fp3d- world names and --save alone also looks in fp3d-live-2, -3 ...; client tests pass.
 - 2026-11-10 — Cheats opt-in: LiveSession sends the bridge's `set_cheats_allowed` from the debug switch (or --test / --cheats / test range), again when a game starts; cheats page says the first cheat ends that game's achievements; client tests pass.
+- 2026-11-10 — Model loader: stricter image header and glTF text checks, caps on primitives per mesh and drawn surfaces, a mesh budget across models; loading and tinting no longer hold the library lock (tints made from the importer's copies); client tests pass.
 - 2026-11-10 — Recipe queries on the client (LiveSession.match_recipes / recipes_matched, results parsed with caps for lead-vr's cooking card); drop targets know heat squares from the snapshot (fires on the floor too, "not lit" hint).
 - 2026-11-10 — A grabbed item's copy starts where its pile drew it, turned the same way (Hands read the slot after hiding the item; found by lead-vr).
 - 2026-11-10 — Items in an open drawer or behind an opened cabinet door / lid can be pointed at and follow the part; MockItems.put_check lets tests refuse a pocket (for lead-vr's backpack).

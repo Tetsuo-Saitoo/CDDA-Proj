@@ -32,6 +32,8 @@ const MAX_NODES := 512
 const MAX_DEPTH := 32
 const MAX_MESHES := 256
 const MAX_PRIMITIVES := 512
+const MAX_MESH_PRIMITIVES := 32     # per mesh: each is a draw call wherever the mesh is used
+const MAX_DRAWN_SURFACES := 128     # primitives over every node that uses a mesh (draw calls per model)
 const MAX_PRIMITIVE_VERTICES := 65536
 const MAX_VERTICES := 250000
 const MAX_ACCESSORS := 4096
@@ -56,6 +58,8 @@ const MAX_HULL_POINTS := 256
 const MAX_MODELS := 1024
 ## Tinted variants copy their model's meshes: past this many, models are drawn untinted.
 const MAX_TINTED := 512
+## Triangles of every loaded model and tinted copy together (a mesh memory budget).
+const MAX_TOTAL_TRIANGLES := 6000000
 const MAX_FAILED := 1024
 const MAX_NAME := 128
 const MAX_NUMBER := 99
@@ -117,6 +121,10 @@ class Model:
 	var triangles := 0
 	## Registry material this variant is tinted with ("" = the model as made).
 	var tint := ""
+	## Drawn mesh -> the glTF importer's copy of it (CPU-side arrays), which tinted variants are made from.
+	var sources := {}
+	## Decoded bytes of its images (counted toward MAX_IMAGE_BYTES while it is cached).
+	var image_bytes := 0
 	## The mover (lid, door_N, drawer_N; "" none) each of `parts` moves with: its nearest such marker, itself
 	## included (a mover inside another one moves with the outer one).
 	var part_owner := PackedStringArray()
@@ -183,16 +191,27 @@ var _failed_warned := false
 var max_tinted := MAX_TINTED
 var _tinted := {}  # "path|material" -> tinted Model (at most MAX_TINTED)
 var _tint_warned := false
+var max_total_triangles := MAX_TOTAL_TRIANGLES
+var _triangle_total := 0   # of the cached models and tinted copies
+var _mesh_warned := false
 
 
 ## The model at a registry path, or null (missing, outside the folder, or a bad file: see warnings).
-## Safe to call from several threads.
+## Safe to call from several threads. The file is read outside the lock, so a slow load never holds up
+## another thread (two threads may read the same file at once; the first model kept is the one both get).
 func get_model(rel: String) -> Model:
 	var key := rel.left(MAX_PATH + 1).to_lower()
 	_mutex.lock()
 	var m: Model = _cache.get(key)
+	var done := m != null or _failed.has(key) or not _room_to_load()
+	_mutex.unlock()
+	if done:
+		return m
+	var made := _load(rel)
+	_mutex.lock()
+	m = _cache.get(key)
 	if m == null and not _failed.has(key):
-		m = _load_new(key, rel)
+		m = _keep(key, made, rel)
 	_mutex.unlock()
 	return m
 
@@ -208,18 +227,40 @@ func get_tinted(rel: String, material: String) -> Model:
 	var key := m.path + "|" + material
 	_mutex.lock()   # the meshing worker and the main thread both ask
 	var t: Model = _tinted.get(key)
+	var room := t == null and _room_to_tint(m)
+	_mutex.unlock()
+	if t != null:
+		return t
+	if not room:
+		return m
+	var made := tinted(m, CddaPalette.material(material))   # outside the lock, like loads
+	made.tint = material
+	_mutex.lock()
+	t = _tinted.get(key)
 	if t == null:
-		if _tinted.size() >= max_tinted:
-			if not _tint_warned:
-				_warn("more than %d tinted models, the rest are drawn untinted" % max_tinted)
-				_tint_warned = true
-			_mutex.unlock()
-			return m
-		t = tinted(m, CddaPalette.material(material))
-		t.tint = material
-		_tinted[key] = t
+		if _room_to_tint(m):
+			_tinted[key] = made
+			_triangle_total += made.triangles
+			t = made
+		else:
+			t = m
 	_mutex.unlock()
 	return t
+
+
+## Whether another tinted variant of m fits (called with the mutex held; warns once when not).
+func _room_to_tint(m: Model) -> bool:
+	if _tinted.size() >= max_tinted:
+		if not _tint_warned:
+			_warn("more than %d tinted models, the rest are drawn untinted" % max_tinted)
+			_tint_warned = true
+		return false
+	if _triangle_total + m.triangles > max_total_triangles:
+		if not _mesh_warned:
+			_warn("over the mesh budget for models (%d triangles), the rest are drawn untinted" % max_total_triangles)
+			_mesh_warned = true
+		return false
+	return true
 
 
 ## A variant of m whose drawn meshes use copies of its materials, the albedo colour multiplied by
@@ -242,7 +283,7 @@ static func tinted(m: Model, tint: Color) -> Model:
 	for p: Array in m.parts:
 		var mesh: Mesh = p[0]
 		if not meshes.has(mesh):
-			meshes[mesh] = _tinted_mesh(mesh, factor, materials, plain)
+			meshes[mesh] = _tinted_mesh(mesh, m.sources.get(mesh), factor, materials, plain)
 		t.parts.append([meshes[mesh], p[1]])
 	t.part_owner = m.part_owner
 	t.surface_owner = m.surface_owner
@@ -251,25 +292,30 @@ static func tinted(m: Model, tint: Color) -> Model:
 	return t
 
 
-static func _tinted_mesh(mesh: Mesh, factor: Color, materials: Dictionary, plain: Array) -> Mesh:
-	if not mesh is ArrayMesh:
-		return mesh   # glTF meshes are ArrayMeshes; anything else is drawn as made
-	var copy := mesh.duplicate() as ArrayMesh
+## A copy of `mesh` with tinted materials, made from the importer's CPU-side copy `src` (copying the drawn mesh
+## would read it back from the renderer, which waits on the main thread). Without one: the mesh as made.
+static func _tinted_mesh(mesh: Mesh, src: Variant, factor: Color, materials: Dictionary, plain: Array) -> Mesh:
+	if not src is ImporterMesh:
+		return mesh
+	var copy := (src as ImporterMesh).duplicate() as ImporterMesh
+	if copy == null or copy.get_surface_count() == 0:
+		return mesh
 	for s in copy.get_surface_count():
-		var mat := copy.surface_get_material(s)
+		var mat := copy.get_surface_material(s)
 		if mat == null:
 			if plain[0] == null:
 				var sm := StandardMaterial3D.new()
 				sm.albedo_color = factor
 				plain[0] = sm
-			copy.surface_set_material(s, plain[0])
+			copy.set_surface_material(s, plain[0])
 		elif mat is BaseMaterial3D:
 			if not materials.has(mat):
 				var tm := mat.duplicate() as BaseMaterial3D
 				tm.albedo_color = (mat as BaseMaterial3D).albedo_color * factor
 				materials[mat] = tm
-			copy.surface_set_material(s, materials[mat])
-	return copy
+			copy.set_surface_material(s, materials[mat])
+	var out := copy.get_mesh()
+	return out if out != null else mesh
 
 
 ## A copy of the warnings, safe while another thread loads models.
@@ -280,23 +326,42 @@ func get_warnings() -> PackedStringArray:
 	return out
 
 
-## Loads a path not tried before, within the model and failure caps (called with the mutex held).
-func _load_new(key: String, rel: String) -> Model:
+## Whether a path not tried before may be loaded: within the model and failure caps (called with the mutex
+## held; warns once when not).
+func _room_to_load() -> bool:
 	if _cache.size() >= max_models:
 		if not _full_warned:
 			_warn("more than %d models, the rest aren't loaded" % max_models)
 			_full_warned = true
-		return null
+		return false
 	if _failed.size() >= max_failed:
 		if not _failed_warned:
 			_warn("more than %d models failed to load, the rest aren't tried" % max_failed)
 			_failed_warned = true
-		return null
-	var m := _load(rel)
+		return false
+	return true
+
+
+## Keeps a model just loaded under `key` within the caps and budgets (called with the mutex held); a failed
+## or refused load is remembered as failed. Returns the model kept, or null.
+func _keep(key: String, m: Model, rel: String) -> Model:
+	if m != null and _cache.size() >= max_models:   # filled by other threads meanwhile
+		if not _full_warned:
+			_warn("more than %d models, the rest aren't loaded" % max_models)
+			_full_warned = true
+		m = null
+	elif m != null and _image_bytes + m.image_bytes > max_image_bytes:
+		_warn("%s: over the image memory budget for models" % _clean(rel, 80))
+		m = null
+	elif m != null and _triangle_total + m.triangles > max_total_triangles:
+		_warn("%s: over the mesh budget for models (%d triangles)" % [_clean(rel, 80), max_total_triangles])
+		m = null
 	if m == null:
 		_failed[key] = true
-	else:
-		_cache[key] = m
+		return null
+	_cache[key] = m
+	_image_bytes += m.image_bytes
+	_triangle_total += m.triangles
 	return m
 
 
@@ -355,7 +420,10 @@ func _load(rel: String) -> Model:
 		_warn("%s: %s" % [name, why])
 		return null
 	var image_bytes: int = info.get("pixels", 0) * 4
-	if image_bytes > 0 and _image_bytes + image_bytes > max_image_bytes:
+	_mutex.lock()
+	var over := image_bytes > 0 and _image_bytes + image_bytes > max_image_bytes
+	_mutex.unlock()
+	if over:
 		_warn("%s: over the image memory budget for models" % name)
 		return null
 	var doc := GLTFDocument.new()
@@ -371,14 +439,24 @@ func _load(rel: String) -> Model:
 		return null
 	var m := Model.new()
 	m.path = rel
+	m.image_bytes = image_bytes
 	why = _read(scene, m)
 	scene.free()
 	if not why.is_empty():
 		_warn("%s: %s" % [name, why])
 		return null
+	var used := {}
+	for p: Array in m.parts:
+		used[p[0]] = true
+	for gm: GLTFMesh in state.get_meshes():   # the importer's copies: what tinted variants are made from
+		var im := gm.mesh
+		if im != null and im.get_surface_count() > 0:
+			var drawn := im.get_mesh()   # made once by the importer: the mesh the scene draws
+			if used.has(drawn):
+				im.remove_meta("extras")
+				m.sources[drawn] = im
 	for w in make_movers(m):
 		_warn("%s: %s" % [name, w])
-	_image_bytes += image_bytes
 	return m
 
 
@@ -401,8 +479,13 @@ func check_glb(bytes: PackedByteArray, out: Dictionary = {}) -> String:
 		if bytes.decode_u32(bin_at + 4) != 0x004E4942 or bin_at + 8 + bin_len > bytes.size():
 			return "bad BIN chunk"
 		bin_at += 8
+	var chunk := bytes.slice(20, 20 + jlen)
+	var sorted := chunk.duplicate()
+	sorted.sort()
+	if not sorted.is_empty() and sorted[sorted.size() - 1] >= 0x80:
+		return "the glTF JSON must be plain ASCII"
 	var json := JSON.new()
-	if json.parse(bytes.slice(20, 20 + jlen).get_string_from_utf8()) != OK or not json.data is Dictionary:
+	if json.parse(chunk.get_string_from_ascii()) != OK or not json.data is Dictionary:
 		return "bad glTF JSON"
 	return _check_json(json.data, bytes, bin_at, bin_len, out)
 
@@ -462,10 +545,11 @@ func _check_json(g: Dictionary, bytes: PackedByteArray, bin_at: int, bin_len: in
 	if not why.is_empty():
 		return why
 	var tris := PackedInt32Array()
-	why = _check_meshes(g, acc, bytes, tris)
+	var prims := PackedInt32Array()
+	why = _check_meshes(g, acc, bytes, tris, prims)
 	if not why.is_empty():
 		return why
-	return _check_nodes(g, tris)
+	return _check_nodes(g, tris, prims)
 
 
 ## Embedded PNG or JPEG images: format matches mimeType, sides and pixels in all within the caps.
@@ -480,9 +564,9 @@ static func _check_images(g: Dictionary, views: Array, bytes: PackedByteArray, b
 		var at: int = bin_at + views[vi][0]
 		var n: int = views[vi][1]
 		var mime := _image_mime(bytes, at, n)
-		var said: Variant = img.get("mimeType", mime)
+		var said: Variant = img.get("mimeType")
 		if mime.is_empty() or not said is String or said != mime:
-			return "images must be PNG or JPEG"
+			return "images must be PNG or JPEG, with their mimeType"
 		var size := _image_size(bytes, at, n)
 		if size.x <= 0 or size.y <= 0:
 			return "bad image"
@@ -548,10 +632,12 @@ static func _check_materials(g: Dictionary) -> String:
 			if s.has(k) and not (_int(s[k], 0, 0xFFFF) in SAMPLER_VALUES[k]):
 				return "bad texture sampler"
 	for t: Variant in _list(g, "textures"):
-		if not t is Dictionary or (t.has("source") and _int(t["source"], 0, n_images - 1) < 0):
+		if not t is Dictionary:
 			return "bad texture image"
 		if t.has("sampler") and _int(t["sampler"], 0, n_samplers - 1) < 0:
 			return "bad texture sampler"
+		if _int(t.get("source"), 0, n_images - 1) < 0:
+			return "bad texture image"
 	for mat: Variant in _list(g, "materials"):
 		if not mat is Dictionary:
 			return "bad material"
@@ -574,8 +660,8 @@ static func _check_materials(g: Dictionary) -> String:
 
 ## Mesh primitives: triangle lists with a POSITION, every attribute of the same count, indices a multiple
 ## of 3 and below the vertex count; vertices and triangles capped over every mesh in the file (used or
-## not). Appends each mesh's triangles to tris.
-func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: PackedInt32Array) -> String:
+## not). Appends each mesh's triangles to tris and its primitive count to prims.
+func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: PackedInt32Array, prims: PackedInt32Array) -> String:
 	var n_materials := _list(g, "materials").size()
 	var primitives := 0
 	var vertices := 0
@@ -585,6 +671,9 @@ func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: Pack
 			return "bad mesh"
 		if _has_items(mesh, "weights"):
 			return "morph targets are not supported"
+		if (mesh["primitives"] as Array).size() > MAX_MESH_PRIMITIVES:
+			return "a mesh has more than %d primitives" % MAX_MESH_PRIMITIVES
+		prims.append((mesh["primitives"] as Array).size())
 		var t := 0
 		for p: Variant in mesh["primitives"]:
 			primitives += 1
@@ -612,6 +701,10 @@ func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: Pack
 				var ai := _int(attrs[k], 0, acc.size() - 1)
 				if not k is String or ai < 0 or not _attribute_type_ok(k, acc[ai][2]):
 					return "bad mesh attribute"
+				var shape: Vector2i = TYPE_SHAPE[acc[ai][2]]
+				var elem: int = COMPONENT_BYTES[acc[ai][1]] * shape.x * shape.y
+				if elem % 4 != 0 and not acc[ai][4]:
+					return "a %d-byte vertex attribute needs a byteStride" % elem
 				if acc[ai][0] != nv:
 					return "mesh attributes differ in count"
 			var corner_n := nv
@@ -636,12 +729,13 @@ func _check_meshes(g: Dictionary, acc: Array, bytes: PackedByteArray, tris: Pack
 
 ## Node tree: valid links, one parent each, no cycles, depth, finite transforms, no skins or cameras,
 ## markers and triangles over all mesh uses. Scenes: index in range, root nodes listed once, parentless.
-func _check_nodes(g: Dictionary, tris: PackedInt32Array) -> String:
+func _check_nodes(g: Dictionary, tris: PackedInt32Array, prims: PackedInt32Array) -> String:
 	var nodes := _list(g, "nodes")
 	var parent := PackedInt32Array()
 	parent.resize(nodes.size())
 	parent.fill(-1)
 	var triangles := 0
+	var drawn := 0
 	var markers := 0
 	for i in nodes.size():
 		var n: Variant = nodes[i]
@@ -660,11 +754,24 @@ func _check_nodes(g: Dictionary, tris: PackedInt32Array) -> String:
 		for k: String in NODE_TRS:
 			if n.has(k) and not _finite_list(n[k], NODE_TRS[k]):
 				return "bad node transform"
+		if n.has("rotation"):
+			var q: Array = n["rotation"]
+			var len2 := float(q[0]) * float(q[0]) + float(q[1]) * float(q[1]) + float(q[2]) * float(q[2]) + float(q[3]) * float(q[3])
+			if absf(len2 - 1.0) > 0.01:
+				return "bad node transform (rotation is not a unit quaternion)"
+		if n.has("matrix"):
+			var mm: Array = n["matrix"]
+			var b := Basis(Vector3(mm[0], mm[1], mm[2]), Vector3(mm[4], mm[5], mm[6]), Vector3(mm[8], mm[9], mm[10]))
+			if absf(b.determinant()) < 1e-9:
+				return "bad node transform (flat matrix)"
 		if n.has("mesh"):
 			var mi := _int(n["mesh"], 0, tris.size() - 1)
 			if mi < 0:
 				return "bad node mesh"
 			triangles += tris[mi]
+			drawn += prims[mi]
+			if drawn > MAX_DRAWN_SURFACES:
+				return "more than %d mesh surfaces drawn" % MAX_DRAWN_SURFACES
 		if n.has("children") and not n["children"] is Array:
 			return "bad node children"
 		for c: Variant in n.get("children", []):
@@ -684,7 +791,7 @@ func _check_nodes(g: Dictionary, tris: PackedInt32Array) -> String:
 	if g.has("scene") and _int(g["scene"], 0, scenes.size() - 1) < 0:
 		return "bad scene index"
 	for s: Variant in scenes:
-		if not s is Dictionary or (s.has("nodes") and not s["nodes"] is Array):
+		if not s is Dictionary or not s.get("nodes") is Array:
 			return "bad scene"
 		var seen := {}
 		for r: Variant in s.get("nodes", []):
@@ -763,6 +870,7 @@ func _read(scene: Node, m: Model) -> String:
 					m.marker_parts[name] = m.parts.size()
 				var part_box := xf * mesh.get_aabb()
 				m.aabb = part_box if m.parts.is_empty() else m.aabb.merge(part_box)
+				_drop_extras(mesh)
 				m.parts.append([mesh, xf])
 				m.part_owner.append(owner)
 		for c in n.get_children():
@@ -781,6 +889,15 @@ func _read(scene: Node, m: Model) -> String:
 		m.surfaces.append(surfaces[k])
 		m.surface_owner.append(m.marker_owner.get("surface_%d" % k, ""))
 	return ""
+
+
+## The file's `extras` (kept by the importer as metadata) go: cached models don't carry them.
+static func _drop_extras(mesh: Mesh) -> void:
+	mesh.remove_meta("extras")
+	for s in mesh.get_surface_count():
+		var mat := mesh.surface_get_material(s)
+		if mat != null:
+			mat.remove_meta("extras")
 
 
 ## Whether a marker name is a mover: lid, door_N or drawer_N.
@@ -1034,6 +1151,10 @@ static func _image_mime(bytes: PackedByteArray, at: int, n: int) -> String:
 
 
 ## Width and height of an embedded PNG (IHDR) or JPEG (first SOF segment), (-1, -1) when unreadable.
+## A JPEG is walked segment by segment from SOI, the way decoders do: only known segments (APPn, COM, DQT, DHT,
+## DRI, DAC, SOFn; RSTn and TEM without a length), each length at least 2 and inside the image, fill bytes
+## (FF FF) skipped. Anything else before the first SOF (FF 00, another SOI, EOI, SOS, unknown markers, a byte
+## that isn't FF where a marker belongs) makes it unreadable.
 static func _image_size(bytes: PackedByteArray, at: int, n: int) -> Vector2i:
 	match _image_mime(bytes, at, n):
 		"image/png":
@@ -1043,20 +1164,38 @@ static func _image_size(bytes: PackedByteArray, at: int, n: int) -> Vector2i:
 		"image/jpeg":
 			var i := at + 2
 			var end := at + n
-			while i + 9 <= end:
+			while i + 2 <= end:
 				if bytes[i] != 0xFF:
 					return Vector2i(-1, -1)
 				var mk := bytes[i + 1]
-				if mk == 0xFF:
+				if mk == 0xFF:   # fill byte before a marker
 					i += 1
 					continue
-				if mk == 0x01 or (mk >= 0xD0 and mk <= 0xD7):
+				if mk == 0x01 or (mk >= 0xD0 and mk <= 0xD7):   # TEM, RSTn: no length
 					i += 2
 					continue
-				if mk >= 0xC0 and mk <= 0xCF and mk != 0xC4 and mk != 0xC8 and mk != 0xCC:
+				if not _jpeg_segment(mk) or i + 4 > end:
+					return Vector2i(-1, -1)
+				var length := _be(bytes, i + 2, 2)
+				if length < 2 or i + 2 + length > end:
+					return Vector2i(-1, -1)
+				if _jpeg_sof(mk):
+					if length < 8:
+						return Vector2i(-1, -1)
 					return Vector2i(_be(bytes, i + 7, 2), _be(bytes, i + 5, 2))
-				i += 2 + _be(bytes, i + 2, 2)
+				i += 2 + length
 	return Vector2i(-1, -1)
+
+
+## A JPEG marker with a length that may come before the first SOF: APPn, COM, DQT, DHT, DRI, DAC or a SOFn.
+static func _jpeg_segment(mk: int) -> bool:
+	return (mk >= 0xE0 and mk <= 0xEF) or mk == 0xFE or mk == 0xDB or mk == 0xC4 or mk == 0xDD or mk == 0xCC \
+			or _jpeg_sof(mk)
+
+
+## SOF0..SOF15 (not DHT C4, JPG C8 or DAC CC).
+static func _jpeg_sof(mk: int) -> bool:
+	return mk >= 0xC0 and mk <= 0xCF and mk != 0xC4 and mk != 0xC8 and mk != 0xCC
 
 
 static func _be(bytes: PackedByteArray, at: int, n: int) -> int:
