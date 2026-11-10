@@ -19,6 +19,8 @@ const LOW_KINDS := ["direction", "target"]
 var direction_mapper := Callable()
 ## Returns [Snapshot, IdTables] now (either may be null); target lists name their creatures with it.
 var world_state := Callable()
+## () -> bool: another menu has the keys now (the F1 menu: its text fields take typing), so input is left to it.
+var held := Callable()
 var widget: RequestWidget
 var request_id := 0
 var _panel: PanelContainer
@@ -138,8 +140,13 @@ func target_widget() -> TargetRequestWidget:
 
 
 func _input(event: InputEvent) -> void:
-	if visible and handle_input(event):
+	if visible and not is_held() and handle_input(event) and get_viewport() != null:
 		get_viewport().set_input_as_handled()
+
+
+## True while `held` says another menu has the keys.
+func is_held() -> bool:
+	return held.is_valid() and held.call() == true
 
 
 func _on_answered(a: Dictionary) -> void:

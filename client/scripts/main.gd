@@ -67,6 +67,9 @@ var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
+## Where CDDA keeps its saves and config; empty: user://cdda. Live scripts set it before adding main, so they
+## never touch the player's saves.
+var cdda_user_dir := ""
 var vr: VrRig
 var vr_perf: VrPerf
 var _quitting := false
@@ -143,8 +146,8 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(grab.icon)
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
-	grab.eyes = func() -> Variant:   # over the shoulder / top-down: reach counts from the eyes, not the camera
-		return fp.global_position if view_mode in ViewCamera.MODES else null
+	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
 	hands = Hands.new(world, item_actions)
@@ -322,6 +325,14 @@ func _fp_active() -> bool:
 	return vr == null and first_person
 
 
+## C9: the eyes when the shown camera is away from them (shoulder, top), for aiming, grabbing and looking:
+## {mode, eye (Vector3), facing (level, unit)}; {} in first person, outside and VR.
+func eyes_view() -> Dictionary:
+	if not _fp_active() or fp == null or not view_mode in ViewCamera.MODES:
+		return {}
+	return {"mode": view_mode, "eye": fp.global_position, "facing": ViewCamera.facing(fp.yaw)}
+
+
 ## C9: first person (true) or the outside fly camera. VR has its own rig and ignores this.
 func _set_first_person(on: bool) -> void:
 	if on and not first_person:
@@ -474,7 +485,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if _args.has("world") or _args.has("save"):
@@ -765,7 +776,11 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
-	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	var v := eyes_view()
+	var dir := cam.project_ray_normal(pos)
+	var o := cam.project_ray_origin(pos)
+	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
@@ -1030,6 +1045,7 @@ func _setup_hud() -> void:
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
+	request_ui.held = func() -> bool: return key_menu != null and key_menu.visible   # F1: its fields get the keys
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:
