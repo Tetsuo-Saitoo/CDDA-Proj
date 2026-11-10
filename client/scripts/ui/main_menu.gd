@@ -9,6 +9,8 @@ extends PanelContainer
 signal new_game(world: String, fresh_world: bool, chargen: bool, world_setup: bool)
 signal load_game(world: String, save: String)
 signal quit_requested
+## "Test range" (PLAN.md K7): lead-qa's generated world with everything in it, cheats allowed.
+signal test_range_requested
 
 const MAX_LISTED := 256
 const MAX_KNOWN := 65536   # names kept for the "already exists" check
@@ -23,6 +25,8 @@ var _taken := {}   # lower-case name -> true, every existing world
 ## world -> PackedStringArray of saves; Callable(world) -> PackedStringArray.
 var saves_of := Callable()
 var page := ""
+## Shows the "Test range" entry (main.gd: only when the bridge has start_test_range).
+var test_range := false
 var message := ""
 var _box: VBoxContainer
 var _msg: Label
@@ -103,6 +107,9 @@ func show_page(p: String) -> void:
 			_button("New game", func() -> void: show_page("new"))
 			var load := _button("Load game", func() -> void: show_page("load"))
 			load.disabled = worlds.is_empty()
+			if test_range:
+				var r := _button("Test range", func() -> void: test_range_requested.emit())
+				r.tooltip_text = "A fresh test world with every item, vehicle and monster in zones; cheats on the F1 menu."
 			_button("Credits", func() -> void: show_page("credits"))
 			_button("Quit", func() -> void: quit_requested.emit())
 		"credits":

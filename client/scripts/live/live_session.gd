@@ -75,6 +75,23 @@ func start_new_game(data_dir: String, user_dir: String, world: String, fresh_wor
 	return error.is_empty()
 
 
+## The test range (PLAN.md K7, lead-qa): the bridge makes its world fp3d-range fresh and starts a new game there.
+## The bridge call is lead-qa's proposal: until a bridge has it, this is false and the menu hides the entry.
+static func test_range_available() -> bool:
+	return available() and ClassDB.class_has_method("CddaSim", "start_test_range")
+
+
+func start_test_range(data_dir: String, user_dir: String) -> bool:
+	if not test_range_available():
+		error = "this build of the bridge has no test range"
+		return false
+	if not _make_sim():
+		return false
+	new_game = true
+	error = _sim.start_test_range(data_dir, user_dir)
+	return error.is_empty()
+
+
 ## Loads the character `save` from the existing `world` under `user_dir` (names from list_saves). Deletes nothing.
 func start_load(data_dir: String, user_dir: String, world: String, save: String) -> bool:
 	if not _make_sim():

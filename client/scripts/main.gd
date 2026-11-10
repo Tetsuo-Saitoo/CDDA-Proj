@@ -429,6 +429,7 @@ func _start_live() -> void:
 ## through a `chargen` request, ChargenRequestWidget) or a load.
 func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu = MainMenu.new()
+	main_menu.test_range = LiveSession.test_range_available()   # set before setup() draws the page
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
@@ -440,6 +441,9 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.test_range_requested.connect(func() -> void:
+		key_menu.cheats_forced = true   # cheats are always allowed in the range
+		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
 
 
