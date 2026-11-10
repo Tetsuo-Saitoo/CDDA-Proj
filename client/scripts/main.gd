@@ -62,6 +62,8 @@ var status := ""
 var _args := {}
 var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
+var _submit_ms := 0
+var _first_live_snapshot := true
 
 
 func _ready() -> void:
@@ -187,7 +189,11 @@ func _reload() -> void:
 ## Shows a validated snapshot; `status` gets the rebuild stats.
 func _show(snap: Snapshot) -> void:
 	var t0 := Time.get_ticks_msec()
-	var n := world.apply_snapshot(snap)
+	_shown(snap, world.apply_snapshot(snap), t0)
+
+
+## The rest of showing a snapshot once the world has it (apply_snapshot, or WorldView.applied in live mode).
+func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
 	gore.view_z_max = world.view_z_max
@@ -320,6 +326,7 @@ func _start_live() -> void:
 	add_child(live)
 	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
+	world.applied.connect(_on_world_applied)
 	live.request_changed.connect(_on_live_request)
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
@@ -426,9 +433,16 @@ func _save_and_quit() -> void:
 	_quit()
 
 
+## Live: meshing runs on a worker (WorldView.submit); _on_world_applied shows the rest when it is done.
 func _on_live_snapshot(snap: Snapshot) -> void:
-	var first := world.snapshot == null
-	_show(snap)
+	_submit_ms = Time.get_ticks_msec()
+	world.submit(snap)
+
+
+func _on_world_applied(snap: Snapshot, n: int) -> void:
+	var first := _first_live_snapshot
+	_first_live_snapshot = false
+	_shown(snap, n, _submit_ms)
 	fp.follow_square(snap.player_pos)   # also while outside, so V comes back to the player
 	status = "turn %d: %s" % [snap.turn, status]
 	if first:
