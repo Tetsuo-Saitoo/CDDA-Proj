@@ -28,6 +28,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_cdda_keys()
 	_test_rebinding(root)
 	_test_creatures(root, world, data, tables)
+	_test_player_body(root, data, tables)
 	world.free()
 
 
@@ -121,13 +122,20 @@ func _test_walk(world: WorldView) -> void:
 	_check.call(door != null, "fp: the mock has a door with a free square west of it")
 	if door != null:
 		var start: Vector3i = door - Vector3i(1, 0, 0)
+		world.door_open[door] = false
 		fp.go_to_square(start)
 		fp.set_look(-PI / 2, 0.0)
 		var x0 := fp.position.x
 		for i in 5:
 			fp.step(0.05, {"move": Vector2(0, 1)})
+		_check.call(fp.position.x - x0 < 0.5 and fp.walk.square_at(fp.position, 0) == start,
+				"fp: a closed door stops you")
+		world.door_open[door] = true   # dragged open
+		fp.go_to_square(start)
+		for i in 5:
+			fp.step(0.05, {"move": Vector2(0, 1)})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75) and fp.walk.square_at(fp.position, 0) == door,
-				"fp: walks into a door square (doors don't block)")
+				"fp: walks through an open door")
 		fp.go_to_square(start)
 		fp.step(0.1, {"move": Vector2(0, 1), "fast": true})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75), "fp: fast walks 2.5x")
@@ -135,6 +143,7 @@ func _test_walk(world: WorldView) -> void:
 		for i in 5:
 			fp.step(0.05, {"move": Vector2(0, 5)})
 		_check.call(is_equal_approx(fp.position.x - x0, 0.75), "fp: stick input past 1 is cut to 1")
+		world.door_open.erase(door)
 	fp.go_to_square(player)
 	var z0 := fp.z
 	_check.call(not fp.change_level(5) and fp.z == z0 and fp.position.is_equal_approx(eye),
@@ -528,3 +537,92 @@ func _test_stair_flights() -> void:
 	_check.call(fs[2].y == 0 and fs[0].y == 1, "stairs look: the south row is the bottom half, the north row the top")
 	var single := TerrainMesher.stair_flight(Vector3i(0, 2, 0), func(q: Vector3i) -> int: return K.STAIRS_UP if q == Vector3i(0, 2, 0) else K.FLOOR, K.STAIRS_UP, walk)
 	_check.call(single.y == 0 and single.z == 1, "stairs look: a lone stair is a whole flight")
+
+## The player's body: parts from the snapshot, worn items inner to outer each a layer larger, wounds on top,
+## head hidden for the own camera, hostile player data rejected.
+func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
+	var snap := Snapshot.from_data(data)
+	_check.call(snap.is_valid() and snap.player_parts.size() == 12 and snap.player_worn.size() == 9,
+			"body: mock player has 12 parts and 9 worn items (%s)" % snap.error)
+	_check.call(tables.body_part_name(35) == "torso", "body: id tables name body parts")
+	var plan := PlayerBody.plan(snap, tables)
+	var torso: Array = plan.filter(func(p: Dictionary) -> bool: return p["part"] == "torso" and p["kind"] in ["skin", "worn"])
+	var grows := torso.size() == 4
+	for i in range(1, torso.size()):
+		grows = grows and torso[i]["size"].x > torso[i - 1]["size"].x
+	_check.call(grows and torso[1]["item"] == 8696 and torso[3]["item"] == 4771,
+			"body: torso skin < t-shirt < hoodie < leather jacket")
+	var kinds := {}
+	for p: Dictionary in plan:
+		kinds[p["kind"] + ":" + p["part"]] = true
+	_check.call(kinds.has("bandage:arm_l") and kinds.has("blood:leg_r") and kinds.has("tear:leg_l")
+			and kinds.has("worn:head") and not kinds.has("bandage:arm_r"),
+			"body: bandage on the left arm, blood on the right leg, torn jeans, a cap")
+	var leg_r: Snapshot.BodyPart = snap.player_parts[9]
+	var leg_l: Snapshot.BodyPart = snap.player_parts[8]
+	_check.call(PlayerBody.skin_color(leg_r).b < PlayerBody.skin_color(leg_l).b
+			and PlayerBody.skin_color(leg_r).g < PlayerBody.skin_color(leg_l).g, "body: hurt leg is redder")
+	var gloves := snap.player_worn[8]
+	var fresh := Snapshot.Worn.new()
+	fresh.type = gloves.type
+	_check.call(PlayerBody.worn_color(null, gloves).s < PlayerBody.worn_color(null, fresh).s,
+			"body: worn-out gloves are paler")
+	var pb := PlayerBody.new()
+	root.add_child(pb)
+	pb.apply(snap, tables)
+	var built := pb.get_child_count()
+	pb.show_head = false
+	var head := pb.get_node_or_null("head") as Node3D
+	var arm := pb.get_node_or_null("arm_l") as Node3D
+	_check.call(built == 14 and head != null and not head.visible and arm.visible,
+			"body: one node per part; own camera hides the head, not the arms")
+	var hips := PlayerBody.next_hip_yaw(0.0, 0.3, 0.1)
+	var turned := PlayerBody.next_hip_yaw(0.0, 1.5, 0.1)
+	var caught := 0.0
+	for i in 60:
+		caught = PlayerBody.next_hip_yaw(caught, 1.5, 1.0 / 60.0)
+	_check.call(hips == 0.0 and turned > 0.0 and turned < 1.5 and absf(1.5 - caught) <= PlayerBody.HIP_SLACK,
+			"body: hips stay for a small head turn, follow a big one (%.2f, %.2f)" % [turned, caught])
+	var far := PlayerBody.arm_pose(-1.0, Vector3(-0.25, 1.45, -2.0))
+	var near := PlayerBody.arm_pose(1.0, Vector3(0.25, 1.2, -0.3))
+	_check.call(absf((far[0] as Vector3).distance_to(Vector3(-0.25, 1.45, 0)) - PlayerBody.ARM_REACH) < 0.001
+			and (far[0] as Vector3).z < -0.6 and (near[0] as Vector3).is_equal_approx(Vector3(0.25, 1.2, -0.3)),
+			"body: hands reach for the controllers, arms don't stretch")
+	pb.position = Vector3.ZERO
+	pb.rotation = Vector3.ZERO
+	pb.reach(pb.to_global(Vector3(-0.25, 1.45, -2.0)), null)
+	var hl := pb.get_node("hand_l") as Node3D
+	var hr := pb.get_node("hand_r") as Node3D
+	_check.call(hl.position.z < -0.5 and hr.transform == Transform3D.IDENTITY
+			and not (pb.get_node("arm_l") as Node3D).transform.basis.is_equal_approx(Basis.IDENTITY),
+			"body: left arm points forward, right arm hangs")
+	var open_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [0, 0, 0, 0, 0])
+	var fist_pts := PlayerBody.finger_points(1.0, Basis.IDENTITY, Vector3(0.25, 0.82, 0), [1, 1, 1, 1, 1])
+	var idx_open: Vector3 = open_pts[1][3]
+	var idx_fist: Vector3 = fist_pts[1][3]
+	_check.call(open_pts.size() == 5 and idx_open.y < 0.7 and idx_fist.y > idx_open.y + 0.03,
+			"body: fingers hang open and curl up into a fist")
+	pb.show_fingers = true
+	pb.pose_fingers("l", pb.curled_points(-1.0, [0.5, 1, 0, 0, 0]))
+	var fl := pb.get_node_or_null("fingers_l") as Node3D
+	_check.call(fl != null and fl.visible and fl.get_child_count() == 15
+			and (fl.get_child(3) as Node3D).position.distance_to(pb.get_node("hand_l").position) < 1.0,
+			"body: 15 finger segments per hand, shown in VR")
+	pb.show_fingers = false
+	_check.call(not fl.visible and VrHands.JOINTS.size() == 5, "body: no fingers on the desktop")
+	var k := pb.key
+	pb.apply(snap, tables)
+	_check.call(pb.key == k and pb.get_child_count() == 14, "body: same snapshot, no rebuild")
+	pb.free()
+	var bad: Dictionary = (data as Dictionary).duplicate(true)
+	bad["player"]["bleed"] = [1, 2]
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: wound list of the wrong length rejected")
+	bad = (data as Dictionary).duplicate(true)
+	var many := []
+	for i in 65:
+		many.append({"type": 1, "covers": [35]})
+	bad["player"]["worn"] = many
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: more than 64 worn items rejected")
+	bad = (data as Dictionary).duplicate(true)
+	bad["player"]["worn"] = [{"type": 1, "covers": "torso"}]
+	_check.call(not Snapshot.from_data(bad).is_valid(), "body: covers must be a list")

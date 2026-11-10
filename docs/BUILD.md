@@ -61,8 +61,13 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      (fly) camera and back; `--view=outside` starts outside (so does `--camera=`, unless `--view=first`). First
      person: hold RMB and move the mouse to look (or the right stick); live, WASD / left stick, arrows and
      numpad step where you look (held keys keep stepping, one step queued at a time), `[ ]` stairs; on the
-     mock town WASD walks (walls stop you, doors don't), Shift faster, `[ ]` level down / up, Home back to the
-     player. Bindings are Godot actions (`client/scripts/input/input_actions.gd`, defaults until E1).
+     mock town WASD walks (walls and closed doors stop you), Shift faster, `[ ]` level down / up, Home back to
+     the player. Bindings are Godot actions (`client/scripts/input/input_actions.gd`, defaults until E1).
+   - Doors (first person): a door next to you gets a yellow outline under the pointer and the pointer becomes a
+     hand; hold LMB on it and move the mouse the way the door should go (forward pushes, back pulls, sideways
+     swings it); past ~30° it opens, back under ~8° it shuts. Live, that queues CDDA's open / close for that
+     door (CDDA's time; a locked door rattles and CDDA says why); on the mock town the client opens it.
+     VR: grip a door within reach of your hand (it lights up) and move the hand.
    - Live game actions: **E** uses what your hands hold on the square you face, or examines it (a rubber
      hose in one hand and a container in the other siphon a vehicle's tank into the container; a held jerrycan
      refuels a vehicle; a held container fills from water, a keg or a puddle; no menus; the hands panel bottom
@@ -104,8 +109,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    `.so` built). Without the bridge, Godot prints once that `fp3d_cdda.gdextension` has no library for this
    platform; the mock town still runs.
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
-   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls stop you, doors
-   don't); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
+   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls and closed doors
+   stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
    release; right B / A: level up / down; left Y: back to the player (WMR / Index: trackpad click, right up /
    down half = level up / down, left = back to the player). Vive wands ("vive" layout): left pad touched walks;
    right pad click left/right turns, held up aims the teleport, down = level down; right menu = level up; left

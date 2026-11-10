@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <climits>
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -14,6 +15,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
 #include "fp3d/bridge.h"
@@ -25,6 +27,7 @@ using godot::Array;
 using godot::Dictionary;
 using godot::String;
 using godot::Variant;
+using godot::Vector2;
 using godot::Vector3i;
 
 namespace
@@ -155,6 +158,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_request" ), &CddaSim::get_request );
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
+    ClassDB::bind_method( D_METHOD( "queue_item_action", "action" ), &CddaSim::queue_item_action );
     ClassDB::bind_method( D_METHOD( "clear_actions" ), &CddaSim::clear_actions );
     ClassDB::bind_method( D_METHOD( "get_queued_actions" ), &CddaSim::get_queued_actions );
     ClassDB::bind_method( D_METHOD( "get_snapshot_seq" ), &CddaSim::get_snapshot_seq );
@@ -329,6 +333,30 @@ bool CddaSim::answer( const Dictionary &d )
                                 std::clamp( p.y, -max_abs_coord, max_abs_coord ),
                                 std::clamp( p.z, -max_abs_coord, max_abs_coord ) };
     }
+    if( !field( d, "shot", Variant::DICTIONARY, v ) ) {
+        return false;
+    }
+    if( d.has( "shot" ) ) {
+        // {end: Vector3i, hit_uid: int, part: String, quality: float}; the sim checks it again.
+        const Dictionary s = v;
+        Variant e;
+        Variant u;
+        Variant p;
+        Variant q;
+        if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) || !field( s, "hit_uid", Variant::INT, u ) ||
+            !field( s, "part", Variant::STRING, p ) || !field( s, "quality", Variant::FLOAT, q ) ) {
+            return false;
+        }
+        fp3d::shot_answer sa;
+        const Vector3i end = e;
+        sa.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
+                                 std::clamp( end.y, -max_abs_coord, max_abs_coord ),
+                                 std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
+        sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
+        sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
+        sa.quality = s.has( "quality" ) ? std::clamp( static_cast<float>( static_cast<double>( q ) ), 0.0f, 0.99f ) : 0.3f;
+        a.shot = sa;
+    }
     fp3d::answer( std::move( a ) );
     return true;
 }
@@ -337,6 +365,101 @@ bool CddaSim::queue_action( const String &action )
 {
     const std::string s = fp3d::sanitize_text( to_std( action ), max_action_bytes );
     return !s.empty() && fp3d::queue_action( s );
+}
+
+// One item, no menus (fp3d/item_hands.h, contracts/bridge_api.md). Every key is checked for type and range; a
+// request with anything wrong or out of range is refused whole (false), as is one the queue has no room for.
+bool CddaSim::queue_item_action( const Dictionary &d )
+{
+    fp3d::item_action a;
+    Variant v;
+    if( !d.has( "op" ) || !field( d, "op", Variant::STRING, v ) ) {
+        return false;
+    }
+    const String op = v;
+    if( op == "take" ) {
+        a.op = fp3d::item_op::take;
+    } else if( op == "put" ) {
+        a.op = fp3d::item_op::put;
+    } else if( op == "drop" ) {
+        a.op = fp3d::item_op::drop;
+    } else {
+        return false;
+    }
+    const auto ref = [&d]( const char *uid_key, const char *type_key, fp3d::item_ref & r ) {
+        Variant u;
+        Variant t;
+        if( !d.has( uid_key ) || !d.has( type_key ) || !field( d, uid_key, Variant::INT, u ) ||
+            !field( d, type_key, Variant::INT, t ) ) {
+            return false;
+        }
+        const int64_t uid = u;
+        const int64_t type = t;
+        if( uid <= 0 || uid > static_cast<int64_t>( fp3d::max_item_uid ) || type <= 0 || type > INT32_MAX ) {
+            return false;
+        }
+        r.uid = static_cast<uint64_t>( uid );
+        r.type = static_cast<uint32_t>( type );
+        return true;
+    };
+    if( !ref( "item", "type", a.item ) ) {
+        return false;
+    }
+    if( !field( d, "pos", Variant::VECTOR3I, v ) ) {
+        return false;
+    }
+    if( d.has( "pos" ) ) {
+        const Vector3i p = v;
+        if( std::abs( p.x ) > max_abs_coord || std::abs( p.y ) > max_abs_coord || std::abs( p.z ) > max_abs_coord ) {
+            return false;
+        }
+        a.pos = fp3d::ui_point{ p.x, p.y, p.z };
+    } else if( a.op != fp3d::item_op::put ) {
+        return false;
+    }
+    if( !field( d, "hand", Variant::STRING, v ) ) {
+        return false;
+    }
+    if( d.has( "hand" ) ) {
+        const String hand = v;
+        if( hand == "pack" ) {
+            a.hand = fp3d::item_hand::pack;
+        } else if( hand == "main" ) {
+            a.hand = fp3d::item_hand::main;
+        } else if( hand == "off" ) {
+            a.hand = fp3d::item_hand::off;
+        } else {
+            return false;
+        }
+    }
+    if( a.op == fp3d::item_op::put ) {
+        if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
+            return false;
+        }
+        if( d.has( "pocket" ) ) {
+            const int64_t pocket = v;
+            if( pocket < -1 || pocket > fp3d::max_item_pocket ) {
+                return false;
+            }
+            a.pocket = static_cast<int>( pocket );
+        }
+    }
+    if( !field( d, "spot", Variant::VECTOR2, v ) ) {
+        return false;
+    }
+    if( d.has( "spot" ) ) {
+        const Vector2 s = v;
+        if( !std::isfinite( s.x ) || !std::isfinite( s.y ) || s.x < 0 || s.x > 1 || s.y < 0 || s.y > 1 ) {
+            return false;
+        }
+        const auto permille = []( real_t f ) {
+            return static_cast<uint16_t>( std::min<int>( fp3d::spot_scale - 1, static_cast<int>( f * fp3d::spot_scale ) ) );
+        };
+        a.has_spot = true;
+        a.spot_x = permille( s.x );
+        a.spot_y = permille( s.y );
+    }
+    return fp3d::queue_item_action( a );
 }
 
 void CddaSim::clear_actions()

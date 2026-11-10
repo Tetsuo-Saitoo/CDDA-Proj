@@ -4,8 +4,9 @@ For anyone making models for the game. The game shows CDDA's world in 3D and VR.
 id (an item, a piece of furniture, terrain, a monster or a vehicle part). In VR, players pick models up, open
 them, pour from them and cook with them, so models need a few named points besides the mesh.
 
-Status: the client doesn't load `.glb` models yet. Until it does it shows simple placeholder shapes (PLAN.md H1,
-TASKS.md). Models made to this spec will show up without changes once loading lands.
+Status: the client loads `.glb` models for furniture, traps and items (terrain still uses procedural shapes).
+Ids without a model show simple placeholder shapes (PLAN.md H1, TASKS.md). A model that breaks the limits
+below is skipped with a warning in the console, and the placeholder shows instead.
 
 Art direction is still an open decision (PLAN.md: stylised low-poly or realistic). Agree on it with the project
 owner before making many models, and keep one style across a set.
@@ -36,12 +37,18 @@ owner before making many models, and keep one style across a set.
 - One material per model if possible, two at most.
 - PBR metallic-roughness: base colour, normal, and occlusion-roughness-metallic packed in one texture.
 - Transparency only for glass and liquids.
-- No LODs needed: Godot makes them on import.
+- No LODs needed for now (models are loaded at run time, so Godot doesn't make LODs; the budgets keep
+  that fine).
+
+**Hard limits** (the game refuses the file above these): 32 MB per file, 512 nodes, 60,000 triangles,
+128 markers, 16 images of at most 4096 px a side (PNG or JPEG, embedded), 32 materials, 64 animations.
+No external files: buffers and textures must be inside the `.glb`.
 
 ## Named points (markers)
 
-Markers are empties (Blender) or empty nodes, named exactly as below; numbered ones start at 1. A model only
-needs the markers that apply to it. Where a marker has a direction, "forward" means the model's front (−Y in
+Markers are empties (Blender) or empty nodes, named exactly as below; numbered ones start at 1 (up to 99).
+Blender's `.001` suffixes break the name, so rename duplicates. A model only needs the markers that apply
+to it. Point markers that are meshes by mistake are hidden. Where a marker has a direction, "forward" means the model's front (−Y in
 Blender) and "up" means Blender Z, unless it says otherwise.
 
 **Held items**
@@ -65,7 +72,8 @@ Blender) and "up" means Blender Z, unless it says otherwise.
   knob), as its own mesh. It is a child of the door, drawer or lid it belongs to. The game highlights it when
   the crosshair or a VR hand is on it. Without one, the whole door, drawer or lid is grabbable.
 - `surface_1`, …: flat planes where items lie, such as shelves, a drawer's floor or a table top. The plane's
-  size is the usable area, and the game hides it.
+  size is the usable area, and the game hides it. Items on the tile are spread over these planes in turn
+  (item 1 on surface_1, item 2 on surface_2, ...); without any, they lie on the placeholder's surfaces.
 
 **Cooking**
 - `burner_1`, …: stove, hotplate and woodstove spots where a pot or pan sits.
@@ -77,8 +85,8 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 
 **Other**
 - `light`: where a lamp's light comes from.
-- Collision (optional): a simple child mesh named `<name>-convcolonly` (Godot makes it a convex collider and
-  hides it). Without one the game uses the bounding box.
+- Collision (optional): a simple child mesh named `<name>-convcolonly` (the game makes it a convex collider
+  and hides it). Without one the game uses the bounding box.
 
 ## Files and the registry
 

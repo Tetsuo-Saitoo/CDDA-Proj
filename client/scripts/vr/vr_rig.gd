@@ -10,6 +10,7 @@ extends XROrigin3D
 ##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
 ## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
 ## `save_path`). Hands (VrHand) show finger tracking when the runtime gives it, else fingers from the buttons.
+## Grip near a door (Grabbable, outlined when in reach) grabs it; it swings with the hand (block L2).
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -56,6 +57,11 @@ var menu: VrMenu          # created on first open
 var left_hand: VrHand
 var right_hand: VrHand
 var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
+const GRAB_REACH := 0.12  # metres from a hand to a door leaf it can grip
+var grab_ok := Callable() # square -> bool: may a hand open the door there (live: next to the player)
+var grabs: Array = [null, null]   # Grabbable held by the left / right hand
+var near: Array = [null, null]    # Grabbable each hand could grip (outlined)
+var _lit: Array = []
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -115,6 +121,8 @@ func _build() -> void:
 	right = _controller("RightHand", &"right_hand", Color(1.0, 0.6, 0.25))
 	left.button_pressed.connect(func(n: String) -> void: press(left, n))
 	right.button_pressed.connect(func(n: String) -> void: press(right, n))
+	left.button_released.connect(func(n: String) -> void: release(left, n))
+	right.button_released.connect(func(n: String) -> void: release(right, n))
 	left_hand = VrHand.new(true)
 	right_hand = VrHand.new(false)
 	add_child(left_hand)
@@ -171,7 +179,40 @@ func _process(delta: float) -> void:
 		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
 				settings["turn"] == "smooth")
 	step(delta, inp)
+	update_grabs()
 	pose_hands()
+
+
+## Held doors follow their hand; free hands outline the door they could grip. `all_hands`: count hands the
+## runtime doesn't track (tests).
+func update_grabs(all_hands := false) -> void:
+	for i in 2:
+		var c: XRController3D = left if i == 0 else right
+		var g: Grabbable = grabs[i]
+		if g != null and not is_instance_valid(g):
+			grabs[i] = null
+			g = null
+		if g != null:
+			g.drag_hand(c.global_position)
+			near[i] = g
+		elif (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open():
+			near[i] = world.grabbable_near(c.global_position, GRAB_REACH, grab_ok)
+		else:
+			near[i] = null
+	for g: Grabbable in _lit:
+		if is_instance_valid(g) and g not in near:
+			g.set_highlight(false)
+	_lit = near.filter(func(g: Variant) -> bool: return g != null)
+	for g: Grabbable in _lit:
+		g.set_highlight(true)
+
+
+func release(c: XRController3D, n: String) -> void:
+	var i := 0 if c == left else 1
+	if n == "grip_click" and grabs[i] != null:
+		if is_instance_valid(grabs[i]):
+			grabs[i].end_grab()
+		grabs[i] = null
 
 
 ## Hands from the runtime's hand tracking, else from each controller's buttons, else hidden; or the simple
@@ -372,6 +413,11 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return
 	if c == right and n == "trigger_click":
 		use_pointed_stair(c)
+		return
+	var hand := 0 if c == left else 1
+	if n == "grip_click" and near[hand] != null and is_instance_valid(near[hand]):
+		grabs[hand] = near[hand]
+		grabs[hand].begin_hand(c.global_position)
 		return
 	if current_layout() == "vive":
 		if c == right and n == "menu_button":

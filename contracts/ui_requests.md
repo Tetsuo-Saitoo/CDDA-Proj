@@ -41,6 +41,13 @@ second click or F / pad R1 fires); holding RMB in first person aims with a centr
 modes only) and LMB fires with the primary action (FIRE, else CONFIRM / SELECT). CDDA still checks range and
 line of fire.
 
+Client-flown shots: a FIRE answer may carry `shot` = {end: Vector3i (absolute square where the bullet
+stopped), hit_uid (creature hit, 0 = miss), part (character body part id like head / arm_l, or monster weak
+point id like head / eye / leg; "" = CDDA picks), quality (float 0 dead centre .. 0.99)}. For that trigger
+pull CDDA skips its dispersion roll: the projectile stops at `end`, can hit only `hit_uid`, in `part`, with
+`quality` as its goodhit (crits, damage multiplier). Anything else (ammo, recoil, noise, time, damage,
+armour) is CDDA's. Ignored on other requests; the bridge clamps it (part 64 bytes, quality 0..0.99).
+
 Every request carries `turn` (game turns since the cataclysm), `paused` and `pause_reason`. The main game loop's
 request (`game::get_player_input`) is `timed`; every other input loop that polls with a timeout gets `TIMEOUT`
 without asking (`fp3d::poll_report()` counts them). While the bridge is active, `ui_manager::redraw`,

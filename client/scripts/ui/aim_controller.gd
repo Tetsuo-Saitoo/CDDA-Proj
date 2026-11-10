@@ -9,6 +9,10 @@ extends Node3D
 ## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors). Answers go through
 ## TargetRequestWidget (pos + FIRE etc.), so CDDA still checks range, line of fire and ammo.
 ## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera; `fired` kicks it.
+## Guns (fire mode with a wielded gun): the client flies the bullet (BulletPhysics: speed, drag, drop, sights
+## zeroed at 25 m) from the eye along the crosshair / clicked point against the creature figures' body parts
+## and the map, draws a tracer, and answers FIRE with the outcome (`shot`): CDDA hits that creature in that
+## part, or misses, instead of rolling.
 
 signal fired
 
@@ -20,6 +24,9 @@ var look_ray: LookRay
 var first_person := false     # main.gd sets it each frame
 var crosshair: Crosshair
 var _marker: MeshInstance3D
+var creature_view: CreatureView   # bullets hit its figures; null = CDDA rolls the shot as before
+var wielded_gun := Callable()     # -> IdTables.Def of the wielded gun, or null (main.gd)
+var last_shot := {}               # the last client-flown shot (tests, debugging)
 
 
 func _init(w: WorldView, ui: RequestUI) -> void:
@@ -87,10 +94,65 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 			request_ui.set_target_cursor(sq)
 		if TargetRequestWidget.is_attack_mode(t.mode):
 			fired.emit()
+		var gun: IdTables.Def = wielded_gun.call() if wielded_gun.is_valid() else null
+		if t.mode == "fire" and gun != null and creature_view != null and world.snapshot != null:
+			var shot := fly_shot(cam, aim_point(cam, mouse, captured), gun.gun_ammo)
+			if not shot.is_empty():
+				t.fire_shot(shot["square"], shot["answer"])
+				return true
 		t.fire()
 	else:
 		request_ui.set_target_cursor(sq)   # first click picks, the second on the same square shoots
 	return true
+
+
+## Flies a bullet through screen point `at`: {square, answer (the `shot` dictionary), result} or {}.
+func fly_shot(cam: Camera3D, at: Vector2, ammo: String) -> Dictionary:
+	var prof := BulletPhysics.ammo_profile(ammo)
+	var origin := cam.project_ray_origin(at)
+	var sight := cam.project_ray_normal(at)
+	var r := BulletPhysics.fly(origin, BulletPhysics.launch_dir(sight, prof[0]), prof[0], prof[1],
+			creature_view.figures(), look_ray)
+	var sq := world.coords.world_to_ms(r["point"])
+	var answer := {"end": sq, "hit_uid": 0, "part": "", "quality": 0.99}
+	if r["hit"] == "creature":
+		var c: Snapshot.Creature = null
+		for x in world.snapshot.creatures:
+			if x.uid == r["uid"]:
+				c = x
+		if c != null:
+			sq = c.pos
+			var d := CreatureView.def_of(world, c)
+			answer = {"end": sq, "hit_uid": c.uid, "quality": BulletPhysics.quality_of(r["quality"]),
+					"part": BulletPhysics.cdda_part(r["zone"], c.kind == Snapshot.Creature.MONSTER,
+							d.weakpoints if d != null else {})}
+	if sq == world.coords.world_to_ms(origin):
+		return {}   # stopped in our own square: let CDDA handle it
+	last_shot = {"square": sq, "answer": answer, "result": r}
+	_tracer(r["path"])
+	return last_shot
+
+
+func _tracer(path: Array) -> void:
+	if path.size() < 2 or not is_inside_tree():
+		return
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(1.0, 0.85, 0.4, 0.9)
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, mat)
+	for i in mini(path.size(), 512):
+		im.surface_add_vertex(path[i] + Vector3(0, -0.08, 0) * (1.0 - float(i) / path.size()))
+	im.surface_end()
+	var mi := MeshInstance3D.new()
+	mi.name = "Tracer"
+	mi.mesh = im
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	var tw := create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.25)
+	tw.tween_callback(mi.queue_free)
 
 
 func _place_marker(sq: Vector3i) -> void:

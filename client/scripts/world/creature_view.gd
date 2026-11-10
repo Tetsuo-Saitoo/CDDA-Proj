@@ -196,6 +196,11 @@ func figure(uid: int) -> CreatureFigure:
 	return _figs.get(uid)
 
 
+## Live figures by uid (BulletPhysics tests bullets against them).
+func figures() -> Dictionary:
+	return _figs
+
+
 func dying_count() -> int:
 	return _dying.size()
 

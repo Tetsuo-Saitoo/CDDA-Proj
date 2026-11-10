@@ -23,7 +23,8 @@ func _init(w: WorldView) -> void:
 
 
 ## {hit: bool, square: Vector3i, point: Vector3, what: "wall" / "door" / "furniture" / "floor" / "ceiling"}.
-func cast(origin: Vector3, dir: Vector3, max_m := MAX_M) -> Dictionary:
+## `creatures` false: only the map (BulletPhysics tests the figures itself).
+func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true) -> Dictionary:
 	if world.snapshot == null or dir.length() < 0.001:
 		return {"hit": false}
 	dir = dir.normalized()
@@ -44,7 +45,7 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M) -> Dictionary:
 			return {"hit": false}   # out of the loaded area
 		var floor_y := world.coords.ms_to_world(p).y
 		var cr := world.snapshot.creature_at(p)
-		if cr != null and pt.y - floor_y < CreatureView.height_of(cr.kind, CreatureView.def_of(world, cr)):
+		if creatures and cr != null and pt.y - floor_y < CreatureView.height_of(cr.kind, CreatureView.def_of(world, cr)):
 			return _hit(p, pt, creature_name(cr))
 		var style := world.catalog.style_for(c["ter"])
 		if style.kind in SOLID:

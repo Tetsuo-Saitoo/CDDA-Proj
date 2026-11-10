@@ -1,5 +1,5 @@
 extends SceneTree
-## Headless checks for blocks C1-C3, E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
+## Headless checks for blocks C1-C3 (models: tests/model_tests.gd), E3 (tests/ui_tests.gd), L1 (tests/vr_tests.gd) and C9 (tests/fp_tests.gd). From the repo root:
 ##   godot --headless --path client --import          (once, so class names resolve)
 ##   godot --headless --path client --script res://tests/run_tests.gd
 ## Exit code 0 = all passed.
@@ -11,6 +11,7 @@ var _failed := 0
 
 
 func _initialize() -> void:
+	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
 	var t0 := Time.get_ticks_msec()
@@ -23,13 +24,33 @@ func _initialize() -> void:
 	_test_registry(tables)
 	_test_bad_registry()
 	_test_props(data, tables)
+	preload("res://tests/model_tests.gd").new().run(_check, data, tables, _scene, _repo)
 	preload("res://tests/ui_tests.gd").new().run(root, _check)
 	await process_frame   # the root is in the tree from here on: the VR rig needs global transforms
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
+
+
+## Every script under res://scripts and res://tests must compile: a parse error elsewhere otherwise only
+## shows as a SCRIPT ERROR line while the suites that use it are skipped and the run still "passes".
+func _test_scripts_compile() -> void:
+	var bad := PackedStringArray()
+	var dirs := ["res://scripts", "res://tests"]
+	while not dirs.is_empty():
+		var d: String = dirs.pop_back()
+		for sub in DirAccess.get_directories_at(d):
+			dirs.append(d.path_join(sub))
+		for f in DirAccess.get_files_at(d):
+			if f.ends_with(".gd"):
+				var sc := load(d.path_join(f)) as GDScript
+				if sc == null or not sc.can_instantiate():
+					bad.append(d.path_join(f))
+	_check(bad.is_empty(), "every script compiles %s" % bad)
 
 
 func _check(cond: bool, what: String) -> void:
@@ -396,6 +417,28 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 		sm0.call(d).erase("items")
 		sm0.call(d).erase("trap"))
 	_check(lean.is_valid() and lean.ids_generation == 1, "a submap without items or traps is valid")
+	# Item handles (L8) and carried items: bounded, checked, never trusted.
+	var handled := _mutated(data, func(d: Dictionary) -> void:
+		sm0.call(d)["handles"] = JSON.parse_string("[[3, 9007199254740991, 5, 250, 750], [3, 77, 5, -1, -1]]")
+		(d["player"] as Dictionary)["items"] = [[10, 4, 0, -1, 1], [11, 5, 10, 0, 0], [12, 5, 0, -1, 6]])
+	var hs := PackedInt64Array()
+	for sm: Snapshot.Submap in handled.submaps.values():
+		hs.append_array(sm.handles)
+	_check(handled.is_valid() and handled.carried.size() == 15 and hs.size() == 10 and hs[1] == 9007199254740991
+			and hs[3] == 250, "handles and carried items read: " + handled.error)
+	var hdl := func(h: Array) -> Callable: return func(d: Dictionary) -> void: sm0.call(d)["handles"] = h
+	_reject(_mutated(data, hdl.call([[3, 0, 5, -1, -1]])), "handle uid 0")
+	_reject(_mutated(data, hdl.call(JSON.parse_string("[[3, 9007199254740992, 5, -1, -1]]"))), "handle uid 2^53")
+	_reject(_mutated(data, hdl.call([[3, 7, 5, 1000, 0]])), "spot 1000")
+	_reject(_mutated(data, hdl.call([[3, 7, 5, 0.5, 0]])), "spot not an integer")
+	_reject(_mutated(data, hdl.call([[3, 7, 5, -1, -1], [4, 7, 5, -1, -1]])), "uid twice")
+	_reject(_mutated(data, hdl.call(range(33).map(func(i: int) -> Array: return [3, i + 1, 5, -1, -1]))), "33 handles on a tile")
+	_reject(_mutated(data, hdl.call([[3, 7, 5, -1]])), "short handle")
+	var car := func(c: Array) -> Callable: return func(d: Dictionary) -> void: (d["player"] as Dictionary)["items"] = c
+	_reject(_mutated(data, car.call([[11, 5, 10, 0, 0]])), "carried before its container")
+	_reject(_mutated(data, car.call([[10, 4, 0, 256, 0]])), "pocket 256")
+	_reject(_mutated(data, car.call([[10, 4, 0, -1, 8]])), "unknown carried flag")
+	_reject(_mutated(data, car.call(range(257).map(func(i: int) -> Array: return [i + 1, 4, 0, -1, 0]))), "257 carried")
 
 	var reg := AssetRegistry.new()
 	reg.load_dir(_repo("assets/registry"))
