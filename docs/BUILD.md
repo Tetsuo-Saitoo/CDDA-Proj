@@ -166,8 +166,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    runtime script error stops the function it happens in, so the checks after it never ran. Tests write only in
    their run's own folder, `user://test-runs/<process id>/` (`tests/test_dir.gd`; every worktree shares the
    user:// folder, so fixed names collided between parallel runs); the live tests' CDDA user dirs are there too,
-   never the game's own `cdda` folder or settings. Removed at the end; folders left behind (a crash, a failed
-   live run) go 6 hours after their run began, by start time, since Godot can't tell whether another
-   process still runs (`OS.is_process_running` only knows its own children). In Godot 4.7 a freed
+   never the game's own `cdda` folder or settings. Removed at the end; a failed live run keeps its folder until
+   the next run. In Godot 4.7 a freed
    object compares equal to `null`: `x != null and not is_instance_valid(x)` never catches one, test
    `not is_instance_valid(x)` alone.

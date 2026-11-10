@@ -264,8 +264,8 @@ func _drain() -> void:
 
 
 func _finish() -> void:
-	# Run 1 owns the folder (run 2 has finished by now). A failed run keeps it to look at; a later run's
-	# clean() removes it once it is TestDir.STALE_S old.
+	# Run 1 owns the folder (run 2 has finished by now). A failed run keeps it to look at; the next run's
+	# clean() removes it.
 	if not "--load" in OS.get_cmdline_user_args():
 		if _failed == 0:
 			TestDir.clean()
