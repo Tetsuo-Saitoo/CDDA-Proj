@@ -23,6 +23,7 @@ var props := PropCatalog.new(catalog.registry)
 ## never writes a cache the main thread reads. Made fresh by _prepare when the tables or registry change.
 var _job_catalog: TerrainCatalog
 var _job_props: PropCatalog
+var _rebuild_all := false   # set_id_tables came while a job was meshing or committing
 var _job_key := []
 var tables: IdTables
 var snapshot: Snapshot
@@ -81,6 +82,8 @@ class Job:
 	var light_on := false   # build `light` (lighting enabled)
 	var light_lut := false  # with a new LUT (the natural light changed)
 	var light: LightMap
+	var catalog: TerrainCatalog   # the job catalogs it was prepared with (the worker reads only these)
+	var props_catalog: PropCatalog
 
 
 func _init() -> void:
@@ -90,10 +93,14 @@ func _init() -> void:
 ## Id tables for the snapshots that follow (contracts/id_tables.md). Null or invalid: the snapshot's
 ## names and the registry only. Everything built so far is rebuilt on the next apply.
 func set_id_tables(t: IdTables) -> void:
-	finish_pending()
 	tables = t if t != null and t.is_valid() else null
 	catalog.set_tables(tables)
 	props.set_tables(tables)
+	_rebuild_all = _task >= 0 or _committing != null   # a job made with the old tables: redo all after it
+	_mark_all_stale()
+
+
+func _mark_all_stale() -> void:
 	for pos: Vector3i in _built:
 		_built[pos]["rev"] = -1
 
@@ -168,6 +175,9 @@ func _step_commit(budget_us: int) -> void:
 	if not _commit(job, budget_us):
 		return
 	_committing = null
+	if _rebuild_all:
+		_rebuild_all = false
+		_mark_all_stale()
 	applied.emit(job.snap, job.dirty.size())
 	if _waiting != null:
 		var next := _waiting
@@ -186,6 +196,8 @@ func _prepare(snap: Snapshot) -> Job:
 		_job_props.set_tables(tables)
 	var job := Job.new()
 	job.snap = snap
+	job.catalog = _job_catalog
+	job.props_catalog = _job_props
 	var dirty := {}
 	var detail := {}
 	for pos: Vector3i in _built:
@@ -211,13 +223,13 @@ func _prepare(snap: Snapshot) -> Job:
 
 
 ## Runs on a worker: touches only the job and the job catalogs (the main thread keeps using `catalog` and
-## `props`; set_id_tables and apply_snapshot wait for the job first). ArrayMesh building goes through the
+## `props` and may change them meanwhile; apply_snapshot waits for the job first). ArrayMesh building goes through the
 ## thread-safe RenderingServer.
 func _compute(job: Job) -> void:
-	_job_catalog.set_snapshot(job.snap)
-	_job_props.set_snapshot(job.snap)
-	var mesher := TerrainMesher.new(job.snap, _job_catalog)
-	var pmesher := PropMesher.new(job.snap, _job_catalog, _job_props)
+	job.catalog.set_snapshot(job.snap)
+	job.props_catalog.set_snapshot(job.snap)
+	var mesher := TerrainMesher.new(job.snap, job.catalog)
+	var pmesher := PropMesher.new(job.snap, job.catalog, job.props_catalog)
 	for pos in job.dirty:
 		job.terrain[pos] = mesher.build(pos)
 	for pos in job.detail:

@@ -110,6 +110,13 @@ func _job_catalogs(root: Node, data: Variant, tables: IdTables) -> void:
 	w.apply_snapshot(snap)
 	_check.call(w._job_catalog != first and w._job_catalog.tables == null and w.catalog.tables == null,
 			"job: new catalogs when the tables change")
+	w.set_id_tables(tables)
+	w.submit(snap)
+	w.set_id_tables(null)   # while the job runs: no wait
+	var during := w.busy()
+	w.finish_pending()
+	var stale := w._built.values().all(func(b: Dictionary) -> bool: return b["rev"] == -1)
+	_check.call(during and stale and w.tables == null, "job: id tables change without waiting; all redone after the job")
 	w.free()
 
 
