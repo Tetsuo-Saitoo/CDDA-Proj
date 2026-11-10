@@ -6,7 +6,8 @@ extends RefCounted
 ## every accepted call ends in a new capture (snap.seq + 1, `changed`), and a refusal first says why with
 ## `message` (CDDA's m_info) and changes no item. It answers inside the call: the caller re-applies the snapshot
 ## to the world on `changed` and passes it on to ItemActions.on_snapshot.
-## Simplified: no weight, volume or pocket limits; what goes into a container lying on the ground isn't listed.
+## Simplified: no weight, volume or pocket limits (tests add their own with `put_check`); what goes into a
+## container lying on the ground isn't listed.
 
 ## Why a call was refused (CDDA's m_info message); `changed` follows.
 signal message(text: String)
@@ -21,6 +22,10 @@ const PS := Snapshot.PILE_STRIDE
 var snap: Snapshot
 var tables: IdTables
 var _next_uid := FIRST_UID
+## Optional pocket rule for put_item, as CDDA's would refuse: (item_type: int, container_type: int, pocket: int)
+## -> String, "" to allow, else the refusal message (e.g. "The rock is too big for the pocket."). Called only
+## once the put is otherwise allowed; nothing moves when it refuses.
+var put_check := Callable()
 
 
 func _init(s: Snapshot, t: IdTables) -> void:
@@ -144,6 +149,10 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 		return _refuse("You can't put your %s inside itself." % _name(t))
 	if not is_container(ct, tables):
 		return _refuse("Could not put %s into %s, it can't hold anything." % [_name(t), _name(ct)])
+	if put_check.is_valid():
+		var why: Variant = put_check.call(t, ct, pocket)
+		if why is String and not (why as String).is_empty():
+			return _refuse((why as String).left(200))
 	var moved := _remove_subtree(row)
 	if crow >= 0:
 		moved[2] = cu

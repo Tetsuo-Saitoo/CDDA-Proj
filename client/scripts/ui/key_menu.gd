@@ -4,7 +4,9 @@ extends PanelContainer
 ## button (modifiers count: Shift+E is its own key; a modifier alone binds when let go); click the pad slot,
 ## then press a pad button or push a stick / trigger one way. Esc cancels, Backspace clears the slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
 ## kept on both and named in the status line. While open the menu takes every key, so nothing reaches the game.
-## With add_hud_settings() it also has the HUD row (compass opacity slider), saved in user://hud.cfg.
+## With add_hud_settings() it also has the HUD row (compass opacity slider, the debug-cheats switch), saved in
+## user://hud.cfg. With add_cheat_page() a "Cheats" button swaps the key list for the CheatPanel; it shows only
+## while cheats are allowed (the debug switch, or cheats_forced by --test / --cheats).
 
 signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
@@ -23,6 +25,19 @@ var hud: HudSettings          # set by add_hud_settings
 var hud_path := HudSettings.FILE
 var compass_slider: HSlider
 var _compass_value: Label
+var debug_check: CheckBox
+var cheat_page: CheatPanel    # set by add_cheat_page
+var cheats_button: Button
+## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
+var cheats_forced := false:
+	set(v):
+		cheats_forced = v
+		if cheats_button != null:
+			_update_cheats_button()
+var _title: Label
+var _scroll: ScrollContainer
+const KEYS_TITLE := ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
+		+ "Esc cancels  Backspace clears  F1 / Esc closes")
 
 
 func _init() -> void:
@@ -40,10 +55,11 @@ func _init() -> void:
 	_box = box
 	add_child(box)
 	var title := Label.new()
-	title.text = ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
-			+ "Esc cancels  Backspace clears  F1 / Esc closes")
+	title.text = KEYS_TITLE
+	_title = title
 	box.add_child(title)
 	var scroll := ScrollContainer.new()
+	_scroll = scroll
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
@@ -79,6 +95,12 @@ func _init() -> void:
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bar.add_child(_status)
+	cheats_button = Button.new()
+	cheats_button.text = "Cheats"
+	cheats_button.focus_mode = Control.FOCUS_NONE
+	cheats_button.visible = false
+	cheats_button.pressed.connect(func() -> void: show_cheats(not showing_cheats()))
+	bar.add_child(cheats_button)
 	for t: String in ["Reset all", "Close"]:
 		var b := Button.new()
 		b.text = t
@@ -107,9 +129,63 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	row.add_child(compass_slider)
 	_compass_value = Label.new()
 	row.add_child(_compass_value)
+	debug_check = CheckBox.new()
+	debug_check.text = "Debug: cheats page"
+	debug_check.tooltip_text = "Shows the Cheats button here (testing only; off by default)."
+	debug_check.focus_mode = Control.FOCUS_NONE
+	debug_check.button_pressed = settings.debug_cheats
+	debug_check.toggled.connect(_on_debug_cheats)
+	row.add_child(debug_check)
 	_box.add_child(row)
 	_box.move_child(row, 1)
 	_show_compass_value()
+
+
+## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
+func add_cheat_page(panel: CheatPanel) -> void:
+	cheat_page = panel
+	_box.add_child(panel)
+	_box.move_child(panel, _scroll.get_index() + 1)
+	panel.visible = false
+	_update_cheats_button()
+
+
+func cheats_allowed() -> bool:
+	return cheat_page != null and (cheats_forced or (hud != null and hud.debug_cheats))
+
+
+func showing_cheats() -> bool:
+	return cheat_page != null and cheat_page.visible
+
+
+## Swaps the key list for the Cheats page (on) or back. The page only opens while cheats are allowed.
+func show_cheats(on: bool) -> void:
+	on = on and cheats_allowed()
+	_capture = []
+	refresh()
+	_scroll.visible = not on
+	_title.text = "Cheats (testing).  F1 / Esc closes" if on else KEYS_TITLE
+	if cheat_page != null:
+		cheat_page.visible = on
+		if on:
+			cheat_page.refresh()
+	if cheats_button != null:
+		cheats_button.text = "Keys" if on else "Cheats"
+
+
+func _update_cheats_button() -> void:
+	cheats_button.visible = cheats_allowed()
+	if not cheats_allowed() and showing_cheats():
+		show_cheats(false)
+
+
+func _on_debug_cheats(on: bool) -> void:
+	hud.debug_cheats = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Debug setting not saved: %s" % error_string(err)
+	_update_cheats_button()
+	hud_changed.emit()
 
 
 func _on_compass_opacity(v: float) -> void:
@@ -130,6 +206,11 @@ func open() -> void:
 	if compass_slider != null:
 		compass_slider.set_value_no_signal(hud.compass_opacity)
 		_show_compass_value()
+	if debug_check != null:
+		debug_check.set_pressed_no_signal(hud.debug_cheats)
+	if cheats_button != null:
+		_update_cheats_button()
+		show_cheats(false)
 	_capture = []
 	_status.text = "Saved in %s" % ProjectSettings.globalize_path(save_path)
 	refresh()
@@ -158,6 +239,8 @@ func refresh() -> void:
 
 
 func start_capture(action: StringName, slot: int) -> void:
+	if showing_cheats():
+		return
 	_capture = [action, slot]
 	_pending_mod = KEY_NONE
 	refresh()

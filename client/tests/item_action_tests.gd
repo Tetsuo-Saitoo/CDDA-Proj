@@ -336,6 +336,16 @@ func _test_mock(data: Variant, tables: IdTables) -> void:
 	_check.call(m.put_item(canvas_uid, canvas, box_uid, box, W) and _row(snap, canvas_uid).is_empty()
 			and _sm(snap, W).detail_revision == rev + 1 and _handle(snap, W, box) == box_uid,
 			"mock items: put into a container lying in reach")
+	# A test's own pocket rule (put_check): refused with its message and nothing moves; other pockets still go.
+	m.put_check = func(it: int, _ct: int, pocket: int) -> Variant:
+		return "The hammer is too big for that pocket." if it == hammer and pocket == 2 else ""
+	n = said.size()
+	_check.call(m.put_item(hammer_uid, hammer, 900, plastic, P, 2) and said.size() == n + 1
+			and said[-1] == "The hammer is too big for that pocket." and _row(snap, hammer_uid)[3] == 1,
+			"mock items: put_check refuses a pocket with its own message, nothing moves")
+	_check.call(m.put_item(hammer_uid, hammer, 900, plastic, P, 0) and said.size() == n + 1
+			and _row(snap, hammer_uid)[3] == 0, "mock items: put_check lets the other pockets through")
+	m.put_check = Callable()
 	caps[0] = 0
 	_check.call(not m.take_item(NAN, rock, E) and not m.take_item(rock_uid, 0.5, E) and not m.take_item(rock_uid, rock, E, "teeth")
 			and not m.drop_item(hammer_uid, hammer, S, Vector2(2.0, 0.5)) and not m.drop_item(hammer_uid, hammer, S, Vector2(0.5, NAN))

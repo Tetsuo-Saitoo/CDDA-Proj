@@ -30,6 +30,14 @@ extends RefCounted
 ## of the furniture they share a tile with (tables, shelves) and are hidden in closed containers. A
 ## furniture model's `surface_N` planes replace the placeholder's surfaces (items behind a model's doors
 ## are drawn there and hidden by the doors).
+##
+## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8) is drawn as
+## the model's `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
+## Grabbables): plain data, so this stays worker-safe. Items on a mover's surface_N are drawn with it (the
+## spec's items_*), in its own space; their item slot names the part (WorldView moves the slot with it and
+## points at it only while the part is open, or always on a lid). Items behind a model's doors get a slot
+## gated by the tile's doors and lids (pointable while one is open). Movers on roof terrain, and past
+## MAX_PARTS in a submap, stay put (the whole model drawn as before).
 
 const K := TerrainCatalog.Kind
 const SEEX := CddaCoords.SEEX
@@ -74,6 +82,8 @@ const ITEM_BOX := {
 }
 const ITEM_BOX_OTHER := AABB(Vector3(-0.42, 0, -0.42), Vector3(0.84, 1.0, 0.84))   # blocks, anything else
 const GLYPH_UP := 0.3   # item glyph cards float this far above their spot
+## Furniture parts that open, per submap (a model has at most ModelLibrary.MAX_MOVERS).
+const MAX_PARTS := 256
 
 
 class Result:
@@ -88,8 +98,17 @@ class Result:
 	var items := 0
 	var traps := 0
 	## One per drawn item that has a handle: [uid, itype, tile, Transform3D (submap-local, as drawn,
-	## scaled), size_m (its longest side), centre (submap-local: the middle of what is drawn)].
+	## scaled), size_m (its longest side), centre (submap-local: the middle of what is drawn), ride (the id of
+	## the part it is drawn with, "" none: transform and centre are at the part's rest), gates
+	## (PackedStringArray: ids of the doors / lids it lies behind; pointable while one is open; empty: none)].
 	var item_slots: Array = []
+	## Furniture doors, drawers and lids (Grabbable.part specs, at most MAX_PARTS), one Dictionary each:
+	## id ("x_y_z/door_1": the absolute square and the marker), square, kind, meshes ([Mesh, Transform3D in
+	## pivot space]; WorldView makes the nodes), pivot (submap-local), axis, max, size, handle (only when the
+	## model marks one), surfaces, open_id, close_id, cdda_open, locked, key (what it is drawn from: another
+	## key on a rebuild makes a new part), and what lies on its surfaces, in pivot space: items_mesh (ArrayMesh
+	## or null), items_models (Model -> [Transform3D]), items_glyphs ([position, symbol, colour]).
+	var parts: Array = []
 
 
 ## Items not to draw (uid -> true), e.g. one held in a hand: no shape, no slot, not counted as clutter.
@@ -104,6 +123,8 @@ var _roof_glass: TerrainMesher.Buf
 var _layout := {}       # absolute square -> Vector2i(facing, piece); piece -1: links to every joined neighbour
 var _run_facing := {}   # Vector4i(first square of a run, axis) -> facing
 var _pieces := 0
+var _tile_parts := {}   # tile -> [Model, PackedInt32Array of indices into Result.parts, one per mover] (this build)
+var _part_bufs := {}    # index into Result.parts -> [solid Buf, glass Buf] of the item shapes on it
 
 
 func _init(snap: Snapshot, terrain: TerrainCatalog, props: PropCatalog) -> void:
@@ -118,6 +139,8 @@ func build(sm_pos: Vector3i) -> Result:
 	_roof_solid = TerrainMesher.Buf.new()
 	_roof_glass = TerrainMesher.Buf.new()
 	var r := Result.new()
+	_tile_parts = {}
+	_part_bufs = {}
 	var sm: Snapshot.Submap = _snap.submaps[sm_pos]
 	var base := CddaCoords.sm_to_ms(sm_pos)
 	var tile_xf := {}   # tile -> furniture transform, for items resting on it
@@ -135,7 +158,8 @@ func build(sm_pos: Vector3i) -> Result:
 			rng.seed = _hash(p)
 			var xf := _place(p, i, prop, rng)
 			tile_xf[i] = xf
-			_emit(b, md, prop, xf, _links(p, prop, _facing_of(xf)), r, rng)
+			if _ter.style_for(sm.ter[i]).kind == K.ROOF or not _add_parts(p, i, prop, xf, md, r):
+				_emit(b, md, prop, xf, _links(p, prop, _facing_of(xf)), r, rng)
 			r.furniture += 1
 		if t != 0:
 			var prop := _cat.trap(t)
@@ -151,7 +175,44 @@ func build(sm_pos: Vector3i) -> Result:
 	r.props = _mesh(_solid, _glass)
 	r.roof_props = _mesh(_roof_solid, _roof_glass)
 	r.vertices = _solid.verts.size() + _glass.verts.size() + _roof_solid.verts.size() + _roof_glass.verts.size()
+	for k: int in _part_bufs:
+		var bufs: Array = _part_bufs[k]
+		r.parts[k]["items_mesh"] = _mesh(bufs[0], bufs[1])
+		r.vertices += (bufs[0] as TerrainMesher.Buf).verts.size() + (bufs[1] as TerrainMesher.Buf).verts.size()
+	_part_bufs = {}
 	return r
+
+
+## Furniture at p (tile i, placed at xf) whose model has movers: its `still` model goes to `md` and each mover
+## to r.parts; false (nothing added) when it has none, would pass MAX_PARTS, or a pivot comes out degenerate
+## (a tiny registry scale): the caller draws the whole model as before.
+func _add_parts(p: Vector3i, i: int, prop: PropCatalog.Prop, xf: Transform3D, md: Dictionary, r: Result) -> bool:
+	var m := prop.model
+	if m == null or m.movers.is_empty() or m.still == null or r.parts.size() + m.movers.size() > MAX_PARTS:
+		return false
+	var mxf := xf * MODEL_TURN
+	var pivots: Array[Transform3D] = []
+	for mv: ModelLibrary.Mover in m.movers:
+		var pv := mxf * mv.pivot
+		if not pv.is_finite() or absf(pv.basis.determinant()) < 1e-6:
+			return false
+		pivots.append(pv)
+	if not m.still.parts.is_empty():
+		_add_model(md, m.still, mxf)
+	r.model_props += 1
+	var idx := PackedInt32Array()
+	for k in m.movers.size():
+		var mv: ModelLibrary.Mover = m.movers[k]
+		var spec := {"id": "%d_%d_%d/%s" % [p.x, p.y, p.z, mv.name], "square": p, "kind": mv.kind,
+				"meshes": mv.meshes, "pivot": pivots[k], "axis": mv.axis, "max": mv.max_amount, "size": mv.size,
+				"surfaces": mv.surfaces, "open_id": prop.open_id, "close_id": prop.close_id, "cdda_open": prop.is_open,
+				"locked": prop.locked, "key": [m, pivots[k]], "items_mesh": null, "items_models": {}, "items_glyphs": []}
+		if mv.has_handle:
+			spec["handle"] = mv.handle
+		idx.append(r.parts.size())
+		r.parts.append(spec)
+	_tile_parts[i] = [m, idx]
+	return true
 
 
 ## Shapes on roof terrain go to the roof meshes.
@@ -421,30 +482,80 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 			continue   # CreatureView lays the body there
 		if not xf.is_finite() or not (e[4] as Vector3).is_finite():
 			continue   # a degenerate surface (zero scale): nothing to draw or point at
-		# Pointable only when drawn where it can be seen: not behind a closed model's doors, not a glyph
-		# past MAX_GLYPHS.
+		var pi := _part_on(pile[0], e[6], r)   # on a drawer's or door's surface: drawn with it
+		# Pointable when drawn: not a glyph past MAX_GLYPHS; behind a closed model's doors only when the tile
+		# has doors or lids that open (WorldView checks one is). On a part: named, WorldView moves it with it.
 		var glyph_only := prop.model == null and prop.shape.is_empty()
-		var pointable: bool = e[2] != 0 and not behind_doors and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
+		var gates := _gates(pile[0], r) if behind_doors else PackedStringArray()
+		var pointable: bool = e[2] != 0 and not (behind_doors and gates.is_empty()) \
+				and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
 		if pointable:
-			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4]])
-		if prop.model != null and itype != 0:
-			_add_model(md, prop.model, xf)
-			r.model_props += 1
-			continue
-		if prop.shape.is_empty():
-			if r.glyphs.size() < MAX_GLYPHS:
-				r.glyphs.append([xf.origin + Vector3(0, GLYPH_UP, 0), prop.symbol, prop.accent])
-			continue
-		b.xf = xf
-		var main := prop.main if itype != 0 else CLUTTER[(pile[0] + k) % CLUTTER.size()]
-		rng.seed = itype
-		PropShapes.build(prop.shape if itype != 0 else "item_small", b, main, main, prop.leaf, 0, 1.0, rng)
+			var ride: String = r.parts[pi]["id"] if pi >= 0 else ""
+			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4], ride, gates])
+		if pi >= 0:
+			var spec: Dictionary = r.parts[pi]
+			_draw_item(_part_builder(pi), spec["items_models"], spec["items_glyphs"],
+					(spec["pivot"] as Transform3D).affine_inverse(), prop, itype, xf, pile[0] + k, r, rng)
+		else:
+			_draw_item(b, md, r.glyphs, Transform3D.IDENTITY, prop, itype, xf, pile[0] + k, r, rng)
 	return placed.size()
 
 
+## One item drawn at `xf` (submap-local), turned into the target's space by `inv`: its model into `md`, its
+## shape into `b`, or a glyph card into `glyphs` (MAX_GLYPHS at most). `clutter` picks a clutter colour.
+func _draw_item(b: PropShapes.Builder, md: Dictionary, glyphs: Array, inv: Transform3D, prop: PropCatalog.Prop,
+		itype: int, xf: Transform3D, clutter: int, r: Result, rng: RandomNumberGenerator) -> void:
+	if prop.model != null and itype != 0:
+		_add_model(md, prop.model, inv * xf)
+		r.model_props += 1
+		return
+	if prop.shape.is_empty():
+		if glyphs.size() < MAX_GLYPHS:
+			glyphs.append([inv * (xf.origin + Vector3(0, GLYPH_UP, 0)), prop.symbol, prop.accent])
+		return
+	b.xf = inv * xf
+	var main := prop.main if itype != 0 else CLUTTER[clutter % CLUTTER.size()]
+	rng.seed = itype
+	PropShapes.build(prop.shape if itype != 0 else "item_small", b, main, main, prop.leaf, 0, 1.0, rng)
+
+
+## The index into r.parts of the mover whose surface `plane` (an index into the tile's model surfaces) is,
+## -1 when it stays put or the tile's furniture has no parts.
+func _part_on(tile: int, plane: int, r: Result) -> int:
+	var tp: Array = _tile_parts.get(tile, [])
+	if tp.is_empty() or plane < 0:
+		return -1
+	var m: ModelLibrary.Model = tp[0]
+	var idx: PackedInt32Array = tp[1]
+	if plane >= m.surface_mover.size():
+		return -1
+	var mi := m.surface_mover[plane]
+	return idx[mi] if mi >= 0 and mi < idx.size() and idx[mi] < r.parts.size() else -1
+
+
+## Ids of tile `tile`'s parts that hide what lies inside it when closed: its doors and lids (not drawers).
+func _gates(tile: int, r: Result) -> PackedStringArray:
+	var out := PackedStringArray()
+	var tp: Array = _tile_parts.get(tile, [])
+	if tp.is_empty():
+		return out
+	for pi: int in (tp[1] as PackedInt32Array):
+		if pi < r.parts.size() and r.parts[pi]["kind"] in ["door", "lid"]:
+			out.append(r.parts[pi]["id"])
+	return out
+
+
+## A shape builder drawing into part `pi`'s own item buffers.
+func _part_builder(pi: int) -> PropShapes.Builder:
+	if not _part_bufs.has(pi):
+		_part_bufs[pi] = [TerrainMesher.Buf.new(), TerrainMesher.Buf.new()]
+	return PropShapes.Builder.new(_part_bufs[pi][0], _part_bufs[pi][1])
+
+
 ## Where the items of a pile [tile, count, top0..3] go: one [transform (scaled to the item), itype, uid,
-## size_m, centre, height] per shown item, on the surfaces of the tile's furniture (its model's surface_N
-## planes when it has them); empty when they are inside a closed container. Deterministic per square.
+## size_m, centre, height, plane] per shown item, on the surfaces of the tile's furniture (its model's
+## surface_N planes when it has them: plane is the index into the model's surfaces, else -1); empty when they
+## are inside a closed container. Deterministic per square.
 ## Without `handles` (the tile's [uid, itype, spot_x, spot_y] lists): the four largest itypes, then
 ## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
 ## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
@@ -480,7 +591,8 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 			var pos := surf.at(k, u, v)
 			var itype := pile[2 + k] if k < 4 else 0
 			var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
-			out.append(_placed(Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos), itype, 0, size))
+			out.append(_placed(Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), pos),
+					itype, 0, size, k % planes.size() if not planes.is_empty() else -1))
 		return out
 	var jitter: Array[Vector2] = []   # per slot, so a stack stands straight
 	for _s in SUB * SUB:
@@ -509,7 +621,7 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 		var key := Vector2i(slot, sk)
 		var lift: float = tops.get(key, 0.0) if spot.x < 0.0 else 0.0
 		xf.origin.y += lift
-		var e := _placed(xf, itype, uid, size)
+		var e := _placed(xf, itype, uid, size, sk if not planes.is_empty() else -1)
 		if spot.x < 0.0:
 			tops[key] = lift + float(e[5])
 		out.append(e)
@@ -528,10 +640,11 @@ func _inside_closed(sm: Snapshot.Submap, i: int) -> bool:
 	return furn.model != null and not furn.model.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
 
 
-## [transform, itype, uid, size_m, centre, height] of an item drawn at `xf` (scaled by `size`).
-func _placed(xf: Transform3D, itype: int, uid: int, size: float) -> Array:
+## [transform, itype, uid, size_m, centre, height, plane] of an item drawn at `xf` (scaled by `size`) on model
+## surface `plane` (-1: not on a model's).
+func _placed(xf: Transform3D, itype: int, uid: int, size: float, plane := -1) -> Array:
 	var ext := _extent(_cat.item(itype), itype, xf, size)
-	return [xf, itype, uid, ext[0], ext[1], ext[2]]
+	return [xf, itype, uid, ext[0], ext[1], ext[2], plane]
 
 
 ## [size_m (longest side), centre, height] of an item drawn at `xf`: from its model's bounds, its shape's

@@ -7,7 +7,7 @@ extends RefCounted
 ## Everything that comes in is game data: numbers are clamped, text is cleaned (no colour tags, no control
 ## characters, capped), lists are capped.
 
-## Which groups changed: any of "body", "needs", "held", "messages", "warnings".
+## Which groups changed: any of "body", "needs", "held", "messages", "warnings", "cheats".
 signal changed(parts: PackedStringArray)
 
 enum { UNKNOWN = -1, OK = 0, HURT = 1, BAD = 2, BROKEN = 3 }
@@ -37,6 +37,8 @@ var held := {}
 var messages: Array[Dictionary] = []
 ## What to flash, worst first: {id, text, level}.
 var warnings: Array[Dictionary] = []
+## Testing cheats that are on, in LiveSession.CHEATS order: the views show a marker while it isn't empty.
+var cheats := PackedStringArray()
 
 var _bridge_held := {}
 
@@ -76,6 +78,18 @@ func set_held(d: Dictionary) -> void:
 	if not _same_held(h, held):
 		held = h
 		_emit_with_warnings(PackedStringArray(["held"]))
+
+
+## LiveSession.cheats_changed: {name: bool}. Only known names that are really true count.
+func set_cheats(d: Dictionary) -> void:
+	var on := PackedStringArray()
+	for n: String in LiveSession.CHEATS:
+		var v: Variant = d.get(n)
+		if v is bool and v:
+			on.append(n)
+	if on != cheats:
+		cheats = on
+		changed.emit(PackedStringArray(["cheats"]))
 
 
 ## Event queue entries (contracts/events.md): `message` ones go to the feed.
