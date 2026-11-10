@@ -334,10 +334,10 @@ func _read_body(d: Dictionary) -> void:
 func _read_worn(v: Variant) -> void:
 	if v == null or not is_valid():
 		return
-	if not v is Array or (v as Array).size() > MAX_WORN:
-		_fail("player.worn: expected a list of at most %d" % MAX_WORN)
+	if not v is Array:
+		_fail("player.worn: expected a list")
 		return
-	for i in (v as Array).size():
+	for i in range(maxi(0, (v as Array).size() - MAX_WORN), (v as Array).size()):   # past the cap: the outer ones
 		var what := "player.worn[%d]" % i
 		var r: Variant = v[i]
 		if not r is Dictionary:
@@ -621,11 +621,11 @@ func _carried(v: Variant, what: String) -> PackedInt64Array:
 	var out := PackedInt64Array()
 	if v == null or not is_valid():
 		return out
-	if not v is Array or (v as Array).size() > MAX_CARRIED:
-		_fail("%s: expected a list of at most %d items" % [what, MAX_CARRIED])
+	if not v is Array:
+		_fail("%s: expected a list" % what)
 		return out
 	var uids := {}
-	for i in (v as Array).size():
+	for i in mini((v as Array).size(), MAX_CARRIED):   # past the cap: left out (a container comes before its contents)
 		var c: Variant = v[i]
 		var w := "%s[%d]" % [what, i]
 		if not c is Array or (c as Array).size() != CARRIED_STRIDE:
