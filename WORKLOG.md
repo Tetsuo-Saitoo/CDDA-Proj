@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — QA stress tests in run_tests (tests/qa_hostile_tests.gd): meshing job vs main-thread catalog lookups, live door leaves across bubble shifts, oversized body part / covers / worn / carried lists, player body caches. BUILD.md and the AppImage's AppRun describe the main menu start (`--new` is gone; `--quick` skips the menu).
+- 2026-11-10 — K7 test range, first slice (fork `fp3d-qa` 671dd63): `boot_test_range`, 58 zones from the loaded data built lazily, hub and gallery (every terrain and furniture id) built, checked range operations, frozen AI; `fp3d-range-test` 64 checks pass, fp3d-sim-test passes. Not wired into the bridge or client yet.
 - 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.
 - 2026-11-10 — Test folders: `TestDir.clean()` no longer deletes other runs' folders (it asked `OS.is_process_running`, which only knows Godot's own children, so parallel runs in other worktrees wiped each other); a run's folder is stale only when its start stamp (else the folder's own time) is over 12 h old.
 - 2026-11-10 — Item pointing fixes from lead-world's review: hit ball capped at 0.15 m, nothing pointable behind a closed model's doors, past the glyph cap or on a degenerate surface; Hands forgets freed door leaves, adds hovered() / set_proxy_pose() for VR; ItemActions doesn't read "not in the 256 carried shown" as moved; client tests pass (1290).
