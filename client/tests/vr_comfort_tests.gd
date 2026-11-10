@@ -2,7 +2,9 @@ extends RefCounted
 ## VR settings, controller layouts, the settings menu and hands (VrSettings, VrMenu, VrHand, VrRig), run by
 ## vr_tests.gd on its mock world. No XR runtime here: controllers are inactive, the test presses buttons.
 
-const TMP := "user://fp3d_test_vr.json"
+const TestDir := preload("res://tests/test_dir.gd")
+
+var _tmp := TestDir.path("fp3d_test_vr.json")
 
 var _check: Callable
 
@@ -14,7 +16,7 @@ func run(root: Node, check: Callable, world: WorldView) -> void:
 	_test_layouts()
 	_test_hand()
 	_test_rig(root, world)
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TMP))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(_tmp))
 
 
 func _test_values() -> void:
@@ -38,7 +40,7 @@ func _test_values() -> void:
 
 
 func _write(text: String) -> void:
-	var f := FileAccess.open(TMP, FileAccess.WRITE)
+	var f := FileAccess.open(_tmp, FileAccess.WRITE)
 	f.store_string(text)
 	f.close()
 
@@ -48,18 +50,18 @@ func _test_file() -> void:
 	s["turn"] = "smooth"
 	s["vignette"] = 0.0
 	s["layout"] = "vive"
-	_check.call(VrSettings.save_file(s, TMP) and VrSettings.load_file(TMP) == s, "vr settings: file round trip")
+	_check.call(VrSettings.save_file(s, _tmp) and VrSettings.load_file(_tmp) == s, "vr settings: file round trip")
 	_write('{"speed": "fast", "turn": 3, "evil": 1, "vignette": 1e9, "hands": "buttons"}')
-	var l := VrSettings.load_file(TMP)
+	var l := VrSettings.load_file(_tmp)
 	var want := VrSettings.DEFAULTS.duplicate()
 	want["vignette"] = 1.0
 	want["hands"] = "buttons"
 	_check.call(l == want, "vr settings: bad file values dropped, good ones kept")
 	_write("[1, 2]")
-	_check.call(VrSettings.load_file(TMP) == VrSettings.DEFAULTS, "vr settings: not an object -> defaults")
+	_check.call(VrSettings.load_file(_tmp) == VrSettings.DEFAULTS, "vr settings: not an object -> defaults")
 	_write("{\"speed\": 3.0, \"pad\": \"%s\"}" % "x".repeat(VrSettings.MAX_FILE_BYTES))
-	_check.call(VrSettings.load_file(TMP) == VrSettings.DEFAULTS, "vr settings: oversized file -> defaults")
-	_check.call(VrSettings.load_file("user://no_such_vr.json") == VrSettings.DEFAULTS, "vr settings: no file -> defaults")
+	_check.call(VrSettings.load_file(_tmp) == VrSettings.DEFAULTS, "vr settings: oversized file -> defaults")
+	_check.call(VrSettings.load_file(TestDir.path("no_such_vr.json")) == VrSettings.DEFAULTS, "vr settings: no file -> defaults")
 
 
 func _test_layouts() -> void:
@@ -116,7 +118,7 @@ func _test_hand() -> void:
 func _test_rig(root: Node, world: WorldView) -> void:
 	var rig := VrRig.new(world, {"turn": "off", "blink": false})
 	root.add_child(rig)
-	rig.save_path = TMP
+	rig.save_path = _tmp
 	rig.camera.position = Vector3(0, 1.7, 0)
 	var player := world.snapshot.player_pos
 	rig.go_to_player(player)
@@ -152,7 +154,7 @@ func _test_rig(root: Node, world: WorldView) -> void:
 	_check.call(rig.menu.row == 1 and rig.settings["move_dir"] == "head", "vr menu: stick picks and changes lines")
 	_check.call(rig.camera.global_position == head, "vr menu: no walking while it is open")
 	rig.press(rig.left, "menu_button")
-	_check.call(not rig.menu_open() and VrSettings.load_file(TMP) == rig.settings, "vr menu: closing saves the settings")
+	_check.call(not rig.menu_open() and VrSettings.load_file(_tmp) == rig.settings, "vr menu: closing saves the settings")
 	# Vive layout buttons.
 	rig.settings["layout"] = "vive"
 	_check.call(rig.current_layout() == "vive", "vr layout: chosen layout wins over auto")

@@ -7,6 +7,7 @@ extends SceneTree
 const MOCK := "contracts/mock/snapshot_town.json"
 const IDS := "contracts/mock/id_tables.json"
 const ErrorCatch := preload("res://tests/error_catch.gd")
+const TestDir := preload("res://tests/test_dir.gd")
 ## Error lines the negative tests cause on purpose: bad JSON and ConfigFile text fed to the parsers.
 const EXPECTED_ERRORS := ["Parse JSON failed", "ConfigFile parse error"]
 
@@ -19,6 +20,7 @@ func _initialize() -> void:
 	_errors.allowed = PackedStringArray(EXPECTED_ERRORS)
 	OS.add_logger(_errors)
 	_test_error_catch()
+	_test_test_dir()
 	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
@@ -40,6 +42,7 @@ func _initialize() -> void:
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
+	TestDir.clean()
 	var errs := _errors.take()
 	OS.remove_logger(_errors)
 	_check(errs.is_empty(), "no unexpected ERROR / SCRIPT ERROR lines (%d)" % errs.size())
@@ -57,6 +60,24 @@ func _test_error_catch() -> void:
 	_cast_freed()
 	_check(_errors.take_matching("fp3d error-catch probe") == 1, "push_error is caught")
 	_check(_errors.take_matching("Trying to cast a freed object") == 1, "a runtime script error is caught")
+
+
+## The run's scratch folder (tests/test_dir.gd): one per process, and clean() removes it and the folders of
+## runs whose process is gone.
+func _test_test_dir() -> void:
+	print("test folder")
+	var mine := TestDir.path("probe.txt")
+	_check(mine.begins_with("%s/%d/" % [TestDir.ROOT, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
+	var dead := 4000000
+	while OS.is_process_running(dead):
+		dead += 4
+	var stale := TestDir.ROOT.path_join(str(dead))
+	DirAccess.make_dir_recursive_absolute(stale.path_join("save/w"))
+	FileAccess.open(stale.path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
+	FileAccess.open(mine, FileAccess.WRITE).store_string("x")
+	TestDir.clean()
+	_check(not DirAccess.dir_exists_absolute(stale) and not FileAccess.file_exists(mine),
+			"clean() removes this run's folder and a dead run's")
 
 
 func _cast_freed() -> void:
@@ -187,7 +208,7 @@ func _test_malformed(data: Variant) -> void:
 	_reject(Snapshot.parse_text("[1, 2, 3]"), "a list at top level")
 	_reject(Snapshot.parse_text("[".repeat(100000)), "100k nested lists")
 	_reject(Snapshot.load_file(_repo("contracts/mock/does_not_exist.json")), "missing file")
-	var big := OS.get_user_data_dir().path_join("big_snapshot.json")
+	var big := TestDir.global("big_snapshot.json")
 	var f := FileAccess.open(big, FileAccess.WRITE)
 	f.store_buffer(_spaces(Snapshot.MAX_FILE_BYTES + 1))
 	f.close()
@@ -340,7 +361,7 @@ func _test_id_tables(t: IdTables) -> void:
 
 
 func _test_bad_registry() -> void:
-	var dir := OS.get_user_data_dir().path_join("bad_registry")
+	var dir := TestDir.global("bad_registry")
 	DirAccess.make_dir_recursive_absolute(dir)
 	FileAccess.open(dir.path_join("a.json"), FileAccess.WRITE).store_string("{not json")
 	FileAccess.open(dir.path_join("b.json"), FileAccess.WRITE).store_string(
@@ -390,7 +411,7 @@ func _test_registry(tables: IdTables) -> void:
 	var g := glyphs.furniture(tables.index_of("furn", "f_chair"))
 	_check(g.shape.is_empty() and g.symbol == "#", "no art at all: a glyph card with the CDDA symbol")
 
-	var dir := OS.get_user_data_dir().path_join("bad_registry2")
+	var dir := TestDir.global("bad_registry2")
 	DirAccess.make_dir_recursive_absolute(dir)
 	FileAccess.open(dir.path_join("c.json"), FileAccess.WRITE).store_string(JSON.stringify([
 		{"type": "fp3d_model", "kind": "furniture", "id": "f_a", "placeholder": "../x"},

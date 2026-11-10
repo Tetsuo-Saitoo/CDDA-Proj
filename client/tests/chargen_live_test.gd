@@ -6,6 +6,8 @@ extends SceneTree
 
 const WORLD := "fp3d-chargen-test"
 const TIMEOUT_MS := 240000
+## The run's own scratch folder (shared user:// otherwise collides between parallel runs).
+const TestDir := preload("res://tests/test_dir.gd")
 
 var _failed := 0
 var _sim: RefCounted
@@ -22,7 +24,7 @@ func _run() -> void:
 		return
 	_sim = ClassDB.instantiate("CddaSim")
 	var data_dir := ProjectSettings.globalize_path("res://").path_join("../cdda").simplify_path()
-	var user_dir := OS.get_user_data_dir().path_join("cdda-chargen-test")
+	var user_dir := TestDir.global("cdda-chargen-test")
 	_check(not String(_sim.start_new_game(data_dir, user_dir, "no-such-world", false, true)).is_empty(),
 			"refuses an existing-world start in a world that isn't there")
 	var why: String = _sim.start_new_game(data_dir, user_dir, WORLD, true, true, true)
@@ -94,6 +96,8 @@ func _wait(want: Callable) -> Dictionary:
 
 
 func _finish() -> void:
+	if _failed == 0:
+		TestDir.clean()   # a failed run keeps its files to look at; the next run's clean() removes them
 	print("chargen live tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 
