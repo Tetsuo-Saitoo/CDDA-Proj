@@ -17,6 +17,18 @@
       }
     },
     {
+      "name": "fp3d-msvc-ci",
+      "displayName": "FP3D: Windows MSVC on GitHub Actions (the runner's vcpkg at C:/vcpkg)",
+      "inherits": "windows-tiles-sounds-x64-msvc",
+      "binaryDir": "${sourceDir}/out/build/fp3d-msvc-ci",
+      "cacheVariables": {
+        "LOCALIZE": "False",
+        "SOUND": "False",
+        "TESTS": "False",
+        "CMAKE_PROJECT_INCLUDE_BEFORE": "${sourceDir}/build-scripts/windows-tiles-sounds-x64-msvc.cmake"
+      }
+    },
+    {
       "name": "fp3d-linux",
       "displayName": "FP3D: Linux Tiles x64 (GCC, system SDL2)",
       "inherits": "linux-tiles-sounds-x64",
@@ -31,6 +43,18 @@
         "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceParentDir}/=",
         "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceParentDir}/=",
         "CMAKE_POSITION_INDEPENDENT_CODE": "ON"
+      }
+    },
+    {
+      "name": "fp3d-linux-tsan",
+      "displayName": "FP3D: Linux ThreadSanitizer (fork tests only, no bridge)",
+      "inherits": "fp3d-linux",
+      "binaryDir": "${sourceDir}/out/build/fp3d-linux-tsan",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan",
+        "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
       }
     }
   ]

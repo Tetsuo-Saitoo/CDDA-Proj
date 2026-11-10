@@ -141,3 +141,28 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    started when installed, like `tools/vr/play_vr.sh`), `--town` the mock town; other step 5/6 options pass
    through. Saves, keys and logs stay in `~/.local/share/godot/app_userdata/CDDA-3D/`; no VR runtime is inside.
    Needs FUSE 3 (`fusermount3`; Arch: `fuse3`), else run it with `--appimage-extract-and-run`.
+9. **CI, perf budget, ThreadSanitizer.** The GitHub Actions workflows wait on branch `claude/team-qa-ci` until
+   Actions is set up in the repos' settings (read-only token, approval for outside contributors): `ci.yml` on
+   pushes to `main` and pull requests (client tests and the mock perf budget; the fork, bridge, fork tests, live
+   test and live perf budget on Linux), `tsan.yml` weekly and by hand, `windows.yml` by hand only (a cold MSVC
+   build takes hours). The Linux steps are one script, so a Linux PC or WSL runs exactly what CI runs:
+   ```bash
+   git submodule update --init          # a fresh clone; then godot-cpp as in step 5
+   GODOT=<Godot 4.7.2 Linux editor> bash tools/build/ci_linux.sh [build fork-tests client-tests live-test perf perf-live]
+   TSAN=1 bash tools/build/ci_linux.sh  # the fork tests under ThreadSanitizer (preset fp3d-linux-tsan)
+   ```
+   `tools/build/ci_godot.sh [dir]` fetches Godot's Linux editor and checks a pinned SHA-256. From Windows, run
+   it on a Linux-disk copy as `wsl_build.sh` makes one (`FP3D_LINUX_DIR`). TSan reports go to the console;
+   `tools/build/tsan.supp` suppresses only uninstrumented system libraries (SDL2).
+   **Perf budget** (PLAN.md K3): `godot --headless --path client --script res://tests/snapshot_bench.gd [-- --live]`
+   prints parse, apply, worker meshing, the longest main-thread step a frame, CPU frame time of the real scene
+   (mock town) and, live, the turn time from queuing a wait to the next turn's request; each against `BUDGET_MS`
+   in that file, exit code 1 when one is over. `--budget-scale=<f>` for slower machines (CI uses 3),
+   `--no-budget` only prints. Headless has no GPU: frame times are CPU only, the 90 fps VR target is 11.1 ms for
+   both.
+   **Client tests:** `godot --headless --path client --script res://tests/run_tests.gd`, exit code 0 = all passed.
+   Every ERROR / SCRIPT ERROR line Godot prints during the run fails it (`tests/error_catch.gd`, a Godot `Logger`),
+   except the ones negative tests cause on purpose (`EXPECTED_ERRORS` in run_tests.gd); warnings don't count. A
+   runtime script error stops the function it happens in, so the checks after it never ran. In Godot 4.7 a freed
+   object compares equal to `null`: `x != null and not is_instance_valid(x)` never catches one, test
+   `not is_instance_valid(x)` alone.
