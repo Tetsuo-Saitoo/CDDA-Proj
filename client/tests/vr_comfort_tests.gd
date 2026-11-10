@@ -463,13 +463,30 @@ func _test_rig(root: Node, world: WorldView) -> void:
 	rig.press(rig.right, "primary_click", Vector2(0, -0.9))
 	_check.call(rig.z == (z0 - 1 if below != null else z0), "vr layout: wand right pad click down = level down")
 	rig.settings["layout"] = "quest"
-	var leaf := Grabbable.new()
-	rig.grabs[0] = leaf
-	rig.near[1] = leaf
-	rig._lit = [leaf]
+	rig.press(rig.right, "grip_click")
+	rig.update_hands(0.016, true)
+	rig.release(rig.right, "grip_click")
+	_check.call(rig.hands == null and rig.let_go(rig.right) == "" and rig.buzzes[0] == 0 and rig.buzzes[1] == 0,
+			"vr rig: without hands the grip grabs nothing")
+	# D5: a door leaf freed under a hand (its submap dropped) that one hand holds and the other outlines.
+	var acts := ItemActions.new()
+	var hands := Hands.new(world, acts)
+	rig.hands = hands
+	var sq := Vector3i(-900, -900, 0)
+	var leaf := Grabbable.door(world, {"square": sq, "local": Vector3.ZERO, "along_x": true, "color": Color.GRAY,
+			"glass": false, "open": false, "locked": false})
+	root.add_child(leaf)
+	var t := {"kind": "door", "node": leaf, "item": null, "square": sq, "point": leaf.global_position, "dist": 0.0,
+			"name": "door"}
+	hands.set_hand_pose("vr_l", rig.left.global_transform, true)
+	var grabbed := hands.grab("vr_l", t)
+	hands.hover("vr_r", t)
 	leaf.free()
-	rig.update_grabs(true)
-	_check.call(typeof(rig.grabs[0]) == TYPE_NIL and rig._lit.all(func(x: Variant) -> bool: return is_instance_valid(x))
-			and rig.near.all(func(x: Variant) -> bool: return typeof(x) == TYPE_NIL or is_instance_valid(x)),
+	rig.update_hands(0.016, true)
+	var hover_node: Variant = hands.hand("vr_r").hover.get("node")
+	_check.call(grabbed and hands.holding("vr_l").is_empty() and (typeof(hover_node) == TYPE_NIL or is_instance_valid(hover_node)),
 			"vr rig: a door that went away under a hand is let go")
+	world.door_state.erase(sq)
 	rig.free()
+	hands.free()
+	acts.free()

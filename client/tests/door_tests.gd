@@ -202,25 +202,31 @@ func _test_pick(root: Node, world: WorldView, g: Grabbable) -> void:
 
 func _test_vr(root: Node, world: WorldView, g: Grabbable) -> void:
 	_reset(world, g)
+	var acts := ItemActions.new()
+	var hands := Hands.new(world, acts)   # VR hands go through the shared hands (L2): reach is the picker's
+	hands.picker.reach = func() -> Variant: return g.square
 	var rig := VrRig.new(world)
+	rig.hands = hands
 	root.add_child(rig)
 	var out := g.global_basis.x * 0.8 + Vector3(0, 1.0, 0)
 	var knob := g.global_position + out
 	rig.left.global_position = knob
-	rig.update_grabs(true)
-	_check.call(rig.near[0] == g and g.highlighted(), "doors vr: a hand at the door outlines it")
+	rig.update_hands(0.016, true)
+	_check.call(hands.hand("vr_l").hover.get("node") == g and g.highlighted(), "doors vr: a hand at the door outlines it")
 	rig.press(rig.left, "grip_click")
-	_check.call(rig.grabs[0] == g and g.grabbed, "doors vr: grip grabs it")
+	_check.call(hands.holding("vr_l").get("node") == g and g.grabbed, "doors vr: grip grabs it")
 	rig.left.global_position = g.global_position + out.rotated(Vector3.UP, 0.7)
-	rig.update_grabs(true)
+	rig.update_hands(0.016, true)
 	_check.call(absf(g.angle - 0.7) < 0.01 and g.cdda_open, "doors vr: it swings with the hand (opened)")
 	rig.release(rig.left, "grip_click")
-	_check.call(rig.grabs[0] == null and not g.grabbed, "doors vr: letting go of the grip")
-	rig.grab_ok = func(_sq: Vector3i) -> bool: return false
+	_check.call(hands.holding("vr_l").is_empty() and not g.grabbed, "doors vr: letting go of the grip")
+	hands.picker.reach = func() -> Variant: return g.square + Vector3i(5, 0, 0)
 	rig.left.global_position = knob
-	rig.update_grabs(true)
-	_check.call(rig.near[0] == null and not g.highlighted(), "doors vr: no grip on doors out of the player's reach")
+	rig.update_hands(0.016, true)
+	_check.call(hands.hand("vr_l").hover.is_empty() and not g.highlighted(), "doors vr: no grip on doors out of the player's reach")
 	rig.free()
+	hands.free()
+	acts.free()
 	_reset(world, g)
 
 

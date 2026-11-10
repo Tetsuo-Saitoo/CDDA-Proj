@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — L2 VR items by hand: VR grip goes through the shared Hands layer (take into the gripping hand at once, put / drop where the hand lets go, over the shoulder into the worn bag, adopt what CDDA holds), grip hold / toggle setting, refusal buzz + note, weight lag and two-handed hold; old VR door-grab code removed; mock VR reaches from the headset.
 - 2026-11-10 — L8 furniture parts: `Grabbable.part()` (cabinet doors, drawers, lids from a checked spec), opened by VR hand or mouse drag, CDDA asked only for open/closed furniture pairs, state kept per part id, drawers carry `contents()`; door_tests parts checks; client tests pass; not registered in the world yet (lead-world).
 - 2026-11-10 — VR comfort leftovers: settings menu laser pointer, left-handed mode (`main_hand`), seated height + "Calibrate height" (`height`, `--vr-height`, `--vr-main-hand`); compass on the off wrist; client tests pass; not tried in a headset.
 - 2026-11-10 — VR compass: rose on the left wrist (turned to north, red hostile arrows, creature dots, head tick) and an optional belt ring, from Compass's logic and blips; VR setting `compass` (wrist/belt/both/off), HUD opacity; client tests pass (756); not seen in a headset.

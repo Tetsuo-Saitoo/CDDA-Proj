@@ -314,10 +314,8 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
+	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
 	add_child(vr)
-	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
-		var p: Variant = _reach_square()
-		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
@@ -703,6 +701,9 @@ func _in_main_loop() -> bool:
 func _reach_square() -> Variant:
 	if world.snapshot == null:
 		return null
+	if live == null and vr != null:   # mock VR: the hands reach from where the headset stands
+		var at := world.coords.world_to_ms(vr.camera.global_position)
+		return Vector3i(at.x, at.y, vr.z)
 	if live == null and _fp_active():
 		var sq := world.coords.world_to_ms(fp.position)
 		return Vector3i(sq.x, sq.y, fp.z)

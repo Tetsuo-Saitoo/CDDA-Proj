@@ -16,7 +16,14 @@ extends XROrigin3D
 ## teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist.
 ## Seated play: the origin stands `height` over the level's floor (floor_y), so the head rises by it; the menu
 ## can set it from the head's height now ("Calibrate height").
-## Grip near a door (Grabbable, outlined when in reach) grabs it; it swings with the hand (block L2).
+## Hands (block L2): each controller is a hand of the shared Hands layer ("vr_l" / "vr_r"; `hands`, set by main.gd).
+## What a free hand touches (a door leaf or an item in reach) is outlined; the grip (setting `grip`: hold, or toggle)
+## grabs it. A door swings with the hand. An item is taken at once into CDDA's main hand (main controller) or off
+## hand (the other), so it is carried while you walk; letting go puts it where the hand is (Hands.drop_at), or into
+## the biggest worn container when the hand is over the shoulder. Grip on nothing picks up what CDDA already holds
+## in that hand, ready to put down. CDDA decides every move; a refusal buzzes and shows its reason by the hand.
+## Heavy items lag behind the hand; a two-handed one sags in one hand and sits between both when the other hand
+## grips it too.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -71,14 +78,38 @@ const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controll
 var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
-const GRAB_REACH := 0.12  # metres from a hand to a door leaf it can grip
-var grab_ok := Callable() # square -> bool: may a hand open the door there (live: next to the player)
-var grabs: Array = [null, null]   # Grabbable held by the left / right hand
-var near: Array = [null, null]    # Grabbable each hand could grip (outlined)
-var _lit: Array = []
 var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
 var pointer_dot: MeshInstance3D   # ... and its dot on the panel
 var _held := {}                   # the last show_held, shown again when the main hand changes
+
+const HAND_IDS := ["vr_l", "vr_r"]   # Hands ids of the left / right controller
+const GRAB_REACH := 0.12   # metres from a hand to a door leaf or an item it can grip
+const SHOULDER_DROP := 0.3 # over the shoulder: the hand higher than this under the head (and behind it)
+const STRENGTH := 8        # CDDA's starting strength: the snapshot doesn't carry the player's stats yet
+const LIGHT := 0.25        # items under this share of a one-hand load follow the hand at once
+const LAG_RATE := 6.0      # 1/s at a full one-hand load (heavier: slower)
+const ALONE_RATE := 0.4    # a two-handed item in one hand follows this much slower ...
+const MIN_RATE := 1.0      # ... but never slower than this
+const MAX_LAG_M := 1.0     # farther behind than this (a jump, a teleport): it is in the hand at once
+const SAG_RAD := 0.5       # a two-handed item in one hand tips down this much ...
+const SAG_DROP := 0.06     # ... and hangs this much lower
+const TWO_HAND_M := 0.35   # the other hand grips within this of a two-handed item's grip: it holds it too
+const NOTE_S := 3.0        # a refusal's reason shows this long by the hand
+const NOTE_MAX := 120      # characters of it (the text comes from the sim)
+
+## The shared hands (main.gd); null: the controllers grab nothing.
+var hands: Hands:
+	set(h):
+		if is_instance_valid(hands) and hands.refused.is_connected(_on_refused):
+			hands.refused.disconnect(_on_refused)
+		hands = h
+		if h != null and not h.refused.is_connected(_on_refused):
+			h.refused.connect(_on_refused)
+var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
+var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
+var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
+var _note_left: Array[float] = [0.0, 0.0]
+var _grip_down: Array[bool] = [false, false]   # the grip button is held (two-handed support uses it)
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -241,7 +272,7 @@ func _process(delta: float) -> void:
 				settings["turn"] == "smooth")
 	step(delta, inp)
 	update_pointer()
-	update_grabs()
+	update_hands(delta)
 	pose_hands()
 	drive_body()
 	place_compass()
@@ -288,39 +319,326 @@ static func hand_colour(pieces: Array[Dictionary], part: String) -> Color:
 	return col
 
 
-## Held doors follow their hand; free hands outline the door they could grip. `all_hands`: count hands the
-## runtime doesn't track (tests).
-func update_grabs(all_hands := false) -> void:
-	for i in 2:   # entries are read untyped: a leaf can be freed under a hand (submap dropped, door gone)
-		if not is_instance_valid(grabs[i]):   # a freed object compares equal to null: test validity only
-			grabs[i] = null
-		if not is_instance_valid(near[i]):
-			near[i] = null
-	_lit = _lit.filter(func(x: Variant) -> bool: return is_instance_valid(x))
+func _ctrl(i: int) -> XRController3D:
+	return left if i == 0 else right
+
+
+## The Hands id of controller c.
+func hand_id(c: XRController3D) -> String:
+	return HAND_IDS[0] if c == left else HAND_IDS[1]
+
+
+## Per frame: the hands follow the controllers; a held door swings with its hand; a held item follows by its
+## weight (follow_rate, sag, two_hand_pose); a free hand outlines what it could grip. CDDA's own hand display
+## (VrHeld) hides while that hand holds a copy. `all_hands`: count hands the runtime doesn't track (tests).
+func update_hands(delta: float, all_hands := false) -> void:
+	_tick_notes(delta)
+	if hands == null:
+		return
+	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
-		var c: XRController3D = left if i == 0 else right
-		var g := grabs[i] as Grabbable
-		if g != null:
-			g.drag_hand(c.global_position)
-			near[i] = g
-		elif (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open():
-			near[i] = world.grabbable_near(c.global_position, GRAB_REACH, grab_ok)
+		var id: String = HAND_IDS[i]
+		_forget_freed(id)
+		var p := hands.proxy(id)
+		if p != null:
+			drawn[i] = p.global_transform
+		hands.set_hand_pose(id, _ctrl(i).global_transform, true)
+	for i in 2:
+		var c := _ctrl(i)
+		var id: String = HAND_IDS[i]
+		var held := hands.holding(id)
+		if held.is_empty():
+			var t := {}
+			if (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open() \
+					and not _supports(i, drawn[1 - i]):
+				t = hands.find_near(c.global_position, GRAB_REACH)
+			hands.hover(id, t)
+			continue
+		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
+		if held.get("kind") == "door":
+			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (_forget_freed)
+			if is_instance_valid(n):
+				(n as Grabbable).drag_hand(c.global_position)
+			else:
+				hands.cancel(id)
+		elif drawn[i] is Transform3D:
+			_weigh(i, drawn[i], delta)
+	_sync_held()
+
+
+## D5: a door leaf can be freed under a hand (its submap dropped, the door gone). In Godot 4.7 a freed object
+## compares equal to null and can't be typed, and Hands keeps the leaf in typed variables, so a stale leaf it
+## still holds or outlines becomes null first (Hands then lets go of it as of nothing).
+func _forget_freed(id: String) -> void:
+	var h := hands.hand(id)
+	for t: Dictionary in [h.hover, h.held]:
+		if t.get("kind") == "door" and not is_instance_valid(t.get("node")):
+			t["node"] = null
+
+
+## The held item of hand i follows its controller by weight: light ones at once, heavy ones eased from where they
+## were drawn (`from`); a two-handed one sags and lags in one hand and sits between both when the other grips it.
+func _weigh(i: int, from: Transform3D, delta: float) -> void:
+	var id: String = HAND_IDS[i]
+	var p := hands.proxy(id)
+	var it: ItemRef = hands.holding(id).get("item")
+	if p == null or it == null:
+		return
+	var c := _ctrl(i)
+	var both := it.two_handed(world.tables, strength)
+	if both and _supports(1 - i, from):
+		var o := _ctrl(1 - i)
+		var m: XRController3D = c if c == main_ctrl() else o
+		var f: XRController3D = o if m == c else c
+		p.global_transform = two_hand_pose(m.global_position, f.global_position, c.global_basis.y,
+				ItemVisual.grip(it.type, world), p.scale)
+		return
+	var to := p.global_transform   # where Hands put it: held rigidly by its grip
+	if both:
+		to = sag(to, c.global_transform, SAG_RAD)
+	p.global_transform = ease_toward(from, to, follow_rate(it.weight_g(world.tables), strength, both), delta, p.scale)
+
+
+## Hand j steadies the two-handed item the other hand holds (drawn at `drawn`): its grip is held, it holds
+## nothing, and it is within TWO_HAND_M of the item's grip point.
+func _supports(j: int, drawn: Variant) -> bool:
+	if hands == null or not _grip_down[j] or not drawn is Transform3D or not hands.holding(HAND_IDS[j]).is_empty():
+		return false
+	var it: ItemRef = hands.holding(HAND_IDS[1 - j]).get("item")
+	if it == null or not it.two_handed(world.tables, strength):
+		return false
+	var xf: Transform3D = drawn
+	var g := ItemVisual.grip(it.type, world)
+	var s := maxf(absf(xf.basis.get_scale().x), 0.001)
+	return _ctrl(j).global_position.distance_to(xf * (g.origin / s)) <= TWO_HAND_M
+
+
+## Grip on controller c: the door leaf or item it touches, else what CDDA holds in that hand (main controller:
+## the wielded item; the other: the off-hand item). An item lying in the world is taken at once into that hand.
+## Near the other hand's two-handed item it only steadies it. False (and a buzz) when there is nothing to grab;
+## a refusal from CDDA comes later through Hands.refused.
+func grab_with(c: XRController3D) -> bool:
+	if hands == null:
+		return false
+	var i := 0 if c == left else 1
+	var id: String = HAND_IDS[i]
+	_forget_freed(id)
+	if not hands.holding(id).is_empty():
+		return false
+	var other := hands.proxy(HAND_IDS[1 - i])
+	if other != null and _supports(i, other.global_transform):
+		return true
+	hands.set_hand_pose(id, c.global_transform, true)   # a door starts its swing here, an adopted item shows here
+	var t := {}
+	if world.snapshot != null and not menu_open():
+		t = hands.find_near(c.global_position, GRAB_REACH)
+	var ok := false
+	if t.is_empty():
+		var it := cdda_holds(c)
+		ok = it != null and hands.adopt(id, it)
+	elif t["kind"] == "item":
+		ok = hands.grab(id, t, "main" if c == main_ctrl() else "off")
+	else:
+		ok = hands.grab(id, t)
+	if not ok:
+		_feel(c)
+	return ok
+
+
+## What CDDA holds in controller c's hand (main: wielded; off: the item flagged off hand), as a carried ItemRef
+## from the snapshot's carried rows; null for nothing.
+func cdda_holds(c: XRController3D) -> ItemRef:
+	var s := world.snapshot
+	if s == null:
+		return null
+	var flag := Snapshot.CARRIED_WIELDED if c == main_ctrl() else Snapshot.CARRIED_OFFHAND
+	var cs := Snapshot.CARRIED_STRIDE
+	var n := mini(s.carried.size(), Snapshot.MAX_CARRIED * cs)
+	for k in range(0, n - cs + 1, cs):
+		if (s.carried[k + 4] & flag) != 0:
+			return ItemRef.on_player(s.carried[k], int(s.carried[k + 1]), s.carried[k + 2], int(s.carried[k + 3]),
+					int(s.carried[k + 4]), s.player_pos)
+	return null
+
+
+## Lets go of what hand c holds. An item: over the shoulder into the biggest worn container (none: a buzz, and it
+## goes where the hand is), else where the hand is (Hands.drop_at; nowhere it can go: it stays in CDDA's hand).
+## A door settles. Returns Hands.release's action ("" when nothing was sent).
+func let_go(c: XRController3D) -> String:
+	if hands == null:
+		return ""
+	var id := hand_id(c)
+	_forget_freed(id)
+	var held := hands.holding(id)
+	if held.is_empty():
+		return ""
+	var it: ItemRef = held.get("item")
+	if held.get("kind") != "item" or it == null or world.snapshot == null:
+		return hands.release(id, {})
+	var drop := {}
+	if over_shoulder(camera.global_transform, c.global_position):
+		var bag := shoulder_bag(hands.picker.worn_containers(), it, world.tables)
+		if bag != null:
+			drop = {"kind": "container", "container": bag}
 		else:
-			near[i] = null
-	for g: Variant in _lit:
-		if g not in near:
-			(g as Grabbable).set_highlight(false)
-	_lit = near.filter(func(g: Variant) -> bool: return is_instance_valid(g))
-	for g: Variant in _lit:
-		(g as Grabbable).set_highlight(true)
+			_feel(c)
+	if drop.is_empty():
+		drop = hands.drop_at(c.global_position, it)
+	return hands.release(id, drop)
 
 
 func release(c: XRController3D, n: String) -> void:
-	var i := 0 if c == left else 1
-	if n == "grip_click" and grabs[i] != null:
-		if is_instance_valid(grabs[i]):
-			grabs[i].end_grab()
-		grabs[i] = null
+	if n != "grip_click":
+		return
+	_grip_down[0 if c == left else 1] = false
+	if settings["grip"] != "toggle":   # toggle: the next press lets go
+		let_go(c)
+
+
+## A hand at `hand_pos` is over the shoulder of a head at `head`: higher than SHOULDER_DROP under it and behind
+## the head's level forward plane (looking straight down or up, the top of the head says where forward is).
+static func over_shoulder(head: Transform3D, hand_pos: Vector3) -> bool:
+	if not head.is_finite() or not hand_pos.is_finite():
+		return false
+	var z := head.basis.z
+	var fwd := -z
+	fwd.y = 0.0
+	if fwd.length() < 0.01:
+		fwd = head.basis.y * signf(z.y)
+		fwd.y = 0.0
+	if fwd.length() < 0.0001:
+		return false
+	var d := hand_pos - head.origin
+	return d.y > -SHOULDER_DROP and d.dot(fwd.normalized()) < 0.0
+
+
+## The worn container an item goes into over the shoulder: the biggest (by volume) that isn't the item; null.
+static func shoulder_bag(worn: Array[ItemRef], held: ItemRef, tables: IdTables) -> ItemRef:
+	var best: ItemRef = null
+	var best_ml := -1
+	for r in worn:
+		if r == null or (held != null and r.uid == held.uid):
+			continue
+		var ml := r.volume_ml(tables)
+		if ml > best_ml:
+			best = r
+			best_ml = ml
+	return best
+
+
+## What one hand lifts without strain: CDDA's two-handed limit (ItemRef.two_handed), strength x 4 x 113 g.
+static func one_hand_g(str_stat: int) -> float:
+	return float(clampi(str_stat, 1, 100) * 4 * 113)
+
+
+## How fast (1/s) a carried item catches up with its hand: INF (at once) for light ones, slower the heavier
+## against `str_stat`; a two-handed item in one hand much slower.
+static func follow_rate(weight_g: int, str_stat: int, two_handed: bool) -> float:
+	var share := float(maxi(weight_g, 0)) / one_hand_g(str_stat)
+	if share < LIGHT and not two_handed:
+		return INF
+	var k := LAG_RATE / maxf(share, LIGHT)
+	if two_handed:
+		k *= ALONE_RATE
+	return maxf(k, MIN_RATE)
+
+
+## One frame of an item following its hand: from `from` toward `to` at `rate` (1/s, INF = at once), keeping
+## the item's own scale `item_scale`. Far behind (a jump): at `to` at once.
+static func ease_toward(from: Transform3D, to: Transform3D, rate: float, delta: float,
+		item_scale: Vector3) -> Transform3D:
+	if not is_finite(rate) or not from.is_finite() or from.origin.distance_to(to.origin) > MAX_LAG_M:
+		return to
+	var a := 1.0 - exp(-maxf(rate, 0.0) * clampf(delta, 0.0, 1.0))
+	var q := from.basis.get_rotation_quaternion().slerp(to.basis.get_rotation_quaternion(), a)
+	return Transform3D(Basis(q).scaled(item_scale), from.origin.lerp(to.origin, a))
+
+
+## `xf` (an item held by a hand at `hand`) tipped down by `angle` about the hand, the way it points, and hung
+## SAG_DROP lower: a heavy item in one hand.
+static func sag(xf: Transform3D, hand: Transform3D, angle: float) -> Transform3D:
+	var out := xf
+	var fwd := -hand.basis.z
+	fwd.y = 0.0
+	if fwd.length() > 0.01 and is_finite(angle):
+		var r := Basis(Vector3.UP.cross(fwd.normalized()).normalized(), angle)
+		out = Transform3D(r * xf.basis, hand.origin + r * (xf.origin - hand.origin))
+	out.origin.y -= SAG_DROP
+	return out
+
+
+## An item held in both hands: its grip (`grip`, ItemVisual.grip) midway between them, pointing (-Z) from the
+## off hand to the main hand, `up` (the main hand's up) as its up where it can be; `item_scale`: its own scale.
+static func two_hand_pose(main_pos: Vector3, off_pos: Vector3, up: Vector3, grip: Transform3D,
+		item_scale: Vector3) -> Transform3D:
+	var d := main_pos - off_pos
+	if not d.is_finite() or d.length() < 0.01:
+		d = Vector3.FORWARD
+	d = d.normalized()
+	var u: Vector3 = up.normalized() if up.is_finite() and up.length() > 0.01 else Vector3.UP
+	if absf(u.dot(d)) > 0.99:
+		u = Vector3.UP if absf(d.y) < 0.99 else Vector3.BACK
+	var b := Basis.looking_at(d, u) * grip.basis.inverse()
+	var mid: Vector3 = (main_pos + off_pos) * 0.5 if main_pos.is_finite() and off_pos.is_finite() else Vector3.ZERO
+	return Transform3D(b.scaled(item_scale), mid - b * grip.origin)
+
+
+## CDDA said no to something a VR hand started: a buzz, and its reason by that hand for a while.
+func _on_refused(id: String, _target: Dictionary, reason: String) -> void:
+	var i := HAND_IDS.find(id)
+	if i < 0:
+		return
+	_feel(_ctrl(i))
+	say(i, reason)
+
+
+## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
+func say(i: int, text: String) -> void:
+	if notes[i] == null or not is_instance_valid(notes[i]):
+		var l := Label3D.new()
+		l.name = "Note"
+		l.pixel_size = 0.0003
+		l.font_size = 32
+		l.outline_size = 8
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.no_depth_test = true
+		l.render_priority = 5
+		l.modulate = Color(1.0, 0.55, 0.5)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.width = 700.0
+		l.position = Vector3(0, 0.13, 0.04)   # over the hand, above VrHeld's line
+		_ctrl(i).add_child(l)
+		notes[i] = l
+	notes[i].text = text.strip_edges().replace("\n", " ").left(NOTE_MAX)
+	notes[i].visible = true
+	_note_left[i] = NOTE_S
+
+
+func _tick_notes(delta: float) -> void:
+	for i in 2:
+		if _note_left[i] <= 0.0:
+			continue
+		_note_left[i] -= maxf(delta, 0.0)
+		if _note_left[i] <= 0.0 and notes[i] != null:
+			notes[i].visible = false
+
+
+## A buzz in controller c, counted.
+func _feel(c: XRController3D) -> void:
+	buzzes[0 if c == left else 1] += 1
+	_buzz(c)
+
+
+## VrHeld (CDDA's hands, show_held) shows on a controller unless that hand holds the item's copy (it would show
+## twice).
+func _sync_held() -> void:
+	if left_held == null:
+		return
+	for i in 2:
+		var node: VrHeld = left_held if i == 0 else right_held
+		var h: Variant = _held.get("main" if _ctrl(i) == main_ctrl() else "off")
+		node.visible = h is Dictionary and not (h as Dictionary).is_empty() \
+				and (hands == null or hands.proxy(HAND_IDS[i]) == null)
 
 
 ## Hands from the runtime's hand tracking, else from each controller's buttons, else hidden; or the simple
@@ -616,6 +934,8 @@ static func _segment(a: Vector3, b: Vector3, r: float) -> Transform3D:
 ## A controller button (signal, or tests). `pad`: the Vive trackpad position, read from the controller when
 ## not given.
 func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
+	if n == "grip_click":
+		_grip_down[0 if c == left else 1] = true
 	if c == left and n == "menu_button":
 		toggle_menu()
 		return
@@ -633,10 +953,12 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 	if c == main_ctrl() and n == "trigger_click":
 		use_pointed_stair(c)
 		return
-	var hand := 0 if c == left else 1
-	if n == "grip_click" and near[hand] != null and is_instance_valid(near[hand]):
-		grabs[hand] = near[hand]
-		grabs[hand].begin_hand(c.global_position)
+	if n == "grip_click":
+		var holds := hands != null and not hands.holding(hand_id(c)).is_empty()
+		if holds and settings["grip"] == "toggle":
+			let_go(c)
+		elif not holds:
+			grab_with(c)
 		return
 	if current_layout() == "vive":
 		if c == right and n == "menu_button":
@@ -681,6 +1003,7 @@ func show_held(held: Dictionary) -> void:
 	var filling := str(held.get("activity", "")) == HandsPanel.FILL_ACTIVITY
 	off_held.show_hand(held.get("off") if held.get("off") is Dictionary else {}, filling)
 	main_held.show_hand(held.get("main") if held.get("main") is Dictionary else {}, filling)
+	_sync_held()
 	if _was_filling and not filling:
 		_buzz(left)
 		_buzz(right)
