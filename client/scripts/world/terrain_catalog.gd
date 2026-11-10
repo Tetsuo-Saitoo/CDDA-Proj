@@ -51,6 +51,9 @@ class Style:
 	var scale := 1.0
 	var offset := Vector3.ZERO
 	var random_yaw := false
+	## Plain ground whose id names a ramp: maybe a ramp's low end (t_ramp_up_low, t_earth_ramp_up_low, ...). CDDA
+	## gives the low end no flag, only that id; TerrainMesher.ramp_place makes it one only right behind a RAMP_UP run.
+	var ramp_low := false
 
 
 var registry := AssetRegistry.new()
@@ -144,6 +147,7 @@ func make_style(def: IdTables.Def, name: String) -> Style:
 	if def != null:
 		s.groups = def.groups
 		s.connects_to = def.connects_to
+	s.ramp_low = s.kind == Kind.FLOOR and name.contains("ramp")
 	_dress(def, name, s)
 	if reg != null and CddaPalette.MATERIALS.has(reg.material):
 		s.color = CddaPalette.material(reg.material)
@@ -311,8 +315,8 @@ func _dress(d: IdTables.Def, name: String, s: Style) -> void:
 		Kind.SHRUB:
 			s.color = CddaPalette.bg(d.color, own) if d != null else own
 			s.height = 0.8
-		Kind.STAIRS_UP, Kind.LADDER_UP, Kind.RAMP_UP:
-			s.color = own.lerp(STONE, 0.6)
+		Kind.STAIRS_UP, Kind.LADDER_UP:
+			s.color = own.lerp(STONE, 0.6)   # ramps keep their own colour, the same as their low end's
 		Kind.BOX:
 			s.height = 1.0
 			if d != null:
