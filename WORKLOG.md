@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Tab inspect view (hands, worn containers by pocket, nearby items; drag between them through Hands; InventoryModel for VR) and the screen HUD (HudView: body bars, need words, message feed, warnings) wired in main.gd; main merged in; client tests pass (1285); not played by hand or live.
 - 2026-11-10 — HUD data layer for screen and VR (API agreed with lead-vr): `HudData` in client/scripts/hud/ (body parts, needs with CDDA's words, held items, cleaned message feed, warnings); hud_tests; not wired or drawn yet; client tests pass (910).
 - 2026-11-10 — Furniture faces the room and multi-tile pieces join (user reports): rows face across the run, chairs their table, beds along themselves with the head at the wall (2x2 = one double bed), one table/bench/counter/sofa piece instead of one per tile; client tests pass; seen in mock renders, not live, not VR.
 - 2026-11-10 — Stairs rise toward the floor above; ramps are sloped wedges from their low end (L-shaped ditch creases cleanly); the look ray meets steps and slopes; client tests pass; seen in mock renders.

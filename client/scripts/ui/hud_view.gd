@@ -1,7 +1,7 @@
 class_name HudView
 extends Control
-## G1: the flat-screen view of HudData. Bottom left: the message feed over the body (one bar per main body part,
-## coloured by level) and the needs CDDA has words for; top centre: warnings, worst first, pulsing while one is
+## G1: the flat-screen view of HudData. Left edge, middle: the body (one bar per main body part, coloured by
+## level) and the needs CDDA has words for, the message feed under them (the look panel keeps the bottom left); top centre: warnings, worst first, pulsing while one is
 ## bad. It only draws what HudData decided (VR draws the same data on the wrist, vr/). All text is plain Label
 ## text or draw_string, never BBCode.
 
@@ -31,9 +31,9 @@ func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	feed = _label("Feed", HORIZONTAL_ALIGNMENT_LEFT)
-	feed.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	feed.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	feed.position = Vector2(12, -150 - FEED_LINES * 18)
+	feed.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+	feed.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	feed.position = Vector2(12, 40)
 	feed.size = Vector2(560, FEED_LINES * 18)
 	warn = _label("Warnings", HORIZONTAL_ALIGNMENT_CENTER)
 	warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -42,8 +42,8 @@ func _init() -> void:
 	_body = Control.new()
 	_body.name = "Body"
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_body.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_body.position = Vector2(12, -140)
+	_body.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+	_body.position = Vector2(12, -100)
 	_body.size = Vector2(320, 130)
 	_body.draw.connect(_draw_body)
 	add_child(_body)
