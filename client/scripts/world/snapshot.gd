@@ -72,6 +72,7 @@ var ids_generation := -1   # -1: the snapshot doesn't say
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
+var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds}, {} for none
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
@@ -205,9 +206,42 @@ func _read_player(v: Variant) -> void:
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
+	var g: Variant = (v as Dictionary).get("wielded_gun")
+	if g != null:
+		player_gun = _read_gun(g)
 	_read_body((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
+
+
+## player.wielded_gun: {type (itype index), dirt (0..10000, -1 absent), faults (fault ids), rounds (-1 absent)}.
+func _read_gun(v: Variant) -> Dictionary:
+	const MAX_FAULTS := 16
+	const MAX_FAULT_LEN := 64
+	if not is_valid():
+		return {}
+	if not v is Dictionary:
+		_fail("player.wielded_gun is not an object")
+		return {}
+	var d: Dictionary = v
+	var gun := {
+		"type": _int(d.get("type", 0), 0, MAX_ID, "player.wielded_gun.type"),
+		"dirt": _int(d["dirt"], 0, 10000, "player.wielded_gun.dirt") if d.has("dirt") else -1,
+		"rounds": _int(d["rounds"], 0, 100000, "player.wielded_gun.rounds") if d.has("rounds") else -1,
+	}
+	var f: Variant = d.get("faults", [])
+	if not f is Array or (f as Array).size() > MAX_FAULTS:
+		_fail("player.wielded_gun.faults: expected a list of at most %d" % MAX_FAULTS)
+		return {}
+	var faults: Array[String] = []
+	for i in (f as Array).size():
+		var s: Variant = f[i]
+		if not s is String or (s as String).length() > MAX_FAULT_LEN:
+			_fail("player.wielded_gun.faults[%d]: expected a string of at most %d characters" % [i, MAX_FAULT_LEN])
+			return {}
+		faults.append(s)
+	gun["faults"] = faults
+	return gun if is_valid() else {}
 
 
 func _read_body(d: Dictionary) -> void:

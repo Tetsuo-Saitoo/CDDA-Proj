@@ -7,6 +7,7 @@ extends Node3D
 ## `sway_arcmin` (CDDA's dispersion while aiming, 0 otherwise) makes it breathe in a slow figure eight, wider
 ## the worse the aim, capped at SWAY_ROT / SWAY_POS. Purely visual: the shot's error is CDDA's roll.
 ## `set_dirt()` shows the held gun's fouling (CDDA's item var `dirt`) as grime on a gun's parts (grime.gdshader).
+## A gun's parts are named (Muzzle, Grip, MagWell, Magazine, Slide / Bolt: see build()).
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
@@ -130,6 +131,14 @@ func _process(delta: float) -> void:
 
 ## The model for a shape, pointing down -z (the camera's forward). A gun's parts wear the grime shader at
 ## `grime_level` (0..1), each part its own material (the soot follows its edges); other shapes plain materials.
+## Guns (pistol, long, launcher) carry named parts, the names later gun models will use as markers:
+## - `Muzzle` (Marker3D): the barrel's tip; its -z is the bore.
+## - `Grip` (Marker3D): where the main hand holds it (its +y up the grip).
+## - `MagWell` (Marker3D): where a magazine (a launcher's round) goes in; its +y is the way it slides in.
+## - `Magazine` (mesh): long guns a box under the receiver in front of the grip, pistols the bottom of the grip;
+##   launchers have none.
+## - `Slide` (pistol, mesh): the top part. `Bolt` (long, mesh): a small box on the right of the receiver.
+## Other meshes: `Frame` (a grip), `Receiver`, `Barrel`, `Stock` (long), `Tube` (launcher).
 static func build(s: String, grime_level := 0.0) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Model"
@@ -137,19 +146,35 @@ static func build(s: String, grime_level := 0.0) -> Node3D:
 	var wood := _mat(WOOD)
 	match s:
 		"pistol":
-			_box(root, Vector3(0.035, 0.045, 0.2), Vector3(0, 0, -0.06), metal)
-			_box(root, Vector3(0.03, 0.1, 0.045), Vector3(0, -0.06, 0.02), metal, -0.25)
+			_box(root, Vector3(0.035, 0.045, 0.2), Vector3(0, 0, -0.06), metal, 0.0, "Slide")
+			# the grip, raked back: its top 6 cm is the frame, the bottom 4 cm the magazine
+			var tilt := -0.25
+			var c := Vector3(0, -0.06, 0.02)
+			var up := Vector3(0, cos(tilt), sin(tilt))
+			_box(root, Vector3(0.03, 0.06, 0.045), c + up * 0.02, metal, tilt, "Frame")
+			_box(root, Vector3(0.03, 0.04, 0.045), c - up * 0.03, metal, tilt, "Magazine")
+			_marker(root, "Muzzle", Vector3(0, 0, -0.16))
+			_marker(root, "Grip", c, tilt)
+			_marker(root, "MagWell", c - up * 0.05, tilt)
 		"long":
-			_box(root, Vector3(0.04, 0.06, 0.34), Vector3(0, 0, -0.1), metal)
-			_cyl(root, 0.012, 0.36, Vector3(0, 0.012, -0.44), metal)
-			_box(root, Vector3(0.035, 0.08, 0.22), Vector3(0, -0.03, 0.17), wood)
-			_box(root, Vector3(0.03, 0.08, 0.04), Vector3(0, -0.07, -0.02), metal, -0.3)
+			_box(root, Vector3(0.04, 0.06, 0.34), Vector3(0, 0, -0.1), metal, 0.0, "Receiver")
+			_cyl(root, 0.012, 0.36, Vector3(0, 0.012, -0.44), metal, false, "Barrel")
+			_box(root, Vector3(0.035, 0.08, 0.22), Vector3(0, -0.03, 0.17), wood, 0.0, "Stock")
+			_box(root, Vector3(0.03, 0.08, 0.04), Vector3(0, -0.07, -0.02), metal, -0.3, "Frame")
+			_box(root, Vector3(0.028, 0.08, 0.045), Vector3(0, -0.07, -0.13), metal, 0.0, "Magazine")
+			_box(root, Vector3(0.012, 0.016, 0.05), Vector3(0.026, 0.012, -0.02), metal, 0.0, "Bolt")
+			_marker(root, "Muzzle", Vector3(0, 0.012, -0.62))
+			_marker(root, "Grip", Vector3(0, -0.07, -0.02), -0.3)
+			_marker(root, "MagWell", Vector3(0, -0.03, -0.13))
 		"bow":
 			_box(root, Vector3(0.025, 0.7, 0.03), Vector3(-0.05, 0, -0.2), wood)
 			_cyl(root, 0.004, 0.45, Vector3(0, 0.0, -0.2), wood, true)
 		"launcher":
-			_cyl(root, 0.05, 0.6, Vector3(0, 0.02, -0.15), _mat(OLIVE))
-			_box(root, Vector3(0.03, 0.09, 0.04), Vector3(0, -0.07, -0.05), metal, -0.25)
+			_cyl(root, 0.05, 0.6, Vector3(0, 0.02, -0.15), _mat(OLIVE), false, "Tube")
+			_box(root, Vector3(0.03, 0.09, 0.04), Vector3(0, -0.07, -0.05), metal, -0.25, "Frame")
+			_marker(root, "Muzzle", Vector3(0, 0.02, -0.45))
+			_marker(root, "Grip", Vector3(0, -0.07, -0.05), -0.25)
+			_marker(root, "MagWell", Vector3(0, 0.02, 0.15), -PI / 2.0)   # the breech: a round slides in forward
 		"melee":
 			_box(root, Vector3(0.03, 0.03, 0.12), Vector3(0, -0.04, 0.0), wood)
 			_box(root, Vector3(0.04, 0.04, 0.45), Vector3(0, 0, -0.26), metal)
@@ -208,11 +233,13 @@ static func _mat(c: Color) -> StandardMaterial3D:
 	return m
 
 
-static func _box(parent: Node3D, sz: Vector3, at: Vector3, mat: Material, tilt := 0.0) -> void:
+static func _box(parent: Node3D, sz: Vector3, at: Vector3, mat: Material, tilt := 0.0, part := "") -> void:
 	var b := BoxMesh.new()
 	b.size = sz
 	b.material = mat
 	var mi := MeshInstance3D.new()
+	if part != "":
+		mi.name = part
 	mi.mesh = b
 	mi.position = at
 	mi.rotation.x = tilt
@@ -220,7 +247,8 @@ static func _box(parent: Node3D, sz: Vector3, at: Vector3, mat: Material, tilt :
 	parent.add_child(mi)
 
 
-static func _cyl(parent: Node3D, r: float, length: float, at: Vector3, mat: Material, upright := false) -> void:
+static func _cyl(parent: Node3D, r: float, length: float, at: Vector3, mat: Material, upright := false,
+		part := "") -> void:
 	var c := CylinderMesh.new()
 	c.top_radius = r
 	c.bottom_radius = r
@@ -228,8 +256,19 @@ static func _cyl(parent: Node3D, r: float, length: float, at: Vector3, mat: Mate
 	c.radial_segments = 10
 	c.material = mat
 	var mi := MeshInstance3D.new()
+	if part != "":
+		mi.name = part
 	mi.mesh = c
 	mi.position = at
 	mi.rotation.x = 0.0 if upright else PI / 2.0
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
+
+
+## A named point on a gun (Muzzle, Grip, MagWell), turned by `tilt` about x.
+static func _marker(parent: Node3D, part: String, at: Vector3, tilt := 0.0) -> void:
+	var m := Marker3D.new()
+	m.name = part
+	m.position = at
+	m.rotation.x = tilt
+	parent.add_child(m)

@@ -17,6 +17,13 @@ extends Node3D
 ## `shot` request (shot_error arcmin, shot_angle degrees): on_request() turns the kept sight line by it
 ## (ShotError), flies that bullet, draws its tracer and answers at once with the outcome, or cancels so CDDA
 ## rolls it. While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
+## Only the wielded gun flies: a fire-mode target request with `weapon_wielded: false` (a gunmod, a turret...)
+## is plain FIRE; without the field (old bridges) the wielded gun flies. A flight tests only the figures near
+## its line (BulletPhysics.figures_near_line), so hordes stay cheap.
+## VR: fire_from() shoots from a barrel pose instead of the camera; `live_aim` gives the hand's pose for each
+## shot request, so bursts follow the hand.
+## Hits are confirmed only by CDDA's events (`hits`, HitFeedback, fed by main.gd): the crosshair then shows a
+## hit marker (white, bigger for head / eyes, red for a kill).
 
 signal fired
 
@@ -24,20 +31,24 @@ const MARKER_COLOR := Color(1.0, 0.2, 0.15)
 const AIM_KEEP_MS := 60000        # a kept aim answers shot requests this long after the trigger pull
 const MAX_DISPERSION := 10800.0   # arcmin; larger values from the bridge are refused
 const MAX_TRACERS := 32
+const LIVE_AIM_REACH := 4.0       # m: a live_aim pose farther than this from the kept origin is refused
 
 var world: WorldView
 var request_ui: RequestUI
 var look_ray: LookRay
 var first_person := false     # main.gd sets it each frame
 var crosshair: Crosshair
+var hits: HitFeedback             # hit confirmations from CDDA's events (main.gd feeds it)
 var _marker: MeshInstance3D
 var creature_view: CreatureView   # bullets hit its figures; null = CDDA rolls the shot as before
 var wielded_gun := Callable()     # -> IdTables.Def of the wielded gun, or null (main.gd)
+var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or {}; shot requests fly from it
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
 var dispersion := 0.0             # arcmin, from the last target request (0 = none / old bridge)
 var shown_dispersion := 0.0       # dispersion while a fire-mode target request shows, else 0 (viewmodel sway)
 var _sim_rolls := false           # the last target request had `dispersion`: shot requests will follow FIRE
+var _wielded_fires := true        # the last target request fires the wielded gun (`weapon_wielded`)
 var _tracers := 0
 
 
@@ -51,6 +62,9 @@ func _init(w: WorldView, ui: RequestUI) -> void:
 	_marker = _marker_mesh()
 	_marker.visible = false
 	add_child(_marker)
+	hits = HitFeedback.new(w)
+	add_child(hits)
+	hits.hit_confirmed.connect(_on_hit)
 
 
 ## The square a ray through screen point `pos` of camera `cam` meets, or null.
@@ -69,7 +83,8 @@ func aim_point(cam: Camera3D, mouse: Vector2, captured: bool) -> Vector2:
 ## Per frame: crosshair, FPS aim (cursor follows the crosshair) and the cursor marker.
 func update(cam: Camera3D, captured: bool) -> void:
 	var t := request_ui.target_widget()
-	crosshair.visible = t != null and first_person
+	crosshair.show_cross = t != null
+	crosshair.visible = first_person and (t != null or crosshair.marking())
 	crosshair.aiming = captured
 	shown_dispersion = dispersion if t != null and t.mode == "fire" else 0.0
 	var spread := 0.0
@@ -108,29 +123,52 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 	var t := request_ui.target_widget()
 	if t == null:
 		return false
-	var sq: Variant = pick(cam, aim_point(cam, mouse, captured))
+	var at := aim_point(cam, mouse, captured)
+	var sq: Variant = pick(cam, at)
 	if captured or (sq != null and sq == t.cursor) or sq == null:
 		if sq != null:
 			request_ui.set_target_cursor(sq)
-		if TargetRequestWidget.is_attack_mode(t.mode):
-			fired.emit()
-			shot_aim = {}   # a new trigger pull replaces the kept aim
-		var gun: IdTables.Def = wielded_gun.call() if wielded_gun.is_valid() else null
-		if t.mode == "fire" and gun != null and creature_view != null and world.snapshot != null:
-			var at := aim_point(cam, mouse, captured)
-			var origin := cam.project_ray_origin(at)
-			var sight := cam.project_ray_normal(at)
-			# with shot requests coming, their tracers show where the bullets really went
-			var shot := fly_from(origin, sight, gun.gun_ammo, not _sim_rolls)
-			if not shot.is_empty():
-				var answer: Dictionary = (shot["answer"] as Dictionary).duplicate()
-				answer["fly"] = true
-				shot_aim = {"origin": origin, "sight": sight, "ammo": gun.gun_ammo, "time": Time.get_ticks_msec()}
-				t.fire_shot(shot["square"], answer)
-				return true
-		t.fire()
+		if not _fire_flown(t, cam.project_ray_origin(at), cam.project_ray_normal(at)):
+			if TargetRequestWidget.is_attack_mode(t.mode):
+				fired.emit()
+				shot_aim = {}   # a new trigger pull replaces the kept aim
+			t.fire()
 	else:
 		request_ui.set_target_cursor(sq)   # first click picks, the second on the same square shoots
+	return true
+
+
+## VR: fires the showing fire-mode target request from a barrel pose (world `origin`, bore `dir`) the way the
+## crosshair does: flies the bullet, answers FIRE with it and `fly: true`, keeps the aim, kicks. False, with
+## nothing sent, when no fire-mode target request shows, the wielded gun isn't the one firing
+## (`weapon_wielded`), no gun is held, or nothing could be flown; the caller may then fall back to plain FIRE.
+func fire_from(origin: Vector3, dir: Vector3) -> bool:
+	var t := request_ui.target_widget()
+	if t == null or t.mode != "fire":
+		return false
+	return _fire_flown(t, origin, dir)
+
+
+## A trigger pull flown by the client (on_fire and fire_from): when `t` fires the wielded gun, flies it from
+## `origin` along `sight`, kicks, answers FIRE with the outcome plus `fly: true` and keeps the aim. False, with
+## nothing sent, when it can't.
+func _fire_flown(t: TargetRequestWidget, origin: Vector3, sight: Vector3) -> bool:
+	if t.mode != "fire" or not _wielded_fires or t.done or t.primary_index() < 0:
+		return false
+	if creature_view == null or world == null or world.snapshot == null:
+		return false
+	var gun: IdTables.Def = wielded_gun.call() if wielded_gun.is_valid() else null
+	if gun == null:
+		return false
+	# with shot requests coming, their tracers show where the bullets really went
+	var shot := fly_from(origin, sight, gun.gun_ammo, not _sim_rolls)
+	if shot.is_empty():
+		return false
+	fired.emit()
+	var answer: Dictionary = (shot["answer"] as Dictionary).duplicate()
+	answer["fly"] = true
+	shot_aim = {"origin": origin, "sight": sight.normalized(), "ammo": gun.gun_ammo, "time": Time.get_ticks_msec()}
+	t.fire_shot(shot["square"], answer)
 	return true
 
 
@@ -148,8 +186,9 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 	if not origin.is_finite() or not sight.is_finite() or sight.length_squared() < 1e-12:
 		return {}
 	var prof := BulletPhysics.ammo_profile(ammo)
-	var r := BulletPhysics.fly(origin, BulletPhysics.launch_dir(sight, prof[0]), prof[0], prof[1],
-			creature_view.figures(), look_ray)
+	var dir := BulletPhysics.launch_dir(sight, prof[0])
+	var near := BulletPhysics.figures_near_line(creature_view.figures(), origin, dir, prof[0])
+	var r := BulletPhysics.fly(origin, dir, prof[0], prof[1], near, look_ray)
 	var sq := world.coords.world_to_ms(r["point"])
 	var path: Array = r["path"]
 	if r["hit"] == "map" and path.size() >= 2:
@@ -176,10 +215,11 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 	return last_shot
 
 
-## Called by main.gd for every live request before it shows. `target`: remembers its `dispersion`, returns {}.
+## Called by main.gd for every live request before it shows. `target`: remembers its `dispersion` and
+## `weapon_wielded`, returns {}.
 ## `shot` (one projectile CDDA fires after a client-flown FIRE): the answer to send right away, no UI:
-## {id, shot} from the kept aim turned by shot_error / shot_angle, or {id, cancel} (CDDA rolls it itself);
-## {} only when the id is unusable. Other kinds: {}.
+## {id, shot} from the kept aim (or live_aim's pose) turned by shot_error / shot_angle, or {id, cancel} (CDDA
+## rolls it itself); {} only when the id is unusable. Other kinds: {}.
 func on_request(req: Dictionary) -> Dictionary:
 	var kind: Variant = req.get("kind")
 	if not kind is String:
@@ -189,6 +229,8 @@ func on_request(req: Dictionary) -> Dictionary:
 		var f := _finite(v)
 		_sim_rolls = (v is float or v is int) and f == float(v) and f >= 0.0 and f <= MAX_DISPERSION
 		dispersion = f if _sim_rolls else 0.0
+		# old bridges don't say: the wielded gun fires; anything but true says it doesn't
+		_wielded_fires = not req.has("weapon_wielded") or (req["weapon_wielded"] is bool and req["weapon_wielded"])
 		return {}
 	if kind != "shot":
 		return {}
@@ -203,11 +245,40 @@ func on_request(req: Dictionary) -> Dictionary:
 	var sight: Variant = shot_aim.get("sight")
 	if not origin is Vector3 or not sight is Vector3:
 		return cancel
+	var pose := _live_pose(origin)   # VR: the hand's pose now, so a burst follows it
+	if not pose.is_empty():
+		origin = pose["origin"]
+		sight = pose["sight"]
 	var dir := ShotError.apply(sight, _finite(req.get("shot_error")), _finite(req.get("shot_angle")))
 	var shot := fly_from(origin, dir, str(shot_aim.get("ammo", "")))
 	if shot.is_empty():
 		return cancel
 	return {"id": id, "shot": shot["answer"]}
+
+
+## live_aim's pose, checked: {origin, sight (unit)}, or {} when there is no live_aim or it gives anything but a
+## dictionary of finite Vector3s with a non-zero sight and an origin within LIVE_AIM_REACH of `kept_origin`.
+func _live_pose(kept_origin: Vector3) -> Dictionary:
+	if not live_aim.is_valid():
+		return {}
+	var p: Variant = live_aim.call()
+	if not p is Dictionary:
+		return {}
+	var o: Variant = (p as Dictionary).get("origin")
+	var s: Variant = (p as Dictionary).get("sight")
+	if not o is Vector3 or not s is Vector3:
+		return {}
+	var ov: Vector3 = o
+	var sv: Vector3 = s
+	if not ov.is_finite() or not sv.is_finite() or sv.length_squared() < 1e-12 \
+			or ov.distance_to(kept_origin) > LIVE_AIM_REACH:
+		return {}
+	return {"origin": ov, "sight": sv.normalized()}
+
+
+## A hit CDDA confirmed (HitFeedback): the crosshair's hit marker.
+func _on_hit(_uid: int, part: String, _amount: int, killed: bool) -> void:
+	crosshair.show_hit(part in HitFeedback.HEAD_PARTS, killed)
 
 
 ## A bridge number as a float: ints and finite floats; anything else is 0.
@@ -277,10 +348,23 @@ static func _marker_mesh() -> MeshInstance3D:
 	return mi
 
 
-## A small cross at the screen centre; brighter while aiming (mouse captured). A thin circle of radius
-## `spread_px` shows CDDA's dispersion (0 = none).
+## A small cross at the screen centre (while `show_cross`); brighter while aiming (mouse captured). A thin circle
+## of radius `spread_px` shows CDDA's dispersion (0 = none). show_hit() flashes a hit marker, four diagonal ticks
+## around the centre fading over HIT_FADE_S: white, bigger for the head / eyes, red for a kill.
 class Crosshair:
 	extends Control
+	const HIT_FADE_S := 0.3
+	const HIT_WHITE := Color(1, 1, 1)
+	const HIT_RED := Color(1, 0.15, 0.1)
+	const HEAD_SCALE := 1.6
+	var show_cross := true:
+		set(v):
+			if v != show_cross:
+				show_cross = v
+				queue_redraw()
+	var hit_left := 0.0           # seconds the hit marker still shows
+	var hit_color := HIT_WHITE
+	var hit_scale := 1.0          # 1, or HEAD_SCALE for the head / eyes
 	var aiming := false:
 		set(v):
 			if v != aiming:
@@ -298,14 +382,45 @@ class Crosshair:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	## Flashes the hit marker: bigger for a head (or eyes) hit, red for a kill.
+	func show_hit(head: bool, killed: bool) -> void:
+		hit_left = HIT_FADE_S
+		hit_color = HIT_RED if killed else HIT_WHITE
+		hit_scale = HEAD_SCALE if head else 1.0
+		queue_redraw()
+
+	## The hit marker is showing.
+	func marking() -> bool:
+		return hit_left > 0.0
+
+	func _process(delta: float) -> void:
+		if hit_left > 0.0:
+			tick_hit(delta)
+
+	## Fades the hit marker by `delta` seconds (tests call it directly).
+	func tick_hit(delta: float) -> void:
+		if not is_finite(delta) or delta < 0.0:
+			return
+		hit_left = maxf(hit_left - delta, 0.0)
+		queue_redraw()
+
 	func _draw() -> void:
 		var c := size / 2.0
 		var col := Color(1, 0.25, 0.2) if aiming else Color(1, 1, 1, 0.7)
 		var gap := 4.0 if aiming else 7.0
-		for d: Vector2 in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
-			draw_line(c + d * gap, c + d * (gap + 9.0), Color.BLACK, 4.0)
-			draw_line(c + d * gap, c + d * (gap + 9.0), col, 2.0)
-		draw_circle(c, 1.5, col)
-		if spread_px > gap:
-			draw_arc(c, spread_px, 0.0, TAU, 64, Color(0, 0, 0, 0.35), 3.0, true)
-			draw_arc(c, spread_px, 0.0, TAU, 64, Color(col, 0.6), 1.2, true)
+		if show_cross:
+			for d: Vector2 in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
+				draw_line(c + d * gap, c + d * (gap + 9.0), Color.BLACK, 4.0)
+				draw_line(c + d * gap, c + d * (gap + 9.0), col, 2.0)
+			draw_circle(c, 1.5, col)
+			if spread_px > gap:
+				draw_arc(c, spread_px, 0.0, TAU, 64, Color(0, 0, 0, 0.35), 3.0, true)
+				draw_arc(c, spread_px, 0.0, TAU, 64, Color(col, 0.6), 1.2, true)
+		if hit_left > 0.0:
+			var a := clampf(hit_left / HIT_FADE_S, 0.0, 1.0)
+			var r0 := 7.0 * hit_scale
+			var r1 := 15.0 * hit_scale
+			for d: Vector2 in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+				var n := d.normalized()
+				draw_line(c + n * r0, c + n * r1, Color(0, 0, 0, 0.6 * a), 4.0)
+				draw_line(c + n * r0, c + n * r1, Color(hit_color, a), 2.0)

@@ -486,6 +486,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	aim.hits.on_events(events)   # CDDA's hit confirmations: the crosshair's hit marker
 	for e: Dictionary in events:
 		if e.get("kind", "") == "message":
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
@@ -665,6 +666,7 @@ func _update_aim() -> void:
 	viewmodel.sway_arcmin = aim.shown_dispersion
 	viewmodel.visible = _fp_active()
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
+	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 
 
 func _in_main_loop() -> bool:
