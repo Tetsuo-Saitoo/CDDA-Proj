@@ -13,7 +13,7 @@ previous capture is the *same object* (shared pointer) with the same revisions, 
 a client that skips snapshots still sees every change. The client keeps, per submap position, the revisions it
 last built and rebuilds:
 - the mesh when `revision` changes (ter / furn / trap / flags);
-- overlays (light, visibility, item piles, fields, heat, cookware) when `detail_revision` changes.
+- overlays (light, visibility, item piles, fields, heat, cookware, lights) when `detail_revision` changes.
 
 A submap that leaves the bubble is forgotten; if it comes back it restarts at revision 1 (the client should
 rebuild on any revision it didn't build, not only on increases).
@@ -26,7 +26,7 @@ struct snapshot {
     uint32 ids_generation;        // the id tables (id_tables.md) its indices belong to
     ui_point bubble_origin;       // absolute submap at bubble (0,0); z = 0
     player_view player;
-    std::vector<shared_ptr<const submap_view>> submaps;   // all 2541, z -10..10
+    std::vector<shared_ptr<const submap_view>> submaps;   // all 2541, z -10..10 (JSON: top-level "z_levels": [-10, 10])
     std::vector<creature_view> creatures;   // perceived only, player first   (cap 1024)
     std::vector<vehicle_view>  vehicles;    // all in the bubble (physical, like terrain) (cap 256)
     environment_view env;
@@ -44,7 +44,12 @@ struct submap_view {              // parallel arrays, index = y * 12 + x
     std::vector<field_view>     fields;  // tiles with vis == 2 only (cap 4 per tile)
     std::vector<heat_view>      heat;      // tiles with vis == 2 only (cap 32)
     std::vector<cookware_view>  cookware;  // on those heat tiles where CDDA shows items (could_see_items; cap 16)
+    std::vector<light_view>     lights;    // tiles with vis == 2 that add light (cap 16, brightest first)
 };
+struct light_view     { uint8 tile; uint8 luminance; uint8 kind; };
+    // C6: the strongest light source on the square, as CDDA's lightmap gathers it. luminance = CDDA luminance,
+    // rounded, 0..255. kind: 0 terrain/furniture (light_emitted), 1 an item lying there (lamp, lit candle...),
+    // 2 a field (fire and other glowing fields). Ties keep tile order.
 struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state;    // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
                         std::vector<item_handle_view> handles; };   // the first 32 items, CDDA's stack order
 struct item_handle_view { uint64 uid; uint32 type; int16 spot_x, spot_y; };   // uid 1..2^53-1 (bridge_api.md "Single items"); type = itype index; spot = where it was placed, permille of the square (x east, y south), -1 none
@@ -134,7 +139,7 @@ limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` 
 item handles as a per-submap `handles` list of `[tile, uid, type, spot_x, spot_y]`, carried items as the player's
 `items` list of `[uid, type, parent, pocket, flags]` (both optional; the client checks ranges, caps, distinct uids
 and that a container comes before its contents), fields as
-`[tile, type, intensity, age]`, heat as a per-submap `heat` list of `[tile, source, tool, fire, charges, lit]` (lit 0/1), cookware as a per-submap `cookware` list of objects `{"tile", "uid", "type", "contents": [[uid, type, count], ...], "craft_result", "craft_recipe", "craft_progress"}` (craft fields always present: 0 / "" / 0 when none). The client checks ranges and caps (32 heat, 16 cookware per submap, 16 contents), and that each cookware tile has a heat entry. Vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
+`[tile, type, intensity, age]`, heat as a per-submap `heat` list of `[tile, source, tool, fire, charges, lit]` (lit 0/1), cookware as a per-submap `cookware` list of objects `{"tile", "uid", "type", "contents": [[uid, type, count], ...], "craft_result", "craft_recipe", "craft_progress"}` (craft fields always present: 0 / "" / 0 when none), lights as a per-submap `lights` list of `[tile, luminance, kind]` (always present, may be empty; cap 16). The client checks ranges and caps (32 heat, 16 cookware per submap, 16 contents), and that each cookware tile has a heat entry. Vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
 `ids_generation` and `ids`: the names of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`). Session tables and
 all definitions are in the id tables JSON (4th argument). Mock: `mock/snapshot_town.json` with
 `mock/id_tables.json`.

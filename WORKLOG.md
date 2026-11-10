@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Chargen templates and world mods: stricter checks (names, saving, mod order, file size up to 4 MiB, parsed templates cached); "Character to Template" templates keep their setup as in CDDA. Chargen test checks.
+- 2026-11-10 — Snapshots: per-submap `lights` (seen squares that add light: terrain/furniture, item, field; brightest 16) and top-level `z_levels`; new `use_stairs(pos, dir)` action for stairs on or next to the player. Sim test `stairs`, cooking test checks lights.
 - 2026-11-10 — L9 cooking base merged: heat sources and cookware (with contents and craft progress) in snapshots, recipe matching from a container's contents (`match_recipes` / `take_query_result`, CDDA's rules); explosion events now name the item behind a queued blast (grenades, C4 gave none). Sim test `cooking`, events test checks.
 - 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.
 - 2026-11-10 — Test folders: `TestDir.clean()` no longer deletes other runs' folders (it asked `OS.is_process_running`, which only knows Godot's own children, so parallel runs in other worktrees wiped each other); a run's folder is stale only when its start stamp (else the folder's own time) is over 12 h old.

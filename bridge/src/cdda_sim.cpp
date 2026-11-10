@@ -160,6 +160,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
     ClassDB::bind_method( D_METHOD( "queue_item_action", "action" ), &CddaSim::queue_item_action );
+    ClassDB::bind_method( D_METHOD( "use_stairs", "pos", "dir" ), &CddaSim::use_stairs );
     ClassDB::bind_method( D_METHOD( "clear_actions" ), &CddaSim::clear_actions );
     ClassDB::bind_method( D_METHOD( "get_queued_actions" ), &CddaSim::get_queued_actions );
     ClassDB::bind_method( D_METHOD( "get_snapshot_seq" ), &CddaSim::get_snapshot_seq );
@@ -474,6 +475,17 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.spot_y = permille( s.y );
     }
     return fp3d::queue_item_action( a );
+}
+
+bool CddaSim::use_stairs( const Vector3i &pos, int64_t dir )
+{
+    if( dir != 1 && dir != -1 ) {
+        return false;
+    }
+    fp3d::stairs_action a;
+    a.pos = fp3d::ui_point{ pos.x, pos.y, pos.z };
+    a.dir = static_cast<int>( dir );
+    return fp3d::queue_stairs_action( a );   // checks the square's range and the queue
 }
 
 void CddaSim::clear_actions()

@@ -39,6 +39,7 @@ class CddaSim : public godot::RefCounted
         bool answer( const godot::Dictionary &a );
         bool queue_action( const godot::String &action );
         bool queue_item_action( const godot::Dictionary &a );
+        bool use_stairs( const godot::Vector3i &pos, int64_t dir );
         void clear_actions();
         int64_t get_queued_actions() const;
 
