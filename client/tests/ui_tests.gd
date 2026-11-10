@@ -3,6 +3,8 @@ extends RefCounted
 ## RequestUI, keys and clicks are simulated, and each answer must be the one the sim expects and pass the same
 ## type checks as CddaSim.answer() (bridge/src/cdda_sim.cpp).
 
+const Main := preload("res://scripts/main.gd")
+
 var _check: Callable
 var ui: RequestUI
 var answers: Array = []
@@ -663,6 +665,16 @@ func _test_main_menu() -> void:
 	_check.call(not m.start_new() and got.is_empty(), "menu: won't replace an existing world")
 	m._world_edit.text = "wORLD"
 	_check.call(not m.start_new() and got.is_empty(), "menu: nor one whose name differs only in case")
+	m._world_edit.text = "FP3D-mine"
+	_check.call(not m.start_new() and got.is_empty() and MainMenu.world_reserved("fp3d-live") and not MainMenu.world_reserved("fp3dx"),
+			"menu: no new world named fp3d-... (kept for quick starts and tests)")
+	var sv := func(w: String) -> PackedStringArray:
+		return PackedStringArray(["Ann"]) if w in ["fp3d-live-3", "fp3d-live-10"] else PackedStringArray(["Bob"])
+	var ws := PackedStringArray(["fp3d-live", "fp3d-live-10", "fp3d-live-3", "fp3d-live--3", "fp3d-live-x", "Other"])
+	_check.call(Main.world_for_save(ws, "Ann", sv) == "fp3d-live-3" and Main.world_for_save(ws, "Bob", sv) == "fp3d-live"
+			and Main.world_for_save(ws, "Cid", sv) == "fp3d-live" and Main.world_for_save(ws, "", sv) == "fp3d-live"
+			and Main.world_for_save(PackedStringArray(["fp3d-live-2"]), "Bob", sv) == "fp3d-live-2",
+			"menu: --save alone finds the save in fp3d-live, then -2, -3 ... in number order")
 	var many := PackedStringArray()
 	for i in MainMenu.MAX_LISTED + 5:
 		many.append("w%d" % i)
