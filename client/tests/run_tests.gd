@@ -481,7 +481,9 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	_reject(_mutated(data, car.call([[11, 5, 10, 0, 0]])), "carried before its container")
 	_reject(_mutated(data, car.call([[10, 4, 0, 256, 0]])), "pocket 256")
 	_reject(_mutated(data, car.call([[10, 4, 0, -1, 8]])), "unknown carried flag")
-	_reject(_mutated(data, car.call(range(257).map(func(i: int) -> Array: return [i + 1, 4, 0, -1, 0]))), "257 carried")
+	var most := _mutated(data, car.call(range(257).map(func(i: int) -> Array: return [i + 1, 4, 0, -1, 0])))
+	_check(most.is_valid() and most.carried.size() == Snapshot.MAX_CARRIED * Snapshot.CARRIED_STRIDE,
+			"257 carried: the first 256 kept " + most.error)
 
 	var reg := AssetRegistry.new()
 	reg.load_dir(_repo("assets/registry"))

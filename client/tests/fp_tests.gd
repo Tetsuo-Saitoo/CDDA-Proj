@@ -863,9 +863,11 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	bad = (data as Dictionary).duplicate(true)
 	var many := []
 	for i in 65:
-		many.append({"type": 1, "covers": [35]})
+		many.append({"type": 1 + i, "covers": [35]})
 	bad["player"]["worn"] = many
-	_check.call(not Snapshot.from_data(bad).is_valid(), "body: more than 64 worn items rejected")
+	var outer := Snapshot.from_data(bad)
+	_check.call(outer.is_valid() and outer.player_worn.size() == Snapshot.MAX_WORN and outer.player_worn[0].type == 2,
+			"body: more than 64 worn items: the outer 64 kept " + outer.error)
 	bad = (data as Dictionary).duplicate(true)
 	bad["player"]["worn"] = [{"type": 1, "covers": "torso"}]
 	_check.call(not Snapshot.from_data(bad).is_valid(), "body: covers must be a list")
