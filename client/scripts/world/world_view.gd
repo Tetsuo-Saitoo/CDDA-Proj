@@ -1,7 +1,8 @@
 class_name WorldView
 extends Node3D
 ## Shows the newest snapshot: one node per submap per z, holding "terrain", "roof" and "caps" meshes
-## (TerrainMesher) and "props", "roof_props" and "glyphs" (PropMesher: furniture, traps, item piles).
+## (TerrainMesher) and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher:
+## furniture, traps, item piles; models are one MultiMeshInstance3D per model part).
 ## Terrain is rebuilt when a submap's revision differs from the one built (any difference, not only an
 ## increase: a submap that leaves the bubble and comes back restarts at 1), together with its six
 ## neighbours, whose edge walls, wall tops and roof lids depend on it. Props are rebuilt with the
@@ -19,7 +20,7 @@ var z_min_loaded := 0
 var z_max_loaded := 0
 var vertex_count := 0
 var props_built := 0      # submaps whose props the last apply rebuilt
-var prop_counts := {"furniture": 0, "items": 0, "traps": 0, "glyphs": 0}
+var prop_counts := {"furniture": 0, "items": 0, "traps": 0, "glyphs": 0, "models": 0}
 ## Asked for once per generation that doesn't match the snapshot's (live mode refetches).
 var tables_mismatch := false
 var _built := {}   # Vector3i absolute submap -> {"rev", "detail", "node", "verts", "pverts", "counts"}
@@ -140,6 +141,8 @@ func _build_props(mesher: PropMesher, pos: Vector3i) -> void:
 	var r := mesher.build(pos)
 	_set_mesh(node, "props", r.props)
 	_set_mesh(node, "roof_props", r.roof_props)
+	_set_models(node, "models", r.models)
+	_set_models(node, "roof_models", r.roof_models)
 	var old := node.get_node_or_null("glyphs")
 	if old:
 		old.free()
@@ -151,7 +154,8 @@ func _build_props(mesher: PropMesher, pos: Vector3i) -> void:
 		node.add_child(g)
 	b["detail"] = (snapshot.submaps[pos] as Snapshot.Submap).detail_revision
 	b["pverts"] = r.vertices
-	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size()}
+	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size(),
+			"models": r.model_props}
 
 
 ## Step 5 of the fallback chain: the CDDA symbol in its colour, facing the camera.
@@ -166,6 +170,30 @@ static func _glyph(pos: Vector3, symbol: String, col: Color) -> Label3D:
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	l.shaded = false
 	return l
+
+
+## Replaces the node's model holder: one multimesh per part of each model, an instance per prop.
+static func _set_models(node: Node3D, part: String, models: Dictionary) -> void:
+	var old := node.get_node_or_null(part)
+	if old:
+		old.free()
+	if models.is_empty():
+		return
+	var holder := Node3D.new()
+	holder.name = part
+	for m: ModelLibrary.Model in models:
+		var xfs: Array = models[m]
+		for p: Array in m.parts:
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = p[0]
+			mm.instance_count = xfs.size()
+			for k in xfs.size():
+				mm.set_instance_transform(k, (xfs[k] as Transform3D) * (p[1] as Transform3D))
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			holder.add_child(mmi)
+	node.add_child(holder)
 
 
 static func _set_mesh(node: Node3D, part: String, mesh: ArrayMesh) -> void:
@@ -185,7 +213,7 @@ func _update_visibility() -> void:
 	for pos: Vector3i in _built:
 		var node: Node3D = _built[pos]["node"]
 		node.visible = pos.z <= view_z_max
-		for part in ["roof", "roof_props"]:
+		for part in ["roof", "roof_props", "roof_models"]:
 			var roof := node.get_node_or_null(part) as Node3D
 			if roof:
 				roof.visible = roofs_visible

@@ -8,7 +8,7 @@
 # client (client/export_presets.cfg, preset "Linux"), add CDDA's data and tilesets, the SDL2 libraries the
 # bridge loads (from this Ubuntu, found through the bridge's RPATH) and the licences, then pack the AppImage.
 # Inside: AppRun (tools/build/appimage/AppRun.sh) and usr/lib/cdda-3d/ with the game, its .pck, the bridge,
-# libs/, cdda/{data,gfx}, assets/registry and contracts/mock. Saves, keys and settings stay in Godot's user
+# libs/, cdda/{data,gfx}, assets/registry, assets/models (when there are any) and contracts/mock. Saves, keys and settings stay in Godot's user
 # folder (~/.local/share/godot/app_userdata/CDDA-3D/). No VR runtime inside: VR uses the system's OpenXR runtime.
 # Needs: squashfs-tools rsync curl python3 binutils, the bridge's build packages (docs/BUILD.md) and Godot
 # 4.7.2's Linux editor: $GODOT, else ~/tools/godot-4.7.2/Godot_v4.7.2-stable_linux.x86_64.
@@ -104,6 +104,7 @@ mkdir -p "$app/cdda" "$app/assets" "$app/contracts"
 rsync -a --exclude=/data/cache/ "$dst/cdda/data" "$dst/cdda/gfx" "$app/cdda/"
 cp "$dst/cdda/LICENSE.txt" "$app/cdda/"
 rsync -a "$dst/assets/registry" "$app/assets/"
+if [ -d "$dst/assets/models" ]; then rsync -a "$dst/assets/models" "$app/assets/"; fi
 rsync -a "$dst/contracts/mock" "$app/contracts/"
 
 # The bridge's libraries, and theirs, except what every desktop Linux has and must stay the system's own:

@@ -44,10 +44,10 @@ class Style:
 
 var registry := AssetRegistry.new()
 var tables: IdTables
-## The registry's warnings (bad files and entries).
+## The registry's warnings (bad files and entries) and its models' (bad or missing .glb files).
 var warnings: PackedStringArray:
 	get:
-		return registry.warnings
+		return registry.all_warnings()
 var _names := {}       # int id -> name, from the snapshot (used when the tables don't match it)
 var _by_index := true  # tables match the snapshot: look definitions up by index
 var _styles := {}      # int id -> Style

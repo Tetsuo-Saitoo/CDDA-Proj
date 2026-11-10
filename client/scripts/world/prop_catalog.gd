@@ -1,8 +1,9 @@
 class_name PropCatalog
 extends RefCounted
 ## Decides how each furniture, trap and item id is shown: the registry's fallback chain
-## (contracts/assets.md) over the id tables' definitions, cached per index. Steps 1-3 give a placeholder
-## shape (PropShapes); billboards (step 4) don't exist yet, so the rest become glyph cards (step 5).
+## (contracts/assets.md) over the id tables' definitions, cached per index. Steps 1-3 give a model
+## (ModelLibrary) when the entry's .glb loads, else its placeholder shape (PropShapes); billboards
+## (step 4) don't exist yet, so the rest become glyph cards (step 5).
 ##
 ## Furniture categories for `generic_furniture_<category>`, in order: flower, sign, seat, table,
 ## container, shelf (from FLOWER, SIGN, CAN_SIT, FLAT_SURF, CONTAINER, PLACE_ITEM). Items use their
@@ -18,7 +19,8 @@ const CORPSE_M := 1.0
 
 
 class Prop:
-	var shape := ""            # "" = glyph card
+	var model: ModelLibrary.Model   # drawn instead of the shape when set (real size: no item scaling)
+	var shape := ""            # "" and no model = glyph card
 	var step := AssetRegistry.Step.GLYPH
 	var via := ""
 	var main := Color.WHITE    # body (registry material, else the CDDA colour)
@@ -131,9 +133,11 @@ func _make(table: String, index: int) -> Prop:
 			cats.append(d.category)
 	p.main = p.accent
 	var found := registry.find_prop(kind, id, chain, cats)
-	if found.entry != null and PropShapes.has_shape(found.entry.placeholder):
+	var model := registry.model_of(found.entry)
+	if found.entry != null and (model != null or PropShapes.has_shape(found.entry.placeholder)):
 		var e := found.entry
-		p.shape = e.placeholder
+		p.model = model
+		p.shape = e.placeholder if PropShapes.has_shape(e.placeholder) else ""
 		p.step = found.step
 		p.via = found.via
 		p.scale = e.scale
@@ -141,7 +145,7 @@ func _make(table: String, index: int) -> Prop:
 		p.random_yaw = e.random_yaw
 		if CddaPalette.MATERIALS.has(e.material):
 			p.main = CddaPalette.material(e.material)
-	if table == "itype":
+	if table == "itype" and p.model == null:   # models have their real size
 		var edge := pow(maxf(d.volume_ml if d != null else 250, 1), 1.0 / 3.0) / 100.0 * ITEM_GROW
 		# CDDA's corpse item is 0 ml (the body's size comes from the monster at run time): body-sized.
 		p.scale *= CORPSE_M if d != null and d.category == "corpses" else clampf(edge, ITEM_MIN_M, ITEM_MAX_M)
