@@ -329,6 +329,30 @@ bool CddaSim::answer( const Dictionary &d )
                                 std::clamp( p.y, -max_abs_coord, max_abs_coord ),
                                 std::clamp( p.z, -max_abs_coord, max_abs_coord ) };
     }
+    if( !field( d, "shot", Variant::DICTIONARY, v ) ) {
+        return false;
+    }
+    if( d.has( "shot" ) ) {
+        // {end: Vector3i, hit_uid: int, part: String, quality: float}; the sim checks it again.
+        const Dictionary s = v;
+        Variant e;
+        Variant u;
+        Variant p;
+        Variant q;
+        if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) || !field( s, "hit_uid", Variant::INT, u ) ||
+            !field( s, "part", Variant::STRING, p ) || !field( s, "quality", Variant::FLOAT, q ) ) {
+            return false;
+        }
+        fp3d::shot_answer sa;
+        const Vector3i end = e;
+        sa.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
+                                 std::clamp( end.y, -max_abs_coord, max_abs_coord ),
+                                 std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
+        sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
+        sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
+        sa.quality = s.has( "quality" ) ? std::clamp( static_cast<float>( static_cast<double>( q ) ), 0.0f, 0.99f ) : 0.3f;
+        a.shot = sa;
+    }
     fp3d::answer( std::move( a ) );
     return true;
 }

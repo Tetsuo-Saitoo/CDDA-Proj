@@ -466,6 +466,45 @@ func _build(main: Color, second: Color) -> void:
 			_eyes(_head, 0.0, 0.08 * s)
 
 
+## Hit zones for client-side bullets: every visible body part as [MeshInstance3D, zone], zone one of head,
+## eye, torso, arm_l, arm_r, leg_l, leg_r, leg (non-humanoid legs), wing. Parts keep their animated pose,
+## so a ray tested against them (BulletPhysics) hits what is drawn.
+func hit_zones() -> Array:
+	var out := []
+	if dying or not _body.visible:
+		return out
+	for m in _parts:
+		if not m.is_visible_in_tree():
+			continue
+		out.append([m, _zone_of(m)])
+	return out
+
+
+func _zone_of(m: MeshInstance3D) -> String:
+	if m.has_meta("zone"):
+		return m.get_meta("zone")
+	var p := m.get_parent()
+	if _head != null and _head != _spine and (p == _head or _head.is_ancestor_of(m)):
+		return "head"
+	if plan == Plan.SNAKE and not _segments.is_empty() and p == _segments[0]:
+		return "head"
+	var i := _limbs.find(p)
+	if i < 0:
+		for k in _limbs.size():
+			if _limbs[k].is_ancestor_of(m):
+				i = k
+				break
+	if i >= 0:
+		var side := "l" if to_local(m.global_position).x < 0.0 else "r"
+		if plan == Plan.HUMANOID:
+			return ("leg_" if i < 2 else "arm_") + side
+		return "leg_" + side if plan == Plan.QUADRUPED else "leg"
+	for w in _wings:
+		if w == p or w.is_ancestor_of(m):
+			return "wing"
+	return "torso"
+
+
 func _pivot(parent: Node3D, at: Vector3) -> Node3D:
 	var n := Node3D.new()
 	n.position = at
@@ -495,7 +534,7 @@ func _part(parent: Node3D, mesh: Mesh, at: Vector3, rot: Vector3, col: Color) ->
 func _eyes(head: Node3D, r: float, gap: float, z := 0.0) -> void:
 	var er := maxf(gap * 0.4, 0.008)
 	for x: float in [-gap / 2.0, gap / 2.0]:
-		_part(head, _sphere(er), Vector3(x, r * 0.25, z - r * 0.9), Vector3.ZERO, Color(0.08, 0.06, 0.05))
+		_part(head, _sphere(er), Vector3(x, r * 0.25, z - r * 0.9), Vector3.ZERO, Color(0.08, 0.06, 0.05)).set_meta("zone", "eye")
 
 
 func _set_overlay(mat: Material) -> void:

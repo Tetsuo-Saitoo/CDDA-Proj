@@ -134,6 +134,16 @@ func reload() -> void:
 		send({"cancel": true, "then": PackedStringArray(RELOAD_THEN)})
 
 
+## Fires a shot the client flew itself (BulletPhysics): CDDA follows `shot` (end square, creature, part)
+## instead of rolling. `pos` is where it went; the action is the primary one (FIRE).
+func fire_shot(pos: Vector3i, shot: Dictionary) -> void:
+	var p := primary_index()
+	if p < 0 or done:
+		return
+	cursor = _clamp(pos)
+	send({"pos": cursor, "action": actions[p], "shot": shot})
+
+
 ## True for modes that shoot or throw at something (the crosshair follows the view in these).
 static func is_attack_mode(m: String) -> bool:
 	return m in ["fire", "throw", "throw_blind", "turret_manual", "reach", "spell"]
