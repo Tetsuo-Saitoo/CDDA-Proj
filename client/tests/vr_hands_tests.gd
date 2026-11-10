@@ -282,6 +282,12 @@ func _test_refused() -> void:
 	_hands.refused.emit("mouse", {}, "not for VR")
 	_check.call(_rig.notes[0].text.length() == VrRig.NOTE_MAX and _rig.buzzes[0] == b[0] + 1 and _rig.buzzes[1] == b[1],
 			"vr hands: a long reason is cut; the mouse's refusals don't buzz VR")
+	var main_i := 0 if _rig.main_ctrl() == _rig.left else 1
+	var b2 := _rig.buzzes.duplicate()
+	_rig.refused_here("stairs: wait for the last move to finish")
+	_check.call(_rig.buzzes[main_i] == b2[main_i] + 1 and _rig.buzzes[1 - main_i] == b2[1 - main_i]
+			and _rig.notes[main_i].visible and _rig.notes[main_i].text.begins_with("stairs:"),
+			"vr hands: a refused stair use buzzes the main hand and says why there")
 
 
 ## Grip on nothing picks up what CDDA wields (shown on the hand by VrHeld, hidden while the hand holds its copy);

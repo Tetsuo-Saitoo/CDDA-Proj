@@ -604,6 +604,14 @@ func _on_refused(id: String, _target: Dictionary, reason: String) -> void:
 	say(i, reason)
 
 
+## main.gd turned down something the main hand asked for (a stair use while the last move is still going): a
+## buzz in that hand and the reason by it.
+func refused_here(reason: String) -> void:
+	var i := 0 if main_ctrl() == left else 1
+	_feel(_ctrl(i))
+	say(i, reason)
+
+
 ## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
 func say(i: int, text: String) -> void:
 	if notes[i] == null or not is_instance_valid(notes[i]):

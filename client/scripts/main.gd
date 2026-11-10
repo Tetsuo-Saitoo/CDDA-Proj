@@ -360,7 +360,10 @@ func _start_vr() -> void:
 	vr_perf = VrPerf.new(xr)
 	add_child(vr_perf)
 	vr.live_stairs = live != null
-	vr.stair_used.connect(func(st: Dictionary) -> void: use_stair(st, true))
+	vr.stair_used.connect(func(st: Dictionary) -> void:
+		status = "stairs: not now"   # use_stair says why when it knows
+		if not use_stair(st, true):
+			vr.refused_here(status))   # a buzz and the reason by the main hand (no status line in the headset)
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
