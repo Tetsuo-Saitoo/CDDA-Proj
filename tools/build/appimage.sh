@@ -212,10 +212,10 @@ fi
 
 # --- 5. Pack: the runtime, then the squashfs image ---
 rm -f "$work/app.squashfs"
-# 128 KiB blocks (squashfs's default): CDDA reads thousands of small files at start, and each read through FUSE
-# decompresses the whole block it sits in.
+# 1 MiB blocks: measured in WSL, CDDA's data loads as fast as with 128 KiB blocks (faster with the JSON cache) and the
+# image is ~6 MB smaller.
 mksquashfs "$work/AppDir" "$work/app.squashfs" -root-owned -noappend -no-xattrs -comp zstd -Xcompression-level 19 \
-    -b 128K -no-progress >/dev/null
+    -b 1M -no-progress >/dev/null
 out="$src/tools/out/appimage"
 mkdir -p "$out"
 cat "$runtime" "$work/app.squashfs" >"$out/CDDA-3D-x86_64.AppImage.part"
