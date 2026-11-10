@@ -61,6 +61,7 @@ class CddaSim : public godot::RefCounted
         godot::Dictionary get_save_status() const;
 
         bool set_cheat( const godot::String &name, bool on );
+        void set_cheats_allowed( bool on );
         godot::Dictionary get_cheats() const;
         bool give_test_kit();
 

@@ -178,6 +178,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_held" ), &CddaSim::get_held );
     ClassDB::bind_method( D_METHOD( "set_auto_pause", "on" ), &CddaSim::set_auto_pause );
     ClassDB::bind_method( D_METHOD( "set_cheat", "name", "on" ), &CddaSim::set_cheat );
+    ClassDB::bind_method( D_METHOD( "set_cheats_allowed", "on" ), &CddaSim::set_cheats_allowed );
     ClassDB::bind_method( D_METHOD( "get_cheats" ), &CddaSim::get_cheats );
     ClassDB::bind_method( D_METHOD( "give_test_kit" ), &CddaSim::give_test_kit );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
@@ -395,6 +396,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::put;
     } else if( op == "drop" ) {
         a.op = fp3d::item_op::drop;
+    } else if( op == "unload" ) {
+        a.op = fp3d::item_op::unload;
+    } else if( op == "reload" ) {
+        a.op = fp3d::item_op::reload;
     } else {
         return false;
     }
@@ -429,7 +434,7 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
-    } else if( a.op != fp3d::item_op::put ) {
+    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop ) {
         return false;
     }
     if( !field( d, "hand", Variant::STRING, v ) ) {
@@ -446,6 +451,9 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         } else {
             return false;
         }
+    }
+    if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
+        return false;
     }
     if( a.op == fp3d::item_op::put ) {
         if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
@@ -630,6 +638,11 @@ bool CddaSim::set_cheat( const String &name, bool on )
     return c && fp3d::request_cheat( *c, on );
 }
 
+void CddaSim::set_cheats_allowed( bool on )
+{
+    fp3d::set_cheats_allowed( on );
+}
+
 Dictionary CddaSim::get_cheats() const
 {
     const fp3d::cheats_view v = fp3d::latest_cheats();
@@ -641,6 +654,7 @@ Dictionary CddaSim::get_cheats() const
     d["seq"] = static_cast<int64_t>( std::min<uint64_t>( v.seq, INT64_MAX ) );
     d["kits_given"] = static_cast<int64_t>( std::min<uint64_t>( v.kits_given, INT64_MAX ) );
     d["cheats"] = on;
+    d["allowed"] = fp3d::cheats_allowed();
     return d;
 }
 

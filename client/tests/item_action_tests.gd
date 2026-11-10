@@ -433,7 +433,19 @@ func _test_drop_target(data: Variant, tables: IdTables) -> void:
 			"drop target: floor in reach: a surface, spot across the square (x east, y south)")
 	res = DropTarget.resolve(coords, at.call(E, Vector3(1.0, 0.6, 0.5), "furniture"), null, held, tables, snap, reach)
 	_check.call(DropTarget.furniture_id(E, snap, tables) == "f_woodstove" and res["kind"] == "burner"
-			and res["spot"] == Vector2(0.999, 0.5), "drop target: a wood stove is a burner, spot clamped")
+			and res["spot"] == Vector2(0.999, 0.5) and (res["heat"] as Dictionary).is_empty(),
+			"drop target: a wood stove is a burner (no heat squares in the snapshot: by id), spot clamped")
+	# The bridge's heat squares decide when the snapshot has them: a fire on the floor is a burner, lit or not.
+	var sms := _sm(snap, S)
+	sms.heat = PackedInt32Array([ItemActions.tile_of(S), Snapshot.HEAT_FIRE, 0, 2, 0, 0])
+	res = DropTarget.resolve(coords, at.call(S, Vector3(0.5, 0.0, 0.5), "floor"), null, held, tables, snap, reach)
+	_check.call(res["kind"] == "burner" and res["heat"]["fire"] == 2 and res["heat"]["lit"] == false
+			and Hands.drop_hint(res, tables) == "put it on the heat (not lit)",
+			"drop target: a heat square from the snapshot is a burner; the hint says it isn't lit")
+	sms.heat = PackedInt32Array([ItemActions.tile_of(S), Snapshot.HEAT_FIRE, 0, 2, 0, 1])
+	res = DropTarget.resolve(coords, at.call(S, Vector3(0.5, 0.0, 0.5), "floor"), null, held, tables, snap, reach)
+	_check.call(res["kind"] == "burner" and Hands.drop_hint(res, tables) == "put it on the heat", "drop target: a lit fire")
+	sms.heat = PackedInt32Array()
 	res = DropTarget.resolve(coords, at.call(P, Vector3(0.5, 0.6, 0.5), "furniture"), null, held, tables, snap, reach)
 	_check.call(res["kind"] == "surface" and not DropTarget.is_heat_source("f_table"), "drop target: other furniture is a surface")
 	var none := true

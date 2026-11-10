@@ -55,6 +55,7 @@ func _initialize() -> void:
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
 	preload("res://tests/hud_tests.gd").new().run(_check, tables)
 	preload("res://tests/cheat_tests.gd").new().run(_check)
+	preload("res://tests/recipe_tests.gd").new().run(_check)
 	preload("res://tests/world_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/level_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/light_tests.gd").new().run(root, _check, data)
