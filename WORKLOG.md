@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Crash on exit after headless live runs through main.gd (range UI test, exit 0xC0000005): the boot log's one-shot "first frame drawn" lambda stayed connected to RenderingServer.frame_post_draw (no frame is drawn headless); it is now a method, disconnected in main's _exit_tree.
 - 2026-11-10 — AppImage `--vr`: the SteamVR wait before the game window is at most 30 s (was 65), ends after 10 s when SteamVR and Steam are gone, and is announced at once (console and desktop notification).
 - 2026-11-10 — Faster boot (lead-world): CDDA's data consistency check is skipped when the same version, program file, mods and data already passed (fork `fp3d-world`, approved by lead-bridge; sim checks); the AppImage ships CDDA's JSON cache built by the new `fp3d-json-cache` (squashfs stays at 1 MiB blocks: 128 KiB measured no faster); appimage.sh works from a Windows-made worktree. Loads 44-48 s -> 33-35 s on Windows; AppImage warm quick start 50 s -> 29 s in WSL.
 - 2026-11-10 — Boot time measured (Windows, lead-world): 25-30 s new game, 44-48 s load to the first frame; most of it is CDDA's data load (12-15 s) and data verification (6-9 s). main.gd prints `boot: <ms> <phase>` lines. Fixes proposed in TASKS "Boot time".

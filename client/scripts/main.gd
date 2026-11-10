@@ -92,6 +92,17 @@ static func _boot_log(what: String) -> void:
 	print("boot: %6d ms  %s" % [Time.get_ticks_msec(), what])
 
 
+func _on_first_frame_drawn() -> void:
+	_boot_log("first frame drawn")
+
+
+func _exit_tree() -> void:
+	# Nothing of ours may stay connected to an engine singleton: a headless run never draws a frame, and the callable
+	# still waiting on frame_post_draw crashed the engine as it shut down.
+	if RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+		RenderingServer.frame_post_draw.disconnect(_on_first_frame_drawn)
+
+
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
@@ -674,7 +685,8 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 	if first:
 		print("live: " + status)
 		_boot_log("first world built")
-		RenderingServer.frame_post_draw.connect(func() -> void: _boot_log("first frame drawn"), CONNECT_ONE_SHOT)
+		if not RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+			RenderingServer.frame_post_draw.connect(_on_first_frame_drawn, CONNECT_ONE_SHOT)
 		_frame_player()
 
 
