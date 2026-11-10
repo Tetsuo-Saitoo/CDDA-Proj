@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Gun block 2: CDDA rolls each projectile's error and the client flies it (per-projectile `shot` requests, fork fp3d-combat); CDDA's roll decides hits and aimed weak points; crosshair spread ring, viewmodel sway, hit / kill markers from CDDA's events, VR fire hooks and named gun parts, gun fouling grime shader, `Snapshot.player_gun`; sim test (combat checks), client tests and live test pass.
 - 2026-11-10 — Look line follows the player (user bug): its start is redrawn from the chest every frame (`_update_look_line`), its end stays on the looked-at point; was left floating where you clicked.
 - 2026-11-10 — Planned the test range (PLAN.md K7, user): a generated world with every weapon, item, vehicle, monster (AI frozen), furniture and terrain, toggleable cheats, tests default there; owner QA lead.
 - 2026-11-10 — L8 furniture parts: `Grabbable.part()` (cabinet doors, drawers, lids from a checked spec), opened by VR hand or mouse drag, CDDA asked only for open/closed furniture pairs, state kept per part id, drawers carry `contents()`; door_tests parts checks; client tests pass; not registered in the world yet (lead-world).
