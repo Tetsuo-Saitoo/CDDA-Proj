@@ -60,8 +60,8 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A cancel, a
   missing `shot` or one that fails the checks leaves that projectile to CDDA's own path (the FIRE answer's
   outcome is not used with `fly`).
-- Checks: quality finite (clamped 0..0.99); a hit names the cursor creature or a hostile candidate, alive and seen now
-  (the bullet stops at its square); a miss's `end` is in the bubble; the square is on the shooter's z, in
+- Checks: quality finite (clamped 0..0.99); a hit names the cursor creature or a hostile candidate (still hostile
+  when the shot flies), alive and seen now (the bullet stops at its square); a miss's `end` is in the bubble; the square is on the shooter's z, in
   front of it, within the gun's range for the avatar, and near the line: within 1 square of the line to the
   cursor (FIRE answer) or 1.5 squares of CDDA's deviated line (shot answer: the line turned by
   shot_error * sin(shot_angle) to the shooter's right). Anything else is ignored and CDDA's own path runs.
@@ -70,15 +70,13 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   line combined with the error's vertical part (shot_error * cos(shot_angle)) over the distance along it (shot
   answer), or the aim line plus the whole error in the worst direction (FIRE answer), never better than CDDA's roll
   for a creature a projectile meets on the way (at least 0.4); a HARDTOHIT character: the worse of two rolls, as
-  CDDA does. goodhit = max(that roll, quality); when the roll misses, CDDA's own path runs.
-- A client miss never picks the direction: the projectile flies CDDA's line (the deviated line for a shot answer,
-  the aim line for a FIRE answer) out to the aimed distance and on as CDDA's overshoot would. When CDDA's own roll
-  is a square or more off (a wild miss), CDDA's wild-miss path runs (its distance scatter, so a grenade aimed at
-  an empty square doesn't land on it); after a shot request it heads along that request's deviated line instead
-  of CDDA's coin-flip side. `end` only stops it early, at
-  its distance along that line, where the line's square there is impassable (wall, closed door, solid
-  furniture). Other creatures on the path get CDDA's rolls, the aimed one no better than CDDA's own (a CDDA miss
-  stays a miss). The client can make a shot worse, never better.
+  CDDA does. goodhit = max(that roll, quality); when the roll misses, CDDA's own path runs and that creature, its
+  roll made, isn't rolled again if the path meets it.
+- A client miss never picks the path: CDDA's own runs (its near miss along the aim line with its overshoot, or its
+  wild miss with its angle and distance scatter, so a grenade aimed at an empty square doesn't land on the
+  cursor); `end` is only checked. After a shot request, CDDA's wild miss turns to the side that request's angle
+  showed instead of its coin flip. Other creatures on the path get CDDA's rolls, the aimed one no better than
+  CDDA's own (a CDDA miss stays a miss). The client can make a shot worse, never better.
 - Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
   lands only if goodhit <= sqrt(hit chance / 100) (weak point: `weakpoint::hit_chance`; body part: its share of
   the body's hit size), else CDDA picks. Ignored on other requests.
