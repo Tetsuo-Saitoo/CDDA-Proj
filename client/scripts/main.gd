@@ -402,6 +402,7 @@ func _start_live() -> void:
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
 	cheat_panel.backend = live
+	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
@@ -447,6 +448,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.quit_requested.connect(_quit)
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
+		_sync_cheats_allowed()
 		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
 
@@ -458,6 +460,13 @@ func _menu_started(center: Control, ok: bool) -> void:
 	center.queue_free()
 	main_menu = null
 	_after_live_start(true)
+
+
+## The bridge lets cheats work only while the player allowed them: the F1 debug switch, --test / --cheats, or a
+## test-range game (KeyMenu.cheats_allowed).
+func _sync_cheats_allowed() -> void:
+	if live != null:
+		live.set_cheats_allowed(key_menu.cheats_allowed())
 
 
 ## --test: the test kit, once, and only for a new game (never on a load: the save already has it).
@@ -934,6 +943,7 @@ func _setup_hud() -> void:
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
+	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 
 

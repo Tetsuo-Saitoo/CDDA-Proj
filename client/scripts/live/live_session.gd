@@ -51,6 +51,9 @@ const MAX_KEPT_RESULTS := 32
 const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
 ## The running game was started new (not loaded): --test gives its test kit only then.
 var new_game := false
+## Cheats and test kits work only while allowed (bridge set_cheats_allowed, off by default): the player's own
+## debug switch, --test / --cheats, or a test-range game. Kept here and sent again when the game starts running.
+var cheats_allowed := false
 ## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
 var _snap_task := -1
 var _snap_job: SnapJob
@@ -139,8 +142,20 @@ func save_pending() -> bool:
 	return _sim != null and _sim.has_method("get_save_status") and _sim.get_save_status().get("pending", false)
 
 
+func set_cheats_allowed(on: bool) -> void:
+	cheats_allowed = on
+	_push_cheats_allowed()
+
+
+## Older bridges have no opt-in (their cheats always work).
+func _push_cheats_allowed() -> void:
+	if _sim != null and _sim.has_method("set_cheats_allowed"):
+		_sim.set_cheats_allowed(cheats_allowed)
+
+
 ## Turns a testing cheat on or off (applied at the sim's next request; cheats_changed follows). False for a name
-## not in CHEATS, without a running game or with a bridge that can't.
+## not in CHEATS, without a running game, while cheats aren't allowed (the sim says) or with a bridge that can't.
+## The first cheat or kit turns the game's achievements off for good (CDDA's "Achievements have been disabled.").
 func set_cheat(cheat: String, on: bool) -> bool:
 	if not cheat in CHEATS or not _can("set_cheat"):
 		return false
@@ -249,6 +264,7 @@ func _make_sim() -> bool:
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
+	_push_cheats_allowed()
 	return true
 
 
@@ -320,6 +336,8 @@ func _poll(delta: float) -> void:
 		state = s
 		if s == "ended" or s == "failed":
 			error = _sim.get_error()
+		if s == "running":
+			_push_cheats_allowed()   # before state_changed: --test / --cheats are applied on it
 		state_changed.emit(s)
 	if state == "running" and _sim.has_method("get_save_status"):
 		var st: Dictionary = _sim.get_save_status()
