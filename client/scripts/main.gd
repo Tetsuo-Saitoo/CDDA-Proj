@@ -247,7 +247,7 @@ func _place_player_body() -> void:
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
-		VrHands.drive(player_body, vr)
+		# the rig poses the hands and the arms after this (VrRig.drive_body)
 	else:
 		player_body.rotation = Vector3(0, yaw, 0)
 	player_body.visible = own or world.snapshot.player_pos.z <= world.view_z_max
@@ -288,6 +288,7 @@ func _start_vr() -> void:
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
 	vr.save_path = VrSettings.FILE
+	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	add_child(vr)
 	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
 		var p: Variant = _reach_square()

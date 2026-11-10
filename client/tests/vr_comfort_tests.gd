@@ -113,6 +113,44 @@ func _test_hand() -> void:
 	l.free()
 
 
+## One hand system: the rig's hands are the only hands; the body's arms reach for their wrists.
+func _test_body(root: Node, world: WorldView, rig: VrRig) -> void:
+	var pb := PlayerBody.new()
+	root.add_child(pb)
+	pb.apply(world.snapshot, world.tables)
+	var head := rig.camera.global_position
+	pb.global_position = Vector3(head.x, rig.global_position.y, head.z)
+	rig.left.transform = Transform3D(Basis(), rig.camera.position + Vector3(-0.25, -0.3, -0.4))
+	rig.body = pb
+	rig.drive_body()   # box hands showing (set just before)
+	var hl := pb.get_node_or_null("hand_l") as Node3D
+	var al := pb.get_node_or_null("arm_l") as Node3D
+	var w: Variant = rig.wrist(0)
+	_check.call(hl != null and not hl.visible and w is Vector3
+			and (w as Vector3).is_equal_approx(rig.left.global_transform * VrRig.BOX_WRIST)
+			and not al.transform.basis.is_equal_approx(Basis.IDENTITY),
+			"vr rig: one hand system: body hands hidden, the arm reaches for the box hand")
+	rig.settings["hands"] = "buttons"
+	rig._boxes[0].visible = false
+	rig.left_hand.pose_from_controller(rig.left.transform, VrHand.curls_from_buttons(0.0, false, 0.0, false))
+	w = rig.wrist(0)
+	_check.call(w is Vector3 and (w as Vector3).is_equal_approx(rig.global_transform * rig.left_hand.joints[1]),
+			"vr rig: the arm reaches for the finger hand's wrist")
+	rig.left_hand.visible = false
+	rig._boxes[1].visible = false
+	_check.call(rig.wrist(0) == null and rig.wrist(1) == null, "vr rig: no hand shown, the arm hangs")
+	var gloved: Array[Dictionary] = [{"part": "hand_l", "kind": "skin", "colour": Color.RED},
+			{"part": "hand_l", "kind": "worn", "colour": Color.BLUE}, {"part": "hand_l", "kind": "blood", "colour": Color.BLACK},
+			{"part": "hand_r", "kind": "worn", "colour": Color.GREEN}]
+	var bare: Array[Dictionary] = []
+	_check.call(VrRig.hand_colour(gloved, "hand_l") == Color.BLUE and VrRig.hand_colour(bare, "hand_l") == VrHand.SKIN,
+			"vr rig: hands take the outermost glove's colour")
+	_check.call(rig.left_hand.colour == VrRig.hand_colour(pb.pieces, "hand_l"), "vr rig: hand colour from the body")
+	rig.body = null
+	rig.settings["hands"] = "boxes"
+	pb.free()
+
+
 func _test_rig(root: Node, world: WorldView) -> void:
 	var rig := VrRig.new(world, {"turn": "off", "blink": false})
 	root.add_child(rig)
@@ -129,6 +167,7 @@ func _test_rig(root: Node, world: WorldView) -> void:
 	rig.settings["hands"] = "boxes"
 	rig.pose_hands()
 	_check.call(rig._boxes[0].visible and rig._boxes[1].visible, "vr rig: simple box hands")
+	_test_body(root, world, rig)
 	# Moving toward the hand: the left controller points away from the player, the head at them.
 	rig.settings["move_dir"] = "hand"
 	rig.left.transform = Transform3D(rig.camera.transform.basis.rotated(Vector3.UP, PI), Vector3(-0.2, 1.2, 0))

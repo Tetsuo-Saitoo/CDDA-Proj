@@ -9,7 +9,8 @@ extends XROrigin3D
 ## - vive (trackpad wands): left pad touched moves; right pad clicked: left / right half snap turns, up half
 ##   held aims the teleport, down half = level down. Right menu: level up. Left pad click: back to the player.
 ## Left menu button (Index: left stick click): the settings menu (VrMenu; settings in VrSettings, saved to
-## `save_path`). Hands (VrHand) show finger tracking when the runtime gives it, else fingers from the buttons.
+## `save_path`). Hands (VrHand) show finger tracking when the runtime gives it, else fingers from the buttons;
+## they are the only hands: the player's body hides its own and reaches its arms for their wrists (drive_body).
 ## Grip near a door (Grabbable, outlined when in reach) grabs it; it swings with the hand (block L2).
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
@@ -57,6 +58,9 @@ var menu: VrMenu          # created on first open
 var left_hand: VrHand
 var right_hand: VrHand
 var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
+const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controller space
+var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
+var _glove_key := "-"     # body.key the hand colours were taken from
 const GRAB_REACH := 0.12  # metres from a hand to a door leaf it can grip
 var grab_ok := Callable() # square -> bool: may a hand open the door there (live: next to the player)
 var grabs: Array = [null, null]   # Grabbable held by the left / right hand
@@ -181,6 +185,41 @@ func _process(delta: float) -> void:
 	step(delta, inp)
 	update_grabs()
 	pose_hands()
+	drive_body()
+
+
+## One hand system: VrHand draws the hands (fingers from tracking or buttons), the player's body draws the arms,
+## which reach for the hands' wrists; the body's own hand boxes hide and the hands take the glove's colour.
+## Runs after main.gd placed the body under the head this frame.
+func drive_body() -> void:
+	if body == null or not is_instance_valid(body):
+		return
+	body.show_hands = false
+	if body.key != _glove_key:
+		_glove_key = body.key
+		left_hand.set_colour(hand_colour(body.pieces, "hand_l"))
+		right_hand.set_colour(hand_colour(body.pieces, "hand_r"))
+	body.reach(wrist(0), wrist(1))
+
+
+## Hand i's wrist (global), or null when neither the hand nor its box shows (the arm hangs then).
+func wrist(i: int) -> Variant:
+	var h: VrHand = left_hand if i == 0 else right_hand
+	if h.visible and h.joints.size() == VrHand.JOINTS:
+		return global_transform * h.wrist()
+	if _boxes[i].visible:
+		var c: XRController3D = left if i == 0 else right
+		return c.global_transform * BOX_WRIST
+	return null
+
+
+## The outermost skin or worn piece on a hand part (PlayerBody.plan lists inner to outer), else bare skin.
+static func hand_colour(pieces: Array[Dictionary], part: String) -> Color:
+	var col := VrHand.SKIN
+	for p: Dictionary in pieces:
+		if p.get("part") == part and p.get("kind") in ["skin", "worn"]:
+			col = p["colour"]
+	return col
 
 
 ## Held doors follow their hand; free hands outline the door they could grip. `all_hands`: count hands the
