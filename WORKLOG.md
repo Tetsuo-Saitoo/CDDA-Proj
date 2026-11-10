@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Snapshots off Godot's main thread: fetch + parse (and id tables) on a worker, world meshing on a worker, scene swap within 4 ms a frame; live main-thread snapshot work per frame from ~125 ms per turn (~400 ms first world) to 4.4 ms max; `tests/snapshot_bench.gd` measures it.
 - 2026-11-09 — VR design: PLAN.md L8 containers and looting by hand, L9 dynamic cooking (recipes from the pot's contents on a lit heat source), ideas from other VR games, two open decisions (timed search, burnt food); PLAN.md E6 mouse/keyboard hands on the same actions (Amnesia-style drag to open, grabbable handles highlighted); docs/MODELS.md model spec (glb, scale, axes, budgets, VR markers, first ids, licence); TASKS L8, L9, E6.
 - 2026-11-09 — Main menu Credits page (CDDA by CleverRaven and contributors; Seglectic), by the main-menu session; ui_tests check it.
 - 2026-11-09 — README Credits section: Seglectic (3D models, VR ideas and feedback); in-game credits line asked of the main-menu session.

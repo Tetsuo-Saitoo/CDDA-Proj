@@ -25,9 +25,34 @@ var tables_mismatch := false
 var _built := {}   # Vector3i absolute submap -> {"rev", "detail", "node", "verts", "pverts", "counts"}
 
 
+## Emitted on the main thread when a snapshot given to submit() is shown; `rebuilt` as apply_snapshot returns.
+signal applied(snap: Snapshot, rebuilt: int)
+
+var _task := -1          # WorkerThreadPool task meshing _job; -1 when none runs
+var _job: Job
+var _waiting: Snapshot   # the newest snapshot submitted while a job ran (older ones are skipped)
+var _committing: Job     # meshed, being put into the scene a few submaps per frame
+## Main-thread time per frame for putting a submitted snapshot's meshes into the scene (VR budget ~11 ms).
+const COMMIT_BUDGET_US := 4000
+
+
+## One apply: what to rebuild is decided on the main thread (_prepare, from _built), the meshes are made by
+## _compute (a worker for submit(): it reads only the snapshot, the catalogs and the tables, which the main
+## thread leaves alone while a job runs), and _commit puts them in the scene on the main thread.
+class Job:
+	var snap: Snapshot
+	var drops: Array[Vector3i] = []
+	var dirty: Array[Vector3i] = []    # terrain to rebuild (in the snapshot)
+	var detail: Array[Vector3i] = []   # props to rebuild (includes dirty)
+	var terrain := {}   # Vector3i -> TerrainMesher.Result
+	var props := {}     # Vector3i -> PropMesher.Result
+	var next := -1      # commit progress: -1 not begun, then an index into dirty + detail
+
+
 ## Id tables for the snapshots that follow (contracts/id_tables.md). Null or invalid: the snapshot's
 ## names and the registry only. Everything built so far is rebuilt on the next apply.
 func set_id_tables(t: IdTables) -> void:
+	finish_pending()
 	tables = t if t != null and t.is_valid() else null
 	catalog.set_tables(tables)
 	props.set_tables(tables)
@@ -35,21 +60,91 @@ func set_id_tables(t: IdTables) -> void:
 		_built[pos]["rev"] = -1
 
 
-## Shows a validated snapshot; returns how many submaps' terrain was rebuilt.
+## Shows a validated snapshot now (meshing on this thread); returns how many submaps' terrain was rebuilt.
 func apply_snapshot(snap: Snapshot) -> int:
 	assert(snap.is_valid())
-	if snapshot == null or snap.bubble_origin != snapshot.bubble_origin:
-		coords.set_bubble_origin(snap.bubble_origin)
-		for pos: Vector3i in _built:
-			(_built[pos]["node"] as Node3D).position = coords.sm_to_world(pos)
-	catalog.set_snapshot(snap)
-	props.set_snapshot(snap)
-	tables_mismatch = tables != null and snap.ids_generation >= 0 and snap.ids_generation != tables.generation
+	finish_pending()
+	var job := _prepare(snap)
+	_compute(job)
+	_commit(job, -1)
+	return job.dirty.size()
+
+
+## Shows a validated snapshot without blocking: meshing runs on a worker and `applied` follows on a later
+## frame (from _process). A snapshot submitted while one is meshing waits; only the newest waits.
+func submit(snap: Snapshot) -> void:
+	assert(snap.is_valid())
+	if _task >= 0 or _committing != null:
+		_waiting = snap
+		return
+	_job = _prepare(snap)
+	_task = WorkerThreadPool.add_task(_compute.bind(_job), false, "world meshing")
+
+
+func busy() -> bool:
+	return _task >= 0 or _waiting != null or _committing != null
+
+
+## Blocks until a submitted snapshot is shown (and the one waiting after it).
+func finish_pending() -> void:
+	while _task >= 0 or _committing != null:
+		if _committing == null:
+			WorkerThreadPool.wait_for_task_completion(_task)
+			_take_task()
+		_step_commit(-1)
+
+
+## Main-thread microseconds the last _process took (for the bench and a HUD).
+var process_us := 0
+
+
+func _process(_delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_poll()
+	process_us = Time.get_ticks_usec() - t0
+
+
+func _poll() -> void:
+	if _committing == null and _task >= 0 and WorkerThreadPool.is_task_completed(_task):
+		WorkerThreadPool.wait_for_task_completion(_task)
+		_take_task()
+	if _committing != null:
+		_step_commit(COMMIT_BUDGET_US)
+
+
+func _exit_tree() -> void:
+	if _task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_task)
+		_task = -1
+
+
+func _take_task() -> void:
+	_task = -1
+	_committing = _job
+	_job = null
+
+
+## Puts more of _committing into the scene, within `budget_us` (-1: all of it); emits `applied` when done.
+func _step_commit(budget_us: int) -> void:
+	var job := _committing
+	if not _commit(job, budget_us):
+		return
+	_committing = null
+	applied.emit(job.snap, job.dirty.size())
+	if _waiting != null:
+		var next := _waiting
+		_waiting = null
+		submit(next)
+
+
+func _prepare(snap: Snapshot) -> Job:
+	var job := Job.new()
+	job.snap = snap
 	var dirty := {}
 	var detail := {}
-	for pos: Vector3i in _built.keys():
+	for pos: Vector3i in _built:
 		if not snap.submaps.has(pos):
-			_drop(pos)
+			job.drops.append(pos)
 			_mark_around(dirty, pos)
 	for pos: Vector3i in snap.submaps:
 		var b: Dictionary = _built.get(pos, {})
@@ -58,19 +153,56 @@ func apply_snapshot(snap: Snapshot) -> int:
 			_mark_around(dirty, pos)
 		elif b["detail"] != sm.detail_revision:
 			detail[pos] = true
-	snapshot = snap
-	var mesher := TerrainMesher.new(snap, catalog)
-	var pmesher := PropMesher.new(snap, catalog, props)
-	var count := 0
-	props_built = 0
 	for pos: Vector3i in dirty:
 		if snap.submaps.has(pos):
-			_build(mesher, pos)
-			count += 1
+			job.dirty.append(pos)
 			detail[pos] = true
 	for pos: Vector3i in detail:
-		_build_props(pmesher, pos)
-		props_built += 1
+		job.detail.append(pos)
+	return job
+
+
+## Thread-safe as long as the main thread doesn't touch catalog, props or tables meanwhile (set_id_tables
+## and apply_snapshot wait for the job first). ArrayMesh building goes through the thread-safe RenderingServer.
+func _compute(job: Job) -> void:
+	catalog.set_snapshot(job.snap)
+	props.set_snapshot(job.snap)
+	var mesher := TerrainMesher.new(job.snap, catalog)
+	var pmesher := PropMesher.new(job.snap, catalog, props)
+	for pos in job.dirty:
+		job.terrain[pos] = mesher.build(pos)
+	for pos in job.detail:
+		job.props[pos] = pmesher.build(pos)
+
+
+## Puts a meshed job into the scene, `budget_us` at a time (-1: all); true when done. Until then the old
+## snapshot stays current: only the submaps already swapped show the new one.
+func _commit(job: Job, budget_us: int) -> bool:
+	var t0 := Time.get_ticks_usec()
+	var snap := job.snap
+	if job.next < 0:
+		job.next = 0
+		if snapshot == null or snap.bubble_origin != snapshot.bubble_origin:
+			coords.set_bubble_origin(snap.bubble_origin)
+			for pos: Vector3i in _built:
+				(_built[pos]["node"] as Node3D).position = coords.sm_to_world(pos)
+		for pos in job.drops:
+			if _built.has(pos):
+				_drop(pos)
+	var total := job.dirty.size() + job.detail.size()
+	while job.next < total:
+		if budget_us >= 0 and Time.get_ticks_usec() - t0 >= budget_us:
+			return false
+		var i := job.next
+		job.next += 1
+		if i < job.dirty.size():
+			_build(job.dirty[i], job.terrain[job.dirty[i]], snap)
+		else:
+			var pos := job.detail[i - job.dirty.size()]
+			_build_props(pos, job.props[pos], snap)
+	snapshot = snap
+	tables_mismatch = tables != null and snap.ids_generation >= 0 and snap.ids_generation != tables.generation
+	props_built = job.detail.size()
 	z_min_loaded = CddaCoords.Z_MAX
 	z_max_loaded = CddaCoords.Z_MIN
 	vertex_count = 0
@@ -84,7 +216,7 @@ func apply_snapshot(snap: Snapshot) -> int:
 		for k: String in prop_counts:
 			prop_counts[k] += b["counts"].get(k, 0)
 	set_view_z_max(view_z_max)
-	return count
+	return true
 
 
 func set_view_z_max(z: int) -> void:
@@ -117,7 +249,7 @@ func _drop(pos: Vector3i) -> void:
 	_built.erase(pos)
 
 
-func _build(mesher: TerrainMesher, pos: Vector3i) -> void:
+func _build(pos: Vector3i, r: TerrainMesher.Result, snap: Snapshot) -> void:
 	var b: Dictionary = _built.get(pos, {})
 	var node: Node3D = b.get("node")
 	if node == null:
@@ -127,17 +259,15 @@ func _build(mesher: TerrainMesher, pos: Vector3i) -> void:
 		add_child(node)
 		b = {"node": node, "pverts": 0, "counts": {}}
 		_built[pos] = b
-	var r := mesher.build(pos)
 	for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps]]:
 		_set_mesh(node, part[0], part[1])
-	b["rev"] = (snapshot.submaps[pos] as Snapshot.Submap).revision
+	b["rev"] = (snap.submaps[pos] as Snapshot.Submap).revision
 	b["verts"] = r.vertices
 
 
-func _build_props(mesher: PropMesher, pos: Vector3i) -> void:
+func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	var b: Dictionary = _built[pos]
 	var node: Node3D = b["node"]
-	var r := mesher.build(pos)
 	_set_mesh(node, "props", r.props)
 	_set_mesh(node, "roof_props", r.roof_props)
 	var old := node.get_node_or_null("glyphs")
@@ -149,7 +279,7 @@ func _build_props(mesher: PropMesher, pos: Vector3i) -> void:
 		for e: Array in r.glyphs:
 			g.add_child(_glyph(e[0], e[1], e[2]))
 		node.add_child(g)
-	b["detail"] = (snapshot.submaps[pos] as Snapshot.Submap).detail_revision
+	b["detail"] = (snap.submaps[pos] as Snapshot.Submap).detail_revision
 	b["pverts"] = r.vertices
 	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size()}
 

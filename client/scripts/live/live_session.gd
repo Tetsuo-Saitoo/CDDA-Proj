@@ -32,6 +32,9 @@ var _sim: RefCounted
 var _saves_done := 0
 var _since_save := 0.0
 var _held_seq := 0
+## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
+var _snap_task := -1
+var _snap_job: SnapJob
 
 
 static func available() -> bool:
@@ -104,6 +107,10 @@ func _make_sim() -> bool:
 
 
 func stop() -> void:
+	if _snap_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_snap_task)
+		_snap_task = -1
+		_snap_job = null
 	if _sim != null:
 		_sim.stop()
 
@@ -125,7 +132,17 @@ func sim() -> RefCounted:
 	return _sim
 
 
+## Main-thread microseconds the last _process took (for the bench and a HUD).
+var process_us := 0
+
+
 func _process(delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_poll(delta)
+	process_us = Time.get_ticks_usec() - t0
+
+
+func _poll(delta: float) -> void:
 	if _sim == null:
 		return
 	var s: String = _sim.get_state()
@@ -153,26 +170,66 @@ func _process(delta: float) -> void:
 	if not events.is_empty():
 		events_arrived.emit(events)
 	# The snapshot first: it is taken right before the request, so the world is current when the request shows.
-	var seq: int = _sim.get_snapshot_seq()
-	if seq != snapshot_seq:
-		var snap := Snapshot.parse_text(_sim.get_snapshot_json(Z_BELOW, Z_ABOVE))
-		snapshot_seq = seq
-		if snap.is_valid() and snap.ids_generation != ids_generation:
-			_fetch_id_tables(snap.ids_generation)
-		if snap.is_valid():
-			snapshot_ready.emit(snap)
-		else:
-			push_error("live snapshot rejected: " + snap.error)
+	# Fetching and parsing happen on a worker; a new request waits until the snapshot before it is out.
+	if not _poll_snapshot():
+		return
 	var r: Dictionary = _sim.get_request()
 	if r.get("id", 0) != request.get("id", 0):
 		request = r
 		request_changed.emit(r)
 
 
-## Asked once per generation: a failed or mismatched fetch leaves the world on the snapshot's names.
-func _fetch_id_tables(generation: int) -> void:
+## Starts or finishes the snapshot worker; true when no snapshot newer than the one shown is waiting.
+func _poll_snapshot() -> bool:
+	if _snap_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_snap_task):
+			return false
+		WorkerThreadPool.wait_for_task_completion(_snap_task)
+		_snap_task = -1
+		var snap := _snap_job.snap
+		snapshot_seq = _snap_job.seq
+		if snap.is_valid() and snap.ids_generation != ids_generation:
+			_use_id_tables(snap.ids_generation, _snap_job.tables)
+		if snap.is_valid():
+			snapshot_ready.emit(snap)
+		else:
+			push_error("live snapshot rejected: " + snap.error)
+		_snap_job = null
+	var seq: int = _sim.get_snapshot_seq()
+	if seq == snapshot_seq:
+		return true
+	_snap_job = SnapJob.new(_sim, seq, ids_generation)
+	_snap_task = WorkerThreadPool.add_task(_snap_job.run, false, "snapshot parse")
+	return false
+
+
+## One fetch and parse on a worker thread. The bridge hands out an immutable snapshot under a mutex, so the
+## call is safe off the main thread; the job touches nothing else. `seq` is read before the fetch, so a newer
+## snapshot taken meanwhile is fetched again next time (never skipped).
+class SnapJob:
+	var sim: RefCounted
+	var seq: int
+	var known_generation: int
+	var snap: Snapshot
+	var tables: IdTables   # fetched too when the snapshot wants a generation other than known_generation
+
+	func _init(s: RefCounted, q: int, generation: int) -> void:
+		sim = s
+		seq = q
+		known_generation = generation
+
+	func run() -> void:
+		snap = Snapshot.parse_text(sim.get_snapshot_json(Z_BELOW, Z_ABOVE))
+		if snap.is_valid() and snap.ids_generation != known_generation:
+			tables = IdTables.parse_text(sim.get_id_tables_json())
+
+
+## Asked once per generation (fetched by the worker): a failed or mismatched fetch leaves the world on the
+## snapshot's names.
+func _use_id_tables(generation: int, t: IdTables) -> void:
 	ids_generation = generation
-	var t := IdTables.parse_text(_sim.get_id_tables_json())
+	if t == null:
+		t = IdTables.parse_text(_sim.get_id_tables_json())
 	if not t.is_valid():
 		push_error("live id tables rejected: " + t.error)
 	elif t.generation != generation:
