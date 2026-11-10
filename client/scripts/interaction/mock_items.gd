@@ -18,6 +18,7 @@ const FIRST_UID := 1_000_000
 const HS := Snapshot.HANDLE_STRIDE
 const CS := Snapshot.CARRIED_STRIDE
 const PS := Snapshot.PILE_STRIDE
+const THROW_RANGE := 10   # squares
 
 var snap: Snapshot
 var tables: IdTables
@@ -41,14 +42,17 @@ static func message_event(text: String) -> Dictionary:
 	return {"kind": "message", "type": ItemActions.M_INFO, "text": text}
 
 
-## Can items be put into an itype? The id tables' pocket count when they have one, else category "container".
+## Can items be put into an itype? When the id tables send pockets: it has one the player may use. Older tables:
+## category "container".
 static func is_container(type: int, t: IdTables) -> bool:
 	var def: IdTables.Def = t.def_at("itype", type) if t != null else null
 	if def == null:
 		return false
-	if "pockets" in def:
-		var n: Variant = def.get("pockets")
-		return (n is int or n is float) and n > 0
+	if t.has_pockets:
+		for p: Dictionary in def.pockets:
+			if not int(p["flags"]) & IdTables.POCKET_FORBIDDEN:
+				return true
+		return false
 	return def.category == "container"
 
 
@@ -306,6 +310,87 @@ func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Ve
 	return _captured()
 
 
+## Throw a carried, unworn item at `pos`: a square seen, on your level, within THROW_RANGE, not your own. It
+## lands there whole (no stacks or charges here).
+func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0 or not _pos_ok(pos):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	var flags := snap.carried[row * CS + 4]
+	if flags & Snapshot.CARRIED_WORN:
+		return _refuse("Take off your %s first." % _name(t))
+	var d := pos - snap.player_pos
+	if d == Vector3i.ZERO:
+		return _refuse("You can't throw it at yourself.")
+	if d.z != 0 or maxi(absi(d.x), absi(d.y)) > THROW_RANGE:
+		return _refuse("That's too far to throw your %s." % _name(t))
+	var sm := _submap(pos)
+	var tile := ItemActions.tile_of(pos)
+	if sm == null or tile >= sm.vis.size() or sm.vis[tile] != 2:
+		return _refuse("You can't see where to throw it.")
+	var p := _pile(sm, tile)
+	if _handles_on(sm, tile) >= Snapshot.MAX_HANDLES_PER_TILE \
+			or (p >= 0 and sm.items[p + 1] >= Snapshot.MAX_ITEM_COUNT):
+		return _refuse("There's no room for your %s there." % _name(t))
+	_remove_subtree(row)
+	if flags & Snapshot.CARRIED_WIELDED:
+		snap.player_wielded = 0
+	_add_handle(sm, tile, u, t, -1, -1)
+	_touch(sm)
+	return _captured()
+
+
+## Pour onto `pos` (your square or next to it): what a carried item holds first goes (spilt, no item left).
+## The mock can't tell liquids from other things: it pours whatever is first inside.
+func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0 or not _pos_ok(pos):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	if not _in_reach(pos):
+		return _refuse("You can't pour that there.")
+	if _subtree_end(row) == row + 1:
+		return _refuse("Your %s is empty." % _name(t))
+	_remove_subtree(row + 1)
+	return _captured()
+
+
+## Pour into `container`: what a carried item holds first goes into it (carried: listed inside it, pocket 0 or
+## `pocket`; on a square in reach: not listed, as with put).
+func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	var cu := _uid(container)
+	var ct := _type(container_type)
+	if snap == null or u <= 0 or t <= 0 or cu <= 0 or ct <= 0 or pocket < -1 or pocket > Snapshot.MAX_POCKET:
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	if cu == u or _subtree(row).has(cu):
+		return _refuse("You can't pour your %s into itself." % _name(t))
+	if _subtree_end(row) == row + 1:
+		return _refuse("Your %s is empty." % _name(t))
+	var crow := ItemActions.carried_row(snap, cu, ct)
+	if crow < 0 and not _ground_in_reach(cu, ct):
+		return _refuse("You can't reach that from here.")
+	var moved := _remove_subtree(row + 1)
+	if crow >= 0:
+		crow = ItemActions.carried_row(snap, cu, ct)
+		moved[2] = cu
+		moved[3] = maxi(pocket, 0)
+		moved[4] = 0
+		_insert_rows(_subtree_end(crow), moved)
+	return _captured()
+
+
 ## A carried item for tests and mock scenes: a new row inside `parent` (a carried uid, pocket 0; 0 = on the
 ## body) after what that already holds, with CARRIED_* `flags`. Returns its uid, -1 when the parent isn't
 ## carried or the list is full.
@@ -361,6 +446,16 @@ static func _type(v: float) -> int:
 
 static func _pos_ok(p: Vector3i) -> bool:
 	return ItemActions.ok_square(p)
+
+
+## Is handle uid + type on your square or one next to it?
+func _ground_in_reach(u: int, t: int) -> bool:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var p := snap.player_pos + Vector3i(dx, dy, 0)
+			if ItemActions.handle_index(_submap(p), ItemActions.tile_of(p), u, t) >= 0:
+				return true
+	return false
 
 
 ## The player's square or one of the eight around it, same z.

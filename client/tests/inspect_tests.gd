@@ -42,6 +42,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	for id: String in ["rock", "hammer", "bag_canvas", "backpack", "bottle_plastic", "water_clean"]:
 		_it[id] = tables.index_of("itype", id)
 	InputActions.ensure(false)
+	_test_pockets()
 	if not _setup(root, data):
 		return
 	_test_model()
@@ -54,6 +55,64 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_hands.free()
 	_actions.free()
 	_world.free()
+
+
+## itype pockets from the id tables (contracts/id_tables.md): read strictly, decide what counts as a container, and
+## name the worn column's groups (empty ones too, so items can be dropped in; unusable ones only when used).
+func _test_pockets() -> void:
+	var base := {"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [], "itype": [
+		{"id": ""},
+		{"id": "pack", "name": "backpack", "pockets": [
+			{"name": "main <color_red>bag</color>" + String.chr(0x202E) + "", "volume_ml": 15000, "max_weight_g": 30000, "flags": 0},
+			{"volume_ml": 500, "max_weight_g": 1000.0, "max_item_ml": 200, "flags": IdTables.POCKET_WATERTIGHT},
+			{"volume_ml": 100, "max_weight_g": 100, "flags": IdTables.POCKET_FORBIDDEN},
+			{"volume_ml": 900, "max_weight_g": 1500, "flags": IdTables.POCKET_HOLSTER | IdTables.POCKET_RESTRICTED}]},
+		{"id": "sealed", "name": "sealed can", "category": "container",
+			"pockets": [{"volume_ml": 300, "max_weight_g": 400, "flags": IdTables.POCKET_FORBIDDEN}]},
+		{"id": "rock", "name": "rock", "category": "container"}]}
+	var t := IdTables.from_data(base)
+	var pack: Array[Dictionary] = []
+	if t.is_valid():
+		pack = t.def_named("itype", "pack").pockets
+	_check.call(t.is_valid() and t.has_pockets and pack.size() == 4 and pack[1] == {"name": "", "volume_ml": 500,
+			"max_weight_g": 1000, "max_item_ml": 200, "flags": IdTables.POCKET_WATERTIGHT} and pack[0]["max_item_ml"] == -1
+			and t.def_named("itype", "rock").pockets.is_empty(), "pockets: read per itype (%s)" % t.error)
+	_check.call(MockItems.is_container(1, t) and not MockItems.is_container(2, t) and not MockItems.is_container(3, t),
+			"pockets: a container has a pocket the player may use; category no longer decides once pockets are sent")
+	var old := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "box", "category": "container"}]})
+	_check.call(not old.has_pockets and MockItems.is_container(1, old), "pockets: older tables fall back to the category")
+	var refused := []
+	var cases := {
+		"pockets not a list": func(d: Dictionary) -> void: d["itype"][1]["pockets"] = {},
+		"33 pockets": func(d: Dictionary) -> void: d["itype"][1]["pockets"] = range(33).map(func(_i: int) -> Dictionary: return {}),
+		"pocket not an object": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0] = 5,
+		"flags out of range": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0]["flags"] = 512,
+		"negative volume": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0]["volume_ml"] = -1,
+		"name too long": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0]["name"] = "n".repeat(5000),
+		"name not text": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0]["name"] = 7,
+		"fractional weight": func(d: Dictionary) -> void: d["itype"][1]["pockets"][0]["max_weight_g"] = 1.5,
+	}
+	for what: String in cases:
+		var d: Dictionary = base.duplicate(true)
+		(cases[what] as Callable).call(d)
+		var r := IdTables.from_data(d)
+		if r.is_valid() or not r.itype.is_empty():
+			refused.append(what)
+	_check.call(refused.is_empty(), "pockets: bad entries fail the tables %s" % [refused])
+	if not t.is_valid():
+		return
+	var c := ItemRef.on_player(10, 1, 0, -1, Snapshot.CARRIED_WORN, Vector3i.ZERO)
+	var kids := {10: [ItemRef.on_player(11, 3, 10, 2, 0, Vector3i.ZERO), ItemRef.on_player(12, 3, 10, 5, 0, Vector3i.ZERO)]}
+	var col := InventoryModel._worn_column(c, kids, t, null, {}, Vector3i.ZERO)
+	var titles: Array = (col["groups"] as Array).map(func(g: Dictionary) -> String: return "%s=%s" % [g["key"], g["title"]])
+	_check.call(titles == ["0=main bag (max 15.00 L, 30.00 kg)", "1=pocket 2 (max 500 ml, 1.00 kg; watertight)",
+			"2=pocket 3 (max 100 ml, 100 g; can't use)", "3=holster 4 (max 900 ml, 1.50 kg; some items only)",
+			"5=pocket 6"] and (col["groups"][0]["rows"] as Array).is_empty() and (col["groups"][2]["rows"] as Array).size() == 1,
+			"pockets: worn column lists the type's pockets, empty ones too; unusable only when used; extra ones by number (%s)" % [titles])
+	kids = {}
+	col = InventoryModel._worn_column(c, kids, t, null, {}, Vector3i.ZERO)
+	_check.call((col["groups"] as Array).size() == 3, "pockets: an empty pack shows its usable pockets")
 
 
 func _setup(root: Node, data: Variant) -> bool:

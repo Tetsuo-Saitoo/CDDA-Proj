@@ -606,7 +606,7 @@ static func cheat_names(v: String) -> PackedStringArray:
 func _after_live_start(ok: bool) -> void:
 	if ok:
 		_boot_log("game booting")
-		status = "game booting (~30 s)"
+		status = LiveSession.boot_text(live.boot_info())
 	else:
 		status = "live mode failed: " + live.error
 		push_error(status)
@@ -1179,6 +1179,8 @@ func _process(_delta: float) -> void:
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
 	var help := _help()
+	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
+		status = LiveSession.boot_text(live.boot_info())
 	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
 			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])

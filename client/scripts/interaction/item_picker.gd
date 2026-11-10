@@ -81,8 +81,8 @@ func contents(container_uid: int) -> Array[ItemRef]:
 
 
 ## Worn items that hold things, outermost first (backpack before shirt pockets): the body slots VR puts items
-## into and the Tab view lists. Until the bridge sends pockets per itype, "holds things" = a container by
-## category (MockItems.is_container) or something carried inside it now; an empty backpack isn't known yet.
+## into and the Tab view lists. "Holds things" = MockItems.is_container (a usable pocket in the id tables, or
+## category "container" with older tables) or something carried inside it now.
 func worn_containers() -> Array[ItemRef]:
 	var all := carried()
 	var has_contents := {}

@@ -365,6 +365,20 @@ func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: 
 	mreq["shot_angle"] = 0.0
 	var miss := aim.on_request(mreq)
 	_check.call(_bridge_typed(miss.get("shot", {})) and miss["shot"]["hit_uid"] == 0, "shots: a miss's answer is typed too (%s)" % [miss])
+	var preq := mreq.duplicate()
+	preq["shot_error"] = 0.0
+	preq["pellets"] = [0.0, 30.0, -30.0, 1200.0]
+	var pr := aim.on_request(preq)
+	var pl: Variant = pr.get("shot", {}).get("pellets")
+	_check.call(pl is Array and pl.size() == 4 and pl[0].get("hit_uid") == 8589934593 and pl[3].get("hit_uid") == 0
+			and pl.all(func(x: Dictionary) -> bool: return _bridge_typed(x)),
+			"shots: a shell flies each pellet, 20° right misses (%s)" % [pr])
+	var junk_pellets := []
+	for junk: Variant in ["1,2", [1.0, NAN], [1.0, "2"], [2000.0], range(AimController.MAX_PELLETS + 1)]:
+		preq["pellets"] = junk
+		junk_pellets.append(aim.on_request(preq).get("shot", {}))
+	_check.call(junk_pellets.all(func(x: Dictionary) -> bool: return x.has("end") and not x.has("pellets")),
+			"shots: bad pellets fly one bullet (%s)" % [junk_pellets])
 	var bad_ids := []
 	for id: Variant in ["31", -3, 0, 1.5, null]:
 		sreq["id"] = id
@@ -625,6 +639,21 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	for want: Array in [["head", head], ["leg_l", leg]]:
 		var r := B.fly(eye, B.launch_dir(eye.direction_to(want[1]), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
 		_check.call(r["hit"] == "creature" and r["zone"] == want[0], "bullets: aimed at the %s, hit the %s (%s)" % [want[0], r.get("zone"), r["hit"]])
+	# soft cover: furniture in front of the zombie's legs doesn't stop the client's bullet (CDDA's path decides)
+	var cover := zp - Vector3i(signi(zp.x - me.x), signi(zp.y - me.y), 0)
+	var csm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(cover))
+	var cl := CddaCoords.ms_to_local(cover)
+	var stopped := {}
+	var through := {}
+	if cover != me and csm != null:
+		var ci := cl.y * CddaCoords.SEEX + cl.x
+		var old_furn: int = csm.furn[ci]
+		csm.furn[ci] = 1
+		stopped = aim.look_ray.cast(eye, eye.direction_to(leg), 30.0, false)
+		through = B.fly(eye, B.launch_dir(eye.direction_to(leg), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
+		csm.furn[ci] = old_furn
+	_check.call(stopped.get("what") == "furniture" and through.get("hit") == "creature",
+			"bullets: furniture is soft cover, the bullet flies through it (%s, %s)" % [stopped.get("what"), through.get("hit")])
 	_check.call(B.cdda_part("head", true, {"head": true}) == "head" and B.cdda_part("torso", true, {"head": true}) == ""
 			and B.cdda_part("arm_l", false, {}) == "arm_l", "bullets: zones map to weak points / body parts")
 	# through the aim controller: a gun in hand answers FIRE with the shot

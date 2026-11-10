@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, throw, pour) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -30,12 +30,16 @@ const HANDS := ["pack", "main", "off"]
 const SPOT_MAX := 0.999
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
-## Ops whose result the snapshot may not show (see above): no message after two looks is no refusal.
-const CONTENT_OPS := ["unload", "reload"]
+## Ops judged by the carried rows around the item (see above).
+const CONTENT_OPS := ["unload", "reload", "pour"]
+## Ops whose result the snapshot may not show (rounds topped up, one unit of a stack thrown, a partial pour): no
+## message after two looks is no refusal.
+const QUIET_OK := ["unload", "reload", "throw", "pour"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
-## Anything with take_item / put_item / drop_item / unload_item / reload_item (-> bool) and queued_actions()
+## Anything with take_item / put_item / drop_item / unload_item / reload_item / throw_item / pour_item /
+## pour_into (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
@@ -95,7 +99,39 @@ func reload(item: ItemRef, ammo: ItemRef) -> bool:
 			[float(item.uid), float(item.type), float(ammo.uid), float(ammo.type), ammo.square])
 
 
-## The op in flight for `uid` ("take", "put", "drop", "unload", "reload"), "" when none.
+## Throws a carried, unworn `item` at `square` (one you see, on your level, in throw range, not your own): CDDA's
+## throw, one unit of a stack.
+func throw(item: ItemRef, square: Vector3i) -> bool:
+	if not _ok_ref(item) or not item.carried or item.flags & Snapshot.CARRIED_WORN or not ok_square(square):
+		return false
+	if _snap != null and square == _snap.player_pos:
+		return false
+	return _send("throw", item, square, Vector2(-1, -1), "throw_item", [float(item.uid), float(item.type), square])
+
+
+## Pours the liquid out of a carried `item` (a container, or the liquid in one) onto `square`: yours or one next
+## to it, all of it.
+func pour(item: ItemRef, square: Vector3i) -> bool:
+	if not _ok_ref(item) or not item.carried or not ok_square(square):
+		return false
+	if _snap != null:
+		var d := square - _snap.player_pos
+		if d.z != 0 or absi(d.x) > 1 or absi(d.y) > 1:
+			return false
+	return _send("pour", item, square, Vector2(-1, -1), "pour_item", [float(item.uid), float(item.type), square])
+
+
+## Pours the liquid out of a carried `item` into `container` (carried, or on or next to your square), as much as
+## fits; `pocket` -1 = CDDA's pick.
+func pour_into(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
+	if not _ok_ref(item) or not item.carried or not _ok_ref(container) or container.uid == item.uid \
+			or pocket < -1 or pocket > Snapshot.MAX_POCKET or not ok_square(container.square):
+		return false
+	return _send("pour", item, container.duplicate_ref(), Vector2(-1, -1), "pour_into",
+			[float(item.uid), float(item.type), float(container.uid), float(container.type), pocket])
+
+
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "throw", "pour"), "" when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -150,7 +186,7 @@ func on_snapshot(snap: Snapshot) -> void:
 			Where.STILL:
 				e["looks"] += 1
 				e["seq"] = snap.seq   # a second look needs a newer snapshot
-				if not (e["info"] as String).is_empty() or (e["looks"] >= 2 and not (e["op"] in CONTENT_OPS)):
+				if not (e["info"] as String).is_empty() or (e["looks"] >= 2 and not (e["op"] in QUIET_OK)):
 					done.append([e, _reason(e)])
 	_resolve(done)
 
@@ -191,7 +227,7 @@ func check_timeouts() -> void:
 		var e: Dictionary = _pending[uid]
 		if now - int(e["sent_ms"]) >= TIMEOUT_MS:
 			var quiet: bool = (e["info"] as String).is_empty()
-			if e["op"] in CONTENT_OPS and quiet and e["looks"] >= 2:
+			if e["op"] in QUIET_OK and quiet and e["looks"] >= 2:
 				done.append([e, ""])   # taken without a refusal; the change didn't show
 				continue
 			done.append([e, _reason(e) if e["looks"] > 0 or not quiet else NO_ANSWER])
@@ -308,6 +344,15 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			var i := row * Snapshot.CARRIED_STRIDE
 			var same: bool = snap.carried[i + 2] == item.parent and snap.carried[i + 3] == item.pocket
 			return Where.STILL if same else Where.MOVED
+		"throw":
+			if row < 0:
+				return Where.UNKNOWN if full else Where.MOVED
+			return Where.STILL   # also one unit thrown off a stack: QUIET_OK
+		"pour":
+			if row < 0:   # the poured liquid itself, all gone
+				return Where.UNKNOWN if full else Where.MOVED
+			var into: ItemRef = e["target"] if e["target"] is ItemRef else null
+			return Where.MOVED if contents_sig(snap, item, into) != e["before"] else Where.STILL
 		"unload", "reload":
 			var other: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, other) != e["before"] else Where.STILL
