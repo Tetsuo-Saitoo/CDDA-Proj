@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Shot review leftovers (fork fp3d-combat): the client's body part / weak point only weights CDDA's pick (roll against its chance times up to 4), and a `fly` trigger pull asks for at most 8 rounds (long bursts no longer stall); sim checks, contract.
 - 2026-11-10 — Jams reviewed (lead-bridge approved 5451a10). Balance change against vanilla, on purpose: a jam stops the burst, and clearing takes the fix's full 10 s, not the quick fix's random try. Clearing in the dark stays allowed (comment in gun_faults.cpp).
 - 2026-11-10 — Jams: item action `clear` (bridge `queue_item_action` op, lead-bridge's request): clears the wielded gun's jam by handle, refuses anything else without spending; branches merged up with fp3d / main.
 - 2026-11-10 — v0.5.0 pre-release published (Linux AppImage built by lead-qa in WSL from main b87a485 + fork 281b553) after the security re-review's HIGH items were fixed and re-checked; then merged the test range (bridge + UI controls), gun jams (combat block 3) and QA's hostile checks.

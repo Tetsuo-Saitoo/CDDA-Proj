@@ -57,7 +57,9 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
 - With `fly`, each projectile (each round of a burst; a shotgun shell is one, its pellets spread around it) sends
   one `shot` request with the error CDDA rolled (at most 1800 arcmin); the client turns its sight line by it,
   flies that bullet against the figures it already shows (a `shot` request comes with no new snapshot, held update or range operations: the next other request brings them) and
-  answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A cancel, a
+  answers with `shot` {end, hit_uid, part, quality}. The sim waits for one answer per projectile. A trigger
+  pull asks for its first 8 projectiles only; later rounds of a long burst take CDDA's own path, unasked (their
+  `projectile` events still come). A cancel, a
   missing `shot` or one that fails the checks leaves that projectile to CDDA's own path (the FIRE answer's
   outcome is not used with `fly`).
 - Checks: quality finite (clamped 0..0.99); a hit names the cursor creature or a hostile candidate (still hostile
@@ -78,8 +80,9 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   showed instead of its coin flip. Other creatures on the path get CDDA's rolls, the aimed one no better than
   CDDA's own (a CDDA miss stays a miss). The client can make a shot worse, never better.
 - Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
-  lands only if goodhit <= sqrt(hit chance / 100) (weak point: `weakpoint::hit_chance`; body part: its share of
-  the body's hit size), else CDDA picks. Ignored on other requests.
+  only weights CDDA's pick: CDDA picks first, then the client's part replaces it on a roll against its own hit
+  chance (weak point: `weakpoint::hit_chance` / 100; body part: its share of the body's hit size) times
+  1 + 3 * (1 - goodhit), at most 1. Ignored on other requests.
 Anything else (ammo, recoil, noise, time, damage, armour) is CDDA's.
 
 Every request carries `turn` (game turns since the cataclysm), `paused` and `pause_reason`. The main game loop's
