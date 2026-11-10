@@ -36,6 +36,9 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 			fv.count(L.SWARM) - before[3]]
 	_check.call(added == [2, 3, 2, 7], "fields: 2 flames, 3 smoke puffs, 2 sparks, 7 bees %s" % [added])
 	_check.call(fv.count() - before[4] == 14, "fields: hot air, blood and acid are not drawn in the air")
+	var prio := func(n: String) -> int: return (fv.get_node(n) as GeometryInstance3D).material_override.render_priority
+	_check.call(prio.call("gas") < -100 and prio.call("swarm") < -100 and prio.call("flame") == 0
+			and prio.call("spark") == 0, "fields: gas and swarms darken with the light, flames and sparks glow")
 	gv.apply(snap, world)
 	_check.call(gv.count() - before[5] == 2, "ground fields: blood and acid splats (+%d)" % (gv.count() - before[5]))
 
@@ -83,6 +86,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_job_catalogs(root, data, tables)
 	_door_leaves(root)
 	_body_limits(data, tables)
+	_light_levels(data)
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -191,3 +195,19 @@ func _body_limits(data: Variant, tables: IdTables) -> void:
 	_check.call(a.mesh == (pb2.get_node("torso").get_child(0) as MeshInstance3D).mesh, "body: same boxes share a mesh")
 	pb.free()
 	pb2.free()
+
+
+## A snapshot spanning many levels gives the light atlas only the levels around the player.
+func _light_levels(data: Variant) -> void:
+	print("light atlas levels")
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	d["z_levels"] = [-CddaCoords.Z_LIMIT, CddaCoords.Z_LIMIT]
+	for z: int in [-CddaCoords.Z_LIMIT, CddaCoords.Z_LIMIT]:
+		var sm: Dictionary = (d["submaps"][0] as Dictionary).duplicate(true)
+		sm["pos"] = [sm["pos"][0], sm["pos"][1], z]
+		(d["submaps"] as Array).append(sm)
+	var snap := Snapshot.from_data(d)
+	var m := LightMap.build(snap, false)
+	_check.call(snap.is_valid() and m.levels == LightMap.MAX_LEVELS and m.z_lo <= snap.player_pos.z
+			and m.z_lo + m.levels > snap.player_pos.z and m.image.get_height() == LightMap.SIZE * LightMap.MAX_LEVELS,
+			"light: at most %d atlas levels, the player's among them %s" % [LightMap.MAX_LEVELS, snap.error])

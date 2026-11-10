@@ -157,6 +157,8 @@ static func _layer(look: int) -> MultiMeshInstance3D:
 	quad.size = Vector2.ONE
 	var mat := ShaderMaterial.new()
 	mat.shader = shader(look)
+	if look == Look.GAS or look == Look.SWARM:
+		mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass; flames and sparks glow
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
