@@ -1,6 +1,6 @@
 extends RefCounted
 ## QA checks, run by run_tests.gd: stress and hostile input for the world view. The meshing job against
-## main-thread catalog lookups, live door leaves across bubble shifts,
+## main-thread catalog lookups, live door leaves across bubble shifts, kept door angles that are not numbers,
 ## oversized body part / covers / worn / carried lists, and the player body's shared caches.
 ## Members that older versions of the scripts lack are read with get(), so this file compiles against them.
 
@@ -18,6 +18,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check = check
 	_job_stress(root, data, tables)
 	_live_doors(root, data, tables)
+	_door_angles(root)
 	_body_parts(data)
 	_covers(data, tables)
 	_worn_and_carried(data, tables)
@@ -343,6 +344,39 @@ func _live_doors(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call(not w.grabbables.has(sq_k) and not w.door_state.has(sq_k) and not is_instance_valid(kept)
 			and _leaves_valid(w), "qa doors: live, a door CDDA removed loses its leaf and state")
 	print("        %d shifts in %d ms" % [SHIFT_ROUNDS * 2, Time.get_ticks_msec() - t0])
+	w.free()
+
+
+## Kept angles that are not finite numbers (or out of the leaf's range) never reach the leaf.
+func _door_angles(root: Node) -> void:
+	print("qa: kept door angles that are not numbers")
+	var w := WorldView.new()
+	root.add_child(w)
+	w.door_local = false
+	var sq := Vector3i(-700, -700, 0)
+	for open: bool in [false, true]:
+		for bad: float in [NAN, INF, -INF, 1e30]:
+			var d := {"square": sq, "local": Vector3.ZERO, "along_x": true, "color": Color.GRAY, "glass": false,
+					"open": open, "locked": false}
+			w.door_state[sq] = {"angle": bad}
+			var g := Grabbable.door(w, d)
+			var what := "%s door, kept angle %s" % ["open" if open else "closed", "1e30" if is_finite(bad) else str(bad)]
+			if is_finite(bad):
+				_check.call(absf(g.angle) <= Grabbable.MAX_ANGLE,
+						"qa doors: %s: the leaf stays within MAX_ANGLE (%s)" % [what, "1e30" if absf(g.angle) == 1e30 else str(g.angle)])
+			else:
+				_check.call(is_finite(g.angle) and g.transform.is_finite(),
+						"qa doors: %s: the leaf's angle and transform are finite (%s)" % [what, g.angle])
+			g.free()
+	# A drag that works out a NaN angle (a hand position that is not a number) must not reach the leaf either.
+	w.door_state.erase(sq)
+	var leaf := Grabbable.door(w, {"square": sq, "local": Vector3.ZERO, "along_x": true, "color": Color.GRAY,
+			"glass": false, "open": false, "locked": false})
+	leaf.set_angle(NAN)
+	var kept: Variant = (w.door_state.get(sq, {}) as Dictionary).get("angle", 0.0)
+	_check.call(is_finite(leaf.angle) and leaf.transform.is_finite() and kept is float and is_finite(kept),
+			"qa doors: set_angle(NAN) leaves the leaf and its kept angle finite (%s)" % leaf.angle)
+	leaf.free()
 	w.free()
 
 
