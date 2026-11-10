@@ -244,6 +244,14 @@ func range_teleport(zone: int) -> int:
 	return _range_op("range_teleport", [zone])
 
 
+## Clears zone index `zone` and builds it again (same layout); the game refuses it while you are in it, ride or
+## sit in a vehicle.
+func range_rebuild_zone(zone: int) -> int:
+	if zone < 0 or zone >= RangeInfo.MAX_ZONES:
+		return 0
+	return _range_op("range_rebuild_zone", [zone])
+
+
 ## Jumps forward to the next `minute` of the day (0..1439).
 func range_set_time(minute: int) -> int:
 	if minute < 0 or minute >= RangeInfo.MINUTES_PER_DAY:
@@ -407,6 +415,25 @@ func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool
 func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "reload", "item": int(uid), "type": int(type),
 			"container": int(ammo), "container_type": int(ammo_type), "pos": pos})
+
+
+## Throw a carried, unworn item at square `pos` (one you see, on your level, in throw range, not your own):
+## CDDA's throw without its target menu, one unit of a stack. An older bridge refuses the op (false).
+func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "throw", "item": int(uid), "type": int(type), "pos": pos})
+
+
+## Pour the liquid out of carried `uid` (a container, or the liquid itself) onto square `pos`: yours or one next
+## to it, all of it.
+func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type), "pos": pos})
+
+
+## Pour the liquid out of carried `uid` into `container` (carried, or on or next to your square), as much as
+## fits; `pocket` -1 = CDDA's pick.
+func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
+			"container": int(container), "container_type": int(container_type), "pocket": pocket})
 
 
 ## Actions waiting in the bridge's queue (0 without a game).
