@@ -77,6 +77,31 @@ func def(tables: IdTables) -> IdTables.Def:
 	return tables.def_at("itype", type) if tables != null else null
 
 
+## Volume and weight of one such item from the id tables (0 when unknown; a stack counts as one).
+func volume_ml(tables: IdTables) -> int:
+	var d := def(tables)
+	return d.volume_ml if d != null else 0
+
+
+func weight_g(tables: IdTables) -> int:
+	var d := def(tables)
+	return d.weight_g if d != null else 0
+
+
+## Needs both hands, CDDA's rule (item::is_two_handed): the ALWAYS_TWOHAND flag, or heavier than the character's
+## strength x 4 quarter-pounds (113 g). A client estimate for how a hand carries it; the sim still decides.
+func two_handed(tables: IdTables, strength := 8) -> bool:
+	var d := def(tables)
+	if d == null:
+		return false
+	return d.has("ALWAYS_TWOHAND") or d.weight_g / 113 > strength * 4
+
+
+## Holds other items (MockItems.is_container: the id tables' pockets when the bridge sends them, else category).
+func is_container(tables: IdTables) -> bool:
+	return MockItems.is_container(type, tables)
+
+
 ## Display name: the id tables' name, else its id, else "item #<index>".
 func display_name(tables: IdTables) -> String:
 	var d := def(tables)

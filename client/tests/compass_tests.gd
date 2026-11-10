@@ -76,6 +76,21 @@ func _test_hostiles(data: Variant) -> void:
 		ok = ok and blips[i].is_equal_approx(want[i])
 	_check.call(ok, "compass: markers at bearing and distance, hostiles then others, nearest first %s" % [blips])
 	_check.call(Compass.creature_blips(null, from, coords.ms_center_to_world).is_empty(), "compass: no snapshot, no markers")
+	# Other levels: level_blips / creature_blip_levels add the level offset, in creature_blips' order.
+	var lb := Compass.level_blips(snap, from, coords.ms_center_to_world)
+	var levels := Compass.creature_blip_levels(snap, from, coords.ms_center_to_world)
+	var same := lb.size() == blips.size() and levels.size() == blips.size()
+	for i in mini(lb.size(), mini(blips.size(), levels.size())):
+		same = same and Vector3(lb[i].x, lb[i].y, lb[i].z) == blips[i] and int(lb[i].w) == levels[i]
+	_check.call(same and levels == PackedInt32Array([0, 0, 1, 0, 0, 0]),
+			"compass: level offsets in the markers' order, the zombie one up is +1 %s" % [levels])
+	_check.call(Compass.level_blips(null, from, coords.ms_center_to_world).is_empty()
+			and Compass.creature_blip_levels(null, from, coords.ms_center_to_world).is_empty(), "compass: no snapshot, no levels")
+	var up := Compass.level_ticks(Vector2(10, 10), 1)
+	var down := Compass.level_ticks(Vector2(10, 10), -3)
+	_check.call(Compass.level_ticks(Vector2(10, 10), 0).is_empty() and up.size() == 1 and down.size() == 2
+			and up[0][1].y < up[0][0].y and down[0][1].y > down[0][0].y and down[1][1].y > down[0][1].y,
+			"compass: no chevron on your level, one up for above, two down for 2+ below")
 	var many := [me]
 	for i in Compass.MAX_BLIPS + 20:
 		many.append(_creature(100 + i, M, p + Vector3i(i + 1, 0, 0)))
@@ -96,8 +111,11 @@ func _test_hostiles(data: Variant) -> void:
 		_check.call(not Snapshot.from_data(d).is_valid(), "compass: attitude %s refused" % str(bad))
 	var cmp := Compass.new()
 	var list: Array[Vector3] = [Vector3(10, 2, 0), Vector3(30, 5, 2)]
+	var with_levels: Array[Vector4] = [Vector4(10, 2, 0, -1), Vector4(30, 5, 2, 0)]
+	cmp.set_level_blips(with_levels)
+	_check.call(cmp.blips == list and cmp.blip_levels == PackedInt32Array([-1, 0]), "compass: takes markers with levels")
 	cmp.set_blips(list)
-	_check.call(cmp.blips == list, "compass: takes the markers")
+	_check.call(cmp.blips == list and cmp.blip_levels.is_empty(), "compass: takes the markers (all on your level)")
 	cmp.free()
 
 

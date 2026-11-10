@@ -76,6 +76,12 @@ fi
 bash "$src/tools/build/wsl_build.sh" fp3d-cdda
 so_built="$dst/client/bin/fp3d_cdda.linux.x86_64.so"
 [ -f "$so_built" ] || die "no bridge at $so_built"
+# Nothing shipped may be a symlink: rsync -a would copy it as a link that resolves on the player's machine,
+# and Godot's export would pack whatever a link in client/ points at (any file of this machine) into the .pck.
+shipped=("$dst/client" "$dst/cdda/data" "$dst/cdda/gfx" "$dst/assets/registry" "$dst/contracts/mock")
+[ -d "$dst/assets/models" ] && shipped+=("$dst/assets/models")
+links="$(find "${shipped[@]}" -type l -not -path "$dst/cdda/data/cache/*" -print | head -20)"
+[ -z "$links" ] || die "symlinks in shipped folders (replace them with files): $links"
 
 # --- 3. Export the client ---
 work="$dst/tools/out/appimage"   # kept between runs for Godot's import cache; never copied back
@@ -173,6 +179,8 @@ install -m 755 "$dst/tools/build/appimage/AppRun.sh" "$work/AppDir/AppRun"
 cp "$dst/tools/build/appimage/cdda-3d.desktop" "$work/AppDir/"
 cp "$dst/cdda/data/xdg/org.cataclysmdda.CataclysmDDA.svg" "$work/AppDir/cdda-3d.svg"
 ln -s cdda-3d.svg "$work/AppDir/.DirIcon"
+links="$(find "$work/AppDir" -type l -not -path "$work/AppDir/.DirIcon" -print | head -20)"
+[ -z "$links" ] || die "symlinks in the AppDir: $links"
 
 # Nothing from this machine's paths may ship (CDDA's source paths are mapped out at compile time).
 if grep -rlaF -e "$HOME" -e "$src" "$work/AppDir" >"$work/leaks.txt"; then

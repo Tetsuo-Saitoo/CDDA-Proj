@@ -1,6 +1,8 @@
 class_name TargetRequestWidget
 extends RequestWidget
 ## `target` requests (look_around, target_ui): a cursor square, the creatures in view and CDDA's actions.
+## Candidates are named from the snapshot when `world_state` gives one (name, hostile / friendly, health in
+## words; NPCs are "someone": the snapshot has no NPC names).
 ## Keys: arrows / numpad move the cursor (relative to the screen), < > change level, Tab / Shift+Tab next /
 ## previous creature, Enter = the main action (FIRE, else CONFIRM or SELECT, else the first), Space checks
 ## the square (CDDA asks again with a new status), 1-9 press an action, Esc cancels. Mouse: click a creature,
@@ -17,6 +19,12 @@ const RELOAD_THEN := ["reload_weapon", "fire"]
 const STATUS_TEXT := {
 	"bad_target": "No valid target there", "out_of_ammo": "Out of ammo", "out_of_range": "Out of range",
 }
+const MAX_NAME_CHARS := 48
+## hp_frac (0..255) at or above each step -> words, as CDDA describes a monster's health.
+const HEALTH_WORDS := [[255, "uninjured"], [204, "lightly injured"], [153, "moderately injured"],
+		[77, "heavily injured"], [26, "severely injured"], [0, "nearly dead"]]
+const HOSTILE_TEXT := Color(1.0, 0.62, 0.55)
+const FRIENDLY_TEXT := Color(0.6, 1.0, 0.65)
 
 var mode := ""
 var origin := Vector3i.ZERO
@@ -28,6 +36,8 @@ var action_buttons: Array[Button] = []
 var candidate_buttons: Array[Button] = []
 var _cursor_label: RichTextLabel
 var _candidate := -1
+## Returns [Snapshot, IdTables] as they are now (either may be null); RequestUI passes main.gd's.
+var world_state := Callable()
 
 
 func setup(req: Dictionary) -> void:
@@ -67,10 +77,19 @@ func setup(req: Dictionary) -> void:
 		var box := VBoxContainer.new()
 		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		scroll.add_child(box)
+		var state := _world_state()
 		for i in mini(candidates.size(), MAX_ROWS):
 			var d := candidates[i] - origin
-			var b := add_button("%s   (%d)" % [offset_text(d), _dist(candidates[i])], pick_candidate.bind(i), box)
+			var text := "%s   (%d)" % [offset_text(d), _dist(candidates[i])]
+			var c: Snapshot.Creature = state[0].creature_at(candidates[i]) if state[0] != null else null
+			if c != null:
+				text = "%s   %s" % [creature_text(c, state[1]), text]
+			var b := add_button(text, pick_candidate.bind(i), box)   # Button text is plain: no markup
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			if c != null and (c.is_hostile() or c.attitude == Snapshot.Creature.FRIENDLY):
+				var col := HOSTILE_TEXT if c.is_hostile() else FRIENDLY_TEXT
+				for k: String in ["font_color", "font_hover_color", "font_pressed_color"]:
+					b.add_theme_color_override(k, col)
 			candidate_buttons.append(b)
 	var bar := HFlowContainer.new()
 	add_child(bar)
@@ -161,6 +180,41 @@ func primary_index() -> int:
 	return 0 if not actions.is_empty() else -1
 
 
+## "zombie (hostile, lightly injured)": the creature's name (monsters from the id tables, NPCs "someone"), how
+## it stands to the player, and its health in words.
+static func creature_text(c: Snapshot.Creature, tables: IdTables) -> String:
+	var who := "someone"
+	if c.kind == Snapshot.Creature.MONSTER:
+		var d: IdTables.Def = tables.def_at("mtype", c.type) if tables != null else null
+		who = plain_name(d.name) if d != null else ""
+		if who.is_empty():
+			who = "creature"
+	var notes := PackedStringArray()
+	if c.is_hostile():
+		notes.append("hostile")
+	elif c.attitude == Snapshot.Creature.FRIENDLY:
+		notes.append("friendly")
+	elif c.attitude == Snapshot.Creature.NEUTRAL:
+		notes.append("neutral")
+	notes.append(health_words(c.hp_frac))
+	return "%s (%s)" % [who, ", ".join(notes)]
+
+
+static func health_words(hp_frac: int) -> String:
+	for step: Array in HEALTH_WORDS:
+		if hp_frac >= step[0]:
+			return step[1]
+	return HEALTH_WORDS[-1][1]
+
+
+## A name for one line of plain text: control characters become spaces, at most MAX_NAME_CHARS.
+static func plain_name(s: String) -> String:
+	var out := PackedStringArray()
+	for ch in s.left(MAX_NAME_CHARS):
+		out.append(ch if ch.unicode_at(0) >= 32 and ch.unicode_at(0) != 127 else " ")
+	return "".join(out).strip_edges()
+
+
 ## "3 E, 2 N, 1 up" for a relative square (CDDA's y points south).
 static func offset_text(d: Vector3i) -> String:
 	var parts := PackedStringArray()
@@ -205,6 +259,18 @@ func handle_input(event: InputEvent) -> bool:
 	else:
 		return false
 	return true
+
+
+## [Snapshot or null, IdTables or null] from `world_state`; anything else it returns counts as none.
+func _world_state() -> Array:
+	var out := [null, null]
+	if not world_state.is_valid():
+		return out
+	var s: Variant = world_state.call()
+	if s is Array and (s as Array).size() == 2:
+		out[0] = s[0] if s[0] is Snapshot else null
+		out[1] = s[1] if s[1] is IdTables else null
+	return out
 
 
 func _clamp(p: Vector3i) -> Vector3i:

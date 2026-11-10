@@ -9,6 +9,8 @@ extends Node3D
 ## neighbours, whose edge walls, wall tops and roof lids depend on it. Props are rebuilt with the
 ## terrain and also when only the detail_revision (items) changed.
 ## Every snapshot also gives `lighting` (WorldLighting, block C6) a new LightMap: CDDA's light and vis.
+## Single items on the ground (piles with handles) are kept as item slots per submap, for a crosshair or a
+## hand to point at (items_on_ray, items_near, item_slot; ItemPicker); hidden_items are left out of the piles.
 
 ## A door leaf crossed its open / close threshold (Grabbable): main.gd asks the sim. Not in mock mode.
 signal door_wants(square: Vector3i, open: bool)
@@ -49,12 +51,21 @@ var door_local := true
 var door_open := {}
 ## Darkens the world by CDDA's light (block C6); main.gd turns it off with --no-light.
 var lighting := WorldLighting.new()
-## Vector3i absolute submap -> {"rev", "detail", "verts", "pverts", "counts", "terrain", "props"}: every submap
-## built, drawn or not ("terrain" / "props": that part has something to draw).
+## Vector3i absolute submap -> {"rev", "detail", "verts", "pverts", "counts", "terrain", "props", "slots"}: every
+## submap built, drawn or not ("terrain" / "props": that part has something to draw).
 var _built := {}
 var _nodes := {}   # Vector3i absolute submap -> Node3D, only for the submaps with something drawn
 var _content_levels := PackedInt32Array()   # the levels with a node, ascending
 var _view_want := CddaCoords.Z_LIMIT        # the cutaway asked for; Z_LIMIT: every level
+## Items not drawn (uid -> true), e.g. one held in a hand. Read only: change it with set_hidden_items.
+var hidden_items := {}
+const MAX_HIDDEN := 64
+## An item is hit as a ball around the middle of what is drawn: this share of its size, at least ITEM_HIT_MIN_M.
+const ITEM_HIT_SCALE := 0.6
+const ITEM_HIT_MIN_M := 0.06
+var _slot_of := {}         # uid -> [submap, item slot] of each drawn item ("slots": tile -> [item slot, ...])
+var _hidden_rev := 0       # counts set_hidden_items changes
+var _hidden_wait := {}     # uids whose hiding changed while a worker meshed: rebuilt when it is done
 
 
 ## Emitted on the main thread when a snapshot given to submit() is shown; `rebuilt` as apply_snapshot returns.
@@ -84,6 +95,8 @@ class Job:
 	var light: LightMap
 	var catalog: TerrainCatalog   # the job catalogs it was prepared with (the worker reads only these)
 	var props_catalog: PropCatalog
+	var hidden := {}    # hidden_items when prepared (the worker's own copy) and their revision
+	var hidden_rev := 0
 
 
 func _init() -> void:
@@ -167,6 +180,10 @@ func _take_task() -> void:
 	_task = -1
 	_committing = _job
 	_job = null
+	if not _hidden_wait.is_empty():   # the job meshed with the old hidden set
+		var changed := _hidden_wait
+		_hidden_wait = {}
+		_rebuild_hidden(changed)
 
 
 ## Puts more of _committing into the scene, within `budget_us` (-1: all of it); emits `applied` when done.
@@ -198,6 +215,8 @@ func _prepare(snap: Snapshot) -> Job:
 	job.snap = snap
 	job.catalog = _job_catalog
 	job.props_catalog = _job_props
+	job.hidden = hidden_items.duplicate()
+	job.hidden_rev = _hidden_rev
 	var dirty := {}
 	var detail := {}
 	for pos: Vector3i in _built:
@@ -230,6 +249,7 @@ func _compute(job: Job) -> void:
 	job.props_catalog.set_snapshot(job.snap)
 	var mesher := TerrainMesher.new(job.snap, job.catalog)
 	var pmesher := PropMesher.new(job.snap, job.catalog, job.props_catalog)
+	pmesher.hidden = job.hidden
 	for pos in job.dirty:
 		job.terrain[pos] = mesher.build(pos)
 	for pos in job.detail:
@@ -268,7 +288,10 @@ func _commit(job: Job, budget_us: int) -> bool:
 			_build(job.dirty[i], job.terrain[job.dirty[i]], snap)
 		else:
 			var pos := job.detail[i - job.dirty.size()]
-			_build_props(pos, job.props[pos], snap)
+			var pr: PropMesher.Result = job.props[pos]
+			if job.hidden_rev != _hidden_rev and _holds_any(pos, snap, _changed(job.hidden, hidden_items)):
+				pr = _mesh_props(pos, snap)   # an item was hidden or shown since the worker started
+			_build_props(pos, pr, snap)
 	snapshot = snap
 	tables_mismatch = tables != null and snap.ids_generation >= 0 and snap.ids_generation != tables.generation
 	props_built = job.detail.size()
@@ -387,6 +410,8 @@ func node_count() -> int:
 
 ## Door leaves live under their submap's node, so a submap without one has none to drop.
 func _free_node(pos: Vector3i) -> void:
+	if _built.has(pos):
+		_set_slots(pos, [])
 	var node: Node3D = _nodes.get(pos)
 	if node == null:
 		return
@@ -507,6 +532,186 @@ func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	b["props"] = drawn
 	if not drawn and not b.get("terrain", false):
 		_free_node(pos)   # nothing left to draw: open sky keeps no node
+	_set_slots(pos, r.item_slots)
+
+
+## Replaces the item slots of submap `pos` (PropMesher.Result.item_slots).
+func _set_slots(pos: Vector3i, slots: Array) -> void:
+	var b: Dictionary = _built[pos]
+	for tile_slots: Array in (b.get("slots", {}) as Dictionary).values():
+		for e: Array in tile_slots:
+			var s: Array = _slot_of.get(e[0], [])
+			if not s.is_empty() and s[0] == pos:
+				_slot_of.erase(e[0])
+	var by_tile := {}
+	for e: Array in slots:
+		if not by_tile.has(e[2]):
+			by_tile[e[2]] = []
+		(by_tile[e[2]] as Array).append(e)
+		_slot_of[e[0]] = [pos, e]
+	b["slots"] = by_tile
+
+
+## Hides items (uid -> true; a copy is kept, MAX_HIDDEN at most) and shows the ones no longer listed: the
+## props of the submaps that draw or hold a changed uid are rebuilt now, on this thread (only those), so a
+## grabbed item leaves its pile in the same frame. While a worker meshes a submitted snapshot (with the old
+## hidden set) the rebuild waits until it is done.
+func set_hidden_items(uids: Dictionary) -> void:
+	var next := {}
+	for u: Variant in uids:
+		if u is int and next.size() < MAX_HIDDEN:
+			next[u] = true
+	if next.size() < uids.size():
+		push_warning("hidden items: %d given, kept %d (ints only, at most %d)" % [uids.size(), next.size(), MAX_HIDDEN])
+	var changed := _changed(hidden_items, next)
+	hidden_items = next
+	if changed.is_empty():
+		return
+	_hidden_rev += 1
+	if _task >= 0:
+		_hidden_wait.merge(changed)
+		return
+	_rebuild_hidden(changed)
+
+
+## Uids in one of the two sets but not the other.
+static func _changed(a: Dictionary, b: Dictionary) -> Dictionary:
+	var out := {}
+	for u: Variant in a:
+		if not b.has(u):
+			out[u] = true
+	for u: Variant in b:
+		if not a.has(u):
+			out[u] = true
+	return out
+
+
+## Rebuilds the props of the shown submaps that draw or hold one of `changed`; sets props_built.
+func _rebuild_hidden(changed: Dictionary) -> void:
+	var swapped := {}   # submaps a committing job already shows: built from its snapshot
+	if _committing != null:
+		for k in maxi(_committing.next - _committing.dirty.size(), 0):
+			swapped[_committing.detail[k]] = true
+	var n := 0
+	for pos: Vector3i in _built.keys():
+		var snap := _committing.snap if swapped.has(pos) else snapshot
+		if snap != null and snap.submaps.has(pos) and _holds_any(pos, snap, changed):
+			_build_props(pos, _mesh_props(pos, snap), snap)
+			n += 1
+	if snapshot != null:
+		catalog.set_snapshot(snapshot)   # the main-thread catalogs follow the shown snapshot again
+		props.set_snapshot(snapshot)
+	props_built = n
+
+
+## Whether submap `pos` draws one of `uids` or holds it in its snapshot handles.
+func _holds_any(pos: Vector3i, snap: Snapshot, uids: Dictionary) -> bool:
+	if uids.is_empty():
+		return false
+	for u: Variant in uids:
+		var s: Array = _slot_of.get(u, [])
+		if not s.is_empty() and s[0] == pos:
+			return true
+	var sm: Snapshot.Submap = snap.submaps.get(pos)
+	if sm == null:
+		return false
+	var hs := sm.handles
+	for k in range(1, hs.size(), Snapshot.HANDLE_STRIDE):
+		if uids.has(hs[k]):
+			return true
+	return false
+
+
+## One submap's props, meshed now on this thread with the main-thread catalogs (the worker has its own).
+func _mesh_props(pos: Vector3i, snap: Snapshot) -> PropMesher.Result:
+	catalog.set_snapshot(snap)
+	props.set_snapshot(snap)
+	var pm := PropMesher.new(snap, catalog, props)
+	pm.hidden = hidden_items
+	return pm.build(pos)
+
+
+## Radius of the ball an item of `size_m` is hit as.
+static func item_hit_radius(size_m: float) -> float:
+	return maxf(size_m * ITEM_HIT_SCALE, ITEM_HIT_MIN_M)
+
+
+## The drawn item a ray (normalized `dir`) meets first on the 3 x 3 squares around `centre` (same level),
+## within `max_d`: [uid, itype, square, hit point, world transform (as drawn, scaled), size_m], or [].
+func items_on_ray(origin: Vector3, dir: Vector3, centre: Vector3i, max_d: float) -> Array:
+	var best: Array = []
+	var best_t := max_d
+	for e: Array in _slots_around(centre):
+		var c := _slot_centre(e[0], e[1])
+		var t := _ray_ball(origin, dir, c, item_hit_radius(e[1][4]))
+		if t <= best_t and t < INF:
+			best_t = t
+			best = _slot_entry(e[0], e[1], origin + dir * t)
+	return best
+
+
+## The drawn item nearest `p` (its ball's surface; inside counts as nearer) within `radius` on the 3 x 3
+## squares around `centre`, same entry as items_on_ray (the point: the ball's point nearest p), or [].
+func items_near(p: Vector3, radius: float, centre: Vector3i) -> Array:
+	var best: Array = []
+	var best_d := radius
+	for e: Array in _slots_around(centre):
+		var c := _slot_centre(e[0], e[1])
+		var r := item_hit_radius(e[1][4])
+		var d := p.distance_to(c) - r
+		if d <= best_d:
+			best_d = d
+			best = _slot_entry(e[0], e[1], c + (p - c).limit_length(r))
+	return best
+
+
+## The drawn item `uid` as items_on_ray gives it (the point: its middle), [] when it isn't drawn.
+func item_slot(uid: int) -> Array:
+	var s: Array = _slot_of.get(uid, [])
+	if s.is_empty() or hidden_items.has(uid) or not _built.has(s[0]):
+		return []
+	return _slot_entry(s[0], s[1], _slot_centre(s[0], s[1]))
+
+
+## [submap, item slot] of the drawn items on the 3 x 3 squares around `centre`.
+func _slots_around(centre: Vector3i) -> Array:
+	var out := []
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var sq := centre + Vector3i(dx, dy, 0)
+			var pos := CddaCoords.ms_to_sm(sq)
+			var b: Dictionary = _built.get(pos, {})
+			if b.is_empty():
+				continue
+			var l := CddaCoords.ms_to_local(sq)
+			for e: Array in (b.get("slots", {}) as Dictionary).get(l.y * CddaCoords.SEEX + l.x, []):
+				if not hidden_items.has(e[0]):
+					out.append([pos, e])
+	return out
+
+
+func _slot_centre(pos: Vector3i, e: Array) -> Vector3:
+	return coords.sm_to_world(pos) + (e[5] as Vector3)
+
+
+func _slot_entry(pos: Vector3i, e: Array, point: Vector3) -> Array:
+	var xf: Transform3D = e[3]
+	var tile: int = e[2]
+	var sq := CddaCoords.sm_to_ms(pos) + Vector3i(tile % CddaCoords.SEEX, tile / CddaCoords.SEEX, 0)
+	return [e[0], e[1], sq, point, Transform3D(xf.basis, xf.origin + coords.sm_to_world(pos)), e[4]]
+
+
+## Distance along a ray (normalized `d`) to a ball: 0 from inside it, INF when it misses or lies behind.
+static func _ray_ball(o: Vector3, d: Vector3, c: Vector3, r: float) -> float:
+	var oc := c - o
+	var t := oc.dot(d)
+	var miss := oc.length_squared() - t * t - r * r
+	if miss > 0.0:
+		return INF
+	var th := sqrt(-miss)
+	if t + th < 0.0:
+		return INF
+	return maxf(t - th, 0.0)
 
 
 ## Step 5 of the fallback chain: the CDDA symbol in its colour, facing the camera.

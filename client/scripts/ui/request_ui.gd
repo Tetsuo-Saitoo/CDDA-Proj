@@ -17,6 +17,8 @@ const LOW_KINDS := ["direction", "target"]
 
 ## (right, forward) on screen -> CDDA step (x east, y south); main.gd makes it camera-relative.
 var direction_mapper := Callable()
+## Returns [Snapshot, IdTables] now (either may be null); target lists name their creatures with it.
+var world_state := Callable()
 var widget: RequestWidget
 var request_id := 0
 var _panel: PanelContainer
@@ -63,6 +65,8 @@ func show_request(req: Dictionary) -> bool:
 	request_id = id
 	widget = make_widget(kind, req)
 	widget.direction_mapper = direction_mapper
+	if widget is TargetRequestWidget:
+		(widget as TargetRequestWidget).world_state = world_state
 	widget.answered.connect(_on_answered)
 	_panel.add_child(widget)
 	widget.setup(req)
