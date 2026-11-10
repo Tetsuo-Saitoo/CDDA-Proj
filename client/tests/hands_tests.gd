@@ -33,6 +33,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_cancel()
 	_test_mouse(root)
 	_test_move()
+	_test_freed_leaf()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -275,6 +276,31 @@ func _test_mouse(root: Node) -> void:
 	_check.call(ctl.icon.text == "You can't do that." and ctl.icon.bad, "hands: a refusal flashes its reason in red")
 	cam.free()
 	ctl.free()
+
+
+## A door leaf freed while a hand hovers or holds it (its submap dropped): forgotten, no cast errors; also the
+## public hovered() and set_proxy_pose(), and the hit ball's cap.
+func _test_freed_leaf() -> void:
+	var g := Grabbable.new()
+	g.leaf = MeshInstance3D.new()
+	g.add_child(g.leaf)
+	var t := {"kind": "door", "node": g, "item": null, "square": P, "point": Vector3.ZERO, "dist": 1.0, "name": "door"}
+	_hands.hover("vr_l", t)
+	_check.call(Hands.same_target(_hands.hovered("vr_l"), t), "hands: hovered() gives the target under a hand")
+	g.free()
+	_check.call(_hands.hovered("vr_l").is_empty() and _hands.release("vr_l", {}) == "" and not _hands.grab("vr_l", t),
+			"hands: a freed door leaf is forgotten, not grabbed")
+	_hands.hover("vr_l", {})
+	var bag := _handle(SE, _it["bag_canvas"])
+	_check.call(_hands.grab("vr_r", _hands.find_near(_mid(bag), 0.05)), "hands: grab for set_proxy_pose")
+	var p := _hands.proxy("vr_r")
+	var s := p.scale
+	_hands.set_proxy_pose("vr_r", Transform3D(Basis(Vector3.UP, 0.5), Vector3(1, 2, 3)))
+	_check.call(p.global_position.is_equal_approx(Vector3(1, 2, 3)) and p.scale.is_equal_approx(s),
+			"hands: set_proxy_pose places the held copy, keeping its size")
+	_hands.cancel("vr_r")
+	_check.call(WorldView.item_hit_radius(0.7) == WorldView.ITEM_HIT_MAX_M and WorldView.item_hit_radius(0.01) == WorldView.ITEM_HIT_MIN_M,
+			"hands: an item's hit ball is capped (a long item doesn't swallow its neighbours)")
 
 
 ## Hands.move (the Tab view's drag and drop): the carried rock into the bag on SE without a hand holding it;
