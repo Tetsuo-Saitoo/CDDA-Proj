@@ -344,9 +344,76 @@ func _test_rebinding(root: Node) -> void:
 	_check.call(saved is Dictionary and saved["actions"].get("cdda_wield") == ["Ctrl+Y"], "keys menu: each change is saved")
 	menu.take(esc)
 	_check.call(not menu.visible, "keys menu: Esc closes")
+	_test_pad_rebinding(menu, path)
 	menu.free()
 	InputActions.reset_all()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+## The key menu's pad column: pad buttons and pushed sticks bind there (saved, loaded back), nothing else does.
+func _test_pad_rebinding(menu: KeyMenu, path: String) -> void:
+	var pad_texts := func(action: StringName) -> Array:
+		return InputActions.pad_slots(action).map(func(e: InputEvent) -> String: return InputActions.event_text(e))
+	menu.open()
+	menu.start_capture(&"cdda_wield", KeyMenu.PAD_SLOT)
+	var drift := InputEventJoypadMotion.new()
+	drift.axis = JOY_AXIS_RIGHT_X
+	drift.axis_value = 0.2
+	var nan := drift.duplicate() as InputEventJoypadMotion
+	nan.axis_value = NAN
+	var y := InputEventKey.new()
+	y.physical_keycode = KEY_Y
+	y.pressed = true
+	menu.take(drift)
+	menu.take(nan)
+	_check.call(menu.take(y) and pad_texts.call(&"cdda_wield").is_empty() and InputActions.key_of(&"cdda_wield") == "Ctrl+Y",
+			"keys menu pad: stick drift, NaN and keys don't bind in the pad column")
+	var btn := InputEventJoypadButton.new()
+	btn.button_index = JOY_BUTTON_Y
+	btn.pressed = true
+	_check.call(menu.take(btn) and pad_texts.call(&"cdda_wield") == ["pad:3"] and InputActions.key_of(&"cdda_wield") == "Ctrl+Y"
+			and (menu._buttons[&"cdda_wield"][KeyMenu.PAD_SLOT] as Button).text == "Pad Y",
+			"keys menu pad: a pad button binds in the pad column, keys stay")
+	menu.start_capture(&"cdda_wield", 0)
+	_check.call(not menu.take(btn) and InputActions.key_of(&"cdda_wield") == "Ctrl+Y", "keys menu pad: a key slot ignores pad buttons")
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	menu.take(esc)
+	menu.start_capture(&"move_forward", KeyMenu.PAD_SLOT)
+	var push := InputEventJoypadMotion.new()
+	push.axis = JOY_AXIS_RIGHT_Y
+	push.axis_value = -0.9
+	menu.take(push)
+	var pads := InputActions.pad_slots(&"move_forward")
+	_check.call(pad_texts.call(&"move_forward") == ["axis:3-"] and InputActions.key_of(&"move_forward") == "W"
+			and InputActions.event_label(pads[0]) == "R stick up" and InputActions.users_of(pads[0], &"move_forward") == [&"look_up"],
+			"keys menu pad: the right stick pushed up replaces the left stick, W stays (also look up) %s" % [pad_texts.call(&"move_forward")])
+	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check.call(saved is Dictionary and saved["actions"].get("cdda_wield") == ["Ctrl+Y", "pad:3"]
+			and saved["actions"].get("move_forward") == ["W", "axis:3-"], "keys menu pad: saved in the same key file")
+	InputActions.reset_all()
+	_check.call(InputActions.load_bindings(path).is_empty() and pad_texts.call(&"cdda_wield") == ["pad:3"]
+			and pad_texts.call(&"move_forward") == ["axis:3-"] and InputActions.key_of(&"cdda_wield") == "Ctrl+Y",
+			"keys menu pad: loaded back")
+	menu.start_capture(&"move_forward", KeyMenu.PAD_SLOT)
+	var bs := InputEventKey.new()
+	bs.physical_keycode = KEY_BACKSPACE
+	bs.pressed = true
+	menu.take(bs)
+	_check.call(pad_texts.call(&"move_forward").is_empty() and InputActions.key_of(&"move_forward") == "W",
+			"keys menu pad: Backspace clears the pad slot only")
+	var up := btn.duplicate() as InputEventJoypadButton
+	up.pressed = false
+	var big := btn.duplicate() as InputEventJoypadButton
+	big.button_index = 200 as JoyButton
+	_check.call(InputActions.pad_binding_from(up) == null and InputActions.pad_binding_from(big) == null
+			and InputActions.pad_binding_from(y) == null, "keys pad: releases, unknown buttons and keys make no pad binding")
+	_check.call(InputActions.event_label(InputActions.parse_event("pad:10")) == "Pad R1"
+			and InputActions.event_label(InputActions.parse_event("axis:5+")) == "R2"
+			and InputActions.event_label(InputActions.parse_event("pad:20")) == "Pad 20", "keys pad: labels")
+	menu.close()
+	InputActions.reset_all()
 
 
 ## Nearest wall square on p's level with an empty floor square beside it: [wall, floor], or [].
