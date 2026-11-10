@@ -94,6 +94,11 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(explosions.shift)
 	request_ui.get_parent().add_child(explosions.flash_rect)
 	aim = AimController.new(world, request_ui)
+	aim.creature_view = creature_view
+	aim.wielded_gun = func() -> IdTables.Def:
+		var i := world.snapshot.player_wielded if world.snapshot != null else 0
+		var d: IdTables.Def = world.tables.def_at("itype", i) if world.tables != null and i > 0 else null
+		return d if d != null and d.gun != "" else null
 	add_child(aim)
 	request_ui.get_parent().add_child(aim.crosshair)
 	request_ui.get_parent().move_child(aim.crosshair, request_ui.get_index())
@@ -733,6 +738,11 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	_update_aim()
+	var cam := get_viewport().get_camera_3d()
+	if cam != null and vr == null:   # no shaking in VR (comfort)
+		var o := explosions.shake_offset()
+		cam.h_offset = o.x
+		cam.v_offset = o.y
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view

@@ -85,6 +85,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(corpse.shape == "item_corpse" and corpse.scale >= 0.9,
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
+	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
 	_test_viewmodel(root, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -186,8 +187,77 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	_check.call(ev.live_count() == 1, "explosions: a blast starts, junk is skipped")
 	ev.on_events([{"kind": "explosion", "pos": me, "amount": 8, "text": "flashbang", "detail": 0, "path": []}])
 	_check.call(ev.flash_strength() > 0.0, "explosions: a flashbang next to the camera whites the screen")
+	_check.call(ev.shake_strength() > 0.0 and ev.shake_offset().length() > 0.0, "explosions: nearby blasts shake")
 	for i in 40:
 		ev.tick(0.05)
-	_check.call(ev.live_count() == 0 and ev.flash_strength() == 0.0, "explosions: effects end and the flash fades")
+	_check.call(ev.live_count() == 0 and ev.flash_strength() == 0.0 and ev.shake_strength() == 0.0
+			and ev.shake_offset() == Vector2.ZERO, "explosions: effects end, the flash and the shake fade")
+	var boom := ev.sound_for("blast", 5.0)
+	_check.call(boom.data.size() > 40000 and ev.sound_for("blast", 5.0) == boom
+			and ev.sound_for("flashbang", 1.0).data.size() < boom.data.size(),
+			"explosions: a boom per kind and size, made once (flashbang shorter)")
 	ev.flash_rect.free()
 	ev.free()
+
+
+func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i, zp: Vector3i, ui: RequestUI,
+		aim: AimController, cam: Camera3D, req: Dictionary) -> void:
+	var B := BulletPhysics
+	var nine: Array = B.ammo_profile("9mm")
+	var rifle: Array = B.ammo_profile("223")
+	_check.call(nine[0] < rifle[0] and B.ammo_profile("")[0] == B.DEFAULT[0], "bullets: rifles are faster, unknown ammo gets a default")
+	# zeroed: the path crosses the line of sight at ZERO_M, then drops below it; pistols drop more
+	var drops := []
+	for prof: Array in [nine, rifle]:
+		var r := B.fly(Vector3.ZERO, B.launch_dir(Vector3.FORWARD, prof[0]), prof[0], prof[1], {}, null)
+		var y_at := func(z: float) -> float:
+			var path: Array = r["path"]
+			for i in range(1, path.size()):
+				if -path[i].z >= z:
+					return lerpf(path[i - 1].y, path[i].y, (z - -path[i - 1].z) / maxf(-path[i].z - -path[i - 1].z, 0.0001))
+			return NAN
+		drops.append([y_at.call(B.ZERO_M), y_at.call(100.0)])
+	_check.call(absf(drops[0][0]) < 0.01 and absf(drops[1][0]) < 0.01, "bullets: sights zeroed at 25 m (%s)" % [drops])
+	_check.call(drops[0][1] < drops[1][1] and drops[0][1] < -0.05, "bullets: at 100 m the pistol bullet has dropped more (%s)" % [drops])
+	# a zombie figure: aimed at its head / legs, the bullet hits that zone
+	var cv := CreatureView.new()
+	root.add_child(cv)
+	cv.apply(world.snapshot, world)
+	aim.creature_view = cv
+	var z: CreatureFigure = null
+	for uid: int in cv.figures():
+		z = cv.figures()[uid]
+	var head := Vector3.ZERO
+	var leg := Vector3.ZERO
+	for zz: Array in z.hit_zones():
+		if zz[1] == "head":
+			head = (zz[0] as MeshInstance3D).global_position
+		elif zz[1] == "leg_l":
+			leg = (zz[0] as MeshInstance3D).global_position
+	var eye := world.coords.ms_center_to_world(me) + Vector3(0, 1.6, 0)
+	for want: Array in [["head", head], ["leg_l", leg]]:
+		var r := B.fly(eye, B.launch_dir(eye.direction_to(want[1]), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
+		_check.call(r["hit"] == "creature" and r["zone"] == want[0], "bullets: aimed at the %s, hit the %s (%s)" % [want[0], r.get("zone"), r["hit"]])
+	_check.call(B.cdda_part("head", true, {"head": true}) == "head" and B.cdda_part("torso", true, {"head": true}) == ""
+			and B.cdda_part("arm_l", false, {}) == "arm_l", "bullets: zones map to weak points / body parts")
+	# through the aim controller: a gun in hand answers FIRE with the shot
+	var gun := IdTables.Def.new()
+	gun.gun = "rifle"
+	gun.gun_ammo = "223"
+	aim.wielded_gun = func() -> IdTables.Def: return gun
+	var zdef: IdTables.Def = tables.def_named("mtype", "mon_zombie")
+	var old_wp := zdef.weakpoints
+	zdef.weakpoints = {"head": true, "eye": true}
+	cam.global_position = eye
+	cam.look_at(head)
+	ui.show_request(req)
+	answers.clear()
+	aim.on_fire(cam, Vector2.ZERO, true)
+	var a: Dictionary = answers[0] if not answers.is_empty() else {}
+	var shot: Dictionary = a.get("shot", {})
+	_check.call(a.get("action") == "FIRE" and shot.get("hit_uid") == 8589934593 and shot.get("part") == "head"
+			and a.get("pos") == zp and shot.get("quality") is float, "bullets: FIRE carries the client's shot (%s)" % [a])
+	zdef.weakpoints = old_wp
+	aim.wielded_gun = Callable()
+	aim.creature_view = null
+	cv.free()

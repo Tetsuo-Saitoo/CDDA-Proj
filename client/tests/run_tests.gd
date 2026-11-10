@@ -11,6 +11,7 @@ var _failed := 0
 
 
 func _initialize() -> void:
+	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
 	var t0 := Time.get_ticks_msec()
@@ -32,6 +33,23 @@ func _initialize() -> void:
 	preload("res://tests/compass_tests.gd").new().run(root, _check, data)
 	print("tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
+
+
+## Every script under res://scripts and res://tests must compile: a parse error elsewhere otherwise only
+## shows as a SCRIPT ERROR line while the suites that use it are skipped and the run still "passes".
+func _test_scripts_compile() -> void:
+	var bad := PackedStringArray()
+	var dirs := ["res://scripts", "res://tests"]
+	while not dirs.is_empty():
+		var d: String = dirs.pop_back()
+		for sub in DirAccess.get_directories_at(d):
+			dirs.append(d.path_join(sub))
+		for f in DirAccess.get_files_at(d):
+			if f.ends_with(".gd"):
+				var sc := load(d.path_join(f)) as GDScript
+				if sc == null or not sc.can_instantiate():
+					bad.append(d.path_join(f))
+	_check(bad.is_empty(), "every script compiles %s" % bad)
 
 
 func _check(cond: bool, what: String) -> void:
