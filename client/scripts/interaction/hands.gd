@@ -18,7 +18,7 @@ signal confirmed(hand: String, target: Dictionary)
 signal refused(hand: String, target: Dictionary, reason: String)
 
 const RAY_M := 4.0
-const THROW_SPEED := 4.0    # m/s at release: a throw (needs the bridge's throw op; until then a drop)
+const THROW_SPEED := 4.0    # m/s at release: a throw (VR's release doesn't use it yet; throw() does the throwing)
 const OUTLINE := Color(1.0, 0.85, 0.3)
 
 var world: WorldView
@@ -315,6 +315,29 @@ func move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	return _move(id, it, drop)
 
 
+## Throws the item hand `id` holds at `square` (CDDA's throw: its range, aim, time; one unit of a stack). An item
+## lying in the world is taken first (into the main hand when it is free, else the pack), then thrown; a square
+## that can't be (your own, another level) sends nothing. Returns "throw", "take" (first of two steps) or ""
+## (nothing sent: the item is back where it was).
+func throw(id: String, square: Vector3i) -> String:
+	var h := hand(id)
+	var t := h.held
+	if t.is_empty() or t["kind"] != "item":
+		return ""
+	var s := world.snapshot   # checked before a take: a throw that can't go leaves a lying item where it was
+	if s == null or square == s.player_pos or square.z != s.player_pos.z or not ItemActions.ok_square(square):
+		release(id, {})
+		return ""
+	h.held = {}
+	var it: ItemRef = t["item"]
+	_free_visuals(h, false)
+	_held_hidden.erase(it.uid)
+	var second := func(c: ItemRef) -> bool: return actions.throw(c, square)
+	var op := _two_step(id, it, second, "throw")
+	_sync_hidden()
+	return op
+
+
 ## Cancels a hold: the item goes back, nothing is sent.
 func cancel(id: String) -> void:
 	release(id, {})
@@ -375,10 +398,16 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 		if kind == "container":
 			return actions.put(c, container, pocket)
 		return actions.drop(c, square, spot)
+	return _two_step(id, it, second, "put" if kind == "container" else "drop")
+
+
+## `second` (put / drop / throw) on a carried item at once (returns `op`), else a take first and `second` when it
+## lands (returns "take"); "" when nothing was sent.
+func _two_step(id: String, it: ItemRef, second: Callable, op: String) -> String:
 	_owner[it.uid] = id
 	if it.carried:
 		if second.call(it):
-			return "put" if kind == "container" else "drop"
+			return op
 		_owner.erase(it.uid)
 		return ""
 	_then[it.uid] = second

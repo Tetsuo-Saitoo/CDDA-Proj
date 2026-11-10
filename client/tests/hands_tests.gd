@@ -36,6 +36,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_move()
 	_test_door_names()
 	_test_freed_leaf()
+	_test_flick(root)   # last: throws the bag away
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -255,7 +256,8 @@ func _test_mouse(root: Node) -> void:
 	var floor_at := _world.coords.ms_center_to_world(SE) + Vector3(0.1, 0.0, 0.1)
 	cam.look_at_from_position(eye, floor_at)
 	ctl.update(cam, mid, true, true)
-	_check.call(ctl.icon.mode == GrabController.GrabIcon.FIST and ctl.drop.get("kind") == "surface" and ctl.icon.text == "put it here",
+	_check.call(ctl.icon.mode == GrabController.GrabIcon.FIST and ctl.drop.get("kind") == "surface"
+			and ctl.icon.text == "put it here\nflick and let go: throw it",
 			"hands: carrying: fist and where it would go (%s)" % ctl.icon.text)
 	var m0 := ctl.carry_m
 	var wheel := InputEventMouseButton.new()
@@ -309,6 +311,56 @@ func _test_freed_leaf() -> void:
 	_hands.cancel("vr_r")
 	_check.call(WorldView.item_hit_radius(0.7) == WorldView.ITEM_HIT_MAX_M and WorldView.item_hit_radius(0.01) == WorldView.ITEM_HIT_MIN_M,
 			"hands: an item's hit ball is capped (a long item doesn't swallow its neighbours)")
+
+
+## Throwing: Hands.throw at your own square sends nothing (the item goes back); in GrabController a slow let-go
+## puts the item down, a flick (fast mouse motion right before) throws it at the square under the pointer:
+## taken first, then CDDA's throw (MockItems), landing there.
+func _test_flick(root: Node) -> void:
+	var bag := _handle(SE, _it["bag_canvas"])
+	_seen.clear()
+	_check.call(_hands.grab("mouse", _hands.find_near(_mid(bag), 0.05)) and _hands.throw("mouse", P) == ""
+			and _hands.holding("mouse").is_empty() and _world.hidden_items.is_empty() and _actions.pending_count() == 0
+			and _handle(SE, _it["bag_canvas"]) == bag, "hands: a throw at your own square sends nothing, the item is back")
+	var ctl := GrabController.new(_world)
+	root.add_child(ctl)
+	ctl.reach = func() -> Variant: return P
+	ctl.hands = _hands
+	var cam := Camera3D.new()
+	root.add_child(cam)
+	cam.make_current()
+	var mid := root.get_viewport().get_visible_rect().size / 2
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	cam.look_at_from_position(eye, _mid(bag))
+	ctl.update(cam, mid, true, true)
+	var lmb := InputEventMouseButton.new()
+	lmb.button_index = MOUSE_BUTTON_LEFT
+	lmb.pressed = true
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	up.pressed = false
+	ctl.handle_event(lmb, cam, mid)
+	var now := Time.get_ticks_msec()
+	ctl._motion = [[now - 1000, 5000.0]]
+	_check.call(ctl.carrying() and ctl.flick_speed(now) == 0.0, "hands: old mouse motion is no flick")
+	cam.look_at_from_position(eye, eye + Vector3(0.002, -1.0, 0.0))
+	_check.call(ctl.throw_square(cam, mid) == null, "hands: looking straight down: nowhere to throw")
+	cam.look_at_from_position(eye, _world.coords.ms_center_to_world(P + Vector3i(3, 0, 0)))
+	ctl.update(cam, mid, true, true)
+	var sq: Variant = ctl.throw_square(cam, mid)
+	var flick := InputEventMouseMotion.new()
+	flick.relative = Vector2(0, -120)
+	var used := false
+	for i in 3:
+		used = used or ctl.handle_event(flick, cam, mid)
+	_check.call(not used and ctl.flick_speed(Time.get_ticks_msec()) >= GrabController.FLICK_PX_S,
+			"hands: carrying, mouse motion still turns the view and is counted for a flick")
+	_seen.clear()
+	_check.call(sq is Vector3i and sq != P and (sq as Vector3i).z == P.z and ctl.handle_event(up, cam, mid)
+			and not ctl.carrying() and _handle(sq, _it["bag_canvas"]) == bag and not _carried(bag)
+			and _seen == [["confirmed", "mouse", bag, ""]], "hands: a flick throws it at the square under the pointer (%s, %s)" % [sq, _seen])
+	cam.free()
+	ctl.free()
 
 
 ## Hands.move (the Tab view's drag and drop): the carried rock into the bag on SE without a hand holding it;

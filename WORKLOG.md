@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Throw and pour gestures (mouse and keyboard): flick while letting go of a carried item throws it at the square under the pointer; hold E with a liquid in hand pours into the container under the pointer or onto the square you face (a tap still uses / examines). Client tests pass.
 - 2026-11-10 — Boot status line shows the bridge's load phase, seconds and CDDA error count (`get_boot_info`) instead of "game booting (~30 s)"; failure reasons are cleaned before they are shown. Client tests pass.
 - 2026-11-10 — Client side of the bridge's new shapes: HUD effects list and hunger word from `player.effects`; Tab inventory pockets by name and capacity from itype `pockets` (empty ones listed); ItemActions throw / pour / pour into; Cheats page "Rebuild" zone. One-line game text now also drops hidden direction characters. Client tests pass.
 - 2026-11-10 — Merged K7 range slice 2 (fp3d-qa f3e9e47, approved by lead-bridge) and the CI workflows (Actions settings done by the user); UI's range smoke test renamed `tests/range_ui_live_test.gd`.
