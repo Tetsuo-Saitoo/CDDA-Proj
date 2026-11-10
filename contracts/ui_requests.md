@@ -66,11 +66,16 @@ dead centre .. 0.99), fly (bool, anything else = false)}. CDDA's dispersion roll
   cursor (FIRE answer) or 1.5 squares of CDDA's deviated line (shot answer: the line turned by
   shot_error * sin(shot_angle) to the shooter's right). Anything else is ignored and CDDA's own path runs.
 - Outcome: a client hit counts only if the creature's own roll hits: CDDA's roll for the aimed square's creature;
-  for another creature, CDDA's rolled error over the distance to it against its ranged size (a HARDTOHIT
-  character: the worse of two rolls, as CDDA does). goodhit = max(that roll, quality); when the roll misses,
-  CDDA's own path runs. A client miss flies to `end` and, unless `end` is impassable (wall, closed door, solid
-  furniture), on as CDDA's overshoot would. Other creatures on the path get CDDA's rolls, the aimed one no better
-  than CDDA's own (a CDDA miss stays a miss). The client can make a shot worse, never better.
+  for another creature, its square's distance off the projectile's line against its ranged size: CDDA's deviated
+  line combined with the error's vertical part (shot_error * cos(shot_angle)) over the distance along it (shot
+  answer), or the aim line plus the whole error in the worst direction (FIRE answer); a HARDTOHIT character: the
+  worse of two rolls, as CDDA does. goodhit = max(that roll, quality); when the roll misses, CDDA's own path runs.
+- A client miss never picks the direction: the projectile flies CDDA's line (the deviated line for a shot answer,
+  the aim line for a FIRE answer; a FIRE answer's miss when CDDA's own roll is a square or more off takes CDDA's
+  own wild-miss path) out to the aimed distance and on as CDDA's overshoot would. `end` only stops it early, at
+  its distance along that line, where the line's square there is impassable (wall, closed door, solid
+  furniture). Other creatures on the path get CDDA's rolls, the aimed one no better than CDDA's own (a CDDA miss
+  stays a miss). The client can make a shot worse, never better.
 - Part: looked up by name (body parts of the character, weak points of the monster's type; 64 bytes max); it
   lands only if goodhit <= sqrt(hit chance / 100) (weak point: `weakpoint::hit_chance`; body part: its share of
   the body's hit size), else CDDA picks. Ignored on other requests.
