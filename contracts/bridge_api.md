@@ -94,7 +94,11 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
 - Hand attacks (first person / VR, `cdda/src/fp3d/hands.h`): main-loop actions `fp3d_attack_main_<DIR>` and
   `fp3d_attack_off_<DIR>`, DIR one of the eight move actions (UP = north). Main hand: CDDA's melee attack with
   what is wielded; off hand: an unarmed strike (the `attack` event's `type` is 0), refused while the wielded item
-  needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time.
+  needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time. Nobody next
+  to you that way: the main hand's weapon with reach (a spear: 2) strikes the first creature along it, up to its
+  reach (CDDA's reach attack, which may hit someone in between). `fp3d_attack_<main|off>_aim_<DIR>` is the same
+  strike aimed: the client's crosshair (VR: the hand) is on that creature, so the swing sends one `swing`
+  request (`ui_requests.md`).
 - Held items and context use (`cdda/src/fp3d/held.h`): the off hand (left) holds one carried item, marked with
   the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it; a token the avatar keeps
   too means an item that left the avatar isn't held again on return), empty while the wielded item needs both

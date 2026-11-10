@@ -158,6 +158,17 @@ static func _map_hit(look_ray: LookRay, from: Vector3, dir: Vector3, seg_len: fl
 	return {}
 
 
+## The nearest body part a straight segment from `from` along `seg` passes through, if no wall, door, floor or
+## furniture is in the way first: {d, point, uid, zone, quality} or {} (melee picks, AimController.melee_from).
+static func reach_figure(from: Vector3, seg: Vector3, figures: Dictionary, look_ray: LookRay,
+		shooter_uid := 1) -> Dictionary:
+	var hit := _hit_figure(from, seg, figures, shooter_uid)
+	if hit.is_empty() or look_ray == null:
+		return hit
+	var m := look_ray.cast(from, seg.normalized(), hit["d"], false)
+	return {} if m.get("hit", false) else hit
+
+
 ## The nearest body part a segment passes through: {d, point, uid, zone, quality} or {}.
 static func _hit_figure(from: Vector3, seg: Vector3, figures: Dictionary, shooter_uid: int) -> Dictionary:
 	var best := {}

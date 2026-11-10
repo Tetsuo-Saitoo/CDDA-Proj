@@ -755,9 +755,16 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike the square you face: the left (off) hand or the right (main) hand
+		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# reach (an aimed strike, AimController.strike_action), else the square you face
 		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
-		act = "fp3d_attack_%s_%s" % [hand, OCT_ACTIONS[_octant(Vector2(0, 1))]]
+		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
+		var cam := get_viewport().get_camera_3d()
+		act = "fp3d_attack_%s_%s" % [hand, facing]
+		if cam != null and world.snapshot != null:
+			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
+					captured, world.snapshot.player_pos, facing)
 	if act == "":
 		return false
 	if _in_main_loop():
