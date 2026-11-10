@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-09 — Doors you drag open (branch `door-drag`): door leaves are their own nodes (`Grabbable`) that swing on a hinge; LMB hold + drag (Amnesia-style) or VR grip; outline and hand pointer when in reach; past 30° / under 8° asks CDDA to open / close (direction answered for it), mock opens itself; locked doors rattle; closed doors block VrWalk and the mock walk; `door_tests.gd` 42 checks, client tests pass; not tried live.
 - 2026-11-09 — VR design: PLAN.md L8 containers and looting by hand, L9 dynamic cooking (recipes from the pot's contents on a lit heat source), ideas from other VR games, two open decisions (timed search, burnt food); PLAN.md E6 mouse/keyboard hands on the same actions (Amnesia-style drag to open, grabbable handles highlighted); docs/MODELS.md model spec (glb, scale, axes, budgets, VR markers, first ids, licence); TASKS L8, L9, E6.
 - 2026-11-09 — Main menu Credits page (CDDA by CleverRaven and contributors; Seglectic), by the main-menu session; ui_tests check it.
 - 2026-11-09 — README Credits section: Seglectic (3D models, VR ideas and feedback); in-game credits line asked of the main-menu session.

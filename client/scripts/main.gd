@@ -44,6 +44,7 @@ var _look_line: MeshInstance3D   # player -> what was clicked
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
+var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for the player, NPCs and monsters (C4)
 var _demo_step := 0
@@ -96,6 +97,13 @@ func _ready() -> void:
 	add_child(aim)
 	request_ui.get_parent().add_child(aim.crosshair)
 	request_ui.get_parent().move_child(aim.crosshair, request_ui.get_index())
+	grab = GrabController.new(world)
+	add_child(grab)
+	request_ui.get_parent().add_child(grab.icon)
+	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
+	grab.reach = _reach_square
+	world.door_wants.connect(_on_door_wants)
+	world.door_message.connect(func(t: String) -> void: _log.append(t))
 	viewmodel = WeaponViewmodel.new()
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
@@ -241,6 +249,9 @@ func _start_vr() -> void:
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
 	vr.save_path = VrSettings.FILE
 	add_child(vr)
+	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
+		var p: Variant = _reach_square()
+		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
@@ -272,6 +283,7 @@ func _view() -> Node3D:
 func _start_live() -> void:
 	live = LiveSession.new()
 	live.name = "Live"
+	world.door_local = false   # doors open when CDDA opens them
 	add_child(live)
 	live.id_tables_ready.connect(world.set_id_tables)
 	live.snapshot_ready.connect(_on_live_snapshot)
@@ -397,6 +409,12 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])
+	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
+	if not door.is_empty():   # the "Open where?" of a door you dragged: its direction
+		grab.ask = {}
+		request_ui.clear()
+		live.answer(door)
+		return
 	if req.get("context", "") == "RAW_KEY":
 		# A raw key read: CDDA's debug message prompt and "press any key" screens (the text is only in
 		# debug.log). Space goes on.
@@ -567,6 +585,32 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## The square hands and the mouse reach doors from: the player's; in mock first person, where you stand.
+func _reach_square() -> Variant:
+	if world.snapshot == null:
+		return null
+	if live == null and _fp_active():
+		var sq := world.coords.world_to_ms(fp.position)
+		return Vector3i(sq.x, sq.y, fp.z)
+	return world.snapshot.player_pos
+
+
+## A door leaf crossed its threshold (live): queue CDDA's open / close; its "where?" prompt is answered for it.
+func _on_door_wants(square: Vector3i, open: bool) -> void:
+	if live == null or world.snapshot == null or not _in_main_loop():
+		return
+	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
+	if act != "":
+		live.queue_action(act)
+
+
+## The mouse point grabbing and looking use: the screen centre while the mouse looks around.
+func _pointer() -> Vector2:
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		return get_viewport().get_visible_rect().size / 2.0
+	return get_viewport().get_mouse_position()
+
+
 ## Live first person: WASD / left stick walk where you look. A press queues a step at once (`now`); held, the
 ## next step waits until the sim has taken the last one, so letting go leaves nothing queued.
 func _fp_live_step(now: bool) -> void:
@@ -726,6 +770,8 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	_update_aim()
+	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
+			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	creature_view.view_z_max = world.view_z_max
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	var tile := world.coords.world_to_ms(_view().global_position)
@@ -752,7 +798,7 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at  " % [k.call(&"look"), k.call(&"look_at")]
+	var out := "%s look  %s look at, hold on a door and drag to open  " % [k.call(&"look"), k.call(&"look_at")]
 	if live != null and _fp_active():
 		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
 				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
@@ -801,6 +847,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_open_key_menu()
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
+		return
+	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
 		var mb := event as InputEventMouseButton
