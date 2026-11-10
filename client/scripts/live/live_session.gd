@@ -309,6 +309,19 @@ func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) 
 	return _sim != null and _sim.queue_item_action(a)
 
 
+## Unload an item (carried, else the one on square `pos`): a gun's magazine whole, a magazine's rounds, to
+## `hand` ("pack", "main", "off"). An older bridge refuses the op (false).
+func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "unload", "item": int(uid), "type": int(type),
+			"pos": pos, "hand": hand})
+
+
+## Reload a carried item with ammo or a magazine (carried, else the one on square `pos`), as much as fits.
+func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "reload", "item": int(uid), "type": int(type),
+			"container": int(ammo), "container_type": int(ammo_type), "pos": pos})
+
+
 ## Actions waiting in the bridge's queue (0 without a game).
 func queued_actions() -> int:
 	return _sim.get_queued_actions() if _sim != null else 0
