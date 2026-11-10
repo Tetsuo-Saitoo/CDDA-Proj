@@ -17,6 +17,9 @@ extends Node3D
 ## `shot` request (shot_error arcmin, shot_angle degrees): on_request() turns the kept sight line by it
 ## (ShotError), flies that bullet, draws its tracer and answers at once with the outcome, or cancels so CDDA
 ## rolls it. While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
+## Shot requests have no time limit and no UI: main.gd sends their answer through send_shot(), which cancels
+## instead when the bridge refuses it, so CDDA never waits on one. Answers hold exactly the bridge's types
+## (shot_answer()).
 ## Only the wielded gun flies: a fire-mode target request with `weapon_wielded: false` (a gunmod, a turret...)
 ## is plain FIRE; without the field (old bridges) the wielded gun flies. A flight tests only the figures near
 ## its line (BulletPhysics.figures_near_line), so hordes stay cheap.
@@ -32,6 +35,8 @@ const AIM_KEEP_MS := 60000        # a kept aim answers shot requests this long a
 const MAX_DISPERSION := 10800.0   # arcmin; larger values from the bridge are refused
 const MAX_TRACERS := 32
 const LIVE_AIM_REACH := 4.0       # m: a live_aim pose farther than this from the kept origin is refused
+const MAX_PART_BYTES := 64        # the bridge's cap on a shot answer's `part`
+const MAX_QUALITY := 0.99         # the bridge's range for a shot answer's `quality` is 0..0.99
 
 var world: WorldView
 var request_ui: RequestUI
@@ -195,7 +200,7 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 		# a floor / ceiling hit's point lies just past it, on the next level: keep the bullet's level
 		var back: Vector3 = r["point"] - (path[-1] - path[-2]).normalized() * (LookRay.STEP_M + 0.01)
 		sq.z = world.coords.world_to_ms(back).z
-	var answer := {"end": sq, "hit_uid": 0, "part": "", "quality": 0.99}
+	var answer := shot_answer(sq, 0, "", MAX_QUALITY)
 	if r["hit"] == "creature":
 		var c: Snapshot.Creature = null
 		for x in world.snapshot.creatures:
@@ -204,9 +209,8 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 		if c != null:
 			sq = c.pos
 			var d := CreatureView.def_of(world, c)
-			answer = {"end": sq, "hit_uid": c.uid, "quality": BulletPhysics.quality_of(r["quality"]),
-					"part": BulletPhysics.cdda_part(r["zone"], c.kind == Snapshot.Creature.MONSTER,
-							d.weakpoints if d != null else {})}
+			answer = shot_answer(sq, c.uid, BulletPhysics.cdda_part(str(r["zone"]), c.kind == Snapshot.Creature.MONSTER,
+					d.weakpoints if d != null else {}), BulletPhysics.quality_of(float(r["quality"])))
 	if sq == world.coords.world_to_ms(origin):
 		return {}   # stopped in our own square: let CDDA handle it
 	last_shot = {"square": sq, "answer": answer, "result": r}
@@ -238,7 +242,7 @@ func on_request(req: Dictionary) -> Dictionary:
 	if id == null or id <= 0:
 		push_warning("aim: shot request without a usable id")
 		return {}
-	var cancel := {"id": id, "cancel": true}
+	var cancel := fallback_answer(id)
 	if shot_aim.is_empty() or Time.get_ticks_msec() - int(shot_aim.get("time", 0)) > AIM_KEEP_MS:
 		return cancel
 	var origin: Variant = shot_aim.get("origin")
@@ -253,7 +257,41 @@ func on_request(req: Dictionary) -> Dictionary:
 	var shot := fly_from(origin, dir, str(shot_aim.get("ammo", "")))
 	if shot.is_empty():
 		return cancel
-	return {"id": id, "shot": shot["answer"]}
+	return {"id": int(id), "shot": shot["answer"]}
+
+
+## A `shot` answer of exactly the types the bridge takes (contracts/bridge_api.md `answer`): end Vector3i,
+## hit_uid int (0 = none, never negative), part String (over MAX_PART_BYTES it is ""), quality float in
+## 0..MAX_QUALITY (NaN = 0).
+static func shot_answer(end: Vector3i, hit_uid: int, part: String, quality: float) -> Dictionary:
+	var q: float = clampf(quality, 0.0, MAX_QUALITY) if is_finite(quality) else 0.0
+	var p: String = part if part.to_utf8_buffer().size() <= MAX_PART_BYTES else ""
+	return {"end": Vector3i(end), "hit_uid": int(maxi(hit_uid, 0)), "part": String(p), "quality": float(q)}
+
+
+## What a shot request `req_id` is answered with when the bridge refuses its answer: a cancel (CDDA rolls the
+## shot itself), or {} when the id is unusable.
+static func fallback_answer(req_id: Variant) -> Dictionary:
+	var id: Variant = RequestWidget.id_value(req_id)
+	if id == null or id <= 0:
+		return {}
+	return {"id": int(id), "cancel": true}
+
+
+## Sends a shot request's `answer` through `send` (Callable(Dictionary) -> bool, e.g. LiveSession.answer). When
+## the bridge refuses it, sends fallback_answer() instead, so CDDA never waits on the shot. Returns the answer
+## that was taken: `answer`, the cancel, or {} when both were refused (or the id was unusable).
+static func send_shot(answer: Dictionary, send: Callable) -> Dictionary:
+	if not send.is_valid():
+		return {}
+	var ok: Variant = send.call(answer)
+	if ok is bool and ok:
+		return answer
+	var fb := fallback_answer(answer.get("id"))
+	if fb.is_empty() or fb == answer:
+		return {}
+	ok = send.call(fb)
+	return fb if ok is bool and ok else {}
 
 
 ## live_aim's pose, checked: {origin, sight (unit)}, or {} when there is no live_aim or it gives anything but a

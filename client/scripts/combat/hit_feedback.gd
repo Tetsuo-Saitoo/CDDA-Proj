@@ -1,19 +1,18 @@
 class_name HitFeedback
 extends Node
 ## Hit confirmation from CDDA's events (contracts/events.md), never from the client's own flight: CDDA decides
-## every hit. A `projectile` event shot by the player marks the creature it hit (`other`) for MARK_S; a `damage`
-## event on a marked creature confirms a hit (HP lost, body part from `detail`), its `death` a kill.
-## CDDA sends a shot's `damage` (and a death that happens at once) before that shot's `projectile` event, so
-## damage and deaths on unmarked creatures wait RECENT_S: a player's projectile event claims those on its creature.
+## every hit, and only the player's own shots count.
+## CDDA sends a shot's `damage` (and a death that happens at once) before that shot's `projectile` event, in the
+## same drained batch. So a `projectile` event shot by the player that names the creature it hit (`other`)
+## confirms the damage (HP lost, body part from `detail`) and death events on that creature that came before it
+## in the same on_events() batch, after the batch start or the previous projectile event (anyone's: damage before
+## an ally's projectile event is the ally's). Damage in another batch, after the projectile event, on another
+## creature, or before someone else's projectile event (an ally's shot, bleeding, fire) is never credited.
 ## Emits hit_confirmed (AimController's hit marker, VR, other UI) and plays a quiet generated tick (`sound`).
 ## Event fields are checked: bad uids, amounts or body parts skip the event.
 
 signal hit_confirmed(uid: int, part: String, amount: int, killed: bool)
 
-const MARK_S := 1.5            # a player's projectile marks the creature it hit this long
-const RECENT_S := 0.5          # unclaimed damage / deaths wait this long for their projectile event
-const MAX_MARKS := 64
-const MAX_RECENT := 64
 const MAX_EVENTS := 4096       # the bridge queue's cap; more in one batch are ignored
 const MAX_UID := 1 << 53       # JSON numbers are doubles
 const MAX_DETAIL := 1 << 20
@@ -28,8 +27,6 @@ const TICK_DB := -16.0         # quiet
 var world: WorldView           # player uid (snapshot), body part names (id tables); may be null
 var sound := true              # play the tick (VR may play its own instead)
 var ticks := 0                 # ticks played (tests)
-var _marks := {}               # uid -> {left (s), part, amount}
-var _recent: Array[Dictionary] = []   # unclaimed: {kind, uid, part, amount, left}
 var _player: AudioStreamPlayer
 static var _tick: AudioStreamWAV
 
@@ -42,42 +39,26 @@ func _init(w: WorldView = null) -> void:
 	add_child(_player)
 
 
-## Events from the bridge; anything malformed is skipped.
+## One drained batch of events from the bridge; anything malformed is skipped. Nothing carries over to the next
+## batch.
 func on_events(events: Array) -> void:
 	var me := player_uid()
+	var pending: Array[Dictionary] = []   # damage / deaths since the batch start or the last projectile event
 	for i in mini(events.size(), MAX_EVENTS):
 		var e: Variant = events[i]
 		if not e is Dictionary:
 			continue
 		var kind: Variant = (e as Dictionary).get("kind")
-		if kind is String:
-			match kind:
-				"projectile":
-					_on_projectile(e, me)
-				"damage", "death":
-					_on_hurt(kind, e, me)
-
-
-func _process(delta: float) -> void:
-	tick(delta)
-
-
-## Ages the marks and the unclaimed events by `delta` seconds (tests call it directly).
-func tick(delta: float) -> void:
-	if not is_finite(delta) or delta <= 0.0:
-		return
-	for uid: int in _marks.keys():
-		_marks[uid]["left"] -= delta
-		if _marks[uid]["left"] <= 0.0:
-			_marks.erase(uid)
-	for i in range(_recent.size() - 1, -1, -1):
-		_recent[i]["left"] -= delta
-		if _recent[i]["left"] <= 0.0:
-			_recent.remove_at(i)
-
-
-func is_marked(uid: int) -> bool:
-	return _marks.has(uid)
+		if not kind is String:
+			continue
+		match kind:
+			"projectile":
+				_on_projectile(e, me, pending)
+				pending.clear()
+			"damage", "death":
+				var h := _hurt(kind, e, me)
+				if not h.is_empty():
+					pending.append(h)
 
 
 ## The player's uid: the snapshot's player creature, else the contract's 1.
@@ -89,58 +70,44 @@ func player_uid() -> int:
 	return PLAYER_UID
 
 
-func _on_projectile(e: Dictionary, me: int) -> void:
+## A projectile event: when the player shot it into a creature, confirms that creature's `pending` damage and
+## death, in order.
+func _on_projectile(e: Dictionary, me: int, pending: Array[Dictionary]) -> void:
 	var shooter := _uint(e.get("uid"), MAX_UID)
 	var hit := _uint(e.get("other"), MAX_UID)
-	if shooter <= 0 or hit <= 0 or hit == shooter or shooter != me:
+	if shooter <= 0 or shooter != me or hit <= 0 or hit == shooter:
 		return
-	if not _marks.has(hit):
-		if _marks.size() >= MAX_MARKS:
-			_marks.erase(_marks.keys()[0])   # the oldest
-		_marks[hit] = {"part": "", "amount": 0}
-	_marks[hit]["left"] = MARK_S
-	var claimed: Array[Dictionary] = []
-	for i in range(_recent.size() - 1, -1, -1):
-		if _recent[i]["uid"] == hit:
-			claimed.push_front(_recent[i])
-			_recent.remove_at(i)
-	for r in claimed:
-		if _marks.has(hit):
-			_confirm(r["kind"], hit, r["part"], r["amount"])
+	var part := ""
+	var amount := 0
+	for h in pending:
+		if h["uid"] != hit:
+			continue
+		if h["kind"] == "death":
+			_confirm(hit, part, amount, true)   # the kill shows the last hit's part and amount
+			return
+		part = h["part"]
+		amount = h["amount"]
+		_confirm(hit, part, amount, false)
 
 
-func _on_hurt(kind: String, e: Dictionary, me: int) -> void:
+## A damage or death event as {kind, uid, part, amount}, or {} when it is malformed or on the player.
+func _hurt(kind: String, e: Dictionary, me: int) -> Dictionary:
 	var uid := _uint(e.get("uid"), MAX_UID)
 	if uid <= 0 or uid == me:
-		return
+		return {}
 	var part := ""
 	var amount := 0
 	if kind == "damage":
 		amount = _uint(e.get("amount", 0), MAX_AMOUNT)
 		var detail := _uint(e["detail"], MAX_DETAIL) if e.has("detail") else 0
 		if amount < 0 or detail < 0:
-			return
+			return {}
 		part = _part_name(detail) if e.has("detail") else ""
-	if _marks.has(uid):
-		_confirm(kind, uid, part, amount)
-		return
-	if _recent.size() >= MAX_RECENT:
-		_recent.pop_front()
-	_recent.append({"kind": kind, "uid": uid, "part": part, "amount": amount, "left": RECENT_S})
+	return {"kind": kind, "uid": uid, "part": part, "amount": amount}
 
 
-func _confirm(kind: String, uid: int, part: String, amount: int) -> void:
-	var m: Dictionary = _marks[uid]
-	if kind == "death":
-		_marks.erase(uid)
-		for i in range(_recent.size() - 1, -1, -1):
-			if _recent[i]["uid"] == uid:
-				_recent.remove_at(i)
-		hit_confirmed.emit(uid, str(m["part"]), int(m["amount"]), true)
-	else:
-		m["part"] = part
-		m["amount"] = amount
-		hit_confirmed.emit(uid, part, amount, false)
+func _confirm(uid: int, part: String, amount: int, killed: bool) -> void:
+	hit_confirmed.emit(uid, part, amount, killed)
 	_play_tick()
 
 

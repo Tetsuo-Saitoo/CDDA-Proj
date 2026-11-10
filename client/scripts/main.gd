@@ -70,6 +70,7 @@ var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
+var _shot_refused := false   # a shot answer was refused (warned once)
 
 
 func _ready() -> void:
@@ -502,7 +503,13 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	var shot := aim.on_request(req)   # a projectile's shot request: answered at once, no UI
 	if not shot.is_empty():
-		_on_request_answered(shot)
+		# no UI and no time limit: a refused answer is replaced by a cancel, so CDDA never waits on it
+		var sent := AimController.send_shot(shot, live.answer)
+		if sent.is_empty():
+			push_warning("live: bridge refused the shot answer %s and its cancel: the game may wait" % [shot])
+		elif sent != shot and not _shot_refused:
+			_shot_refused = true   # warned once
+			push_warning("live: bridge refused the shot answer %s, cancelled it" % [shot])
 		return
 	print("live: request %s %s %s" % [req.get("kind", "?"), req.get("context", ""),
 			str(req.get("text", "")).left(120).replace("\n", " ")])

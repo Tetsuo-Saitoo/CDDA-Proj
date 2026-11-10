@@ -335,6 +335,14 @@ func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: 
 	r = aim.on_request(sreq)
 	_check.call(r.get("id") == 32 and r.get("shot", {}).get("hit_uid") == 8589934593,
 			"shots: a string error and a NaN angle count as 0 (%s)" % [r])
+	_check.call(typeof(r.get("id")) == TYPE_INT and r.size() == 2 and _bridge_typed(r.get("shot", {}))
+			and _bridge_typed(a.get("shot", {}), true) and _bridge_typed(aim.last_shot.get("answer", {})),
+			"shots: answers hold exactly the bridge's types, a float id becomes an int (%s %s)" % [r, a])
+	var mreq := sreq.duplicate()
+	mreq["shot_error"] = 600.0
+	mreq["shot_angle"] = 0.0
+	var miss := aim.on_request(mreq)
+	_check.call(_bridge_typed(miss.get("shot", {})) and miss["shot"]["hit_uid"] == 0, "shots: a miss's answer is typed too (%s)" % [miss])
 	var bad_ids := []
 	for id: Variant in ["31", -3, 0, 1.5, null]:
 		sreq["id"] = id
@@ -364,6 +372,7 @@ func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: 
 			"shots: no aim, an old aim, a bad aim, a shot into our own square, no figures: cancel (%s)" % [cancels])
 	_check.call(aim.on_request({"id": 5, "kind": "menu"}).is_empty() and aim.on_request({"id": 5, "kind": 7}).is_empty()
 			and aim.on_request({}).is_empty(), "shots: other requests aren't answered here")
+	_test_shot_answers()
 
 	# an older bridge (no dispersion): FIRE draws its own tracer
 	aim.on_request(req)
@@ -372,6 +381,75 @@ func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: 
 	aim.on_fire(cam, Vector2.ZERO, true)
 	_check.call(aim.dispersion == 0.0 and aim._tracers == tracers + 1, "shots: without dispersion FIRE draws its tracer as before")
 	ui.clear()
+
+
+## A `shot` answer of exactly the bridge's types (contracts/bridge_api.md `answer`): end, hit_uid, part, quality
+## and, for a FIRE (`fire`), fly.
+static func _bridge_typed(s: Variant, fire := false) -> bool:
+	if not s is Dictionary:
+		return false
+	var d: Dictionary = s
+	var keys := ["end", "hit_uid", "part", "quality"]
+	if fire:
+		keys.append("fly")
+	if d.size() != keys.size() or not d.has_all(keys):
+		return false
+	if fire and typeof(d["fly"]) != TYPE_BOOL:
+		return false
+	return typeof(d["end"]) == TYPE_VECTOR3I and typeof(d["hit_uid"]) == TYPE_INT and d["hit_uid"] >= 0 \
+			and typeof(d["part"]) == TYPE_STRING and (d["part"] as String).to_utf8_buffer().size() <= 64 \
+			and typeof(d["quality"]) == TYPE_FLOAT and d["quality"] >= 0.0 and d["quality"] <= 0.99
+
+
+## shot_answer() keeps the bridge's types and ranges; send_shot() cancels a shot whose answer the bridge refuses,
+## so CDDA never waits on it.
+func _test_shot_answers() -> void:
+	var A := AimController
+	var end := Vector3i(4, -2, 1)
+	var ok := A.shot_answer(end, 7, "head", 0.5)
+	var junk := A.shot_answer(end, -5, "x".repeat(65), NAN)
+	var wide := A.shot_answer(end, 7, "é".repeat(33), 3.0)
+	_check.call(ok == {"end": end, "hit_uid": 7, "part": "head", "quality": 0.5} and _bridge_typed(ok)
+			and junk == {"end": end, "hit_uid": 0, "part": "", "quality": 0.0} and _bridge_typed(junk)
+			and wide["part"] == "" and wide["quality"] == 0.99 and A.shot_answer(end, 1, "eyes", -1.0)["quality"] == 0.0
+			and A.shot_answer(end, 1, "e".repeat(64), INF)["part"].length() == 64,
+			"shot answers: a negative uid is 0, a part over 64 bytes is \"\", quality clamped to 0..0.99, NaN 0 (%s %s %s)" % [ok, junk, wide])
+	var fb_ok := A.fallback_answer(31) == {"id": 31, "cancel": true} and typeof(A.fallback_answer(31.0)["id"]) == TYPE_INT
+	for bad: Variant in ["31", -1, 0, 1.5, null, NAN, INF, [31], 1e12]:
+		fb_ok = fb_ok and A.fallback_answer(bad).is_empty()
+	_check.call(fb_ok, "shot answers: the fallback is a cancel with the int id, none for a bad id")
+
+	var sent := []
+	var refuse := [0]   # 0 none, 1 everything but a cancel, 2 everything
+	var send := func(d: Dictionary) -> bool:
+		sent.append(d)
+		return refuse[0] == 0 or (refuse[0] == 1 and d.has("cancel"))
+	var shot := {"id": 31, "shot": ok}
+	var cancel := {"id": 31, "cancel": true}
+	var taken := A.send_shot(shot, send)
+	var took_ok := taken == shot and sent == [shot]
+	refuse[0] = 1
+	sent.clear()
+	taken = A.send_shot(shot, send)
+	var fell_back := taken == cancel and sent == [shot, cancel]
+	refuse[0] = 2
+	sent.clear()
+	taken = A.send_shot(shot, send)
+	var both := taken.is_empty() and sent == [shot, cancel]
+	sent.clear()
+	taken = A.send_shot(cancel, send)
+	var no_resend := taken.is_empty() and sent == [cancel]
+	sent.clear()
+	taken = A.send_shot({"id": "31", "shot": ok}, send)
+	var bad_id := taken.is_empty() and sent.size() == 1
+	var odd := [0]
+	var not_bool := func(_d: Dictionary) -> Variant:
+		odd[0] += 1
+		return 1
+	var odd_ok: bool = A.send_shot(shot, not_bool).is_empty() and odd[0] == 2 and A.send_shot(shot, Callable()).is_empty()
+	_check.call(took_ok and fell_back and both and no_resend and bad_id and odd_ok,
+			"shot answers: a refused shot answer is followed by a cancel, once; a refused cancel isn't resent (%s)"
+			% [[took_ok, fell_back, both, no_resend, bad_id, odd_ok]])
 
 
 func _key(code: Key) -> InputEventKey:
@@ -641,7 +719,8 @@ func _test_wielded_and_vr(aim: AimController, ui: RequestUI, cam: Camera3D, req:
 	ui.clear()
 
 
-## Hit feedback: only CDDA's events confirm hits (projectile by the player marks, damage / death confirm).
+## Hit feedback: only CDDA's events confirm hits: the player's projectile event confirms the damage / death on the
+## creature it names that came before it in the same batch.
 func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTables) -> void:
 	var hf := aim.hits
 	var got := []
@@ -656,56 +735,71 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	var dmg := func(uid: Variant, amount: Variant, part: Variant) -> Dictionary:
 		return {"kind": "damage", "uid": uid, "amount": amount, "detail": part, "pos": Vector3i.ZERO}
 	_check.call(me == 1 and head >= 0 and torso >= 0, "hits: the player is uid 1, the tables name head and torso")
-	# CDDA's order: the shot's damage, then its projectile event
+	var death := func(uid: Variant) -> Dictionary:
+		return {"kind": "death", "uid": uid, "pos": Vector3i.ZERO}
+	# CDDA's order: the shot's damage, then its projectile event, in one batch
 	hf.on_events([dmg.call(z, 7, torso), shot_by.call(me, z)])
 	var cross := aim.crosshair
-	_check.call(got == [[z, "torso", 7, false]] and hf.is_marked(z) and cross.marking() and cross.hit_color == AimController.Crosshair.HIT_WHITE
-			and cross.hit_scale == 1.0 and hf.ticks == 1, "hits: damage then the player's projectile confirms a hit (%s)" % [got])
+	_check.call(got == [[z, "torso", 7, false]] and cross.marking() and cross.hit_color == AimController.Crosshair.HIT_WHITE
+			and cross.hit_scale == 1.0 and hf.ticks == 1, "hits: damage then the player's projectile in one batch confirms a hit (%s)" % [got])
 	aim.first_person = true
 	ui.clear()
 	aim.update(cam, false)
 	var shows := aim.crosshair.visible and not aim.crosshair.show_cross
-	hf.on_events([dmg.call(z, 20.0, head)])
+	hf.on_events([dmg.call(z, 20.0, head), shot_by.call(me, z)])
 	_check.call(got.size() == 2 and got[1] == [z, "head", 20, false] and cross.hit_scale == AimController.Crosshair.HEAD_SCALE and shows,
-			"hits: damage on a marked creature is a hit, the head a bigger marker, shown without aiming (%s)" % [got])
-	hf.on_events([{"kind": "death", "uid": z, "pos": Vector3i.ZERO}])
-	_check.call(got.size() == 3 and got[2] == [z, "head", 20, true] and cross.hit_color == AimController.Crosshair.HIT_RED and not hf.is_marked(z),
-			"hits: its death confirms a kill, red (%s)" % [got])
+			"hits: a head hit is a bigger marker, shown without aiming (%s)" % [got])
+	hf.on_events([dmg.call(z, 12, head), death.call(z), shot_by.call(me, z)])
+	_check.call(got.size() == 4 and got[2] == [z, "head", 12, false] and got[3] == [z, "head", 12, true]
+			and cross.hit_color == AimController.Crosshair.HIT_RED, "hits: damage and death before the projectile: hit, then a red kill (%s)" % [got])
 	cross.tick_hit(0.31)
 	aim.update(cam, false)
 	_check.call(not cross.marking() and not cross.visible, "hits: the marker fades in 0.3 s")
 
-	# a death right with the damage, before the projectile event: hit and kill
+	# a burst: each projectile event claims only the damage since the one before
 	got.clear()
-	hf.on_events([dmg.call(z + 1, 30, torso), {"kind": "death", "uid": z + 1}, shot_by.call(me, z + 1)])
-	_check.call(got == [[z + 1, "torso", 30, false], [z + 1, "torso", 30, true]], "hits: damage and death before the projectile: hit, kill (%s)" % [got])
-	# not ours, not marked, expired
+	hf.on_events([dmg.call(z + 1, 3, torso), shot_by.call(me, z + 1), dmg.call(z + 1, 4, head), shot_by.call(me, z + 1),
+			shot_by.call(me, z + 1)])
+	_check.call(got == [[z + 1, "torso", 3, false], [z + 1, "head", 4, false]],
+			"hits: a burst credits each shot's own damage once (%s)" % [got])
+	# a later batch, after the projectile, an earlier batch: nothing
 	got.clear()
-	hf.on_events([dmg.call(z + 2, 5, torso)])
-	hf.tick(HitFeedback.RECENT_S + 0.1)
-	hf.on_events([shot_by.call(me, z + 2)])
-	var late := got.is_empty() and hf.is_marked(z + 2)
-	hf.on_events([dmg.call(z + 3, 5, torso), shot_by.call(z + 4, z + 3), dmg.call(z + 3, 5, torso)])
-	var others := got.is_empty() and not hf.is_marked(z + 3)
-	hf.tick(HitFeedback.MARK_S + 0.1)
-	hf.on_events([dmg.call(z + 2, 5, torso)])
-	_check.call(late and others and got.is_empty() and not hf.is_marked(z + 2),
-			"hits: damage on an unmarked creature, another shooter's projectile, an expired mark: nothing (%s)" % [got])
+	hf.on_events([dmg.call(z + 1, 5, torso)])
+	var later := got.is_empty()
+	hf.on_events([shot_by.call(me, z + 1), dmg.call(z + 1, 5, torso), death.call(z + 1)])
+	var after := got.is_empty()
+	_check.call(later and after, "hits: damage in a later batch or after the projectile event isn't the player's (%s)" % [got])
+	# another creature, a miss in between, an ally's projectile
+	hf.on_events([dmg.call(z + 3, 5, torso), death.call(z + 3), shot_by.call(me, z + 2)])
+	var other := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 5, torso), shot_by.call(me, 0), shot_by.call(me, z + 2)])
+	var missed := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 5, torso), shot_by.call(z + 4, z + 2)])
+	var ally := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 6, torso), death.call(z + 2), shot_by.call(z + 4, z + 2), shot_by.call(me, z + 2)])
+	var ally_first := got.is_empty()
+	hf.on_events([dmg.call(z + 2, 6, torso), shot_by.call(z + 2, me), shot_by.call(me, z + 2)])
+	var at_me := got.is_empty()
+	_check.call(other and missed and ally and ally_first and at_me,
+			"hits: damage on another creature, before the player's miss, an ally's or a monster's projectile: nothing (%s)"
+			% [[other, missed, ally, ally_first, at_me]])
+	hf.on_events([dmg.call(z + 3, 5, torso), dmg.call(z + 2, 8, torso), dmg.call(me, 9, torso), shot_by.call(me, z + 2)])
+	_check.call(got == [[z + 2, "torso", 8, false]], "hits: of several creatures hurt, only the one shot counts (%s)" % [got])
 	# junk
-	hf.on_events([shot_by.call(me, z + 5)])
+	got.clear()
 	hf.on_events(["junk", 5, null, {"kind": 7, "uid": z + 5}, {"kind": "damage"}, dmg.call("x", 5, torso),
 			dmg.call(z + 5, -3, torso), dmg.call(z + 5, NAN, torso), dmg.call(z + 5, "5", torso), dmg.call(z + 5, 1e12, torso),
 			dmg.call(z + 5, 4.5, torso), dmg.call(z + 5, 5, -1), dmg.call(z + 5, 5, "head"), dmg.call(z + 5, 5, INF),
-			shot_by.call(me, -4), shot_by.call(1.5, z), shot_by.call(me, NAN), shot_by.call(me, 1e300), shot_by.call(me, me),
-			{"kind": "death", "uid": [z + 5]}])
-	var junk_ok := got.is_empty() and hf.is_marked(z + 5) and not hf.is_marked(z)
-	hf.on_events([dmg.call(z + 5, 9, 99999), {"kind": "damage", "uid": z + 5, "amount": 2}])
+			{"kind": "death", "uid": [z + 5]}, death.call(-1), shot_by.call(me, z + 5)])
+	hf.on_events([shot_by.call(me, -4), shot_by.call(1.5, z), shot_by.call(me, NAN), shot_by.call(me, 1e300), shot_by.call(me, me),
+			{"kind": "projectile", "uid": me, "other": "z"}, {"kind": "projectile"}])
+	var junk_ok := got.is_empty()
+	hf.on_events([dmg.call(z + 5, 9, 99999), {"kind": "damage", "uid": z + 5, "amount": 2}, shot_by.call(me, z + 5)])
 	_check.call(junk_ok and got == [[z + 5, "", 9, false], [z + 5, "", 2, false]],
 			"hits: junk events are skipped, an unknown or missing body part is \"\" (%s)" % [got])
 	var snd := HitFeedback.tick_stream()
 	_check.call(snd.data.size() == int(HitFeedback.TICK_RATE * HitFeedback.TICK_S) * 2 and HitFeedback.tick_stream() == snd
 			and hf.ticks >= 5, "hits: a short tick, made once, plays per confirmation (%d)" % hf.ticks)
-	hf.tick(10.0)
 	aim.first_person = false
 
 
