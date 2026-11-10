@@ -354,6 +354,18 @@ func _test_compass(root: Node, world: WorldView) -> void:
 	_check.call(wr.visible and not rig.compass.belt.visible and wr.arrow_count() == 2 and wr.dot_count() == 2
 			and wr.global_position.distance_to(rig.left.global_position) < 0.25 and wr.global_basis.y.x < -0.9,
 			"vr compass: on the back of the left wrist (box hand), creatures shown")
+	var lv: Array[Vector4] = [Vector4(90, 2, Snapshot.Creature.HOSTILE, 0), Vector4(270, 35, Snapshot.Creature.HOSTILE, 1),
+			Vector4(180, 50, Snapshot.Creature.NEUTRAL, -3), Vector4(0, 5, Snapshot.Creature.FRIENDLY, 0)]
+	var lay2 := VrCompass.layout(list, 1.0, PackedInt32Array([0, 1, -3, 0]))
+	rig.compass.set_level_blips(lv)
+	_check.call(lay2[1][0] == "ring" and lay2[2][0] == "ring" and lay2[0][0] == "arrow"
+			and is_equal_approx((lay2[1][3] as Color).a, (lay[1][3] as Color).a * Compass.OTHER_LEVEL_FADE)
+			and wr.arrow_count() == 1 and wr.dot_count() == 1 and wr.ring_count() == 2
+			and wr.chevron_counts() == Vector2i(1, 2) and rig.compass.blip_levels.size() == 4,
+			"vr compass: creatures on other levels are faint rings with up / down chevrons (two for 2+ levels)")
+	rig.compass.set_blips(list)
+	_check.call(wr.ring_count() == 0 and wr.arrow_count() == 2 and rig.compass.blip_levels.is_empty(),
+			"vr compass: plain blips clear the levels")
 	rig.settings["compass"] = "belt"
 	rig.place_compass()
 	var head := rig.camera.global_position
@@ -465,13 +477,30 @@ func _test_rig(root: Node, world: WorldView) -> void:
 	rig.press(rig.right, "primary_click", Vector2(0, -0.9))
 	_check.call(rig.z == (z0 - 1 if below != null else z0), "vr layout: wand right pad click down = level down")
 	rig.settings["layout"] = "quest"
-	var leaf := Grabbable.new()
-	rig.grabs[0] = leaf
-	rig.near[1] = leaf
-	rig._lit = [leaf]
+	rig.press(rig.right, "grip_click")
+	rig.update_hands(0.016, true)
+	rig.release(rig.right, "grip_click")
+	_check.call(rig.hands == null and rig.let_go(rig.right) == "" and rig.buzzes[0] == 0 and rig.buzzes[1] == 0,
+			"vr rig: without hands the grip grabs nothing")
+	# D5: a door leaf freed under a hand (its submap dropped) that one hand holds and the other outlines.
+	var acts := ItemActions.new()
+	var hands := Hands.new(world, acts)
+	rig.hands = hands
+	var sq := Vector3i(-900, -900, 0)
+	var leaf := Grabbable.door(world, {"square": sq, "local": Vector3.ZERO, "along_x": true, "color": Color.GRAY,
+			"glass": false, "open": false, "locked": false})
+	root.add_child(leaf)
+	var t := {"kind": "door", "node": leaf, "item": null, "square": sq, "point": leaf.global_position, "dist": 0.0,
+			"name": "door"}
+	hands.set_hand_pose("vr_l", rig.left.global_transform, true)
+	var grabbed := hands.grab("vr_l", t)
+	hands.hover("vr_r", t)
 	leaf.free()
-	rig.update_grabs(true)
-	_check.call(typeof(rig.grabs[0]) == TYPE_NIL and rig._lit.all(func(x: Variant) -> bool: return is_instance_valid(x))
-			and rig.near.all(func(x: Variant) -> bool: return typeof(x) == TYPE_NIL or is_instance_valid(x)),
+	rig.update_hands(0.016, true)
+	var hover_node: Variant = hands.hand("vr_r").hover.get("node")
+	_check.call(grabbed and hands.holding("vr_l").is_empty() and (typeof(hover_node) == TYPE_NIL or is_instance_valid(hover_node)),
 			"vr rig: a door that went away under a hand is let go")
+	world.door_state.erase(sq)
 	rig.free()
+	hands.free()
+	acts.free()

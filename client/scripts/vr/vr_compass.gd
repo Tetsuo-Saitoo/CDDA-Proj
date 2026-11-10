@@ -30,6 +30,7 @@ var opacity := 1.0:
 			if r != null:
 				r.set_opacity(opacity)
 var blips: Array[Vector3] = []  # Compass.creature_blips
+var blip_levels := PackedInt32Array()   # level offset per blip (set_level_blips); empty = all on yours
 var wrist: Rose
 var belt: Rose
 
@@ -47,11 +48,28 @@ func _init() -> void:
 
 
 func set_blips(list: Array[Vector3]) -> void:
-	if list == blips:
+	if list == blips and blip_levels.is_empty():
 		return
 	blips = list
+	blip_levels = PackedInt32Array()
 	wrist.show_blips(list)
 	belt.show_blips(list)
+
+
+## Markers with their level offsets (Compass.level_blips): creatures on another level are hollow rings, fainter,
+## with an up / down chevron beside them (two for 2+ levels), as on the flat compass.
+func set_level_blips(list: Array[Vector4]) -> void:
+	var b: Array[Vector3] = []
+	var lv := PackedInt32Array()
+	for v: Vector4 in list:
+		b.append(Vector3(v.x, v.y, v.z))
+		lv.append(int(v.w))
+	if b == blips and lv == blip_levels:
+		return
+	blips = b
+	blip_levels = lv
+	wrist.show_blips(b, lv)
+	belt.show_blips(b, lv)
 
 
 ## Places the roses for this frame: the wrist one on the off hand (VrHand joints, else its controller), the
@@ -117,18 +135,34 @@ static func dir_of(bearing: float) -> Vector3:
 	return Vector3(sin(a), 0.0, -cos(a))
 
 
-## Markers for a blip list on a rose of radius r: [[kind ("arrow"/"dot"), position, size, colour], ...], hostiles
-## first (on the rim, pointing out), others inside. Same nearness and colours as the flat strip.
-static func layout(list: Array[Vector3], r: float) -> Array:
+## Markers for a blip list on a rose of radius r: [[kind ("arrow"/"dot"/"ring"), position, size, colour, level
+## offset], ...], hostiles first (on the rim, pointing out), others inside. A creature on another level (`levels`,
+## same order; missing = yours) is a hollow ring (size = its radius), fainter. Same nearness and colours as the
+## flat strip.
+static func layout(list: Array[Vector3], r: float, levels := PackedInt32Array()) -> Array:
 	var out := []
-	for b: Vector3 in list:
+	for i in list.size():
+		var b := list[i]
+		var dz: int = levels[i] if i < levels.size() else 0
 		var t := Compass.nearness(b.y)
+		var m: Array
 		if b.z == Snapshot.Creature.HOSTILE:
-			out.append(["arrow", dir_of(b.x) * r * 1.08, r * lerpf(0.14, 0.26, t),
-					Color(Compass.HOSTILE_COLOR, lerpf(0.45, 1.0, t))])
+			var s := r * lerpf(0.14, 0.26, t)
+			m = ["arrow", dir_of(b.x) * r * 1.08, s, Color(Compass.HOSTILE_COLOR, lerpf(0.45, 1.0, t)), dz]
+			if dz != 0:
+				m[2] = s * 0.45
 		else:
 			var col := Compass.FRIENDLY_COLOR if b.z == Snapshot.Creature.FRIENDLY else Compass.NEUTRAL_COLOR
-			out.append(["dot", dir_of(b.x) * r * 0.78, r * lerpf(0.05, 0.08, t), Color(col, lerpf(0.4, 0.9, t))])
+			var s := r * lerpf(0.05, 0.08, t)
+			m = ["dot", dir_of(b.x) * r * 0.78, s, Color(col, lerpf(0.4, 0.9, t)), dz]
+			if dz != 0:
+				m[2] = s * 1.3
+		if dz != 0:
+			m[0] = "ring"
+			var c: Color = m[3]
+			c.a *= Compass.OTHER_LEVEL_FADE
+			m[3] = c
+		out.append(m)
 	return out
 
 
@@ -140,6 +174,9 @@ class Rose extends Node3D:
 	var opacity := 1.0
 	var _arrows: MultiMesh
 	var _dots: MultiMesh
+	var _rings: MultiMesh   # creatures on another level (hollow)
+	var _ups: MultiMesh     # chevrons beside them, billboarded: up ...
+	var _downs: MultiMesh   # ... and down
 	var _ticks: MultiMesh
 	var _head: MeshInstance3D
 	var _disc_mat: StandardMaterial3D
@@ -191,6 +228,21 @@ class Rose extends Node3D:
 		ball.radial_segments = 8
 		ball.rings = 4
 		_dots = _multimesh(ball, Compass.MAX_OTHER_BLIPS)
+		var torus := TorusMesh.new()
+		torus.inner_radius = 0.65
+		torus.outer_radius = 1.0
+		torus.rings = 12
+		torus.ring_segments = 4
+		var all := Compass.MAX_BLIPS + Compass.MAX_OTHER_BLIPS
+		_rings = _multimesh(torus, all)
+		_ups = _multimesh(VrCompass._chevron(true), all * 2)
+		_mm_mats[-1].billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		_mm_mats[-1].billboard_keep_scale = true
+		_mm_mats[-1].cull_mode = BaseMaterial3D.CULL_DISABLED
+		_downs = _multimesh(VrCompass._chevron(false), all * 2)
+		_mm_mats[-1].billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+		_mm_mats[-1].billboard_keep_scale = true
+		_mm_mats[-1].cull_mode = BaseMaterial3D.CULL_DISABLED
 		var hb := BoxMesh.new()
 		hb.size = Vector3(r * 0.07, r * 0.05, r * 0.3)
 		hb.material = VrCompass._mat(HEAD_COLOR, false)
@@ -210,12 +262,15 @@ class Rose extends Node3D:
 			l.position = VrCompass.dir_of(deg) * r * (1.12 if ring else 0.62) + Vector3(0, r * (0.12 if ring else 0.1), 0)
 			add_child(l)
 			_labels.append(l)
-		_arrows.visible_instance_count = 0
-		_dots.visible_instance_count = 0
+		for mm: MultiMesh in [_arrows, _dots, _rings, _ups, _downs]:
+			mm.visible_instance_count = 0
 
 	func _multimesh(mesh: Mesh, count: int) -> MultiMesh:
 		var m := VrCompass._mat(Color.WHITE, true)
-		(mesh as PrimitiveMesh).material = m
+		if mesh is PrimitiveMesh:
+			(mesh as PrimitiveMesh).material = m
+		else:
+			(mesh as ArrayMesh).surface_set_material(0, m)
 		_mm_mats.append(m)
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -228,14 +283,39 @@ class Rose extends Node3D:
 		add_child(mi)
 		return mm
 
-	func show_blips(list: Array[Vector3]) -> void:
-		_shown = VrCompass.layout(list, radius)
+	func show_blips(list: Array[Vector3], levels := PackedInt32Array()) -> void:
+		_shown = VrCompass.layout(list, radius, levels)
 		_paint()
 
 	func _paint() -> void:
 		var na := 0
 		var nd := 0
+		var nr := 0
+		var nu := 0
+		var nv := 0
 		for m: Array in _shown:
+			if m[0] == "ring" and nr < _rings.instance_count:
+				var p: Vector3 = m[1]
+				var rr: float = m[2]
+				var rc: Color = m[3]
+				var dz: int = m[4]
+				var lift := Vector3(0, radius * 0.03, 0)
+				_rings.set_instance_transform(nr, Transform3D(Basis.from_scale(Vector3.ONE * rr), p + lift))
+				_rings.set_instance_color(nr, rc)
+				nr += 1
+				var side := p.normalized().cross(Vector3.UP)   # beside the ring, along the rim
+				var ch := radius * 0.12
+				for k in mini(absi(dz), 2):
+					var at := Transform3D(Basis.from_scale(Vector3.ONE * ch), p + lift + side * (rr + ch * (0.7 + k * 1.1)))
+					if dz > 0 and nu < _ups.instance_count:
+						_ups.set_instance_transform(nu, at)
+						_ups.set_instance_color(nu, rc)
+						nu += 1
+					elif dz < 0 and nv < _downs.instance_count:
+						_downs.set_instance_transform(nv, at)
+						_downs.set_instance_color(nv, rc)
+						nv += 1
+				continue
 			var pos: Vector3 = m[1]
 			var s: float = m[2]
 			var col: Color = m[3]
@@ -252,12 +332,22 @@ class Rose extends Node3D:
 				nd += 1
 		_arrows.visible_instance_count = na
 		_dots.visible_instance_count = nd
+		_rings.visible_instance_count = nr
+		_ups.visible_instance_count = nu
+		_downs.visible_instance_count = nv
 
 	func arrow_count() -> int:
 		return _arrows.visible_instance_count
 
 	func dot_count() -> int:
 		return _dots.visible_instance_count
+
+	func ring_count() -> int:
+		return _rings.visible_instance_count
+
+	## Chevrons beside the rings: [up, down].
+	func chevron_counts() -> Vector2i:
+		return Vector2i(_ups.visible_instance_count, _downs.visible_instance_count)
 
 	func set_heading(deg: float) -> void:
 		var d := VrCompass.dir_of(deg)
@@ -272,6 +362,20 @@ class Rose extends Node3D:
 		((_head.mesh as PrimitiveMesh).material as StandardMaterial3D).albedo_color.a = a
 		for m: StandardMaterial3D in _mm_mats:
 			m.albedo_color.a = a
+
+
+## A flat chevron triangle (drawn billboarded), pointing up or down, base 1 wide, 0.8 tall, its middle at 0.
+static func _chevron(up: bool) -> ArrayMesh:
+	var lo := Vector3(0, -0.4, 0)
+	var hi := Vector3(0, 0.4, 0)
+	var v := PackedVector3Array([lo + Vector3(-0.5, 0, 0), lo + Vector3(0.5, 0, 0), hi]) if up \
+			else PackedVector3Array([hi + Vector3(-0.5, 0, 0), hi + Vector3(0.5, 0, 0), lo])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = v
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
 
 
 ## Unshaded so it reads in the dark; `instance_colors`: colour per multimesh instance.

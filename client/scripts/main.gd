@@ -343,10 +343,11 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
+	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
+	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
+	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
+	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	add_child(vr)
-	vr.grab_ok = func(sq: Vector3i) -> bool:   # live: CDDA opens doors next to the player only
-		var p: Variant = _reach_square()
-		return live == null or (p != null and sq.z == p.z and absi(sq.x - p.x) <= 1 and absi(sq.y - p.y) <= 1)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
@@ -363,7 +364,10 @@ func _start_vr() -> void:
 	vr_perf = VrPerf.new(xr)
 	add_child(vr_perf)
 	vr.live_stairs = live != null
-	vr.stair_used.connect(func(st: Dictionary) -> void: use_stair(st, true))
+	vr.stair_used.connect(func(st: Dictionary) -> void:
+		status = "stairs: not now"   # use_stair says why when it knows
+		if not use_stair(st, true):
+			vr.refused_here(status))   # a buzz and the reason by the main hand (no status line in the headset)
 	if live != null:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
@@ -809,6 +813,9 @@ func _can_inspect() -> bool:
 func _reach_square() -> Variant:
 	if world.snapshot == null:
 		return null
+	if live == null and vr != null:   # mock VR: the hands reach from where the headset stands
+		var at := world.coords.world_to_ms(vr.camera.global_position)
+		return Vector3i(at.x, at.y, vr.z)
 	if live == null and _fp_active():
 		var sq := world.coords.world_to_ms(fp.position)
 		return Vector3i(sq.x, sq.y, fp.z)
@@ -1021,8 +1028,10 @@ func _process(_delta: float) -> void:
 		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
-		vr.compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
+	if vr != null:   # the VR Cheats page follows the F1 menu's gate (debug switch, --test / --cheats, test range)
+		vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
 	var help := _help()
