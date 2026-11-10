@@ -3,7 +3,8 @@ extends Node3D
 ## Shows the newest snapshot: one node per submap per z that has anything to draw (open sky gets none),
 ## holding "terrain", "roof" and "caps" meshes and "terrain_models", "terrain_roof_models" (TerrainMesher)
 ## and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher: furniture, traps, item
-## piles); models are one MultiMeshInstance3D per model part.
+## piles); models are one MultiMeshInstance3D per model part. Door leaves (TerrainMesher doors) and furniture
+## doors, drawers and lids (PropMesher parts) are Grabbable children of the submap's node (block L8).
 ## Terrain is rebuilt when a submap's revision differs from the one built (any difference, not only an
 ## increase: a submap that leaves the bubble and comes back restarts at 1), together with its six
 ## neighbours, whose edge walls, wall tops and roof lids depend on it. Props are rebuilt with the
@@ -39,7 +40,7 @@ var z_min_content := 0
 var z_max_content := 0
 var vertex_count := 0
 var props_built := 0      # submaps whose props the last apply rebuilt
-var prop_counts := {"furniture": 0, "items": 0, "traps": 0, "glyphs": 0, "models": 0}
+var prop_counts := {"furniture": 0, "items": 0, "traps": 0, "glyphs": 0, "models": 0, "parts": 0}
 ## Asked for once per generation that doesn't match the snapshot's (live mode refetches).
 var tables_mismatch := false
 ## Door leaves (Grabbable) by square. door_state keeps each one's angle across rebuilds; door_local: no sim,
@@ -49,6 +50,15 @@ var _door_squares := {}   # submap -> {square: true}: the leaves _build_doors ma
 var door_state := {}
 var door_local := true
 var door_open := {}
+## Furniture doors, drawers and lids (Grabbable.part, block L8; PropMesher.Result.parts) by id ("x_y_z/door_1"),
+## several to a square. The same node stays while its id and key last (a newer snapshot: sync_part); freed with
+## its submap. grabbable_near / grabbable_on_ray find them with the door leaves.
+var parts := {}
+var _part_ids := {}    # submap -> {id: true}: the parts _build_parts made there
+var _part_info := {}   # id -> [key, square]
+var _parts_at := {}    # square -> Array of Grabbable
+## Meshes a part is drawn with (a model has at most ModelLibrary.MAX_PARTS drawn meshes).
+const MAX_PART_MESHES := 32
 ## Darkens the world by CDDA's light (block C6); main.gd turns it off with --no-light.
 var lighting := WorldLighting.new()
 ## Vector3i absolute submap -> {"rev", "detail", "verts", "pverts", "counts", "terrain", "props", "slots"}: every
@@ -408,7 +418,7 @@ func node_count() -> int:
 	return _nodes.size()
 
 
-## Door leaves live under their submap's node, so a submap without one has none to drop.
+## Door leaves and furniture parts live under their submap's node, so a submap without one has none to drop.
 func _free_node(pos: Vector3i) -> void:
 	if _built.has(pos):
 		_set_slots(pos, [])
@@ -416,6 +426,7 @@ func _free_node(pos: Vector3i) -> void:
 	if node == null:
 		return
 	_drop_doors(pos, {})
+	_drop_parts(pos, {})
 	node.free()
 	_nodes.erase(pos)
 
@@ -472,50 +483,196 @@ func _drop_doors(pos: Vector3i, keep: Dictionary) -> void:
 	_door_squares.erase(pos)
 
 
-## The leaf nearest `p` (world) within `reach` metres on squares around it, or null. `ok` filters squares.
+## The leaf or furniture part nearest `p` (world) within `reach` metres on squares around it, or null. `ok`
+## filters squares.
 func grabbable_near(p: Vector3, reach: float, ok := Callable()) -> Grabbable:
 	var c := coords.world_to_ms(p)
 	var best: Grabbable = null
 	var best_d := reach
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
-			var g: Grabbable = grabbables.get(c + Vector3i(dx, dy, 0))
-			if g == null or (ok.is_valid() and not ok.call(g.square)):
-				continue
-			var d := g.distance_to(p)
-			if d <= best_d:
-				best = g
-				best_d = d
+			for g: Grabbable in _grabbables_at(c + Vector3i(dx, dy, 0)):
+				if ok.is_valid() and not ok.call(g.square):
+					continue
+				var d := g.distance_to(p)
+				if d <= best_d:
+					best = g
+					best_d = d
 	return best
 
 
-## The leaf a ray (normalized `dir`) meets first on the squares around `centre` (same level), within `max_d`;
-## [Grabbable, hit point] or [].
+## The leaf or furniture part a ray (normalized `dir`) meets first on the squares around `centre` (same
+## level), within `max_d`; [Grabbable, hit point] or [].
 func grabbable_on_ray(origin: Vector3, dir: Vector3, centre: Vector3i, max_d: float) -> Array:
 	var best: Array = []
 	var best_t := max_d
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
-			var g: Grabbable = grabbables.get(centre + Vector3i(dx, dy, 0))
-			if g == null:
-				continue
-			var t := g.ray_distance(origin, dir)
-			if t < best_t:
-				best_t = t
-				best = [g, origin + dir * t]
+			for g: Grabbable in _grabbables_at(centre + Vector3i(dx, dy, 0)):
+				var t := g.ray_distance(origin, dir)
+				if t < best_t:
+					best_t = t
+					best = [g, origin + dir * t]
 	return best
+
+
+## The door leaf and the furniture parts on square `sq` (live nodes only).
+func _grabbables_at(sq: Vector3i) -> Array[Grabbable]:
+	var out: Array[Grabbable] = []
+	var d: Variant = grabbables.get(sq)
+	if d != null and is_instance_valid(d):
+		out.append(d)
+	for g: Variant in _parts_at.get(sq, []):
+		if is_instance_valid(g):
+			out.append(g)
+	return out
+
+
+## The submap's furniture parts from PropMesher.Result.parts: a part whose id and key are already shown keeps its
+## node (a grabbed one keeps its grab) and takes CDDA's newer state (sync_part); new ones are made, gone ones
+## freed. A spec Grabbable.part refuses is drawn still (node "still_parts") rather than lost.
+func _build_parts(node: Node3D, pos: Vector3i, specs: Array) -> void:
+	var keep := {}
+	var old := node.get_node_or_null("still_parts")
+	if old:
+		old.free()
+	var still: Node3D = null
+	for v: Variant in specs:
+		if keep.size() >= PropMesher.MAX_PARTS:
+			break
+		if typeof(v) != TYPE_DICTIONARY:
+			continue
+		var spec: Dictionary = v
+		var id: Variant = spec.get("id")
+		if typeof(id) != TYPE_STRING or keep.has(id):
+			continue
+		var g: Grabbable = parts.get(id) if is_instance_valid(parts.get(id)) else null
+		var info: Array = _part_info.get(id, [])
+		var key: Variant = spec.get("key")
+		if g != null and g.get_parent() == node and info.size() == 2 and typeof(info[0]) == typeof(key) and info[0] == key:
+			g.sync_part(_flag(spec, "cdda_open"), _flag(spec, "locked"))
+		else:
+			if parts.has(id):
+				_free_part(id)
+			var model := _part_model(spec)
+			var made := spec.duplicate()
+			made["mesh"] = model
+			g = Grabbable.part(self, made)
+			if g == null:   # refused (warned): draw it where it rests
+				if still == null:
+					still = Node3D.new()
+					still.name = "still_parts"
+					node.add_child(still)
+				var piv: Variant = spec.get("pivot")
+				model.transform = piv if typeof(piv) == TYPE_TRANSFORM3D and (piv as Transform3D).is_finite() else Transform3D()
+				_set_part_items(model, spec)
+				still.add_child(model)
+				continue
+			node.add_child(g)
+			parts[id] = g
+			_part_info[id] = [spec.get("key"), g.square]
+			if not _parts_at.has(g.square):
+				_parts_at[g.square] = []
+			(_parts_at[g.square] as Array).append(g)
+		keep[id] = true
+		_set_part_items(g.contents(), spec)
+	_drop_parts(pos, keep)
+	if not keep.is_empty():
+		_part_ids[pos] = keep
+
+
+static func _flag(spec: Dictionary, key: String) -> bool:
+	var v: Variant = spec.get(key, false)
+	return typeof(v) == TYPE_BOOL and v
+
+
+## A parentless node with the spec's meshes (pivot space), MAX_PART_MESHES at most; bad entries are skipped.
+static func _part_model(spec: Dictionary) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Model"
+	var meshes: Variant = spec.get("meshes")
+	if typeof(meshes) != TYPE_ARRAY:
+		return root
+	for e: Variant in meshes:
+		if root.get_child_count() >= MAX_PART_MESHES:
+			break
+		if typeof(e) != TYPE_ARRAY or (e as Array).size() != 2 or not e[0] is Mesh or typeof(e[1]) != TYPE_TRANSFORM3D \
+				or not (e[1] as Transform3D).is_finite():
+			continue
+		var mi := MeshInstance3D.new()
+		mi.mesh = e[0]
+		mi.transform = e[1]
+		root.add_child(mi)
+	return root
+
+
+## Replaces what lies on a part ("Items" under `at`, its contents()): the spec's items_mesh, items_models and
+## items_glyphs, in pivot space.
+static func _set_part_items(at: Node3D, spec: Dictionary) -> void:
+	var old := at.get_node_or_null("Items")
+	if old:
+		old.free()
+	var mesh: Variant = spec.get("items_mesh")
+	var models: Variant = spec.get("items_models")
+	var glyphs: Variant = spec.get("items_glyphs")
+	var has_mesh := mesh is ArrayMesh
+	var has_models := typeof(models) == TYPE_DICTIONARY and not (models as Dictionary).is_empty()
+	var has_glyphs := typeof(glyphs) == TYPE_ARRAY and not (glyphs as Array).is_empty()
+	if not has_mesh and not has_models and not has_glyphs:
+		return
+	var holder := Node3D.new()
+	holder.name = "Items"
+	if has_mesh:
+		var mi := MeshInstance3D.new()
+		mi.name = "shapes"
+		mi.mesh = mesh
+		holder.add_child(mi)
+	if has_models:
+		_set_models(holder, "models", models)
+	if has_glyphs:
+		for e: Variant in (glyphs as Array).slice(0, PropMesher.MAX_GLYPHS):
+			if typeof(e) == TYPE_ARRAY and (e as Array).size() == 3 and typeof(e[0]) == TYPE_VECTOR3 \
+					and typeof(e[1]) == TYPE_STRING and typeof(e[2]) == TYPE_COLOR:
+				holder.add_child(_glyph(e[0], e[1], e[2]))
+	at.add_child(holder)
+
+
+## Frees the submap's parts not in `keep`. Live, their kept state goes too: CDDA's state rules a part made again.
+func _drop_parts(pos: Vector3i, keep: Dictionary) -> void:
+	for id: String in _part_ids.get(pos, {}):
+		if keep.has(id):
+			continue
+		_free_part(id)
+		if not door_local:
+			door_state.erase(id)
+	_part_ids.erase(pos)
+
+
+func _free_part(id: String) -> void:
+	var info: Array = _part_info.get(id, [])
+	var g: Variant = parts.get(id)
+	if info.size() == 2:
+		var list: Array = _parts_at.get(info[1], [])
+		list.erase(g)
+		if list.is_empty():
+			_parts_at.erase(info[1])
+	if g != null and is_instance_valid(g):
+		(g as Node).free()
+	parts.erase(id)
+	_part_info.erase(id)
 
 
 func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	var b: Dictionary = _built[pos]
 	var drawn := r.props != null or r.roof_props != null or not r.models.is_empty() \
-			or not r.roof_models.is_empty() or not r.glyphs.is_empty()
+			or not r.roof_models.is_empty() or not r.glyphs.is_empty() or not r.parts.is_empty()
 	var node := _node(pos, drawn)
 	if node != null:
 		_set_mesh(node, "props", r.props)
 		_set_mesh(node, "roof_props", r.roof_props)
 		_set_models(node, "models", r.models)
 		_set_models(node, "roof_models", r.roof_models)
+		_build_parts(node, pos, r.parts)
 		var old := node.get_node_or_null("glyphs")
 		if old:
 			old.free()
@@ -528,7 +685,7 @@ func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	b["detail"] = (snap.submaps[pos] as Snapshot.Submap).detail_revision
 	b["pverts"] = r.vertices
 	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size(),
-			"models": r.model_props}
+			"models": r.model_props, "parts": r.parts.size()}
 	b["props"] = drawn
 	if not drawn and not b.get("terrain", false):
 		_free_node(pos)   # nothing left to draw: open sky keeps no node

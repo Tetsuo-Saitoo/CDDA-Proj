@@ -16,6 +16,11 @@ extends RefCounted
 ##
 ## Models face +Z (Godot's model front), origin at the bottom centre, 1 unit = 1 m.
 ##
+## Doors, drawers and lids (lid, door_N, drawer_N) become movers (Model.movers, block L8): their hinge or slide,
+## how far they open, their handle, their meshes and surface_N planes in their own space, checked and capped
+## (MAX_MOVERS), plus `still`, the model without them. Furniture draws `still` and opens the movers
+## (PropMesher, WorldView, Grabbable.part). The rules are in docs/MODELS.md.
+##
 ## A registry entry with a `material` gets a tinted variant ([method get_tinted]): copies of the model's
 ## meshes and materials with the albedo blended toward the palette material's colour, so a model made in
 ## neutral light grey can serve several ids. One variant per path and palette material, cached.
@@ -80,6 +85,12 @@ const NUMBERED_POINTS := ["burner"]
 const PARTS := ["lid"]
 const NUMBERED_PARTS := ["door", "drawer", "handle", "knob"]
 const COLLIDER_SUFFIX := "-convcolonly"
+## Movers (block L8): the parts furniture opens (Grabbable.part), at most MAX_MOVERS per model; the rest stay put.
+const MAX_MOVERS := 16
+const DOOR_MAX := deg_to_rad(110.0)   # how far a door_N turns open
+const LID_MAX := deg_to_rad(100.0)    # how far a lid turns open
+const DRAWER_OUT := 0.8               # share of a drawer's depth it slides out
+const DRAWER_MIN := 0.05              # metres a drawer slides out at least
 ## Share of a registry material's colour in a tinted model's albedo (the rest keeps the model's own colour
 ## and texture detail): albedo colour * lerp(white, material colour, TINT).
 const TINT := 0.7
@@ -106,6 +117,19 @@ class Model:
 	var triangles := 0
 	## Registry material this variant is tinted with ("" = the model as made).
 	var tint := ""
+	## The mover (lid, door_N, drawer_N; "" none) each of `parts` moves with: its nearest such marker, itself
+	## included (a mover inside another one moves with the outer one).
+	var part_owner := PackedStringArray()
+	## The mover each of `surfaces` moves with ("" none).
+	var surface_owner := PackedStringArray()
+	## Marker name -> the mover it is inside (handle_N, surface_N, ...; the mover itself not listed).
+	var marker_owner := {}
+	## The doors, drawers and lids furniture opens (Mover, at most MAX_MOVERS), in the order lid, door_N, drawer_N.
+	var movers: Array = []
+	## Index into `movers` of the mover each of `surfaces` moves with, -1 for the ones that stay put.
+	var surface_mover := PackedInt32Array()
+	## The model without its movers' meshes (furniture that opens them draws this still); null without movers.
+	var still: Model
 
 	func has_marker(name: String) -> bool:
 		return markers.has(name)
@@ -120,6 +144,21 @@ class Model:
 			if markers.has("%s_%d" % [prefix, n]):
 				out.append("%s_%d" % [prefix, n])
 		return out
+
+
+## A door, drawer or lid of a model that opens (docs/MODELS.md, block L8): what Grabbable.part needs, in the
+## marker's own space ("pivot space"). Read-only once made (the meshing worker reads it).
+class Mover:
+	var name := ""                 # lid, door_N or drawer_N
+	var kind := ""                 # door, drawer or lid (Grabbable.part's kind)
+	var pivot := Transform3D()     # model space: the marker (on the hinge line, or the slide's origin)
+	var axis := Vector3.UP         # pivot space, unit: positive amounts turn (right-hand rule) or slide it open
+	var max_amount := 0.0          # radians, metres for drawers
+	var size := AABB()             # pivot space: the bounds of its meshes
+	var handle := Transform3D()    # pivot space: its first handle_N (has_handle), else Grabbable picks one
+	var has_handle := false
+	var meshes: Array = []         # [Mesh, Transform3D in pivot space]
+	var surfaces: Array = []       # [Transform3D in pivot space, Rect2]: its surface_N planes (items ride along)
 
 
 ## Folder the registry's `model` paths are relative to (assets/models).
@@ -205,6 +244,10 @@ static func tinted(m: Model, tint: Color) -> Model:
 		if not meshes.has(mesh):
 			meshes[mesh] = _tinted_mesh(mesh, factor, materials, plain)
 		t.parts.append([meshes[mesh], p[1]])
+	t.part_owner = m.part_owner
+	t.surface_owner = m.surface_owner
+	t.marker_owner = m.marker_owner
+	make_movers(t)   # the same movers, with the tinted meshes (m's warnings were given when it loaded)
 	return t
 
 
@@ -333,6 +376,8 @@ func _load(rel: String) -> Model:
 	if not why.is_empty():
 		_warn("%s: %s" % [name, why])
 		return null
+	for w in make_movers(m):
+		_warn("%s: %s" % [name, w])
 	_image_bytes += image_bytes
 	return m
 
@@ -657,7 +702,7 @@ func _check_nodes(g: Dictionary, tris: PackedInt32Array) -> String:
 ## Reads the built scene into m: drawn parts, markers, surfaces, fill, colliders. "" or why it failed.
 ## Transforms and bounds must be finite; the whole model must fit in MAX_MODEL_SIZE a side.
 func _read(scene: Node, m: Model) -> String:
-	var stack: Array = [[scene, Transform3D.IDENTITY, false]]   # node, parent transform, hidden
+	var stack: Array = [[scene, Transform3D.IDENTITY, false, ""]]   # node, parent transform, hidden, mover
 	var surfaces := {}
 	var visited := 0
 	var bounds := AABB()
@@ -666,6 +711,7 @@ func _read(scene: Node, m: Model) -> String:
 		var n: Node = e[0]
 		var xf: Transform3D = e[1]
 		var hidden: bool = e[2]
+		var owner: String = e[3]
 		visited += 1
 		if visited > max_nodes + 1:
 			return "more than %d nodes" % max_nodes
@@ -686,6 +732,10 @@ func _read(scene: Node, m: Model) -> String:
 		bounds = box if visited == 1 else bounds.merge(box)
 		if kind != Marker.NONE and kind != Marker.COLLIDER:
 			m.markers[name] = xf
+			if not owner.is_empty():
+				m.marker_owner[name] = owner
+		if owner.is_empty() and is_mover(name):
+			owner = name
 		match kind:
 			Marker.SURFACE:
 				hidden = true
@@ -714,8 +764,9 @@ func _read(scene: Node, m: Model) -> String:
 				var part_box := xf * mesh.get_aabb()
 				m.aabb = part_box if m.parts.is_empty() else m.aabb.merge(part_box)
 				m.parts.append([mesh, xf])
+				m.part_owner.append(owner)
 		for c in n.get_children():
-			stack.append([c, xf, hidden])
+			stack.append([c, xf, hidden, owner])
 	if m.markers.size() + m.colliders.size() > max_markers:
 		return "more than %d markers" % max_markers
 	if m.triangles > max_triangles:
@@ -728,7 +779,140 @@ func _read(scene: Node, m: Model) -> String:
 	keys.sort()
 	for k: int in keys:
 		m.surfaces.append(surfaces[k])
+		m.surface_owner.append(m.marker_owner.get("surface_%d" % k, ""))
 	return ""
+
+
+## Whether a marker name is a mover: lid, door_N or drawer_N.
+static func is_mover(name: String) -> bool:
+	return marker_kind(name) == Marker.PART and (name == "lid" or name.begins_with("door_") or name.begins_with("drawer_"))
+
+
+## Fills m.movers, m.surface_mover and m.still from its parts, markers and owners (docs/MODELS.md, "Doors,
+## drawers and lids that open"): a mover that can't open (a flat transform, no mesh, meshes or handle more than
+## Grabbable.MAX_EXTENT from its origin) stays put with the body. Returns why, one line per mover left out.
+static func make_movers(m: Model) -> PackedStringArray:
+	var why := PackedStringArray()
+	m.movers = []
+	m.still = null
+	m.surface_mover = PackedInt32Array()
+	m.surface_mover.resize(m.surfaces.size())
+	m.surface_mover.fill(-1)
+	if m.part_owner.size() != m.parts.size() or m.surface_owner.size() != m.surfaces.size():
+		return why
+	var names := PackedStringArray(["lid"] if m.markers.has("lid") else [])
+	names.append_array(m.numbered("door"))
+	names.append_array(m.numbered("drawer"))
+	var moving := {}   # mover name -> index into m.movers
+	var over := PackedStringArray()   # past MAX_MOVERS
+	for name in names:
+		if m.marker_owner.has(name):
+			why.append("%s is inside %s and moves with it" % [name, m.marker_owner[name]])
+			continue
+		if m.movers.size() >= MAX_MOVERS:
+			over.append(name)
+			continue
+		var mv: Variant = _mover(m, name)
+		if mv is String:
+			why.append("%s stays put: %s" % [name, mv])
+			continue
+		moving[name] = m.movers.size()
+		m.movers.append(mv)
+	if not over.is_empty():
+		why.append("more than %d doors, drawers and lids: %s and %d more stay put" % [MAX_MOVERS, over[0], over.size() - 1])
+	if moving.is_empty():
+		return why
+	for k in m.surfaces.size():
+		var owner := m.surface_owner[k]
+		if not moving.has(owner):
+			continue
+		var mover: Mover = m.movers[moving[owner]]
+		var s: Array = m.surfaces[k]
+		var xf: Transform3D = mover.pivot.affine_inverse() * (s[0] as Transform3D) * Transform3D(Basis.IDENTITY, Vector3(0, s[2], 0))
+		var rect: Rect2 = s[1]
+		if mover.surfaces.size() >= Grabbable.MAX_SURFACES or not xf.is_finite() or xf.origin.length() > Grabbable.MAX_EXTENT \
+				or not rect.is_finite() or rect.size.length() > Grabbable.MAX_EXTENT * 2.0:
+			why.append("a surface on %s stays put (more than %d there, or too far from it)" % [owner, Grabbable.MAX_SURFACES])
+			continue
+		mover.surfaces.append([xf, rect.abs()])
+		m.surface_mover[k] = moving[owner]
+	var still := Model.new()
+	still.path = m.path
+	still.markers = m.markers
+	still.marker_owner = m.marker_owner
+	still.surfaces = m.surfaces
+	still.surface_owner = m.surface_owner
+	still.surface_mover = m.surface_mover
+	still.fill = m.fill
+	still.colliders = m.colliders
+	still.aabb = m.aabb
+	still.triangles = m.triangles
+	still.tint = m.tint
+	for i in m.parts.size():
+		if moving.has(m.part_owner[i]):
+			continue
+		for nm: String in m.marker_parts:
+			if m.marker_parts[nm] == i:
+				still.marker_parts[nm] = still.parts.size()
+		still.parts.append(m.parts[i])
+		still.part_owner.append(m.part_owner[i])
+	m.still = still
+	return why
+
+
+## The mover named `name` of m, or why it can't open.
+static func _mover(m: Model, name: String) -> Variant:
+	var pivot: Transform3D = m.markers[name]
+	if not pivot.is_finite() or absf(pivot.basis.determinant()) < 1e-6:
+		return "its transform is flat"
+	var inv := pivot.affine_inverse()
+	var mv := Mover.new()
+	mv.name = name
+	mv.pivot = pivot
+	var first := true
+	for i in m.parts.size():
+		if m.part_owner[i] != name:
+			continue
+		var local := inv * (m.parts[i][1] as Transform3D)
+		mv.meshes.append([m.parts[i][0], local])
+		var b := local * (m.parts[i][0] as Mesh).get_aabb()
+		mv.size = b if first else mv.size.merge(b)
+		first = false
+	if mv.meshes.is_empty():
+		return "no mesh moves with it"
+	var box := mv.size
+	if not box.is_finite() or box.size.length() < 0.01 or box.position.length() > Grabbable.MAX_EXTENT \
+			or box.end.length() > Grabbable.MAX_EXTENT:
+		return "its meshes are empty or reach more than %.0f m from its origin" % Grabbable.MAX_EXTENT
+	# The model's up and front (+Z) in pivot space.
+	var up := (inv.basis * Vector3.UP).normalized()
+	var front := (inv.basis * Vector3.BACK).normalized()
+	if not up.is_finite() or not front.is_finite() or up.is_zero_approx() or front.is_zero_approx():
+		return "its transform is flat"
+	if name.begins_with("drawer_"):
+		mv.kind = "drawer"
+		mv.axis = front
+		var depth := absf(front.x) * box.size.x + absf(front.y) * box.size.y + absf(front.z) * box.size.z
+		mv.max_amount = clampf(DRAWER_OUT * depth, DRAWER_MIN, Grabbable.MAX_SLIDE)
+	else:
+		# A door turns about the model's vertical through its origin, a lid about its own X; the sign is the
+		# one that moves the middle of its meshes toward the front (doors) or up (lids).
+		var lid := name == "lid"
+		mv.kind = "lid" if lid else "door"
+		var line := Vector3.RIGHT if lid else up
+		var c := box.get_center()
+		var r := c - line * c.dot(line)
+		var opens := line.cross(r).dot(up if lid else front)
+		mv.axis = line if opens > 1e-4 else -line   # no clear side: as if hinged on the left (doors) or the back (lids)
+		mv.max_amount = LID_MAX if lid else DOOR_MAX
+	for h in m.numbered("handle"):   # the first handle on it that is near it (else Grabbable picks a point)
+		if m.marker_owner.get(h, "") == name:
+			var hd := inv * (m.markers[h] as Transform3D)
+			if hd.is_finite() and hd.origin.length() <= Grabbable.MAX_EXTENT:
+				mv.handle = hd
+				mv.has_handle = true
+				break
+	return mv
 
 
 ## A convex shape for a collider mesh of Model.colliders, from at most max_points of its finite vertices

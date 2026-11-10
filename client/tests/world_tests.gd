@@ -144,6 +144,17 @@ func _door_leaves(root: Node) -> void:
 	g = Grabbable.door(w, d)
 	_check.call(is_equal_approx(g.angle, 1.2), "doors: an angle that agrees is kept")
 	g.free()
+	var odd := []
+	for bad: float in [INF, -INF, 1e30]:
+		w.door_state[sq] = {"angle": bad}
+		g = Grabbable.door(w, d)
+		odd.append(is_finite(g.angle) and absf(g.angle) <= Grabbable.MAX_ANGLE)
+		g.set_angle(NAN)
+		g.begin_hand(Vector3(NAN, 0, 0))
+		g.drag_hand(Vector3(INF, 0, 0))
+		odd.append(is_finite(g.angle) and is_finite(float(w.door_state.get(sq, {}).get("angle", 0.0))))
+		g.free()
+	_check.call(not odd.has(false), "doors: angles that aren't finite numbers are ignored, kept ones clamped")
 	w.door_state.clear()
 	var pos := CddaCoords.ms_to_sm(sq)
 	var one: Array[Dictionary] = [d]
@@ -228,6 +239,23 @@ func _stairs_settled() -> void:
 	_check.call(m.stairs_settled(0, false, 5, 5) and not m.stairs_settled(1, false, 5, 5)
 			and not m.stairs_settled(0, true, 5, 5) and not m.stairs_settled(0, false, 6, 5),
 			"stairs: live steps only when nothing is queued and the newest snapshot is shown")
+	var sim := _FakeStairs.new()
+	var s := {"dz": -1, "stand": Vector3i(3, 4, 0), "to": Vector3i(3, 4, -1)}
+	var ok := StairUse.use_live(sim, s) == 1 and sim.calls == [[Vector3i(3, 4, 0), -1]]
+	sim.answer = false
+	ok = ok and StairUse.use_live(sim, s) == 0
+	ok = ok and StairUse.use_live(sim, {}) == 0 and StairUse.use_live(sim, {"dz": 2, "stand": Vector3i.ZERO}) == 0 			and StairUse.use_live(sim, {"dz": 1.0, "stand": Vector3i.ZERO}) == 0 and sim.calls.size() == 2
+	ok = ok and StairUse.use_live(RefCounted.new(), s) == -1 and StairUse.use_live(null, s) == -1
+	_check.call(ok, "stairs: the bridge's stairs action gets the stair square and direction; older bridges fall back")
+
+
+class _FakeStairs extends RefCounted:
+	var calls: Array = []
+	var answer := true
+
+	func use_stairs(pos: Vector3i, dir: int) -> bool:
+		calls.append([pos, dir])
+		return answer
 
 
 ## Stamina and needs for the HUD: optional, clamped, wrong types rejected.
