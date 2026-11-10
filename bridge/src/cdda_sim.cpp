@@ -181,6 +181,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "stop" ), &CddaSim::stop );
     ClassDB::bind_method( D_METHOD( "get_state" ), &CddaSim::get_state );
     ClassDB::bind_method( D_METHOD( "get_error" ), &CddaSim::get_error );
+    ClassDB::bind_method( D_METHOD( "get_boot_info" ), &CddaSim::get_boot_info );
     ClassDB::bind_method( D_METHOD( "get_request" ), &CddaSim::get_request );
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
@@ -309,6 +310,18 @@ String CddaSim::get_state() const
 String CddaSim::get_error() const
 {
     return to_godot( fp3d_session::error() );
+}
+
+Dictionary CddaSim::get_boot_info() const
+{
+    const fp3d::boot_progress p = fp3d::latest_boot_progress();
+    Dictionary d;
+    d["phase"] = to_godot( p.phase );
+    d["seconds"] = p.seconds;
+    d["phase_seconds"] = p.phase_seconds;
+    d["errors"] = static_cast<int64_t>( std::min<uint64_t>( p.errors, INT64_MAX ) );
+    d["last_error"] = to_godot( p.last_error );
+    return d;
 }
 
 Dictionary CddaSim::get_request() const

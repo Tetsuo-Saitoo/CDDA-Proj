@@ -34,6 +34,7 @@ class CddaSim : public godot::RefCounted
         void stop();
         godot::String get_state() const;
         godot::String get_error() const;
+        godot::Dictionary get_boot_info() const;
 
         godot::Dictionary get_request() const;
         bool answer( const godot::Dictionary &a );
