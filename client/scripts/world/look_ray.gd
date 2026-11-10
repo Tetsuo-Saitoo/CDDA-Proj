@@ -1,11 +1,12 @@
 class_name LookRay
 extends RefCounted
 ## Left-click look: the first thing a ray from the camera meets in the newest snapshot (a wall, a closed door,
-## furniture, a floor or a ceiling) and what the snapshot says is on that square. No nodes, so tests run it
-## headless. The ray meets what the 3D view draws: every square in the snapshot, also ones the character never
-## saw (the view has no fog of war yet); the details say so. Out to the edge of the loaded area (~60 squares).
-## Creatures the player perceives are hit
-## as their placeholder figures (CreatureView). CDDA's own look text isn't in here: the bridge has no "describe".
+## furniture, stairs or a ramp, a floor or a ceiling) and what the snapshot says is on that square. No nodes, so
+## tests run it headless. The ray meets what the 3D view draws: every square in the snapshot, also ones the
+## character never saw (the view has no fog of war yet); the details say so. Out to the edge of the loaded area
+## (~60 squares). Stairs and ramps are met on their slope (TerrainMesher.surface_heights), so pointing at a step
+## picks that stair's square. Creatures the player perceives are hit as their placeholder figures
+## (CreatureView). CDDA's own look text isn't in here: the bridge has no "describe".
 
 const K := TerrainCatalog.Kind
 const SOLID := [K.WALL, K.WINDOW, K.FENCE, K.TREE, K.BOX]
@@ -16,18 +17,27 @@ const VIS := ["your character hasn't seen it", "remembered", "in sight", "in sig
 const MAX_ITEM_LINES := 4
 
 var world: WorldView
+var _surfaces := {}   # Vector3i -> stair / ramp corner heights met by the current cast
+var _ramp_cache := {}
+var _kind_at: Callable
+var _low_at: Callable
 
 
 func _init(w: WorldView) -> void:
 	world = w
 
 
-## {hit: bool, square: Vector3i, point: Vector3, what: "wall" / "door" / "furniture" / "floor" / "ceiling"}.
+## {hit: bool, square: Vector3i, point: Vector3, what: "wall" / "door" / "furniture" / "stairs" / "ramp" / "floor" /
+## "ceiling"}.
 ## `creatures` false: only the map (BulletPhysics tests the figures itself).
 func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true) -> Dictionary:
 	if world.snapshot == null or dir.length() < 0.001:
 		return {"hit": false}
 	dir = dir.normalized()
+	_surfaces = {}
+	_ramp_cache = {}
+	_kind_at = TerrainMesher.kind_lookup(world.snapshot, world.catalog)
+	_low_at = TerrainMesher.low_lookup(world.snapshot, world.catalog)
 	var start := world.coords.world_to_ms(origin)
 	var prev := start
 	for i in range(1, int(max_m / STEP_M) + 1):
@@ -52,6 +62,11 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true) -> D
 			return _hit(p, pt, "object" if style.kind == K.BOX else K.keys()[style.kind].to_lower())
 		if style.kind == K.DOOR and style.state == 0:
 			return _hit(p, pt, "door")
+		if style.kind in [K.STAIRS_UP, K.RAMP_UP] or style.ramp_low:
+			var in_sq := pt - world.coords.ms_to_world(p)
+			var hs := _surface(p)
+			if not hs.is_empty() and in_sq.y < TerrainMesher.height_at(hs, in_sq.x, in_sq.z):
+				return _hit(p, pt, "stairs" if style.kind == K.STAIRS_UP else "ramp")
 		if c["furn"] != 0 and pt.y - floor_y < FURN_H:
 			return _hit(p, pt, "furniture")
 	return {"hit": false}
@@ -92,6 +107,13 @@ func creature_name(cr: Snapshot.Creature) -> String:
 
 func _hit(p: Vector3i, pt: Vector3, what: String) -> Dictionary:
 	return {"hit": true, "square": p, "point": pt, "what": what}
+
+
+## The stair flight or ramp surface drawn on square p (TerrainMesher.surface_heights), empty when none is.
+func _surface(p: Vector3i) -> PackedFloat32Array:
+	if not _surfaces.has(p):
+		_surfaces[p] = TerrainMesher.surface_heights(p, _kind_at, _low_at, _ramp_cache)
+	return _surfaces[p]
 
 
 func _has_floor(p: Vector3i) -> bool:

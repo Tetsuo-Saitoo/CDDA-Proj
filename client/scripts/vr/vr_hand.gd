@@ -28,6 +28,8 @@ const GRIP := Transform3D(Basis(Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 
 var left := false
 var source := ""          # "tracked", "buttons" or "" (not posed yet)
 var joints := PackedVector3Array()
+var colour := SKIN       # skin, or the outermost glove's colour (VrRig.drive_body)
+var _mat: StandardMaterial3D
 var _balls: MultiMesh
 var _bones: MultiMesh
 var _palm: MeshInstance3D
@@ -39,6 +41,7 @@ func _init(is_left: bool) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = SKIN
 	mat.roughness = 0.8
+	_mat = mat
 	var ball := SphereMesh.new()
 	ball.radius = 1.0
 	ball.height = 2.0
@@ -74,6 +77,17 @@ func _multimesh(mesh: Mesh, count: int) -> MultiMesh:
 	mi.multimesh = mm
 	add_child(mi)
 	return mm
+
+
+## Skin or glove colour for the whole hand (one material).
+func set_colour(c: Color) -> void:
+	colour = c
+	_mat.albedo_color = c
+
+
+## The wrist (joint 1) in rig space, the point the body's arm reaches for.
+func wrist() -> Vector3:
+	return joints[1] if joints.size() == JOINTS else Vector3.ZERO
 
 
 ## Finger curls (thumb .. little, 0 = straight, 1 = fist) from controller inputs: the index follows the

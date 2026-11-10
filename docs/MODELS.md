@@ -4,9 +4,10 @@ For anyone making models for the game. The game shows CDDA's world in 3D and VR.
 id (an item, a piece of furniture, terrain, a monster or a vehicle part). In VR, players pick models up, open
 them, pour from them and cook with them, so models need a few named points besides the mesh.
 
-Status: the client loads `.glb` models for furniture, traps and items (terrain still uses procedural shapes).
-Ids without a model show simple placeholder shapes (PLAN.md H1, TASKS.md). A model that breaks the limits
-below is skipped with a warning in the console, and the placeholder shows instead.
+Status: the client loads `.glb` models for furniture, traps, items and terrain (doors still use procedural
+shapes; monsters and vehicle parts don't load models yet). Ids without a model show simple placeholder
+shapes (PLAN.md H1, TASKS.md). A model that breaks the limits below is skipped with a warning in the
+console, and the placeholder shows instead.
 
 Art direction is still an open decision (PLAN.md: stylised low-poly or realistic). Agree on it with the project
 owner before making many models, and keep one style across a set.
@@ -23,6 +24,16 @@ owner before making many models, and keep one style across a set.
   centred on the 1 m × 1 m tile.
 - **Footprint:** CDDA furniture is one tile each, so a model fits inside 1 m × 1 m. Longer things, such as a
   row of counters, are several tiles with one model each, made so neighbours line up.
+- **Terrain:** one tile, 1 m × 1 m, and 3 m high for walls (one storey). The game turns terrain models
+  itself:
+  - Walls, windows and fences: the wall runs left to right in Front view (along X). The front is one face
+    of the wall; the game doesn't know inside from outside yet, so make both faces look right.
+  - Stairs and ramps: the bottom step at the front, rising toward the back to 3 m. Longer flights repeat
+    the model on each tile for now.
+  - Floors, roofs and water: the whole tile surface; the model replaces the flat tile.
+  - Trees, shrubs and other standing things: the game draws the ground under them, so model only the thing.
+    Set `random_yaw` in the registry to turn them freely.
+  - Doors stay procedural for now (the door leaf swings by hand).
 - **Apply transforms** (scale 1, no rotation) before export.
 
 ## Budgets (PC VR at 90 fps, many items on screen)
@@ -41,8 +52,14 @@ owner before making many models, and keep one style across a set.
   that fine).
 
 **Hard limits** (the game refuses the file above these): 32 MB per file, 512 nodes, 60,000 triangles,
-128 markers, 16 images of at most 4096 px a side (PNG or JPEG, embedded), 32 materials, 64 animations.
-No external files: buffers and textures must be inside the `.glb`.
+65,536 vertices per mesh primitive (one material of one mesh) and 250,000 in all, 128 markers, 32 drawn
+meshes, 20 m on any side, 16 images of at most 4096 px a side and at most two 2048 x 2048 images' worth
+of pixels in all (PNG or JPEG, embedded), 32 materials. Triangle meshes only; no animations, skins,
+cameras or morph targets; extensions: KHR_texture_transform, KHR_materials_unlit,
+KHR_materials_emissive_strength, KHR_mesh_quantization (and GODOT_single_root from Godot's exporter)
+only. No external files: buffers and textures must
+be inside the `.glb`, and the models folder must not contain links or junctions. All loaded models
+together get 512 MB of decoded textures; past that, further textured models aren't loaded (warning).
 
 ## Named points (markers)
 
@@ -88,6 +105,36 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 - Collision (optional): a simple child mesh named `<name>-convcolonly` (the game makes it a convex collider
   and hides it). Without one the game uses the bounding box.
 
+## Monster hit regions
+
+For the combat work. A monster model can mark where a shot hits which part of it:
+
+- Make each region a simple child mesh named `hit_<weak point id>`, for example `hit_head` or `hit_leg`.
+  Use CDDA's weak point ids from the monster's JSON (`weakpoints`). The ones the game knows today:
+  `head`, `eye`, `abdomen`, `belly`, `arm`, `leg`, `hindleg`, `wing`.
+- Humans and NPCs use CDDA's body part ids instead: `hit_head`, `hit_eyes`, `hit_mouth`, `hit_torso`,
+  `hit_arm_l`, `hit_arm_r`, `hit_hand_l`, `hit_hand_r`, `hit_leg_l`, `hit_leg_r`, `hit_foot_l`, `hit_foot_r`.
+- A region in several pieces gets a number per piece: `hit_leg_1`, `hit_leg_2` (rename Blender's `.001`
+  suffixes, they break the name).
+- The region is the mesh's box (its bounding box in its own space), so keep them simple boxes or low-poly
+  hulls, and parent each to the bone or part that moves it.
+- A `hit_` id the monster's JSON doesn't list counts as its body.
+- The game hides these meshes and uses them as hit zones. A monster model without them uses the zones of
+  its placeholder figure.
+- The client doesn't read them yet. Adding them now saves redoing the model later.
+
+## Weapons
+
+For reloading by hand in VR. A gun model marks:
+
+- `muzzle`: point marker at the end of the bore, its -Z along the bore.
+- `grip`: point marker where the main hand holds it.
+- `mag_well`: point marker where a magazine snaps in.
+- `magazine`: the detachable magazine as its own mesh (part).
+- `slide` or `bolt`: its own mesh, moving along +Z when racked.
+
+The placeholder gun the game draws uses the same names.
+
 ## Files and the registry
 
 - Put models under `assets/models/<kind>/<cdda_id>.glb`, where kind is `items`, `furniture`, `terrain`,
@@ -100,6 +147,19 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 
 - One model can serve several ids: `"id": ["pot", "pot_copper"]`. Ids that only differ by state (open and
   closed crate) go in `states`.
+- A model made in neutral light grey can serve several ids by material. Each registry entry names its
+  `material` (wood, brick, metal, ...), and the game tints the model's colours toward it (70 %), keeping
+  the texture detail. Example: one `terrain/wall.glb` for `t_wall` (plaster) and `t_brick_wall` (brick):
+
+```json
+[
+  { "type": "fp3d_model", "kind": "terrain", "id": "t_wall", "model": "terrain/wall.glb", "material": "plaster_white" },
+  { "type": "fp3d_model", "kind": "terrain", "id": "t_brick_wall", "model": "terrain/wall.glb", "material": "brick" }
+]
+```
+
+- Without `material`, the model shows its own colours. The material names are the list in
+  `client/scripts/world/palette.gd` (`MATERIALS`).
 
 ## Good first models for the VR work
 
