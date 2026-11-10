@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Melee review follow-up (fork fp3d-combat): reach strikes only at creatures the player sees; sim check for one behind a wall. Sim test passes.
 - 2026-11-10 — Melee slice 1 (fork fp3d-combat): aimed strikes at the creature under the crosshair, a `swing` request whose part weights CDDA's pick, reach weapons strike 2 squares off. Sim, client and live tests pass.
 - 2026-11-10 — Bullet paths review follow-ups: bullet damage only (not arrows or bolts); sim combat scenes walled in, fields cleared, night vision (flaky mend / head-shot checks fixed); live test takes well-formed pellets.
 - 2026-11-10 — Block 2 leftovers (fork fp3d-combat): a shotgun shell's pellets are each flown by the client and rolled as their own projectiles; bullets go on through bodies with damage to spare and may glance off walls at shallow angles (FP3D games); the client's bullet flies through furniture. Sim, client and live tests pass.
