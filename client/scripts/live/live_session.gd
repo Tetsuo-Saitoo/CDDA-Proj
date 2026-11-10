@@ -18,6 +18,9 @@ signal saved(ok: bool)
 signal held_changed(held: Dictionary)
 ## The character's testing cheats changed (CddaSim.get_cheats): {name: bool} for every name in CHEATS.
 signal cheats_changed(cheats: Dictionary)
+## A recipe query (match_recipes) came back: RecipeMatches.parse's result for that container (`ok` false when the
+## sim refused it: out of reach, not found, ...).
+signal recipes_matched(container_uid: int, result: Dictionary)
 
 ## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
 const CHEATS: PackedStringArray = ["invincible", "no_needs", "no_weight_limit", "unlimited_ammo", "stamina",
@@ -40,8 +43,17 @@ var _since_save := 0.0
 var _held_seq := 0
 var _cheats_seq := -1
 var _cheats := {}
+## Recipe queries: query id -> [container uid, msec asked]; results kept per container uid (the last one).
+var _queries := {}
+var _recipe_results := {}
+const MAX_QUERIES := 8          # the bridge refuses more pending ones
+const MAX_KEPT_RESULTS := 32
+const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
 ## The running game was started new (not loaded): --test gives its test kit only then.
 var new_game := false
+## Cheats and test kits work only while allowed (bridge set_cheats_allowed, off by default): the player's own
+## debug switch, --test / --cheats, or a test-range game. Kept here and sent again when the game starts running.
+var cheats_allowed := false
 ## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
 var _snap_task := -1
 var _snap_job: SnapJob
@@ -130,8 +142,20 @@ func save_pending() -> bool:
 	return _sim != null and _sim.has_method("get_save_status") and _sim.get_save_status().get("pending", false)
 
 
+func set_cheats_allowed(on: bool) -> void:
+	cheats_allowed = on
+	_push_cheats_allowed()
+
+
+## Older bridges have no opt-in (their cheats always work).
+func _push_cheats_allowed() -> void:
+	if _sim != null and _sim.has_method("set_cheats_allowed"):
+		_sim.set_cheats_allowed(cheats_allowed)
+
+
 ## Turns a testing cheat on or off (applied at the sim's next request; cheats_changed follows). False for a name
-## not in CHEATS, without a running game or with a bridge that can't.
+## not in CHEATS, without a running game, while cheats aren't allowed (the sim says) or with a bridge that can't.
+## The first cheat or kit turns the game's achievements off for good (CDDA's "Achievements have been disabled.").
 func set_cheat(cheat: String, on: bool) -> bool:
 	if not cheat in CHEATS or not _can("set_cheat"):
 		return false
@@ -186,6 +210,51 @@ func auto_pause() -> bool:
 	return v if v is bool else false
 
 
+## L9: what a container's contents can become on the heat it stands on (bridge match_recipes; read-only, the sim
+## answers at its next request). Returns the query id, 0 when refused (no game, a bad handle, too many pending).
+## `avatar_square`: where the player stands, sent for a carried container (the bridge looks there).
+## recipes_matched follows.
+func match_recipes(container: ItemRef, avatar_square := Vector3i.ZERO) -> int:
+	if container == null or container.uid < 1 or container.type < 1 or not _can("match_recipes") \
+			or _queries.size() >= MAX_QUERIES:
+		return 0
+	var pos := avatar_square if container.carried else container.square
+	var v: Variant = _sim.match_recipes({"uid": container.uid, "type": container.type, "pos": pos})
+	var id := int(v) if v is int or v is float else 0
+	if id < 1:
+		return 0
+	_queries[id] = [container.uid, Time.get_ticks_msec()]
+	return id
+
+
+## The last recipe result for container `uid` (as recipes_matched gave it), {} for none.
+func recipe_matches(uid: int) -> Dictionary:
+	return _recipe_results.get(uid, {})
+
+
+func _poll_queries() -> void:
+	if _queries.is_empty() or not _sim.has_method("take_query_result"):
+		return
+	var now := Time.get_ticks_msec()
+	for id: int in _queries.keys():
+		var text: Variant = _sim.take_query_result(id)
+		var asked: Array = _queries[id]
+		if not text is String or (text as String).is_empty():
+			if now - int(asked[1]) > QUERY_TIMEOUT_MS:
+				_queries.erase(id)
+			continue
+		_queries.erase(id)
+		var r := RecipeMatches.parse(text)
+		var uid: int = asked[0]
+		if r.is_empty() or r["id"] != id or r["container"] != uid:
+			push_warning("recipe query %d: unreadable result" % id)
+			continue
+		if not _recipe_results.has(uid) and _recipe_results.size() >= MAX_KEPT_RESULTS:
+			_recipe_results.erase(_recipe_results.keys()[0])
+		_recipe_results[uid] = r
+		recipes_matched.emit(uid, r)
+
+
 func _can(method: String) -> bool:
 	return _sim != null and state == "running" and _sim.has_method(method)
 
@@ -195,6 +264,7 @@ func _make_sim() -> bool:
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
+	_push_cheats_allowed()
 	return true
 
 
@@ -239,6 +309,19 @@ func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) 
 	return _sim != null and _sim.queue_item_action(a)
 
 
+## Unload an item (carried, else the one on square `pos`): a gun's magazine whole, a magazine's rounds, to
+## `hand` ("pack", "main", "off"). An older bridge refuses the op (false).
+func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "unload", "item": int(uid), "type": int(type),
+			"pos": pos, "hand": hand})
+
+
+## Reload a carried item with ammo or a magazine (carried, else the one on square `pos`), as much as fits.
+func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "reload", "item": int(uid), "type": int(type),
+			"container": int(ammo), "container_type": int(ammo_type), "pos": pos})
+
+
 ## Actions waiting in the bridge's queue (0 without a game).
 func queued_actions() -> int:
 	return _sim.get_queued_actions() if _sim != null else 0
@@ -266,6 +349,8 @@ func _poll(delta: float) -> void:
 		state = s
 		if s == "ended" or s == "failed":
 			error = _sim.get_error()
+		if s == "running":
+			_push_cheats_allowed()   # before state_changed: --test / --cheats are applied on it
 		state_changed.emit(s)
 	if state == "running" and _sim.has_method("get_save_status"):
 		var st: Dictionary = _sim.get_save_status()
@@ -283,6 +368,7 @@ func _poll(delta: float) -> void:
 			_held_seq = hs
 			held_changed.emit(held)
 	_poll_cheats()
+	_poll_queries()
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
 		events_arrived.emit(events)

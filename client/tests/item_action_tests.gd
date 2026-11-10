@@ -38,6 +38,14 @@ class FakeBackend:
 		calls.append(["drop", uid, type, pos, spot])
 		return ok
 
+	func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+		calls.append(["unload", uid, type, pos, hand])
+		return ok
+
+	func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
+		calls.append(["reload", uid, type, ammo, ammo_type, pos])
+		return ok
+
 	func queued_actions() -> int:
 		return queued
 
@@ -50,10 +58,12 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_local()
 	_test_judge()
 	_test_messages_timeout()
+	_test_content_ops()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)
 	_test_mock_with_actions(data, tables)
+	_test_mock_guns(data, tables)
 	print("drop target")
 	_test_drop_target(data, tables)
 
@@ -216,6 +226,108 @@ func _test_messages_timeout() -> void:
 	a._process(0.0)
 	_check.call(seen == [[11, "take", ItemActions.NO_ANSWER]] and a.pending_count() == 0,
 			"item actions: no judgement within 5 s: \"No answer from the game.\"")
+	a.free()
+
+
+## Unload / reload: judged on what changes inside the item (carried rows), refused on CDDA's message, and
+## finished at the timeout when the sim took them quietly (rounds topped up in place show no change).
+func _test_content_ops() -> void:
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var now := [1000]
+	a.clock = func() -> int: return now[0]
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	var gun := ItemRef.on_player(31, 20, 0, -1, WIELDED, SQ)
+	var loaded := [[31, 20, 0, -1, WIELDED], [32, 21, 31, 0, 0], [33, 22, 32, 0, 0]]   # gun > magazine > rounds
+	var out := [[31, 20, 0, -1, WIELDED], [32, 21, 0, -1, OFFHAND], [33, 22, 32, 0, 0]]
+	a.on_snapshot(_snap(5, [], loaded))
+	_check.call(a.unload(gun, "off") and b.calls[-1] == ["unload", 31.0, 20.0, SQ, "off"] and a.hidden().is_empty(),
+			"item actions: unload sends the item, its square and the hand; nothing hidden")
+	a.on_snapshot(_snap(6, [], loaded))
+	a.on_snapshot(_snap(7, [], loaded))
+	_check.call(seen.is_empty() and a.pending(31) == "unload", "item actions: an unload unchanged and unrefused keeps waiting")
+	a.on_snapshot(_snap(8, [], out))
+	_check.call(seen == [["finished", 31, "unload"]], "item actions: unload finished when the magazine left the gun")
+	var mag := ItemRef.on_player(32, 21, 0, -1, OFFHAND, SQ)
+	_check.call(a.reload(gun, mag) and b.calls[-1] == ["reload", 31.0, 20.0, 32.0, 21.0, SQ],
+			"item actions: reload sends the item and the ammo with the ammo's square")
+	a.on_events([MockItems.message_event("That magazine doesn't fit your gun.")])
+	a.on_snapshot(_snap(9, [], out))
+	_check.call(seen[-1] == ["refused", 31, "reload", "That magazine doesn't fit your gun."],
+			"item actions: reload refused with CDDA's message")
+	a.reload(gun, mag)
+	a.on_snapshot(_snap(10, [], loaded))
+	_check.call(seen[-1] == ["finished", 31, "reload"], "item actions: reload finished when the magazine is in")
+	# Rounds topped up in a magazine that already held some: the rows don't change.
+	var box := ItemRef.on_player(34, 22, 0, -1, 0, SQ)
+	var topped := loaded + [[34, 22, 0, -1, 0]]
+	a.on_snapshot(_snap(11, [], topped))
+	a.reload(ItemRef.on_player(32, 21, 31, 0, 0, SQ), box)
+	a.on_snapshot(_snap(12, [], topped))
+	a.on_snapshot(_snap(13, [], topped))
+	now[0] = 1000 + ItemActions.TIMEOUT_MS
+	a.check_timeouts()
+	_check.call(seen[-1] == ["finished", 32, "reload"], "item actions: taken quietly (no change shows): finished at the timeout")
+	a.unload(ItemRef.on_player(32, 21, 31, 0, 0, SQ))
+	now[0] += ItemActions.TIMEOUT_MS
+	a.check_timeouts()
+	_check.call(seen[-1] == ["refused", 32, "unload", ItemActions.NO_ANSWER], "item actions: never looked at: no answer")
+	var floor_gun := ItemRef.on_square(35, 20, SQ)
+	_check.call(a.unload(floor_gun) and a.hidden().is_empty(), "item actions: unloading a gun on the floor leaves it shown")
+	var n := b.calls.size()
+	_check.call(not a.unload(gun, "belt") and not a.reload(gun, gun) and not a.reload(floor_gun, box)
+			and not a.reload(gun, ItemRef.on_square(36, 22, Vector3i(1 << 30, 0, 0))) and b.calls.size() == n,
+			"item actions: bad hand, itself, an uncarried item or a square out of range: nothing sent")
+	_check.call(ItemActions.contents_sig(_snap(1, [], loaded), gun) == PackedInt64Array([32, 31, 0, 33, 32, 0])
+			and ItemActions.contents_sig(_snap(1, [], loaded), floor_gun).size() == 9,
+			"item actions: contents seen are what is inside a carried item, else everything carried")
+	a.free()
+
+
+## MockItems' unload / reload on a gun row holding a magazine row holding rounds.
+func _test_mock_guns(data: Variant, tables: IdTables) -> void:
+	var gt: int = _it["hammer"]   # stand-ins: the mock only needs types
+	var mt: int = _it["box_small"]
+	var rt: int = _it["rock"]
+	var snap := _town(data, tables)
+	var m := MockItems.new(snap, tables)
+	var a := ItemActions.new()
+	a.backend = m
+	m.changed.connect(a.on_snapshot)
+	m.message.connect(func(t: String) -> void: a.on_events([MockItems.message_event(t)]))
+	a.on_snapshot(snap)
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	var g := m.give(gt, 0, WIELDED)
+	var mg := m.give(mt, g)
+	var rd := m.give(rt, mg)
+	_check.call(g > 0 and _row(snap, mg) == [mg, mt, g, 0, 0] and _row(snap, rd) == [rd, rt, mg, 0, 0]
+			and snap.player_wielded == gt and m.give(rt, 12345) == -1, "mock guns: give builds gun > magazine > rounds")
+	var gun := ItemRef.on_player(g, gt, 0, -1, WIELDED, P)
+	_check.call(a.unload(gun, "main") and (seen[-1][3] as String).begins_with("Your hand is full"),
+			"mock guns: unload into the main hand holding the gun: refused")
+	_check.call(a.unload(gun, "off") and seen[-1] == ["finished", g, "unload"] and _row(snap, mg)[4] == OFFHAND
+			and _row(snap, mg)[2] != g and _row(snap, rd)[2] == mg, "mock guns: magazine out whole into the off hand")
+	var mag := ItemRef.on_player(mg, mt, _row(snap, mg)[2], _row(snap, mg)[3], OFFHAND, P)
+	m.reload_check = func(_it_t: int, _ammo_t: int) -> String: return "That magazine doesn't fit your gun."
+	_check.call(a.reload(gun, mag) and seen[-1] == ["refused", g, "reload", "That magazine doesn't fit your gun."]
+			and _row(snap, mg)[4] == OFFHAND, "mock guns: reload_check refuses, nothing moves")
+	m.reload_check = Callable()
+	_check.call(a.reload(gun, mag) and seen[-1] == ["finished", g, "reload"] and _row(snap, mg) == [mg, mt, g, 0, 0]
+			and _row(snap, rd)[2] == mg, "mock guns: magazine back in the gun")
+	var box := m.give(rt)
+	_check.call(a.reload(ItemRef.on_player(mg, mt, g, 0, 0, P), ItemRef.on_player(box, rt, 0, -1, 0, P))
+			and seen[-1] == ["finished", mg, "reload"] and _row(snap, box).is_empty(),
+			"mock guns: rounds merge into the magazine's rounds (counts aren't modelled)")
+	_check.call(a.reload(gun, ItemRef.on_player(box + 1, mt, 0, -1, 0, P)) and seen[-1][0] == "refused",
+			"mock guns: ammo no longer there: refused")
+	_check.call(a.unload(ItemRef.on_player(rd, rt, mg, 0, 0, P)) and seen[-1] == ["refused", rd, "unload",
+			"Your %s isn't loaded." % m._name(rt)], "mock guns: nothing inside: refused")
+	_check.call(a.pending_count() == 0, "mock guns: every action judged at once")
 	a.free()
 
 
@@ -433,7 +545,19 @@ func _test_drop_target(data: Variant, tables: IdTables) -> void:
 			"drop target: floor in reach: a surface, spot across the square (x east, y south)")
 	res = DropTarget.resolve(coords, at.call(E, Vector3(1.0, 0.6, 0.5), "furniture"), null, held, tables, snap, reach)
 	_check.call(DropTarget.furniture_id(E, snap, tables) == "f_woodstove" and res["kind"] == "burner"
-			and res["spot"] == Vector2(0.999, 0.5), "drop target: a wood stove is a burner, spot clamped")
+			and res["spot"] == Vector2(0.999, 0.5) and (res["heat"] as Dictionary).is_empty(),
+			"drop target: a wood stove is a burner (no heat squares in the snapshot: by id), spot clamped")
+	# The bridge's heat squares decide when the snapshot has them: a fire on the floor is a burner, lit or not.
+	var sms := _sm(snap, S)
+	sms.heat = PackedInt32Array([ItemActions.tile_of(S), Snapshot.HEAT_FIRE, 0, 2, 0, 0])
+	res = DropTarget.resolve(coords, at.call(S, Vector3(0.5, 0.0, 0.5), "floor"), null, held, tables, snap, reach)
+	_check.call(res["kind"] == "burner" and res["heat"]["fire"] == 2 and res["heat"]["lit"] == false
+			and Hands.drop_hint(res, tables) == "put it on the heat (not lit)",
+			"drop target: a heat square from the snapshot is a burner; the hint says it isn't lit")
+	sms.heat = PackedInt32Array([ItemActions.tile_of(S), Snapshot.HEAT_FIRE, 0, 2, 0, 1])
+	res = DropTarget.resolve(coords, at.call(S, Vector3(0.5, 0.0, 0.5), "floor"), null, held, tables, snap, reach)
+	_check.call(res["kind"] == "burner" and Hands.drop_hint(res, tables) == "put it on the heat", "drop target: a lit fire")
+	sms.heat = PackedInt32Array()
 	res = DropTarget.resolve(coords, at.call(P, Vector3(0.5, 0.6, 0.5), "furniture"), null, held, tables, snap, reach)
 	_check.call(res["kind"] == "surface" and not DropTarget.is_heat_source("f_table"), "drop target: other furniture is a surface")
 	var none := true

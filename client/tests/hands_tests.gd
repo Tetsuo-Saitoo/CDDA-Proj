@@ -139,9 +139,15 @@ func _test_targets() -> void:
 func _test_carry_to_floor() -> void:
 	var rock := _handle(E, _it["rock"])
 	var t := _hands.find_near(_mid(rock), 0.05)
+	var drawn := _world.item_slot(rock)
 	_check.call(_uid(t) == rock and _hands.grab("mouse", t), "hands: grab an item")
 	_check.call(_hands.proxy("mouse") != null and _hands.proxy("mouse").is_inside_tree() and _world.hidden_items.has(rock),
 			"hands: it leaves its pile and a copy follows the hand")
+	var px := _hands.proxy("mouse")
+	var want := Basis((drawn[4] as Transform3D).basis.get_rotation_quaternion()) if not drawn.is_empty() else Basis()
+	_check.call(not drawn.is_empty() and px != null and px.global_position.is_equal_approx((drawn[4] as Transform3D).origin)
+			and px.global_basis.orthonormalized().is_equal_approx(want.orthonormalized()),
+			"hands: the copy starts where the pile drew the item, turned the same way")
 	_check.call(not _hands.grab("vr_l", t) and _uid(_hands.find_near(_mid(rock), 0.01)) != rock,
 			"hands: another hand can't grab or find what one holds")
 	var o := _world.coords.ms_center_to_world(S) + Vector3(0.2, 1.5, -0.1)
