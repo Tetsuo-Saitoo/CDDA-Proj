@@ -12,6 +12,7 @@ const PALM := 0
 
 static func drive(body: PlayerBody, rig: VrRig) -> void:
 	body.show_fingers = true
+	hide_controller_boxes(rig)
 	var targets := {}
 	var tracked := {}
 	for side: String in ["l", "r"]:
@@ -49,3 +50,11 @@ static func curls_from(c: XRController3D) -> Array:
 	var thumb := 0.6 if (c.is_button_pressed(&"ax_touch") or c.is_button_pressed(&"by_touch")
 			or c.is_button_pressed(&"primary_touch")) else 0.1
 	return [thumb, trig, grip, grip, grip]
+
+
+## The rig's coloured placeholder boxes: the body's hands replace them.
+static func hide_controller_boxes(rig: VrRig) -> void:
+	for c: XRController3D in [rig.left, rig.right]:
+		for n in c.get_children():
+			if n is MeshInstance3D:
+				(n as MeshInstance3D).visible = false
