@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — v0.5.0 dry run: AppImage from main bf3fe55 + fork 1f6a418 built in WSL (114 MB); headless smoke in WSL: --town, `--live --quick` boots and meshes, quitting from the menu exits 0. chargen_live_test checks that a fresh start under a taken world name (any case) fails and leaves the world alone (child processes); fp3d-range-test replaces its own `fp3d-range` world (64 checks pass on the fp3d-bridge merge, sim test too).
 - 2026-11-10 — QA stress tests in run_tests (tests/qa_hostile_tests.gd): meshing job vs main-thread catalog lookups, live door leaves across bubble shifts, oversized body part / covers / worn / carried lists, player body caches. BUILD.md and the AppImage's AppRun describe the main menu start (`--new` is gone; `--quick` skips the menu).
 - 2026-11-10 — K7 test range, first slice (fork `fp3d-qa` 671dd63): `boot_test_range`, 58 zones from the loaded data built lazily, hub and gallery (every terrain and furniture id) built, checked range operations, frozen AI; `fp3d-range-test` 64 checks pass, fp3d-sim-test passes. Not wired into the bridge or client yet.
 - 2026-11-10 — Test run folders are now run-<pid>, so older branches' clean() (bare-number folders) can't delete them mid-run.
