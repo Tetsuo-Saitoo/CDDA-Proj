@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — K7 range, lead-bridge's review follow-ups (fork `fp3d-qa` 0e05d15, merged with fp3d 2d942c7 as eb0e59e): zone rebuild clears only creatures inside the zone, safer arrival squares, no teleport while riding, rebuild stops hauling, glass roofs on the pens; `fp3d-range-test` 126 checks (vehicle refusal, crowded arrival, hazards, riding) and client range_live_test pass.
 - 2026-11-10 — Merged K7 range slice 2 (fp3d-qa f3e9e47, approved by lead-bridge) and the CI workflows (Actions settings done by the user); UI's range smoke test renamed `tests/range_ui_live_test.gd`.
 - 2026-11-10 — Bridge: item actions `throw` and `pour` through `queue_item_action` (pour goes to exactly one place: a square or a container); `range_rebuild_zone(zone)` for lead-qa's rebuild op; wielded_gun lists every fault the gun has; main, fp3d and QA's range slice 2 merged into the bridge branches.
 - 2026-11-10 — Snapshot `player.effects` {id, name, body_part, intensity, rating, seconds_left} for the HUD; id tables: item types' container `pockets` {name, volume_ml, max_weight_g, max_item_ml, flags}; sim test's real-time check tolerates a loaded machine. Snapshot and id-table test checks.
