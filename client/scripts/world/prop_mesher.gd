@@ -411,6 +411,7 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 	var placed := pile_transforms(sm, base, pile, tile_xf, handles)
 	var b := _builder(sm, pile[0])
 	var md := _models(sm, pile[0], r)
+	var behind_doors := _inside_closed(sm, pile[0])
 	for k in placed.size():
 		var e: Array = placed[k]
 		var xf: Transform3D = e[0]
@@ -418,7 +419,13 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		var prop := _cat.item(itype)
 		if prop.shape == "item_corpse" and pile[Snapshot.PILE_CORPSE] != 0:
 			continue   # CreatureView lays the body there
-		if e[2] != 0:
+		if not xf.is_finite() or not (e[4] as Vector3).is_finite():
+			continue   # a degenerate surface (zero scale): nothing to draw or point at
+		# Pointable only when drawn where it can be seen: not behind a closed model's doors, not a glyph
+		# past MAX_GLYPHS.
+		var glyph_only := prop.model == null and prop.shape.is_empty()
+		var pointable: bool = e[2] != 0 and not behind_doors and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
+		if pointable:
 			r.item_slots.append([e[2], itype, pile[0], xf, e[3], e[4]])
 		if prop.model != null and itype != 0:
 			_add_model(md, prop.model, xf)
@@ -510,6 +517,15 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 
 
 const ITEM_CLUTTER_M := 0.07
+
+
+## Items on square `i` lie on a furniture model's inner surface_N planes behind doors that are drawn closed
+## (its placeholder hides contents): drawn, but not pointable through the doors.
+func _inside_closed(sm: Snapshot.Submap, i: int) -> bool:
+	if sm.furn[i] == 0:
+		return false
+	var furn := _cat.furniture(sm.furn[i])
+	return furn.model != null and not furn.model.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
 
 
 ## [transform, itype, uid, size_m, centre, height] of an item drawn at `xf` (scaled by `size`).

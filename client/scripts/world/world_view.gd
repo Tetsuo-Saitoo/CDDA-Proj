@@ -60,9 +60,11 @@ var _view_want := CddaCoords.Z_LIMIT        # the cutaway asked for; Z_LIMIT: ev
 ## Items not drawn (uid -> true), e.g. one held in a hand. Read only: change it with set_hidden_items.
 var hidden_items := {}
 const MAX_HIDDEN := 64
-## An item is hit as a ball around the middle of what is drawn: this share of its size, at least ITEM_HIT_MIN_M.
+## An item is hit as a ball around the middle of what is drawn: this share of its size, ITEM_HIT_MIN_M to
+## ITEM_HIT_MAX_M (a long item's ball would swallow its neighbours: a can next to a rifle).
 const ITEM_HIT_SCALE := 0.6
 const ITEM_HIT_MIN_M := 0.06
+const ITEM_HIT_MAX_M := 0.15
 var _slot_of := {}         # uid -> [submap, item slot] of each drawn item ("slots": tile -> [item slot, ...])
 var _hidden_rev := 0       # counts set_hidden_items changes
 var _hidden_wait := {}     # uids whose hiding changed while a worker meshed: rebuilt when it is done
@@ -633,7 +635,7 @@ func _mesh_props(pos: Vector3i, snap: Snapshot) -> PropMesher.Result:
 
 ## Radius of the ball an item of `size_m` is hit as.
 static func item_hit_radius(size_m: float) -> float:
-	return maxf(size_m * ITEM_HIT_SCALE, ITEM_HIT_MIN_M)
+	return clampf(size_m * ITEM_HIT_SCALE, ITEM_HIT_MIN_M, ITEM_HIT_MAX_M)
 
 
 ## The drawn item a ray (normalized `dir`) meets first on the 3 x 3 squares around `centre` (same level),

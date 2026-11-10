@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Item pointing fixes from lead-world's review: hit ball capped at 0.15 m, nothing pointable behind a closed model's doors, past the glyph cap or on a degenerate surface; Hands forgets freed door leaves, adds hovered() / set_proxy_pose() for VR; ItemActions doesn't read "not in the 256 carried shown" as moved; client tests pass (1290).
 - 2026-11-10 — Tab inspect view (hands, worn containers by pocket, nearby items; drag between them through Hands; InventoryModel for VR) and the screen HUD (HudView: body bars, need words, message feed, warnings) wired in main.gd; main merged in; client tests pass (1285); not played by hand or live.
 - 2026-11-10 — HUD data layer for screen and VR (API agreed with lead-vr): `HudData` in client/scripts/hud/ (body parts, needs with CDDA's words, held items, cleaned message feed, warnings); hud_tests; not wired or drawn yet; client tests pass (910).
 - 2026-11-10 — Furniture faces the room and multi-tile pieces join (user reports): rows face across the run, chairs their table, beds along themselves with the head at the wall (2x2 = one double bed), one table/bench/counter/sofa piece instead of one per tile; client tests pass; seen in mock renders, not live, not VR.
