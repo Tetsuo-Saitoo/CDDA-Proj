@@ -5,9 +5,23 @@ extends RefCounted
 ## TerrainMesher, and lists the transforms of props that have a model (ModelLibrary; WorldView draws
 ## them as multimeshes). Props on roof terrain go to separate meshes and lists, hidden with the roofs.
 ##
-## Facing (90° steps): toward a neighbour in one of the prop's `rotates_to` groups (racks face the
-## room, street lights the road), seats with ALIGN_WORKBENCH toward a table or counter, anything else
-## with its back to a wall; `random_yaw` props turn freely. Item piles show up to MAX_SHOWN items
+## Facing (90° steps), as in Project Zomboid: furniture faces the open side it is used from. CDDA sends
+## no per-tile rotation (mapgen rotation isn't in the snapshot), so it is read from the neighbours.
+## Joined tiles (the same furniture, or furniture in each other's connect groups: a counter run with its
+## sink) are laid out together:
+## - rows (ROW_SHAPES: counters, sofas, benches, shelves, desks, ...): a straight run of joined tiles
+##   shares one facing, across the run (a tile in an L corner goes with its longer run);
+## - beds and bathtubs: a block of joined tiles shares one facing, along its long axis when it is one
+##   tile wide (head at the wall end); a block bigger than one bed splits into beds BED_LEN long from the
+##   head end, 2 wide when the block is exactly 2 wide, else 1 wide (a dorm row), and links (the joins a
+##   shape draws) stay inside each bed;
+## - anything else (tables, hedges): the whole block shares one facing.
+## Each facing scores the tiles' fronts and backs, summed over the run or block; the best wins (ties: a
+## hash of the piece). CDDA's hint counts most: a neighbour in one of the prop's `rotates_to` groups
+## (racks face the room, street lights the road), and for seats (ALIGN_WORKBENCH, or a plain chair,
+## stool or bench) a table or counter. Then the front onto walkable floor (not a wall, window, door or
+## blocking furniture) and the back to a wall. Runs over MAX_RUN and blocks over MAX_BLOCK tiles: each
+## tile on its own. `random_yaw` props turn freely. Item piles show up to MAX_SHOWN items
 ## (the four largest from the snapshot, small clutter for the rest) at sub-tile slots (4 x 4 per tile)
 ## picked by a hash of the square, so a pile looks the same every rebuild. Items rest on the surfaces
 ## of the furniture they share a tile with (tables, shelves) and are hidden in closed containers. A
@@ -25,6 +39,20 @@ const YAW: Array[float] = [0.0, -PI / 2, PI, PI / 2]
 ## Shapes face -z, models +z (Godot's model front): a half turn about y.
 const MODEL_TURN := Transform3D(Basis(Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, -1)), Vector3.ZERO)
 const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
+const WALKABLE := [K.FLOOR, K.ROOF, K.SHRUB]
+## Layouts of joined tiles (see the class notes).
+enum Lay { FREE, ROW, LENGTH }
+const ROW_SHAPES := ["counter", "sink", "sofa", "bench", "park_bench", "shelf", "bookcase", "desk",
+		"workbench", "dresser", "cabinet_tall", "locker", "filing_cabinet", "fridge", "glass_fridge",
+		"chest_freezer", "appliance", "oven", "stove", "toilet", "display_case", "glass_cabinet", "vending",
+		"arcade", "machine", "console", "chair", "stool", "armchair"]
+const LENGTH_SHAPES := ["bed", "bathtub"]
+## Seats that turn to a table beside them even without CDDA's ALIGN_WORKBENCH.
+const SEATS := ["chair", "stool", "armchair", "bench"]
+const MAX_RUN := 12
+const MAX_BLOCK := 24
+const BED_LEN := 2
+const NO_LAYOUT := Vector2i(0, -2)
 const CLUTTER: Array[Color] = [Color(0.7, 0.68, 0.62), Color(0.45, 0.5, 0.55), Color(0.62, 0.45, 0.3),
 		Color(0.8, 0.8, 0.78), Color(0.5, 0.36, 0.32)]
 
@@ -49,6 +77,9 @@ var _solid: TerrainMesher.Buf
 var _glass: TerrainMesher.Buf
 var _roof_solid: TerrainMesher.Buf
 var _roof_glass: TerrainMesher.Buf
+var _layout := {}       # absolute square -> Vector2i(facing, piece); piece -1: links to every joined neighbour
+var _run_facing := {}   # Vector4i(first square of a run, axis) -> facing
+var _pieces := 0
 
 
 func _init(snap: Snapshot, terrain: TerrainCatalog, props: PropCatalog) -> void:
@@ -80,7 +111,7 @@ func build(sm_pos: Vector3i) -> Result:
 			rng.seed = _hash(p)
 			var xf := _place(p, i, prop, rng)
 			tile_xf[i] = xf
-			_emit(b, md, prop, xf, _links(p, f, prop, _facing_of(xf)), r, rng)
+			_emit(b, md, prop, xf, _links(p, prop, _facing_of(xf)), r, rng)
 			r.furniture += 1
 		if t != 0:
 			var prop := _cat.trap(t)
@@ -127,28 +158,189 @@ func _place(p: Vector3i, i: int, prop: PropCatalog.Prop, rng: RandomNumberGenera
 	return Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * prop.scale), o)
 
 
-## Which way (index into DIRS) the prop's front faces; see the class notes.
-func facing(p: Vector3i, prop: PropCatalog.Prop, rng: RandomNumberGenerator) -> int:
-	var best := -1
-	var best_score := 0
-	for d in 4:
-		var score := 0
-		var n := p + DIRS[d]
-		var behind := _ter_style(p - DIRS[d])
+## Which way (index into DIRS) the front of the prop at p faces; see the class notes. Deterministic: the
+## same snapshot always gives the same facings (`_rng` is not used).
+func facing(p: Vector3i, prop: PropCatalog.Prop, _rng: RandomNumberGenerator = null) -> int:
+	return _lay(p, prop).x
+
+
+## Facing and piece of the furniture at p, cached; a bed or table block is laid out whole on its first tile.
+func _lay(p: Vector3i, prop: PropCatalog.Prop) -> Vector2i:
+	if not _layout.has(p):
+		if _kind(prop) == Lay.ROW:
+			_layout[p] = Vector2i(_row_facing(p, prop), -1)
+		else:
+			_lay_block(p, prop)
+	return _layout[p]
+
+
+static func _kind(prop: PropCatalog.Prop) -> int:
+	if prop.shape in LENGTH_SHAPES:
+		return Lay.LENGTH
+	return Lay.ROW if prop.shape in ROW_SHAPES else Lay.FREE
+
+
+## A row tile faces across its run: the longer of its two straight runs of joined tiles (x on a tie).
+func _row_facing(p: Vector3i, prop: PropCatalog.Prop) -> int:
+	var rx := _run(p, Vector3i(1, 0, 0))
+	var ry := _run(p, Vector3i(0, 1, 0))
+	var along_x: bool = rx[1] >= ry[1]
+	var run: Array = rx if along_x else ry
+	if run[1] == 1:
+		return _best([p], prop, [0, 1, 2, 3], p)
+	var dirs := [0, 2] if along_x else [1, 3]
+	if run[1] > MAX_RUN:
+		return _best([p], prop, dirs, p)
+	var first: Vector3i = run[0]
+	var key := Vector4i(first.x, first.y, first.z, 0 if along_x else 1)
+	if not _run_facing.has(key):
+		var step := Vector3i(1, 0, 0) if along_x else Vector3i(0, 1, 0)
+		var tiles := []
+		for k in run[1]:
+			tiles.append(first + step * k)
+		_run_facing[key] = _best(tiles, prop, dirs, first)
+	return _run_facing[key]
+
+
+## The straight run of tiles laid out with p along `step`: [first square, length]. A run longer than
+## MAX_RUN reports MAX_RUN + 1 from every tile in it (so its tiles agree that it is too long).
+func _run(p: Vector3i, step: Vector3i) -> Array:
+	var lo := 0
+	while lo < MAX_RUN and _together(p - step * lo, p - step * (lo + 1)):
+		lo += 1
+	var hi := 0
+	while hi < MAX_RUN and _together(p + step * hi, p + step * (hi + 1)):
+		hi += 1
+	var n := lo + hi + 1
+	return [p - step * lo, MAX_RUN + 1 if lo == MAX_RUN or hi == MAX_RUN else n]
+
+
+## Lays out the block of joined tiles around p (a bed, a big table) with one facing; beds and bathtubs
+## along the block's long axis when it is one tile wide, split into beds (see the class notes). A block
+## over MAX_BLOCK tiles: p faces on its own (and a bed tile there joins nothing).
+func _lay_block(p: Vector3i, prop: PropCatalog.Prop) -> void:
+	var length := _kind(prop) == Lay.LENGTH
+	var tiles := _block(p)
+	_pieces += 1
+	if tiles.is_empty():
+		_layout[p] = Vector2i(_best([p], prop, [0, 1, 2, 3], p), _pieces if length else -1)
+		return
+	var lo: Vector3i = tiles[0]
+	var hi: Vector3i = tiles[0]
+	for t: Vector3i in tiles:
+		lo = Vector3i(mini(lo.x, t.x), mini(lo.y, t.y), lo.z)
+		hi = Vector3i(maxi(hi.x, t.x), maxi(hi.y, t.y), hi.z)
+	var dirs := [0, 1, 2, 3]
+	if length and lo.x == hi.x and lo.y != hi.y:
+		dirs = [0, 2]
+	elif length and lo.y == hi.y and lo.x != hi.x:
+		dirs = [1, 3]
+	var face := _best(tiles, prop, dirs, tiles[0])
+	var base := _pieces
+	for t: Vector3i in tiles:
+		_layout[t] = Vector2i(face, base + _bed_of(t, lo, hi, face) if length else -1)
+	_pieces += (MAX_BLOCK + 1) * (MAX_BLOCK + 1)
+
+
+## Which bed of a block (lo..hi) facing `face` a tile is in: beds BED_LEN long counted from the head end
+## (the back), 2 wide when the block is exactly 2 wide, else 1 wide.
+static func _bed_of(t: Vector3i, lo: Vector3i, hi: Vector3i, face: int) -> int:
+	var along: int = [hi.y - t.y, t.x - lo.x, t.y - lo.y, hi.x - t.x][face]
+	var across := t.x - lo.x if face % 2 == 0 else t.y - lo.y
+	var width := hi.x - lo.x + 1 if face % 2 == 0 else hi.y - lo.y + 1
+	return (along / BED_LEN) * (MAX_BLOCK + 1) + (0 if width <= 2 else across)
+
+
+## The tiles laid out together with p (4-neighbours, across submaps), sorted; empty when there are more
+## than MAX_BLOCK (the search stops there, so a hostile snapshot can't make it long).
+func _block(p: Vector3i) -> Array:
+	var seen := {p: true}
+	var todo: Array[Vector3i] = [p]
+	while not todo.is_empty():
+		var t: Vector3i = todo.pop_back()
+		for d in 4:
+			var q := t + DIRS[d]
+			if not seen.has(q) and _together(t, q):
+				if seen.size() >= MAX_BLOCK:
+					return []
+				seen[q] = true
+				todo.append(q)
+	var out := seen.keys()
+	out.sort()
+	return out
+
+
+## The direction in `dirs` with the highest score summed over `tiles`; a tie goes by a hash of `anchor`.
+func _best(tiles: Array, prop: PropCatalog.Prop, dirs: Array, anchor: Vector3i) -> int:
+	var best: Array[int] = []
+	var best_score := -(1 << 30)
+	for d: int in dirs:
+		var s := 0
+		for t: Vector3i in tiles:
+			var f := _furn_at(t)
+			s += _score(t, _cat.furniture(f) if f != 0 else prop, d)
+		if s > best_score:
+			best_score = s
+			best.clear()
+		if s == best_score:
+			best.append(d)
+	return best[_hash(anchor) % best.size()]
+
+
+## How well the tile's front faces DIRS[d]: CDDA's hints (rotates_to, seats to a table), the front onto
+## walkable floor, the back to a wall. Neighbours laid out with the tile count for nothing.
+func _score(t: Vector3i, prop: PropCatalog.Prop, d: int) -> int:
+	var s := 0
+	var n := t + DIRS[d]
+	if not _together(t, n):
+		var nf := _furn_prop(n)
 		if prop.rotates_to != 0 and (_groups_at(n) & prop.rotates_to) != 0:
-			score += 4
-			if _furn_prop(n) == null:
-				score += 1
-		if prop.align_workbench:
-			var other := _furn_prop(n)
-			if other != null and other.flat_surf:
-				score += 4
-		if behind != null and behind.kind in WALLISH:
-			score += 2
-		if score > best_score:
-			best_score = score
-			best = d
-	return best if best >= 0 else rng.randi() % 4
+			s += 8
+		if (prop.align_workbench or prop.shape in SEATS) and nf != null and nf.flat_surf:
+			s += 8
+		var ts := _ter_style(n)
+		if ts != null:
+			if ts.kind in WALLISH:
+				s -= 3
+			elif nf != null and nf.blocks:
+				s -= 2
+			elif ts.kind in WALKABLE:
+				s += 3 if nf == null else 1
+	var bk := t - DIRS[d]
+	if not _together(t, bk):
+		var tb := _ter_style(bk)
+		if tb != null:
+			if tb.kind == K.WALL:
+				s += 3
+			elif tb.kind == K.WINDOW:
+				s += 2
+			elif tb.kind == K.DOOR:
+				s += 1
+			elif _furn_prop(bk) != null and _furn_prop(bk).blocks:
+				s += 1
+	return s
+
+
+## True when the furniture at a joins the one at b: the same id, or one is in the other's connect groups.
+func _joined(a: Vector3i, b: Vector3i) -> bool:
+	var fa := _furn_at(a)
+	var fb := _furn_at(b)
+	if fa == 0 or fb == 0:
+		return false
+	if fa == fb:
+		return true
+	var pa := _cat.furniture(fa)
+	var pb := _cat.furniture(fb)
+	return (pa.connects_to & pb.groups) != 0 or (pb.connects_to & pa.groups) != 0
+
+
+## Joined and laid out together: the same kind of layout, neither turned at random.
+func _together(a: Vector3i, b: Vector3i) -> bool:
+	if not _joined(a, b):
+		return false
+	var pa := _cat.furniture(_furn_at(a))
+	var pb := _cat.furniture(_furn_at(b))
+	return not pa.random_yaw and not pb.random_yaw and _kind(pa) == _kind(pb)
 
 
 ## Inverse of YAW for an unscaled-or-scaled transform: which DIRS index the front faces.
@@ -159,20 +351,15 @@ static func _facing_of(xf: Transform3D) -> int:
 	return 2 if f.z > 0 else 0
 
 
-## Neighbours this prop joins, as shape-local direction bits: the same furniture (a two-tile bed or
-## sofa), or furniture in a group it connects to (CDDA's rule: counters, tent walls).
-func _links(p: Vector3i, f: int, prop: PropCatalog.Prop, facing: int) -> int:
+## Neighbours this prop joins, as shape-local direction bits (1 front, 2 +x, 4 back, 8 -x): the same
+## furniture (a sofa, a table), or furniture in each other's connect groups (counters, tent walls); a bed
+## or bathtub only joins the tiles of its own bed (see the class notes).
+func _links(p: Vector3i, prop: PropCatalog.Prop, facing: int) -> int:
+	var piece := -1 if prop.random_yaw else _lay(p, prop).y
 	var bits := 0
 	for d in 4:
 		var q := p + DIRS[d]
-		var sm: Snapshot.Submap = _snap.submaps.get(CddaCoords.ms_to_sm(q))
-		if sm == null:
-			continue
-		var l := CddaCoords.ms_to_local(q)
-		var nf := sm.furn[l.y * SEEX + l.x]
-		if nf == 0:
-			continue
-		if nf == f or (_cat.furniture(nf).groups & prop.connects_to) != 0:
+		if _joined(p, q) and (piece < 0 or (_layout.get(q, NO_LAYOUT) as Vector2i).y == piece):
 			bits |= 1 << posmod(d - facing, 4)   # world direction -> shape-local (front = 0)
 	return bits
 
@@ -270,12 +457,17 @@ func _ter_style(p: Vector3i) -> TerrainCatalog.Style:
 	return _ter.style_for(sm.ter[l.y * SEEX + l.x])
 
 
-func _furn_prop(p: Vector3i) -> PropCatalog.Prop:
+## Furniture id at an absolute square (0: none, or the submap isn't loaded).
+func _furn_at(p: Vector3i) -> int:
 	var sm: Snapshot.Submap = _snap.submaps.get(CddaCoords.ms_to_sm(p))
 	if sm == null:
-		return null
+		return 0
 	var l := CddaCoords.ms_to_local(p)
-	var f := sm.furn[l.y * SEEX + l.x]
+	return sm.furn[l.y * SEEX + l.x]
+
+
+func _furn_prop(p: Vector3i) -> PropCatalog.Prop:
+	var f := _furn_at(p)
 	return _cat.furniture(f) if f != 0 else null
 
 
