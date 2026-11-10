@@ -86,7 +86,13 @@ var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
 
 
+## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
+static func _boot_log(what: String) -> void:
+	print("boot: %6d ms  %s" % [Time.get_ticks_msec(), what])
+
+
 func _ready() -> void:
+	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
@@ -170,6 +176,7 @@ func _ready() -> void:
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
 	_set_view(start_view(_args, hud_settings.view))
+	_boot_log("client set up")
 	if _args.has("live"):
 		_start_live()
 	else:
@@ -456,7 +463,8 @@ func _start_live() -> void:
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
-		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
+		print("live: " + status)   # in the console too: in VR the HUD isn't in the headset
+		_boot_log("game " + s))
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
@@ -543,6 +551,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
 		_sync_cheats_allowed()
@@ -596,6 +605,7 @@ static func cheat_names(v: String) -> PackedStringArray:
 
 func _after_live_start(ok: bool) -> void:
 	if ok:
+		_boot_log("game booting")
 		status = "game booting (~30 s)"
 	else:
 		status = "live mode failed: " + live.error
@@ -645,6 +655,8 @@ func _save_and_quit() -> void:
 ## Live: meshing runs on a worker (WorldView.submit); _on_world_applied shows the rest when it is done.
 func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
+	if _first_live_snapshot:
+		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
 	world.submit(snap)
 
 
@@ -656,6 +668,8 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 	status = "turn %d: %s" % [snap.turn, status]
 	if first:
 		print("live: " + status)
+		_boot_log("first world built")
+		RenderingServer.frame_post_draw.connect(func() -> void: _boot_log("first frame drawn"), CONNECT_ONE_SHOT)
 		_frame_player()
 
 
