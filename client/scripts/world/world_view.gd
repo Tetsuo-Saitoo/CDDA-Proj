@@ -41,6 +41,7 @@ var tables_mismatch := false
 ## Door leaves (Grabbable) by square. door_state keeps each one's angle across rebuilds; door_local: no sim,
 ## doors open and close in the client (door_open: square -> bool, read by VrWalk too).
 var grabbables := {}
+var _door_squares := {}   # submap -> {square: true}: the leaves _build_doors made there
 var door_state := {}
 var door_local := true
 var door_open := {}
@@ -395,15 +396,22 @@ func _build_doors(node: Node3D, pos: Vector3i, doors: Array[Dictionary]) -> void
 			node.add_child(g)
 			grabbables[sq] = g
 	_drop_doors(pos, keep)
+	if not keep.is_empty():
+		_door_squares[pos] = keep
 
 
+## Frees the submap's leaves not in `keep`. Live, their kept angle goes too: CDDA's state rules a leaf made again.
 func _drop_doors(pos: Vector3i, keep: Dictionary) -> void:
-	for sq: Vector3i in grabbables.keys():
-		if CddaCoords.ms_to_sm(sq) == pos and not keep.has(sq):
-			var g: Grabbable = grabbables[sq]
-			if is_instance_valid(g):
-				g.free()
-			grabbables.erase(sq)
+	for sq: Vector3i in _door_squares.get(pos, {}):
+		if keep.has(sq):
+			continue
+		var g: Grabbable = grabbables.get(sq)
+		if g != null and is_instance_valid(g):
+			g.free()
+		grabbables.erase(sq)
+		if not door_local:
+			door_state.erase(sq)
+	_door_squares.erase(pos)
 
 
 ## The leaf nearest `p` (world) within `reach` metres on squares around it, or null. `ok` filters squares.

@@ -70,7 +70,10 @@ static func door(w: WorldView, d: Dictionary) -> Grabbable:
 	g.leaf.add_child(knob)
 	g.sync(d)
 	var st: Dictionary = w.door_state.get(g.square, {})
-	g.angle = st.get("angle", OPEN_REST if g.cdda_open else 0.0)
+	var a: float = st.get("angle", NAN)
+	if is_nan(a) or (absf(a) >= OPEN_AT) != g.cdda_open:   # a kept angle counts only while it agrees
+		a = OPEN_REST if g.cdda_open else 0.0
+	g.angle = a
 	g._apply()
 	g.set_process(false)
 	return g

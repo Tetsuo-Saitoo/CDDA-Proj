@@ -81,6 +81,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	fv.free()
 	world.free()
 	_job_catalogs(root, data, tables)
+	_door_leaves(root)
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).
@@ -104,4 +105,45 @@ func _job_catalogs(root: Node, data: Variant, tables: IdTables) -> void:
 	w.apply_snapshot(snap)
 	_check.call(w._job_catalog != first and w._job_catalog.tables == null and w.catalog.tables == null,
 			"job: new catalogs when the tables change")
+	w.free()
+
+
+## A leaf made again follows CDDA's state, not an angle kept from before (live: dropped leaves forget theirs).
+func _door_leaves(root: Node) -> void:
+	print("door leaves made again")
+	var w := WorldView.new()
+	root.add_child(w)
+	w.door_local = false
+	var sq := Vector3i(-900, -900, 0)
+	var d := {"square": sq, "local": Vector3.ZERO, "along_x": true, "color": Color.GRAY, "glass": false,
+			"open": false, "locked": false}
+	w.door_state[sq] = {"angle": Grabbable.OPEN_REST}   # left open, then CDDA closed it
+	var g := Grabbable.door(w, d)
+	_check.call(g.angle == 0.0, "doors: a kept open angle doesn't open a door CDDA has shut")
+	g.free()
+	w.door_state[sq] = {"angle": 0.0}
+	d["open"] = true
+	g = Grabbable.door(w, d)
+	_check.call(g.angle == Grabbable.OPEN_REST, "doors: a kept shut angle doesn't shut a door CDDA has opened")
+	g.free()
+	w.door_state[sq] = {"angle": 1.2}
+	g = Grabbable.door(w, d)
+	_check.call(is_equal_approx(g.angle, 1.2), "doors: an angle that agrees is kept")
+	g.free()
+	w.door_state.clear()
+	var pos := CddaCoords.ms_to_sm(sq)
+	var one: Array[Dictionary] = [d]
+	var none: Array[Dictionary] = []
+	var node := Node3D.new()
+	w.add_child(node)
+	w._build_doors(node, pos, one)
+	w.door_state[sq] = {"angle": 1.2}
+	w._build_doors(node, pos, none)
+	_check.call(not w.grabbables.has(sq) and not w.door_state.has(sq), "doors: live, a dropped leaf forgets its angle")
+	w.door_local = true
+	w._build_doors(node, pos, one)
+	w.door_state[sq] = {"angle": 1.2}
+	w._build_doors(node, pos, none)
+	_check.call(not w.grabbables.has(sq) and w.door_state.has(sq) and w._door_squares.is_empty(),
+			"doors: mock keeps the client's own door state")
 	w.free()
