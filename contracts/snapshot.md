@@ -13,7 +13,7 @@ previous capture is the *same object* (shared pointer) with the same revisions, 
 a client that skips snapshots still sees every change. The client keeps, per submap position, the revisions it
 last built and rebuilds:
 - the mesh when `revision` changes (ter / furn / trap / flags);
-- overlays (light, visibility, item piles, fields) when `detail_revision` changes.
+- overlays (light, visibility, item piles, fields, heat, cookware) when `detail_revision` changes.
 
 A submap that leaves the bubble is forgotten; if it comes back it restarts at revision 1 (the client should
 rebuild on any revision it didn't build, not only on increases).
@@ -42,11 +42,29 @@ struct submap_view {              // parallel arrays, index = y * 12 + x
     uint8  flags[144];            // bit0 roof (not outside), bit1 no floor (open air / hole), bit2 sign, bit3 vehicle part
     std::vector<item_pile_view> items;   // tiles with vis == 2 only (cap 144)
     std::vector<field_view>     fields;  // tiles with vis == 2 only (cap 4 per tile)
+    std::vector<heat_view>      heat;      // tiles with vis == 2 only (cap 32)
+    std::vector<cookware_view>  cookware;  // on those heat tiles where CDDA shows items (could_see_items; cap 16)
 };
 struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state;    // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
                         std::vector<item_handle_view> handles; };   // the first 32 items, CDDA's stack order
 struct item_handle_view { uint64 uid; uint32 type; int16 spot_x, spot_y; };   // uid 1..2^53-1 (bridge_api.md "Single items"); type = itype index; spot = where it was placed, permille of the square (x east, y south), -1 none
 struct field_view     { uint8 tile; uint32 type; uint8 intensity; uint16 age_turns; };   // type = CDDA int id
+struct heat_view      { uint8 tile; uint8 source; uint32 tool; uint8 fire; int32 charges; bool lit; };
+    // A square that gives heat to CDDA's crafting (L9, cdda/src/fp3d/cooking.h). source: 0 a fire alone (fd_fire, or
+    // ter/furn flagged USABLE_FIRE), 1 furniture whose crafting pseudo item is a heat tool (fireplace, wood stove,
+    // oven, smoker), 2 a vehicle part with one as a pseudo tool (kitchen unit hotplate, oven appliance).
+    // tool = itype index of that heat pseudo tool (fake_fireplace, fake_woodstove, hotplate ...), 0 = only a fire;
+    // fire = fd_fire intensity 0..3; charges = what CDDA's crafting inventory gives the tool there (fuel lying in a
+    // fireplace or stove, battery power), clamped to int32; lit = CDDA's crafting would accept that heat now (a fire
+    // burns, or the tool has charges). Heat tools are read from CDDA's `surface_heat` and `water_boiling_heat`
+    // requirements at load, not a fixed list.
+struct cookware_view  { uint8 tile; uint64 uid; uint32 type; std::vector<cookware_item_view> contents;
+                        uint32 craft_result; std::string craft_recipe; uint16 craft_progress; };
+    // An item with the COOK or BOIL quality lying on a heat square (top level of the map stack; vehicle cargo not
+    // yet). uid = its handle, the same uid the pile's `handles` list. contents: its CONTAINER pockets, one level,
+    // cap 16. An in-progress CDDA craft among the contents: craft_result = itype index of the result (0 none),
+    // craft_recipe = recipe id ("" none), craft_progress = permille.
+struct cookware_item_view { uint64 uid; uint32 type; int32 count; };   // count = charges if counted by charges, else 1
 
 struct creature_view {
     uint64 uid;                   // 1 = player; NPC = 1<<32 | character_id; monsters/vehicles from 2<<32 up.
@@ -116,7 +134,7 @@ limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` 
 item handles as a per-submap `handles` list of `[tile, uid, type, spot_x, spot_y]`, carried items as the player's
 `items` list of `[uid, type, parent, pocket, flags]` (both optional; the client checks ranges, caps, distinct uids
 and that a container comes before its contents), fields as
-`[tile, type, intensity, age]`, vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
+`[tile, type, intensity, age]`, heat as a per-submap `heat` list of `[tile, source, tool, fire, charges, lit]` (lit 0/1), cookware as a per-submap `cookware` list of objects `{"tile", "uid", "type", "contents": [[uid, type, count], ...], "craft_result", "craft_recipe", "craft_progress"}` (craft fields always present: 0 / "" / 0 when none). The client checks ranges and caps (32 heat, 16 cookware per submap, 16 contents), and that each cookware tile has a heat entry. Vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus
 `ids_generation` and `ids`: the names of the CDDA ids used (`{"ter": {"12": "t_floor", ...}}`). Session tables and
 all definitions are in the id tables JSON (4th argument). Mock: `mock/snapshot_town.json` with
 `mock/id_tables.json`.

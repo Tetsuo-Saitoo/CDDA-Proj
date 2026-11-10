@@ -179,6 +179,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "set_cheat", "name", "on" ), &CddaSim::set_cheat );
     ClassDB::bind_method( D_METHOD( "get_cheats" ), &CddaSim::get_cheats );
     ClassDB::bind_method( D_METHOD( "give_test_kit" ), &CddaSim::give_test_kit );
+    ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
+    ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
 void CddaSim::stop_session()
@@ -569,6 +571,41 @@ bool CddaSim::save_game( bool only_if_changed )
 {
     // Only while a game runs: the sim takes it at the main loop.
     return fp3d_session::get_state() == fp3d_session::state::running && fp3d::request_save( only_if_changed );
+}
+
+// L9: what a container's contents can become (fp3d/cooking.h, contracts/bridge_api.md "Recipe queries"). Hostile
+// input: every key is checked for type and range; anything wrong is refused whole (0) and nothing is posted.
+int64_t CddaSim::match_recipes( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    Variant u;
+    Variant t;
+    Variant p;
+    if( !d.has( "uid" ) || !d.has( "type" ) || !d.has( "pos" ) || !field( d, "uid", Variant::INT, u ) ||
+        !field( d, "type", Variant::INT, t ) || !field( d, "pos", Variant::VECTOR3I, p ) ) {
+        return 0;
+    }
+    const int64_t uid = u;
+    const int64_t type = t;
+    const Vector3i pos = p;
+    if( uid <= 0 || uid > static_cast<int64_t>( fp3d::max_item_uid ) || type <= 0 || type > INT32_MAX ||
+        pos.x < -max_abs_coord || pos.x > max_abs_coord || pos.y < -max_abs_coord || pos.y > max_abs_coord ||
+        pos.z < -max_abs_coord || pos.z > max_abs_coord ) {
+        return 0;
+    }
+    const fp3d::item_ref ref{ static_cast<uint64_t>( uid ), static_cast<uint32_t>( type ) };
+    return static_cast<int64_t>( fp3d::post_recipe_query( ref, fp3d::ui_point{ pos.x, pos.y, pos.z } ) );
+}
+
+String CddaSim::take_query_result( int64_t id )
+{
+    if( id <= 0 ) {
+        return String();
+    }
+    const std::optional<std::string> result = fp3d::take_query_result( static_cast<uint64_t>( id ) );
+    return result ? to_godot( *result ) : String();
 }
 
 bool CddaSim::set_cheat( const String &name, bool on )

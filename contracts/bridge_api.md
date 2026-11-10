@@ -37,12 +37,37 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `set_cheat(name, on)` | `bool` | Turns a testing cheat on or off for the character (`fp3d/cheats.h`; applied at the main loop's next request, also while paused; message "Cheat <name> on/off."). Names: `invincible` (takes no damage, can't die), `no_needs` (hunger, thirst, sleepiness held), `no_weight_limit`, `unlimited_ammo` (the wielded gun refills every turn), `stamina`, `no_temperature`, `night_vision` (also reveals the map). All off until turned on; they stay with the character in its save. False for any other name, while no game runs, or after shutdown. |
 | `get_cheats()` | `Dictionary` | `seq` (bumps before every request and once per turn), `cheats` ({name: bool} for every name above), `kits_given` (test kits handed out since start). |
 | `give_test_kit()` | `bool` | Gives the character the test loadout at the main loop's next request: a big backpack worn, a loaded Glock 19, Remington 870 and SCAR-L with spare magazines and ammo, machete, combat knife, crowbar, hammer, screwdrivers, multitool, lighter, flashlight, pot, bandages, 4 MREs, 3 bottles of water; what doesn't fit lands at its feet. False while no game runs. |
+| `match_recipes(container)` | `int` | L9: asks what a container's contents can become and how long, without blocking (see "Recipe queries" below). `container`: `uid` + `type` (the handle and itype index from the snapshot, ints) and `pos` (Vector3i, the square it lies on; the avatar's square also finds carried containers). Returns the query id (≥ 1), or 0 when refused: a missing key, a wrong type or anything out of range (uid 1..2^53−1, type ≥ 1), 8 queries pending already, or no game running. |
+| `take_query_result(id)` | `String` | The query's result as JSON (once; a second call gives ""), "" while it is pending or for an unknown id. Results wait until taken; beyond 16 the oldest is dropped. Each ≤ 64 KB. |
 | `get_save_status()` | `Dictionary` | `pending` (asked, not finished), `done` (saves finished since start, skipped ones too), `ok` (the last one). The message log also gets "Game saved." or "The game could not be saved." |
 
 Positions are absolute map squares (CDDA `tripoint_abs_ms`, y south), like the snapshot.
 
 ## Behaviour to know
 
+- Recipe queries (L9, `cdda/src/fp3d/cooking.h`): the sim answers them at the main loop's request (right after
+  the snapshot, and at once when one is posted while it waits there, also while paused) and once per turn
+  during activities; one posted during another prompt (a menu, a popup) waits for the main loop. Poll
+  `take_query_result` each frame until it gives text. Queries are read-only (nothing in the game changes).
+  Result: `{"id": N, "ok": true, "error": "", "container": uid, "matches": [...]}`. Refused: `ok` false, `error`
+  one of `out of reach` (not on the avatar's level within CDDA's crafting reach: 6 squares with a clear path, as
+  crafting_inventory uses; checked first, so a query can't probe unreachable squares), `not found` (no item with
+  that uid **and** itype on that square: gone, moved, or a stale handle), `not a container`, plus `internal` and
+  `too large` (shouldn't happen), `matches` empty. Matching uses CDDA's rules: components come **only** from the
+  container's contents (its CONTAINER pockets and what's nested in them); tools and qualities from the avatar's
+  crafting inventory (what CDDA's craft menu sees in reach: carried, the ground, furniture, vehicles, fires) plus
+  the container itself emptied (CDDA counts BOIL only on an empty pot). Only recipes that need heat (a tool of
+  CDDA's `surface_heat` / `water_boiling_heat`) and take one of the contents as a component are looked at; a
+  recipe matches when every component group is covered by the contents for a batch of 1. Each match:
+  `recipe` (id), `result` (itype id), `name` (plain text, ≤ 128 bytes), `batch_max` (largest batch the
+  contents cover, ≤ 20), `time_s` (CDDA's time for this character to craft one batch now, game seconds, with
+  their crafting speed: light, morale, limbs, pain, helpers), `known` (the character can use the recipe: learned,
+  or in a book in reach, or known by a helper, like CDDA's craft menu), `skills_ok` (skill levels the recipe asks
+  for), `tools_ok` (tools and qualities there), `missing` (≤ 8 short texts: a missing tool group "fire or
+  hotplate or ...", a quality "boiling 1", a skill "cooking 3", a required proficiency), `can_start` (known,
+  tools there and required proficiencies; low skill does **not** block it, as in CDDA, where it only adds a
+  failure chance). Order: `can_start` first, then the recipes using the most of the contents' kinds, then the
+  largest batch, then by id. At most 32 matches.
 - Boot takes ~30 s (data load, new game). The first snapshot arrives with the first request.
 - Saving: `save_game()`, then watch `get_save_status().done` go up. Or queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process

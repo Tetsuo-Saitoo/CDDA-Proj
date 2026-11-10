@@ -62,6 +62,9 @@ class CddaSim : public godot::RefCounted
         bool set_cheat( const godot::String &name, bool on );
         godot::Dictionary get_cheats() const;
         bool give_test_kit();
+
+        int64_t match_recipes( const godot::Dictionary &container );
+        godot::String take_query_result( int64_t id );
 };
 
 #endif // FP3D_BRIDGE_CDDA_SIM_H

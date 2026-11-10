@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — L9 cooking base merged: heat sources and cookware (with contents and craft progress) in snapshots, recipe matching from a container's contents (`match_recipes` / `take_query_result`, CDDA's rules); explosion events now name the item behind a queued blast (grenades, C4 gave none). Sim test `cooking`, events test checks.
 - 2026-11-10 — Item actions, snapshot lists and new-world start: stricter checks (QA review of the 11-09 merges); a fresh world never takes over an existing world's folder (only `fp3d-` throwaway worlds are replaced, by `start()`); sim test `items` / `worlds` checks for each.
 - 2026-11-10 — Cheats and a test kit for testing: set_cheat / get_cheats / give_test_kit (invincible, no needs, no weight limit, unlimited ammo, stamina, no temperature, night vision; CDDA debug traits plus a carry-weight trait); off until turned on, kept in the save; sim test checks each.
 - 2026-11-10 — CDDA safe mode off by default in FP3D games (new and loaded; Shift+1 still toggles it); auto-pause on a new hostile is its own setting (set_auto_pause, on by default); tests no longer toggle safe mode.
