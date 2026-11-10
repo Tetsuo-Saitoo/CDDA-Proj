@@ -97,7 +97,7 @@ func _wait(want: Callable) -> Dictionary:
 
 func _finish() -> void:
 	if _failed == 0:
-		TestDir.clean()   # a failed run keeps its files to look at; the next run's clean() removes them
+		TestDir.clean()   # a failed run keeps its files to look at; a later clean() removes them when old
 	print("chargen live tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 

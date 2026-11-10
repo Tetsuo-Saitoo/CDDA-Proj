@@ -62,22 +62,26 @@ func _test_error_catch() -> void:
 	_check(_errors.take_matching("Trying to cast a freed object") == 1, "a runtime script error is caught")
 
 
-## The run's scratch folder (tests/test_dir.gd): one per process, and clean() removes it and the folders of
-## runs whose process is gone.
+## The run's scratch folder (tests/test_dir.gd): one per process; clean() removes it and folders left by
+## runs that began over STALE_S ago, never a folder another worktree's run is using now.
 func _test_test_dir() -> void:
 	print("test folder")
 	var mine := TestDir.path("probe.txt")
 	_check(mine.begins_with("%s/%d/" % [TestDir.ROOT, OS.get_process_id()]), "files go in this run's folder (%s)" % mine)
-	var dead := 4000000
-	while OS.is_process_running(dead):
-		dead += 4
-	var stale := TestDir.ROOT.path_join(str(dead))
-	DirAccess.make_dir_recursive_absolute(stale.path_join("save/w"))
-	FileAccess.open(stale.path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
+	# Ids past any pid_max, so no real run has them.
+	var now := int(Time.get_unix_time_from_system())
+	var stale := TestDir.ROOT.path_join("999999991")
+	var other := TestDir.ROOT.path_join("999999992")
+	for d: Array in [[stale, now - TestDir.STALE_S - 60], [other, now - 5]]:
+		DirAccess.make_dir_recursive_absolute((d[0] as String).path_join("save/w"))
+		FileAccess.open((d[0] as String).path_join("save/w/f.txt"), FileAccess.WRITE).store_string("x")
+		FileAccess.open((d[0] as String).path_join(TestDir.MARK), FileAccess.WRITE).store_string(str(d[1]))
 	FileAccess.open(mine, FileAccess.WRITE).store_string("x")
 	TestDir.clean()
 	_check(not DirAccess.dir_exists_absolute(stale) and not FileAccess.file_exists(mine),
-			"clean() removes this run's folder and a dead run's")
+			"clean() removes this run's folder and an old one left behind")
+	_check(FileAccess.file_exists(other.path_join("save/w/f.txt")), "clean() keeps a folder another run started just now")
+	TestDir._remove_tree(other)
 
 
 func _cast_freed() -> void:
