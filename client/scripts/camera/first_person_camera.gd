@@ -18,7 +18,7 @@ const FOLLOW_RATE := 12.0    # 1/s: how fast the camera catches up with the play
 const SNAP_DIST := 4.0       # further than this, jump instead of gliding (first world, long moves)
 const PITCH_MAX := 1.5
 const STICK_LOOK := 2.5      # rad/s at full right stick
-const VIEWS := ["first", "outside"]
+const VIEWS := ["first", "shoulder", "top", "outside"]   # C9: ViewCamera draws shoulder and top
 
 var world: WorldView
 var walk: VrWalk
@@ -39,8 +39,8 @@ func _init(w: WorldView) -> void:
 	far = 600.0
 
 
-## The start view from the command line: --view=first|outside. Without it the view is first person, except
-## that --camera= (a fly-camera pose for screenshots) means outside.
+## The start view from the command line: --view=first|shoulder|top|outside. Without it the view is first
+## person, except that --camera= (a fly-camera pose for screenshots) means outside.
 static func view_from_args(args: Dictionary) -> String:
 	var v := String(args.get("view", ""))
 	if v in VIEWS:

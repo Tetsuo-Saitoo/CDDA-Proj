@@ -23,6 +23,9 @@ var world: WorldView
 var look_ray: LookRay
 var icon: GrabIcon
 var reach: Callable          # () -> Variant: the square you reach from (Vector3i), or null
+## () -> Variant: where the player's eyes are (Vector3) when the camera is away from them (over the shoulder,
+## top-down), else null. Reach and carrying then count from the eyes, not from the camera.
+var eyes := Callable()
 var grabbed: Grabbable
 var hover: Grabbable
 var ask := {}                # {word, pos, until}: the door prompt a queued open / close will bring
@@ -66,13 +69,28 @@ func pick(cam: Camera3D, pt: Vector2, max_m := LookRay.MAX_M) -> Array:
 	var centre: Variant = reach.call() if reach.is_valid() else null
 	if centre == null or cam == null or world.snapshot == null:
 		return []
-	var o := cam.project_ray_origin(pt)
-	var d := cam.project_ray_normal(pt)
+	var ray := ray_from(cam, pt)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
 	var r := look_ray.cast(o, d, max_m)
 	var limit := max_m
 	if r["hit"]:   # nothing behind the first wall; a closed door's leaf stands inside its square
 		limit = o.distance_to(r["point"]) + (1.5 if r["what"] == "door" else 0.3)
 	return world.grabbable_on_ray(o, d, centre, limit)
+
+
+## [origin, direction] of the pointer's ray. With `eyes` set the origin moves along the ray to where it passes
+## closest to the eyes (never back towards the camera), so hover and carry distances count from the player.
+func ray_from(cam: Camera3D, pt: Vector2) -> Array:
+	var d := cam.project_ray_normal(pt)
+	return [from_eyes(cam.project_ray_origin(pt), d, eyes.call() if eyes.is_valid() else null), d]
+
+
+## Ray origin `o` (direction `d`, unit) moved forward to where the ray passes closest to `e` (a Vector3), else o.
+static func from_eyes(o: Vector3, d: Vector3, e: Variant) -> Vector3:
+	if not e is Vector3 or not (e as Vector3).is_finite():
+		return o
+	return o + d * maxf((e as Vector3 - o).dot(d), 0.0)
 
 
 ## A short line under the pointer for a while (a refusal's reason in red).
@@ -104,7 +122,8 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 	elif hands != null:
 		var t := {}
 		if grabbed == null and enabled and cam != null:
-			t = hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), HOVER_M)
+			var ray := ray_from(cam, pt)
+			t = hands.find_on_ray(ray[0], ray[1], HOVER_M)
 		hands.hover("mouse", t)
 		hover = t["node"] if not t.is_empty() and t["kind"] == "door" else null
 		item_hover = t if not t.is_empty() and t["kind"] == "item" else {}
@@ -142,8 +161,9 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 ## The carried item floats `carry_m` in front of the camera, or rests where the pointer meets a place it can go.
 func _carry(cam: Camera3D, pt: Vector2) -> void:
 	var held: ItemRef = hands.holding("mouse")["item"]
-	var o := cam.project_ray_origin(pt)
-	var d := cam.project_ray_normal(pt)
+	var ray := ray_from(cam, pt)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
 	drop = hands.drop_on_ray(o, d, held)
 	var pos := o + d * carry_m
 	var p: Variant = drop.get("point")
@@ -181,7 +201,8 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 	if hands != null:
 		if cam == null:
 			return false
-		var t := hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), LookRay.MAX_M)
+		var ray := ray_from(cam, pt)
+		var t := hands.find_on_ray(ray[0], ray[1], LookRay.MAX_M)
 		if t.is_empty() or not hands.grab("mouse", t):
 			return false
 		if t["kind"] == "door":

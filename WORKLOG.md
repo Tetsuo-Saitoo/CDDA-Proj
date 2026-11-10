@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — C9 views: over the shoulder and top-down next to first person (V cycles first, shoulder, top, outside; saved in hud.cfg); client tests pass, not looked at on screen.
 - 2026-11-10 — F1 key menu shows two pad bindings per action (a second pad column); client tests pass, no real pad tried.
 - 2026-11-10 — F1 key menu works with a pad alone (D-pad / left stick pick a slot, A sets it, B / Start close; the open menu keeps every pad event); client tests pass, no real pad tried.
 - 2026-11-10 — Test range controls: LiveSession wraps the bridge's range ops and info (checked, bounded); the F1 Cheats page has a Test range section in range games (zones, freeze, heal, time, spawns); id fields type through the menu; client tests pass, not tried live.

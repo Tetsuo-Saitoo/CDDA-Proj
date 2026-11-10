@@ -38,7 +38,7 @@ func _test_args() -> void:
 	_check.call(FirstPersonCamera.view_from_args({"camera": "1,2,3,4,5"}) == "outside", "fp: --camera= starts outside")
 	_check.call(FirstPersonCamera.view_from_args({"view": "first", "camera": "1,2,3,4,5"}) == "first",
 			"fp: --view=first wins over --camera=")
-	_check.call(FirstPersonCamera.view_from_args({"view": "top"}) == "first", "fp: a bad --view= keeps first person")
+	_check.call(FirstPersonCamera.view_from_args({"view": "sideways"}) == "first", "fp: a bad --view= keeps first person")
 
 
 func _test_actions() -> void:
