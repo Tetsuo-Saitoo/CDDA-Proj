@@ -146,8 +146,8 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(grab.icon)
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
-	grab.eyes = func() -> Variant:   # over the shoulder / top-down: reach counts from the eyes, not the camera
-		return fp.global_position if view_mode in ViewCamera.MODES else null
+	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
 	hands = Hands.new(world, item_actions)
@@ -323,6 +323,14 @@ func _place_player_body() -> void:
 
 func _fp_active() -> bool:
 	return vr == null and first_person
+
+
+## C9: the eyes when the shown camera is away from them (shoulder, top), for aiming, grabbing and looking:
+## {mode, eye (Vector3), facing (level, unit)}; {} in first person, outside and VR.
+func eyes_view() -> Dictionary:
+	if not _fp_active() or fp == null or not view_mode in ViewCamera.MODES:
+		return {}
+	return {"mode": view_mode, "eye": fp.global_position, "facing": ViewCamera.facing(fp.yaw)}
 
 
 ## C9: first person (true) or the outside fly camera. VR has its own rig and ignores this.
@@ -768,7 +776,11 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
-	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	var v := eyes_view()
+	var dir := cam.project_ray_normal(pos)
+	var o := cam.project_ray_origin(pos)
+	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
@@ -1033,6 +1045,7 @@ func _setup_hud() -> void:
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
+	request_ui.held = func() -> bool: return key_menu != null and key_menu.visible   # F1: its fields get the keys
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:

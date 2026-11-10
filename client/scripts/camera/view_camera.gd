@@ -51,6 +51,26 @@ static func pose(m: String, eye: Vector3, yaw: float, pitch: float, dist := TOP_
 	return Transform3D(look, eye + offset * clampf(boom, 0.0, 1.0))
 
 
+## Where a pick ray from the camera (`o`, unit `d`) starts in view `m`, so it meets what is in front of the
+## player, never the player or what lies between the camera and the eyes (`eye`, a Vector3; else `o` is kept).
+## shoulder: where the ray passes closest to the eyes; top: where it comes down to the eyes' height (the levels
+## above are cut away there). Never back towards the camera.
+static func ray_start(m: String, o: Vector3, d: Vector3, eye: Variant) -> Vector3:
+	if not eye is Vector3 or not (eye as Vector3).is_finite() or not o.is_finite() or not d.is_finite():
+		return o
+	var e := eye as Vector3
+	if m == "top":
+		return o + d * ((o.y - e.y) / -d.y) if d.y < -1e-3 and o.y > e.y else o
+	if m == "shoulder":
+		return o + d * maxf((e - o).dot(d), 0.0)
+	return o
+
+
+## The eyes' level facing for yaw `yaw` (radians, 0 = -z): top-view aiming follows it.
+static func facing(yaw: float) -> Vector3:
+	return Vector3(-sin(yaw), 0.0, -cos(yaw))
+
+
 ## The shoulder boom's share left free when `free_m` metres are clear from the eyes towards the full pose.
 static func boom_for(free_m: float) -> float:
 	var full := (Vector3.BACK * SHOULDER_BACK + Vector3.RIGHT * SHOULDER_RIGHT + Vector3.UP * SHOULDER_UP).length()

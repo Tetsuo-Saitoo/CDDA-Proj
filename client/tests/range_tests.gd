@@ -132,7 +132,14 @@ func _test_session() -> void:
 	_check.call(changed.size() == 2 and changed[1]["zone"] == 1 and not changed[1]["ai_frozen"], "range: a new zone shows")
 	ls._range_ops[3] = Time.get_ticks_msec() - LiveSession.QUERY_TIMEOUT_MS - 1
 	ls._poll_range(0.0)
-	_check.call(done.has([3, "no answer"]), "range: an op whose result never came is given up")
+	_check.call(done.has([3, LiveSession.NO_ANSWER]), "range: an op whose result never came is given up")
+	var waiting := ls._range_ops.size()
+	for i in LiveSession.MAX_RANGE_OPS:
+		if ls._range_ops.size() < LiveSession.MAX_RANGE_OPS:
+			ls.range_heal()
+	_check.call(waiting < LiveSession.MAX_RANGE_OPS and ls.range_heal() == 0 and LiveSession.MAX_RANGE_OPS == RangeInfo.MAX_RESULTS,
+			"range: no more ops wait than results are kept (%d)" % LiveSession.MAX_RANGE_OPS)
+	ls._range_ops.clear()
 	sim.refuse = true
 	_check.call(ls.range_heal() == 0, "range: the bridge's 0 is a refusal")
 	# A normal game: looked at about once a second only.

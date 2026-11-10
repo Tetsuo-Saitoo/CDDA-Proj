@@ -24,8 +24,8 @@ signal recipes_matched(container_uid: int, result: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
-## A range_* operation sent from here was done (error "") or refused (the game's reason; "no answer" when its
-## result never came).
+## A range_* operation sent from here was done (error "") or refused (the game's reason; NO_ANSWER when its
+## result didn't come within QUERY_TIMEOUT_MS: a prompt may hold the game up, and the op may still run).
 signal range_done(op_id: int, error: String)
 
 ## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
@@ -60,7 +60,9 @@ var _range := {}
 var _range_seq := -1
 var _range_ops := {}
 var _range_poll_s := 0.0
-const MAX_RANGE_OPS := 32           # the bridge refuses more waiting
+## Waiting range ops at most: the bridge keeps 32 waiting but only the last 16 results, so more could lose theirs.
+const MAX_RANGE_OPS := RangeInfo.MAX_RESULTS
+const NO_ANSWER := "no answer yet (it may still run later)"
 const RANGE_POLL_S := 1.0           # outside a range game, how often to look again
 ## The running game was started new (not loaded): --test gives its test kit only then.
 var new_game := false
@@ -480,24 +482,26 @@ func _poll_range(delta: float) -> void:
 			range_changed.emit({})
 		return
 	_range_poll_s += delta
-	if not in_range() and _range_ops.is_empty() and _range_poll_s < RANGE_POLL_S and _range_seq >= 0:
+	if _range_ops.is_empty() and _range_poll_s < RANGE_POLL_S and _range_seq >= 0:
 		return
 	_range_poll_s = 0.0
 	var d: Variant = _sim.get_range_info()
-	var info := RangeInfo.clean(d)
-	if info.is_empty():
+	if not d is Dictionary:
 		return
 	if not _range_ops.is_empty():
-		for r: Dictionary in info["results"]:
+		for r: Dictionary in RangeInfo.results(d):
 			if _range_ops.erase(r["id"]):
 				range_done.emit(r["id"], r["error"])
 		var now := Time.get_ticks_msec()
 		for id: int in _range_ops.keys():
-			if now - int(_range_ops[id]) > QUERY_TIMEOUT_MS:   # pushed out of the 16 kept, or the game held up
+			if now - int(_range_ops[id]) > QUERY_TIMEOUT_MS:   # the game held up (a prompt open), or pushed out
 				_range_ops.erase(id)
-				range_done.emit(id, "no answer")
+				range_done.emit(id, NO_ANSWER)
 	var seq: Variant = (d as Dictionary).get("seq", 0)
 	if not (seq is int or seq is float) or int(seq) == _range_seq:
+		return   # the zones only cleaned when something changed (~1 ms for 58 of them)
+	var info := RangeInfo.clean(d)
+	if info.is_empty():
 		return
 	_range_seq = int(seq)
 	info.erase("results")

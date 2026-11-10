@@ -58,6 +58,16 @@ func run(root: Node, check: Callable) -> void:
 	menu.open()
 	menu.take(_button(JOY_BUTTON_START))
 	_check.call(not menu.visible, "key menu pad: Start closes")
+	menu.open()
+	menu.cursor = Vector2i(0, 0)   # the D-pad reaches the key slots too
+	menu.take(_button(JOY_BUTTON_A))
+	var setting_key := menu._capture == [InputActions.ACTIONS[0][0], 0]
+	menu.take(_button(JOY_BUTTON_X))
+	var x_ignored := not menu._capture.is_empty()
+	menu.take(_button(JOY_BUTTON_B))
+	_check.call(setting_key and x_ignored and menu._capture.is_empty() and menu.visible,
+			"key menu pad: a key slot set from the pad ignores pad buttons, B backs out of it")
+	menu.close()
 	menu.free()
 	InputActions.reset_all()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
