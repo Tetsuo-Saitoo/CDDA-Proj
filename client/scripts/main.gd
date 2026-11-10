@@ -799,6 +799,7 @@ func _setup_hud() -> void:
 	layer.add_child(hands_panel)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
+	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:
@@ -899,7 +900,7 @@ func _process(_delta: float) -> void:
 	_place_player_body()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
 	if compass.visible:   # creatures the player perceives, by bearing from the view
-		compass.set_blips(Compass.creature_blips(world.snapshot, _view().global_position,
+		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
