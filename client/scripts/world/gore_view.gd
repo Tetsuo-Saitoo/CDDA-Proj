@@ -1,9 +1,10 @@
 class_name GoreView
 extends Node3D
-## Blood, gibs and bile on the ground: CDDA's fields (snapshot `fields`, seen tiles only) of those kinds drawn
-## as splats (blood, bile) and chunks (gibs), sized by intensity, coloured by what bled (flesh, plant, insect,
-## invertebrate). Other fields (fire, smoke, gas) are left to their own views. Rebuilt per snapshot; at most
-## MAX_SPLATS instances per kind. Deterministic per square, so a rebuild doesn't move anything.
+## Fields on the ground: CDDA's fields (snapshot `fields`, seen tiles only) of the liquid and solid kinds drawn
+## as splats (blood, bile, acid, slime, sap, sludge, webs, churned earth) and chunks (gibs, rubble), sized by
+## intensity, blood and gibs coloured by what bled (flesh, plant, insect, invertebrate). Fire, smoke and gas
+## are FieldView's. Rebuilt per snapshot; at most MAX_SPLATS instances per kind. Deterministic per square, so a
+## rebuild doesn't move anything.
 
 const MAX_SPLATS := 2048
 ## field id -> [shape, colour]; shapes: "splat" (flat disc) or "chunks".
@@ -17,6 +18,14 @@ const KINDS := {
 	"fd_gibs_veggy": ["chunks", Color(0.3, 0.42, 0.12)],
 	"fd_gibs_insect": ["chunks", Color(0.4, 0.42, 0.15)],
 	"fd_gibs_invertebrate": ["chunks", Color(0.3, 0.35, 0.5)],
+	"fd_acid": ["splat", Color(0.55, 0.85, 0.1, 0.85)],
+	"fd_slime": ["splat", Color(0.45, 0.55, 0.35, 0.8)],
+	"fd_sap": ["splat", Color(0.7, 0.45, 0.1, 0.85)],
+	"fd_sludge": ["splat", Color(0.22, 0.17, 0.1, 0.9)],
+	"fd_web": ["splat", Color(0.92, 0.92, 0.9, 0.45)],
+	"fd_web_nostick": ["splat", Color(0.92, 0.92, 0.9, 0.45)],
+	"fd_churned_earth": ["splat", Color(0.33, 0.24, 0.15, 0.95)],
+	"fd_rubble": ["chunks", Color(0.5, 0.48, 0.45)],
 }
 
 var view_z_max := CddaCoords.Z_MAX
