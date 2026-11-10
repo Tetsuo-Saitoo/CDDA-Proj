@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR cooking cards (L9, show only): a card over each pot on the heat near the head with heat, contents, CDDA's craft progress or up to 3 recipe matches (asked through LiveSession's recipe wrapper, duck-typed), steam over a lit pot (`vr/vr_cook.gd`, `tests/vr_cook_tests.gd`); not tried live or in a headset.
 - 2026-11-10 — VR point and pull (L2): a half-pressed trigger on an empty hand rays and outlines an item in reach, the click takes it and its copy flies into the hand; main trigger: pack, stairs, then pull, one buzz for nothing (`vr/vr_rig.gd`, `tests/vr_pull_tests.gd`); not tried in a headset.
 - 2026-11-10 — VR backpack (L8): grip over the shoulder takes the worn bag off, let go in front it opens with a compartment per pocket; take items out / put them into a pocket by hand (`vr/vr_pack.gd`, `tests/vr_pack_tests.gd`); not tried in a headset.
 - 2026-11-10 — Items in an open drawer or behind an opened cabinet door / lid can be pointed at and follow the part; MockItems.put_check lets tests refuse a pocket (for lead-vr's backpack).

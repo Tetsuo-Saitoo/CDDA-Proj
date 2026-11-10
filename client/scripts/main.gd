@@ -347,6 +347,7 @@ func _start_vr() -> void:
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
 	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
+	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0

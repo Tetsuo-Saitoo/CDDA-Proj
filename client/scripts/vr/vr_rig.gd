@@ -38,6 +38,8 @@ extends XROrigin3D
 ## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
+## Cooking (block L9, VrCook `cook`, shows only): a card over each pot on a heat square near the head (heat, contents,
+## CDDA's craft progress or the recipes its contents match; main.gd sets `cook.backend`).
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -142,6 +144,7 @@ var hands: Hands:
 		if pack != null:
 			pack.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
+var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -246,6 +249,10 @@ func _build() -> void:
 	pack.head = camera
 	pack.ids.assign(HAND_IDS)
 	add_child(pack)
+	cook = VrCook.new()
+	cook.world = world
+	cook.head = camera
+	add_child(cook)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -336,6 +343,7 @@ func _process(delta: float) -> void:
 	drive_body()
 	place_compass()
 	place_hud(delta)
+	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
 
 
 ## The HUD panel inside the off forearm (setting `wrist_hud`): shows while turned to the eyes.
