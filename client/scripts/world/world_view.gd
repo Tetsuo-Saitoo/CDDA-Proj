@@ -7,6 +7,7 @@ extends Node3D
 ## increase: a submap that leaves the bubble and comes back restarts at 1), together with its six
 ## neighbours, whose edge walls, wall tops and roof lids depend on it. Props are rebuilt with the
 ## terrain and also when only the detail_revision (items) changed.
+## Every snapshot also gives `lighting` (WorldLighting, block C6) a new LightMap: CDDA's light and vis.
 
 ## A door leaf crossed its open / close threshold (Grabbable): main.gd asks the sim. Not in mock mode.
 signal door_wants(square: Vector3i, open: bool)
@@ -34,6 +35,8 @@ var grabbables := {}
 var door_state := {}
 var door_local := true
 var door_open := {}
+## Darkens the world by CDDA's light (block C6); main.gd turns it off with --no-light.
+var lighting := WorldLighting.new()
 var _built := {}   # Vector3i absolute submap -> {"rev", "detail", "node", "verts", "pverts", "counts"}
 
 
@@ -59,6 +62,13 @@ class Job:
 	var terrain := {}   # Vector3i -> TerrainMesher.Result
 	var props := {}     # Vector3i -> PropMesher.Result
 	var next := -1      # commit progress: -1 not begun, then an index into dirty + detail
+	var light_on := false   # build `light` (lighting enabled)
+	var light_lut := false  # with a new LUT (the natural light changed)
+	var light: LightMap
+
+
+func _init() -> void:
+	add_child(lighting)
 
 
 ## Id tables for the snapshots that follow (contracts/id_tables.md). Null or invalid: the snapshot's
@@ -171,6 +181,8 @@ func _prepare(snap: Snapshot) -> Job:
 			detail[pos] = true
 	for pos: Vector3i in detail:
 		job.detail.append(pos)
+	job.light_on = lighting.enabled
+	job.light_lut = lighting.lut_ambient != LightMap.natural_light(snap)
 	return job
 
 
@@ -185,6 +197,8 @@ func _compute(job: Job) -> void:
 		job.terrain[pos] = mesher.build(pos)
 	for pos in job.detail:
 		job.props[pos] = pmesher.build(pos)
+	if job.light_on:
+		job.light = LightMap.build(job.snap, job.light_lut)
 
 
 ## Puts a meshed job into the scene, `budget_us` at a time (-1: all); true when done. Until then the old
@@ -201,6 +215,8 @@ func _commit(job: Job, budget_us: int) -> bool:
 		for pos in job.drops:
 			if _built.has(pos):
 				_drop(pos)
+		if job.light != null:
+			lighting.apply(job.light, coords)
 	var total := job.dirty.size() + job.detail.size()
 	while job.next < total:
 		if budget_us >= 0 and Time.get_ticks_usec() - t0 >= budget_us:

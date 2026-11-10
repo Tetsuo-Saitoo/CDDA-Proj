@@ -112,6 +112,7 @@ static func _layer(shape: String, c: Color) -> MultiMeshInstance3D:
 	mat.roughness = 0.3 if shape == "splat" else 0.6
 	if c.a < 1.0:
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = mesh
