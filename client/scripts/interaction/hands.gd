@@ -223,13 +223,13 @@ func _grab(id: String, target: Dictionary) -> bool:
 	h.held = target
 	_light(h, h.hover, false)
 	h.hover = {}
+	var slot := world.item_slot(it.uid)   # before hiding it: item_slot gives nothing for hidden items
 	if not it.carried:
 		_held_hidden[it.uid] = true
 		_sync_hidden()
 	h.proxy = _make_proxy(it)
 	world.add_child(h.proxy)
 	var start := Transform3D(Basis.IDENTITY, it.point if it.is_drawn() else h.xform.origin)
-	var slot := world.item_slot(it.uid)
 	if not slot.is_empty():   # where the pile drew it, turned the same way (the proxy has its own scale)
 		var xf: Transform3D = slot[4]
 		start = Transform3D(Basis(xf.basis.get_rotation_quaternion()), xf.origin)
@@ -352,7 +352,9 @@ static func drop_hint(drop: Dictionary, tables: IdTables) -> String:
 		"container":
 			return "put it in the %s" % (drop["container"] as ItemRef).display_name(tables)
 		"burner":
-			return "put it on the heat"
+			var heat: Variant = drop.get("heat", {})
+			var cold: bool = heat is Dictionary and (heat as Dictionary).get("lit", true) == false
+			return "put it on the heat (not lit)" if cold else "put it on the heat"
 		"surface":
 			return "put it here"
 	return "can't put it there"
