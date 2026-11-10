@@ -278,14 +278,17 @@ func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
 
 
 ## Moves an item no hand holds (drag and drop in the Tab view) the way letting go would: `drop` as from
-## drop_on_ray / drop_at, or built by the caller ({kind: container, container: ItemRef} or {kind: surface,
-## square, spot}). Returns the action started, "" when none.
+## drop_on_ray / drop_at, or built by the caller ({kind: container, container: ItemRef, pocket: int (optional,
+## -1 = CDDA's pick)} or {kind: surface, square, spot}). Returns the action started, "" when none.
 func move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	if it == null or not _usable(it) or not (drop.get("kind", "none") in ["surface", "burner", "container"]):
 		return ""
 	if drop.get("kind") == "container" and not drop.get("container") is ItemRef:
 		return ""
 	if not drop.get("square", Vector3i.ZERO) is Vector3i or not drop.get("spot", Vector2.ZERO) is Vector2:
+		return ""
+	var pocket: Variant = drop.get("pocket", -1)
+	if not pocket is int or pocket < -1 or pocket > Snapshot.MAX_POCKET:
 		return ""
 	return _move(id, it, drop)
 
@@ -343,9 +346,10 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	var square: Vector3i = drop.get("square", it.square)
 	var spot: Vector2 = drop.get("spot", Vector2(-1, -1))
 	var container: ItemRef = drop.get("container")
+	var pocket: int = drop.get("pocket", -1)
 	var second := func(c: ItemRef) -> bool:
 		if kind == "container":
-			return actions.put(c, container)
+			return actions.put(c, container, pocket)
 		return actions.drop(c, square, spot)
 	_owner[it.uid] = id
 	if it.carried:
