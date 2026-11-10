@@ -163,6 +163,24 @@ Each line: **ID — task.** Done-when. *(depends on)*
   *(B2)*
 - **E4 — 3D placement.** Construction ghosts, zone painting, moving furniture, vehicle construction view.
 - **E5 — Accessibility.** Text size, colour-blind palettes, FOV/motion options, hold vs toggle.
+- **E6 — Hands for mouse and keyboard (user, 2026-11-09).** The flat screen gets as close to VR's hands as it
+  can, on the same one-item bridge actions as L8/L9 (no separate rules): the crosshair picks one item, not
+  just the pile; E takes the item you look at (hold E: its other actions), a quick key puts it straight into
+  the backpack. Hold the left button on an item, a door, a drawer or a lid to grab it: it floats in front of
+  you and follows the mouse, the wheel turns it or changes its distance; release over a container to put it in,
+  over a surface to place it (a ghost shows the spot, which is kept), over a burner to snap cookware on, with a
+  flick to throw. Holding a container and looking at another or at a tank, hold E to pour (the amount follows
+  how long you hold). Opening a cupboard or a bag shows its contents where they are; Tab opens a container or
+  the worn backpack in an inspect view in front of you, where items drag between its compartments, the hands
+  panel and the world. Cooking is the same as L9: drag the pot onto a burner, ingredients into the pot, look
+  at a knob and press E (or the wheel) for the heat. Grabbable parts show themselves (user, 2026-11-09): a
+  handle, knob, lid edge or drawer front under the crosshair gets a highlight (outline or glow) and the
+  crosshair turns into a hand, so players see what opens before they try; opening follows the mouse like
+  Amnesia's doors and drawers (drag back to pull a drawer, sideways to swing a door, how far = how far
+  you drag). The same highlight shows for a VR hand within reach. Models mark these parts (`handle_N`,
+  `docs/MODELS.md`); without a marker the whole door or drawer counts. Flat-screen ideas (mechanics only):
+  Amnesia: The Dark Descent and Penumbra (doors, drawers and lids dragged with the mouse), Skyrim (hold to grab
+  and place things), Escape from Tarkov (dragging loot between containers). *(E2, L8, L9, G)*
 
 ### F. Combat — 1 agent
 - **F1 — Melee.** Hit what the crosshair/cone targets via CDDA melee; swing time = move cost; techniques;
@@ -264,6 +282,44 @@ for one given thing, which the flat screen can use too.
   Needs the bridge's timescale floor lowered from 0.25 to ~0 and D4's creature smoothing (CDDA moves creatures
   in 1 s steps). Open design point: whether swings and reloads spend time as they happen or take effect at
   once. Also usable on a flat screen. Our own name for it, not another game's. *(D3, D4, L3)*
+- **L8 — Containers and looting (user, 2026-11-09).** Opening things and taking what's inside by hand, no
+  lists. Base for all of it: CDDA's per-square item piles and pockets stay the truth; sub-tile spots are the
+  client's (items keep a spot the player placed them on in an item var, range-checked when read back; others
+  get the hashed slots of C3); every hand action is one CDDA action on one given item (L2's per-item handles,
+  checked again by the bridge before acting: the item may be gone), so CDDA's time, volume, weight and length
+  rules decide. Furniture containers (dressers, cupboards, fridges, lockers, crates): doors, drawers and lids
+  open by hand like L2's doors (client-side angle; furniture with open/closed CDDA ids switches past a
+  threshold); what's inside lies on the model's shelf and drawer surfaces (`docs/MODELS.md` markers), sized by
+  volume. Item containers (bags, boxes, jars, cans): open the lid, the contents show at the opening; sealed
+  pockets unseal the CDDA way. Backpack and rig: take the worn bag off the shoulder and open it in front of
+  you; each CDDA pocket is a compartment and the contents lay themselves out by volume (no shape puzzle: CDDA
+  has no shapes, a grid would invent rules); body slots (hips, chest, thigh, wrist quick slots, over the
+  shoulder) are the worn items' pockets. Big piles: grab the pile and its items fan out on a tray in front of
+  you, sorted by category, paged. A refused put-in (too big, too heavy, not watertight) keeps the item in the
+  hand with a buzz and CDDA's reason. Heavy and two-handed items need both hands and trail the controllers a
+  little. Option for the user: searching takes time (contents appear one by one as you look), CDDA itself
+  charges nothing to look. Mouse and keyboard get the same through E6. *(L2, C3, H, B)*
+- **L9 — Dynamic cooking (user, 2026-11-09).** Cook by putting food in a pot and the pot on the heat, the
+  result and the time are CDDA's recipes. Heat sources are what CDDA crafting already counts (stoves, ovens,
+  hotplates, campfires, fireplaces, grills: furniture crafting pseudo-tools or a fire field), lit or fuelled
+  the CDDA way; knobs and lighting by hand. Cookware snaps to burners, racks and spits (model markers).
+  Ingredients go into the pot as CDDA inserts (pocket rules), liquids by pouring or dipping. On a lit heat
+  source the bridge matches the pot's contents against CDDA's recipes whose components the contents cover and
+  whose tools the pot, the heat and nearby tools give: one match starts that craft, several ask once on a
+  wrist panel, none = the food just warms up (CDDA's heat-up). Boiling water in a pot = CDDA's boiling recipe.
+  Progress shows live on the food (CDDA craft progress drives colour, steam, sizzle; the result's own model at
+  the end); taking the pot off pauses it (CDDA's in-progress craft item stays in the pot), putting it back
+  continues. Cooking skill, time and results stay CDDA's; long cooks are waited out by speeding time (paused
+  for hostiles as usual, or L7). Prep by hand later: a knife on a cutting board for CDDA's cutting recipes and
+  butchery, seasoning as a component; stirring is only for show. Open for the user: burnt food (CDDA has no
+  burning; a fork rule plus JSON, changes balance). Mouse and keyboard cook the same way through E6. *(L8, B, E)*
+- **Ideas from other VR games** (mechanics only; never their art, names or levels): Half-Life: Alyx (pull and
+  catch, physical drawers and bins, backpack over the shoulder, wrist slots); The Walking Dead: Saints & Sinners
+  (backpack taken off and opened in front of you, body holsters); Into the Radius (rig pouches by size, a bag
+  you set down and search); Green Hell VR (food on a fire or rack visibly going raw to cooked to burnt, survival
+  pacing); Job Simulator and Cooking Simulator VR (knobs, pans, pouring, food that reacts to heat, no menus);
+  Boneworks/Bonelab (weight felt through hand lag, two-handed heavy things). Flat screen: Escape from Tarkov's
+  timed search (the L8 option).
 
 **VR-ready rules for every agent, from now on** (cheap now, expensive to retrofit):
 - Gameplay input goes through E1's action map only; no hard-coded keys or mouse reads in game logic.
@@ -306,3 +362,5 @@ At most ~6 agents at once; one owner per directory; contract changes go through 
 - Art direction: stylised low-poly (fast, consistent) / realistic (far more art).
 - Default mode: real-time / turn-based (flat screen only; VR is always real-time).
 - VR headset to test on (L1).
+- L8: searching containers takes time (contents appear one by one) / instant like CDDA.
+- L9: food can burn when left on the heat (new rule, changes balance) / CDDA's rules only.
