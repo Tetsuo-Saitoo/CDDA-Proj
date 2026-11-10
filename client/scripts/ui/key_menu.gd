@@ -257,8 +257,21 @@ func reset_all() -> void:
 func _input(event: InputEvent) -> void:
 	if visible and (event is InputEventKey or (not _capture.is_empty() and (event is InputEventMouseButton
 			or InputActions.is_pad(event)))):
+		if _typing(event):
+			return   # a text field on the cheats page gets its keys
 		take(event)
 		get_viewport().set_input_as_handled()
+
+
+## A key for a focused text field on the cheats page (the range's item and monster ids); Esc and F1 still close.
+func _typing(event: InputEvent) -> bool:
+	var k := event as InputEventKey
+	if k == null or not _capture.is_empty() or cheat_page == null or not cheat_page.visible \
+			or k.physical_keycode in [KEY_ESCAPE, InputActions.MENU_KEY]:
+		return false
+	var vp := get_viewport()
+	var f: Control = vp.gui_get_focus_owner() if vp != null else null
+	return f is LineEdit and cheat_page.is_ancestor_of(f)
 
 
 ## One input event while the menu is open (separate from _input so tests can feed it). True if it was used.

@@ -21,6 +21,12 @@ signal cheats_changed(cheats: Dictionary)
 ## A recipe query (match_recipes) came back: RecipeMatches.parse's result for that container (`ok` false when the
 ## sim refused it: out of reach, not found, ...).
 signal recipes_matched(container_uid: int, result: Dictionary)
+## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
+## character is in, AI frozen. {} when the game stops running.
+signal range_changed(info: Dictionary)
+## A range_* operation sent from here was done (error "") or refused (the game's reason; "no answer" when its
+## result never came).
+signal range_done(op_id: int, error: String)
 
 ## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
 const CHEATS: PackedStringArray = ["invincible", "no_needs", "no_weight_limit", "unlimited_ammo", "stamina",
@@ -49,6 +55,13 @@ var _recipe_results := {}
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_KEPT_RESULTS := 32
 const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
+## Test range: the last info (no results), its seq, ops sent and waiting for a result (id -> msec sent).
+var _range := {}
+var _range_seq := -1
+var _range_ops := {}
+var _range_poll_s := 0.0
+const MAX_RANGE_OPS := 32           # the bridge refuses more waiting
+const RANGE_POLL_S := 1.0           # outside a range game, how often to look again
 ## The running game was started new (not loaded): --test gives its test kit only then.
 var new_game := false
 ## Cheats and test kits work only while allowed (bridge set_cheats_allowed, off by default): the player's own
@@ -210,6 +223,78 @@ func auto_pause() -> bool:
 	return v if v is bool else false
 
 
+## K7 test range: the last get_range_info (RangeInfo.clean, no results); {} outside a running game or without a
+## bridge that has it.
+func range_info() -> Dictionary:
+	return _range.duplicate(true)
+
+
+## A test-range game is running (its operations work).
+func in_range() -> bool:
+	return _range.get("range", false)
+
+
+## Moves the character to zone index `zone` (range_info().zones), building it the first time. Each range_*
+## call returns the operation id (range_done follows), 0 when refused here or by the bridge at once.
+func range_teleport(zone: int) -> int:
+	if zone < 0 or zone >= RangeInfo.MAX_ZONES:
+		return 0
+	return _range_op("range_teleport", [zone])
+
+
+## Jumps forward to the next `minute` of the day (0..1439).
+func range_set_time(minute: int) -> int:
+	if minute < 0 or minute >= RangeInfo.MINUTES_PER_DAY:
+		return 0
+	return _range_op("range_set_time", [minute])
+
+
+## Waits `minutes` (1..10080) as real turns; the main loop's next request is answered with "pause" so the wait
+## isn't replaced by another action.
+func range_advance(minutes: int) -> int:
+	if minutes < 1 or minutes > RangeInfo.MAX_ADVANCE:
+		return 0
+	var id := _range_op("range_advance", [minutes])
+	if id > 0:
+		queue_action("pause")
+	return id
+
+
+func range_set_ai_frozen(on: bool) -> int:
+	return _range_op("range_set_ai_frozen", [on])
+
+
+## Full hit points, no pain or bad effects, fed, watered, rested, full stamina.
+func range_heal() -> int:
+	return _range_op("range_heal", [])
+
+
+## `count` (1..1000) of item type index `itype` on square `pos` (in the reality bubble).
+func range_spawn_item(itype: int, count: int, pos: Vector3i) -> int:
+	if itype < 1 or itype > Snapshot.MAX_ID or count < 1 or count > RangeInfo.MAX_COUNT or not ItemActions.ok_square(pos):
+		return 0
+	return _range_op("range_spawn_item", [itype, count, pos])
+
+
+## A monster by CDDA id on a passable, empty square `pos` in the bubble.
+func range_spawn_monster(id: String, pos: Vector3i) -> int:
+	if not RangeInfo.monster_id_ok(id) or not ItemActions.ok_square(pos):
+		return 0
+	return _range_op("range_spawn_monster", [id, pos])
+
+
+func _range_op(method: String, args: Array) -> int:
+	if not _can(method) or _range_ops.size() >= MAX_RANGE_OPS:
+		return 0
+	var v: Variant = _sim.callv(method, args)
+	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
+	if id < 1 or id > RangeInfo.MAX_OP_ID:
+		return 0
+	_range_ops[id] = Time.get_ticks_msec()
+	_range_poll_s = RANGE_POLL_S   # look at the next frame
+	return id
+
+
 ## L9: what a container's contents can become on the heat it stands on (bridge match_recipes; read-only, the sim
 ## answers at its next request). Returns the query id, 0 when refused (no game, a bad handle, too many pending).
 ## `avatar_square`: where the player stands, sent for a carried container (the bridge looks there).
@@ -369,6 +454,7 @@ func _poll(delta: float) -> void:
 			held_changed.emit(held)
 	_poll_cheats()
 	_poll_queries()
+	_poll_range(delta)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
 		events_arrived.emit(events)
@@ -380,6 +466,44 @@ func _poll(delta: float) -> void:
 	if r.get("id", 0) != request.get("id", 0):
 		request = r
 		request_changed.emit(r)
+
+
+## Test range: every frame in a range game or with ops waiting, else once a second (a normal game's answer is
+## only `range` false). range_done once per result of an op sent from here; range_changed when the info
+## (without results, whose changes don't bump seq) changed.
+func _poll_range(delta: float) -> void:
+	if state != "running" or not _sim.has_method("get_range_info"):
+		if not _range.is_empty() or not _range_ops.is_empty():
+			_range = {}
+			_range_seq = -1
+			_range_ops.clear()
+			range_changed.emit({})
+		return
+	_range_poll_s += delta
+	if not in_range() and _range_ops.is_empty() and _range_poll_s < RANGE_POLL_S and _range_seq >= 0:
+		return
+	_range_poll_s = 0.0
+	var d: Variant = _sim.get_range_info()
+	var info := RangeInfo.clean(d)
+	if info.is_empty():
+		return
+	if not _range_ops.is_empty():
+		for r: Dictionary in info["results"]:
+			if _range_ops.erase(r["id"]):
+				range_done.emit(r["id"], r["error"])
+		var now := Time.get_ticks_msec()
+		for id: int in _range_ops.keys():
+			if now - int(_range_ops[id]) > QUERY_TIMEOUT_MS:   # pushed out of the 16 kept, or the game held up
+				_range_ops.erase(id)
+				range_done.emit(id, "no answer")
+	var seq: Variant = (d as Dictionary).get("seq", 0)
+	if not (seq is int or seq is float) or int(seq) == _range_seq:
+		return
+	_range_seq = int(seq)
+	info.erase("results")
+	if info != _range:
+		_range = info
+		range_changed.emit(info.duplicate(true))
 
 
 ## get_cheats' seq bumps every turn: cheats_changed only goes out when a value changed.

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Test range controls: LiveSession wraps the bridge's range ops and info (checked, bounded); the F1 Cheats page has a Test range section in range games (zones, freeze, heal, time, spawns); id fields type through the menu; client tests pass, not tried live.
 - 2026-11-10 — Unload / reload in ItemActions (for VR mag release and insert) with LiveSession and MockItems support; the main menu refuses new fp3d- world names and --save alone also looks in fp3d-live-2, -3 ...; client tests pass.
 - 2026-11-10 — Cheats opt-in: LiveSession sends the bridge's `set_cheats_allowed` from the debug switch (or --test / --cheats / test range), again when a game starts; cheats page says the first cheat ends that game's achievements; client tests pass.
 - 2026-11-10 — Recipe queries on the client (LiveSession.match_recipes / recipes_matched, results parsed with caps for lead-vr's cooking card); drop targets know heat squares from the snapshot (fires on the floor too, "not lit" hint).
