@@ -15,6 +15,8 @@ extends XROrigin3D
 ## rig is separate from the body).
 
 signal level_changed(z: int)
+## The right trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's actions.
+signal stair_used(stair: Dictionary)
 
 const DEADZONE := 0.2
 const TURN_ON := 0.7      # stick x past this snaps a turn ...
@@ -297,6 +299,26 @@ func change_level(dz: int) -> bool:
 	return true
 
 
+## Stairs the controller points at: in the mock (live_stairs false) the rig goes to the level they lead to; a
+## live game moves the ghost when the player's level changes. Emits stair_used; a buzz and {} when it's no stair.
+var live_stairs := false
+
+func use_pointed_stair(c: XRController3D) -> Dictionary:
+	var r := LookRay.new(world).cast(c.global_position, -c.global_basis.z)
+	var s := StairUse.find(world, r["square"], z) if r["hit"] else {}
+	if s.is_empty():
+		_buzz(c)
+		return {}
+	if not live_stairs:
+		var to: Variant = walk.nearest_standable(s["to"])
+		if to == null:
+			_buzz(c)
+			return {}
+		go_to_square(to)
+	stair_used.emit(s)
+	return s
+
+
 func go_to_square(sq: Vector3i) -> void:
 	z = sq.z
 	global_position.y = VrWalk.floor_y(z)
@@ -347,6 +369,9 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			menu.click()
 		return
 	if world.snapshot == null:
+		return
+	if c == right and n == "trigger_click":
+		use_pointed_stair(c)
 		return
 	if current_layout() == "vive":
 		if c == right and n == "menu_button":

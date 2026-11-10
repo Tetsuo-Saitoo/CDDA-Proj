@@ -246,24 +246,21 @@ func _fence(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) -
 		_solid.box(lo, hi, st.color, ALL & ~NY)
 
 
-## Stairs and ramps: steps rising away from a walkable neighbour, preferably toward a wall.
+## Stairs and ramps: one flight per connected block of the same kind (a 2x2 or 1x3 staircase is one wide or
+## long flight, not a flight per tile in its own direction), rising away from a walkable entry, preferably
+## toward a wall. Each tile draws its share of the flight's height.
 func _steps(p: Vector3i, o: Vector3, count: int, col: Color) -> void:
-	var rise := -1
-	for d in 4:
-		var entry := _style_at(p - DIRS[d])
-		var far := _style_at(p + DIRS[d])
-		if entry != null and _walkable(entry):
-			if rise < 0:
-				rise = d
-			if far != null and far.kind == K.WALL:
-				rise = d
-				break
-	if rise < 0:
-		rise = 0
-	for k in count:
-		var u0 := float(k) / count
-		var u1 := float(k + 1) / count
-		var h := H * u1
+	var kind := _style_at(p).kind
+	var f := stair_flight(p, func(q: Vector3i) -> int:
+		var st := _style_at(q)
+		return -1 if st == null else st.kind, kind, func(k: int) -> bool:
+		return k in [K.FLOOR, K.ROOF, K.DOOR, K.SHRUB, K.TREE, K.LADDER_UP])
+	var rise := f.x
+	var n := maxi(1, ceili(float(count) / f.z))   # steps on this tile, the same tread depth over the flight
+	for k in n:
+		var u0 := float(k) / n
+		var u1 := float(k + 1) / n
+		var h := H * (f.y + u1) / f.z
 		var lo: Vector3
 		var hi: Vector3
 		match rise:
@@ -279,7 +276,44 @@ func _steps(p: Vector3i, o: Vector3, count: int, col: Color) -> void:
 			_:
 				lo = Vector3(1 - u1, 0, 0)
 				hi = Vector3(1 - u0, h, 1)
-		_solid.box(o + lo, o + hi, col.darkened(0.04 * (k % 2)), ALL & ~NY)
+		_solid.box(o + lo, o + hi, col.darkened(0.04 * ((f.y * n + k) % 2)), ALL & ~NY)
+
+
+## The flight square p belongs to: Vector3i(rise direction (index into DIRS), p's place along it from the
+## bottom, the flight's length in squares). `kind_at(q)` gives a square's terrain kind (-1 unknown) and
+## `walkable(kind)` whether one can step off onto it. The block is the squares of p's kind joined to p (at most
+## MAX_FLIGHT); every square of it gets the same direction, so a block never shows crossing flights.
+const MAX_FLIGHT := 24
+
+static func stair_flight(p: Vector3i, kind_at: Callable, kind: int, walkable: Callable) -> Vector3i:
+	var block := {p: true}
+	var todo: Array[Vector3i] = [p]
+	while not todo.is_empty() and block.size() < MAX_FLIGHT:
+		var q: Vector3i = todo.pop_back()
+		for d in DIRS:
+			if not block.has(q + d) and kind_at.call(q + d) == kind:
+				block[q + d] = true
+				todo.append(q + d)
+	var best := 0
+	var best_score := -1
+	for d in 4:
+		var score := 0
+		for q: Vector3i in block:
+			var entry: int = kind_at.call(q - DIRS[d])
+			if not block.has(q - DIRS[d]) and entry >= 0 and walkable.call(entry):
+				score += 2
+			if not block.has(q + DIRS[d]) and kind_at.call(q + DIRS[d]) == K.WALL:
+				score += 3
+		if score > best_score:
+			best_score = score
+			best = d
+	var i := 0
+	while block.has(p - DIRS[best] * (i + 1)):
+		i += 1
+	var ahead := 0
+	while block.has(p + DIRS[best] * (ahead + 1)):
+		ahead += 1
+	return Vector3i(best, i, i + 1 + ahead)
 
 
 func _ladder(o: Vector3, col: Color, floor_ok: bool) -> void:

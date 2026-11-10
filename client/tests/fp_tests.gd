@@ -23,6 +23,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_octants(world)
 	_test_compass()
 	_test_look_ray(world)
+	_test_stairs(world)
+	_test_stair_flights()
 	_test_cdda_keys()
 	_test_rebinding(root)
 	_test_creatures(root, world, data, tables)
@@ -472,3 +474,57 @@ func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTabl
 	many.fill(me)
 	d["creatures"] = many
 	_check.call(not Snapshot.from_data(d).is_valid(), "creatures: more than %d refused" % Snapshot.MAX_CREATURES)
+
+
+## Stairs: pointing at them (StairUse) finds where they go, the free-walk camera takes them, and a live game
+## gets CDDA's own actions.
+func _test_stairs(world: WorldView) -> void:
+	var up: Variant = null
+	for pos: Vector3i in world.snapshot.submaps:
+		var sm: Snapshot.Submap = world.snapshot.submaps[pos]
+		for i in Snapshot.TILES:
+			if up == null and world.catalog.style_for(sm.ter[i]).kind == TerrainCatalog.Kind.STAIRS_UP:
+				up = CddaCoords.sm_to_ms(pos) + Vector3i(i % CddaCoords.SEEX, i / CddaCoords.SEEX, 0)
+	_check.call(up != null, "stairs: the mock town has stairs up")
+	if up == null:
+		return
+	var s := StairUse.find(world, up, up.z)
+	_check.call(s.get("dz") == 1 and s["stand"] == up and s["to"] == up + Vector3i(0, 0, 1), "stairs: up from their level (%s)" % s)
+	var d := StairUse.find(world, up, up.z + 1)
+	_check.call(d.get("dz") == -1 and d["to"] == up, "stairs: seen from above (a stairwell) they lead down")
+	_check.call(StairUse.find(world, up, up.z + 3).is_empty(), "stairs: not from a level they don't touch")
+	_check.call(StairUse.find(world, world.snapshot.player_pos, world.snapshot.player_pos.z).is_empty(),
+			"stairs: a plain floor is no stair")
+	_check.call(StairUse.live_actions(up, s) == PackedStringArray(["LEVEL_UP"]), "stairs live: on them, < only")
+	_check.call(StairUse.live_actions(up + Vector3i(-1, 0, 0), s) == PackedStringArray(["RIGHT", "LEVEL_UP"]),
+			"stairs live: next to them, a step then <")
+	_check.call(StairUse.live_actions(up + Vector3i(5, 0, 0), s).is_empty(), "stairs live: too far, nothing")
+	_check.call(StairUse.live_actions(up + Vector3i(0, 0, 1), d) == PackedStringArray(["LEVEL_DOWN"]),
+			"stairs live: on the top end, >")
+	var fp := FirstPersonCamera.new(world)
+	fp.go_to_square(up)
+	_check.call(fp.use_stair(s) and fp.z == up.z + 1, "stairs: the free-walk camera goes up them")
+	_check.call(not fp.use_stair({}), "stairs: no stair, no move")
+	fp.free()
+
+
+## Stair blocks draw as one flight: every square of a 2x2 block rises the same way, split along its length.
+func _test_stair_flights() -> void:
+	var K := TerrainCatalog.Kind
+	var map := {}
+	for x in range(-1, 3):
+		for y in range(-1, 4):
+			map[Vector3i(x, y, 0)] = K.FLOOR
+	for x in range(-1, 3):
+		map[Vector3i(x, -1, 0)] = K.WALL   # wall to the north
+	for q in [Vector3i(0, 0, 0), Vector3i(1, 0, 0), Vector3i(0, 1, 0), Vector3i(1, 1, 0)]:
+		map[q] = K.STAIRS_UP
+	var kind_at := func(q: Vector3i) -> int: return map.get(q, -1)
+	var walk := func(k: int) -> bool: return k == K.FLOOR
+	var fs := []
+	for q in [Vector3i(0, 0, 0), Vector3i(1, 0, 0), Vector3i(0, 1, 0), Vector3i(1, 1, 0)]:
+		fs.append(TerrainMesher.stair_flight(q, kind_at, K.STAIRS_UP, walk))
+	_check.call(fs.all(func(f: Vector3i) -> bool: return f.x == 0 and f.z == 2), "stairs look: a 2x2 block is one flight rising north to the wall (%s)" % [fs])
+	_check.call(fs[2].y == 0 and fs[0].y == 1, "stairs look: the south row is the bottom half, the north row the top")
+	var single := TerrainMesher.stair_flight(Vector3i(0, 2, 0), func(q: Vector3i) -> int: return K.STAIRS_UP if q == Vector3i(0, 2, 0) else K.FLOOR, K.STAIRS_UP, walk)
+	_check.call(single.y == 0 and single.z == 1, "stairs look: a lone stair is a whole flight")

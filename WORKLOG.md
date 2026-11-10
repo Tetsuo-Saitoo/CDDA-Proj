@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-09 — Stairs look: a connected block of stair (or ramp) tiles draws as one flight in one direction, its height split along its length (was a full flight per tile, each its own way); `TerrainMesher.stair_flight`, fp_tests check it; not yet looked at in the game.
+- 2026-11-09 — Stairs usable by pointing: left-click stairs in first person or VR right trigger on them (StairUse: up/down from either end); live queues CDDA's step + LEVEL_UP/DOWN when on/next to them, mock moves the camera/rig; fp/vr tests pass. Before, only `[ ]` / VR buttons changed level and nothing reacted to clicking stairs.
 - 2026-11-09 — VR design: PLAN.md L8 containers and looting by hand, L9 dynamic cooking (recipes from the pot's contents on a lit heat source), ideas from other VR games, two open decisions (timed search, burnt food); PLAN.md E6 mouse/keyboard hands on the same actions (Amnesia-style drag to open, grabbable handles highlighted); docs/MODELS.md model spec (glb, scale, axes, budgets, VR markers, first ids, licence); TASKS L8, L9, E6.
 - 2026-11-09 — Main menu Credits page (CDDA by CleverRaven and contributors; Seglectic), by the main-menu session; ui_tests check it.
 - 2026-11-09 — README Credits section: Seglectic (3D models, VR ideas and feedback); in-game credits line asked of the main-menu session.
