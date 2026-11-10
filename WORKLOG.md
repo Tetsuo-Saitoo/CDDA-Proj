@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — K7 test range slice 2 (fork `fp3d-qa` 5082b78, f3e9e47): armory, halls, lots, pens, lanes and kitchen zones built; `rebuild_zone` op (fork side); range clock end, teleport arrival on a free square, unique zone ids, spawn_item on the asked square only; `fp3d-range-test` 116 checks and sim test pass; new client `tests/range_live_test.gd` (range ops through CddaSim, every zone kind visited) passes on Windows.
 - 2026-11-10 — v0.5.0 pre-release published (Linux AppImage built by lead-qa in WSL from main b87a485 + fork 281b553) after the security re-review's HIGH items were fixed and re-checked; then merged the test range (bridge + UI controls), gun jams (combat block 3) and QA's hostile checks.
 - 2026-11-10 — C9 views: over the shoulder and top-down next to first person (V cycles first, shoulder, top, outside; saved in hud.cfg); client tests pass, not looked at on screen.
 - 2026-11-10 — Snapshot `player.wielded_gun` {type, dirt, rounds, faults} for the gun view; fp3d (combat) and main merged into the bridge branches; before-ask hook code uses `in_timed_hook()` (combat's sim hook too); ui_requests.md: `shot` requests bring no snapshot or held update.
