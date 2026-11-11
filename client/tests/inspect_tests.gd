@@ -22,6 +22,9 @@ class Silent:
 	func take_item(_u: float, _t: float, _p: Vector3i, _h := "pack") -> bool:
 		return true
 
+	func drop_item(_u: float, _t: float, _p: Vector3i, _s: Vector2) -> bool:
+		return true
+
 
 var _check: Callable
 var _it := {}   # itype id -> index
@@ -48,7 +51,10 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_model()
 	_test_caps(data)
 	_test_rows()
+	_test_select()
 	_test_drops()
+	_test_many()
+	_test_bar()
 	_test_pending()
 	_test_toggle()
 	_view.free()
@@ -310,6 +316,107 @@ func _test_rows() -> void:
 			"inspect: rows drag, columns don't")
 
 
+static func _button(down: bool, shift := false, ctrl := false) -> InputEventMouseButton:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = down
+	e.shift_pressed = shift
+	e.ctrl_pressed = ctrl
+	return e
+
+
+## A left click on item `uid`'s row, through the slot's own _gui_input.
+func _click(uid: int, shift := false, ctrl := false) -> void:
+	_view.row_slot(uid)._gui_input(_button(true, shift, ctrl))
+	_view.row_slot(uid)._gui_input(_button(false, shift, ctrl))
+
+
+func _selected() -> Array:
+	var out := _view.selection.keys()
+	out.sort()
+	return out
+
+
+## Selecting several rows: clicks with Ctrl / Shift, the [ ] boxes and a drag over them, kept across rebuilds,
+## Esc clears it before it closes the view.
+func _test_select() -> void:
+	var hammer := _handle(E, _it["hammer"])
+	var stone := _handle(E, _it["rock"])
+	_click(ROCK)
+	_click(WATER, false, true)
+	_check.call(_selected() == [ROCK, WATER] and _view.selection[ROCK] == _it["rock"]
+			and _view.row_slot(ROCK).get_theme_stylebox("panel") is StyleBoxFlat and _view.tick_box(WATER).text == "[x]"
+			and _view.tick_box(BOTTLE).text == "[ ]" and _view._head.text.begins_with("Inventory: 2 selected"),
+			"select: click, then Ctrl+click adds; rows highlighted, boxes ticked, count shown (%s)" % [_selected()])
+	_view.row_slot(ROCK)._gui_input(_button(true))
+	_check.call(_selected() == [ROCK, WATER], "select: pressing a selected row keeps the others (a drag takes them)")
+	_view.row_slot(ROCK)._get_drag_data(Vector2.ZERO)
+	_view.row_slot(ROCK)._gui_input(_button(false))
+	_check.call(_selected() == [ROCK, WATER], "select: ... and after a drag they stay")
+	_click(ROCK)
+	_check.call(_selected() == [ROCK], "select: a click on a selected row without a drag keeps only it")
+	_click(WATER, true)
+	_check.call(_selected() == [ROCK, BOTTLE, WATER], "select: Shift+click selects the run in the column (%s)"
+			% [_selected()])
+	_click(STONE, true)
+	_check.call(_selected() == [STONE], "select: Shift+click in another column selects only that row")
+	_click(STONE, false, true)
+	_check.call(_selected().is_empty() and _view._head.text.contains("Several:"), "select: Ctrl+click removes it")
+	var at := {}   # rows laid out by hand (a test has no layout pass): uid -> y
+	var y := 0.0
+	for sc: Control in _view._col_scroll.values():   # each column's list too, rows shown in it
+		sc.global_position = Vector2.ZERO
+		sc.size = Vector2(200, 400)
+	for u: int in [ROCK, BOTTLE, WATER, STONE, hammer, stone]:
+		_view.row_slot(u).global_position = Vector2(0, y)
+		_view.row_slot(u).size = Vector2(200, 28)   # at least its minimum size: rows are 60 apart
+		at[u] = y + 10
+		y += 60
+	_view.tick_input(_button(true), ROCK)
+	_view.paint_at(Vector2(5, at[WATER]))   # same column: BOTTLE is passed on the way
+	_view.paint_at(Vector2(5, at[hammer]))
+	_view.paint_at(Vector2(5000, at[stone]))   # not on a row
+	_view.tick_input(_button(false), ROCK)
+	_view.paint_at(Vector2(5, at[stone]))     # the button is up
+	_check.call(_selected() == [ROCK, BOTTLE, WATER, hammer], "select: a drag over the boxes selects the rows passed (%s)"
+			% [_selected()])
+	_view.tick_input(_button(true), BOTTLE)
+	_view.paint_at(Vector2(5, at[WATER]))
+	var motion := InputEventMouseMotion.new()   # the button came up outside the view: the next motion ends the drag
+	_view.tick_input(motion, BOTTLE)
+	_view.paint_at(Vector2(5, at[ROCK]))
+	_check.call(_selected() == [ROCK, hammer], "select: a drag from a ticked box unticks the rows passed (%s)"
+			% [_selected()])
+	(_view._col_scroll["nearby"] as Control).size = Vector2(200, 100)   # stone's row is scrolled out of sight now
+	_view.tick_input(_button(true), BOTTLE)
+	_view.paint_at(Vector2(5, at[stone]))
+	_view.tick_input(_button(false), BOTTLE)
+	_check.call(_selected() == [ROCK, BOTTLE, hammer], "select: a box drag never ticks rows out of sight (%s)" % [_selected()])
+	_view.set_selected(BOTTLE, false)
+	for i in InspectView.MAX_BATCH - 2:
+		_view.selection[900000 + i] = 1
+	_click(BOTTLE, false, true)
+	_check.call(_view.selection.size() == InspectView.MAX_BATCH and not _view.selection.has(BOTTLE)
+			and _view.status.contains("At most 256"), "select: at most 256 selected (%s)" % _view.status)
+	for i in InspectView.MAX_BATCH - 2:
+		_view.selection.erase(900000 + i)
+	_view._say("")
+	_view.selection[999999] = _it["rock"]   # gone since
+	_view.selection[STONE] = _it["hammer"]  # another itype under its uid now
+	_view.rebuild()
+	_check.call(_selected() == [ROCK, hammer] and _view.tick_box(hammer).text == "[x]",
+			"select: a rebuild keeps listed rows, drops gone ones (%s)" % [_selected()])
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	_check.call(_view.handle_key(esc) and _view.visible and _selected().is_empty(), "select: Esc clears the selection first")
+	_click(ROCK)
+	_view.close()
+	_view.open()
+	_check.call(_selected().is_empty(), "select: opening the view starts with none")
+
+
 ## Drops through the slots' own _drop_data, MockItems answering inside each call.
 func _test_drops() -> void:
 	var sack_id := "worn:%d" % SACK
@@ -361,6 +468,153 @@ func _test_drops() -> void:
 			"inspect: a refusal shows CDDA's reason (%s)" % _view.status)
 	_hands.refused.emit("mouse", {}, "Not for this view.")
 	_check.call(_view.status.begins_with("Your hand is full"), "inspect: other hands' refusals aren't shown")
+
+
+## Dragging a selected row moves the whole selection, one item after another. After _test_drops: the bottle (with
+## its water) in the sack's first pocket, the stone in the backpack, a ground rock in the main hand, ROCK on your
+## square, the canvas bag on the ground south-east (left there for _test_pending).
+func _test_many() -> void:
+	var stone := _wielded()
+	var sack_id := "worn:%d" % SACK
+	var p2 := {"kind": "group", "column": sack_id, "key": 1}   # pocket 2: no group shown while it is empty
+	_view.rebuild()
+	_click(BOTTLE)
+	_click(WATER, false, true)
+	_click(ROCK, false, true)
+	var data: Variant = _view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO)
+	var preview := _view.drag_preview(_view.row_slot(BOTTLE).row)
+	_check.call(data is Dictionary and (data["inspect_many"] as Array).size() == 3
+			and (preview.get_child(0) as Label).text == "3 items", "many: a selected row drags the selection (%s)" % [data])
+	preview.free()
+	_view.drop(data, p2)
+	var b := _carried(BOTTLE)
+	var w := _carried(WATER)
+	var r := _carried(ROCK)
+	_check.call(b.size() == 5 and b[2] == SACK and b[3] == 1 and w.size() == 5 and w[2] == BOTTLE and r.size() == 5
+			and r[2] == SACK and r[3] == 1 and _view.status == "" and _view.batch_left() == 0
+			and not _view._head.text.begins_with("Moving"),
+			"many: into pocket 2: the bottle (its water along) and the rock from the ground (%s %s %s %s)"
+			% [b, w, r, _view.status])
+	_view.rebuild()
+	_click(stone)
+	_click(BOTTLE, false, true)
+	_view.drop(_view.row_slot(stone)._get_drag_data(Vector2.ZERO), p2)
+	var s := _carried(stone)
+	_check.call(stone > 0 and s.size() == 5 and s[2] == SACK and _view.status.begins_with("1 of 2 done.")
+			and _view.status.contains(InspectView.CANT), "many: one is already there, the other goes; the status counts (%s)"
+			% _view.status)
+	_view.rebuild()
+	_click(BOTTLE)
+	_click(ROCK, false, true)
+	data = _view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO)
+	_check.call(not _view.can_drop(data, p2)
+			and _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, data)
+			and not _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, {"inspect_many": [[BOTTLE, "x"]]})
+			and not _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, {"inspect_many": range(300).map(
+				func(i: int) -> Array: return [i, 1])}),
+			"many: no drop where none can go, or with bad or too long data")
+	_actions.backend = Silent.new()   # drops are sent and never answered: the next waits
+	_view.column_slot("nearby")._drop_data(Vector2.ZERO, data)
+	_check.call(_actions.pending(BOTTLE) == "drop" and _actions.pending(ROCK) == "" and _view.batch_left() == 2
+			and _view._head.text.begins_with("Moving 1 of 2"), "many: the second waits for the first (%s)" % _view._head.text)
+	_actions.refused.emit(_hands.picker.by_uid(BOTTLE), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_actions.pending(ROCK) == "drop" and _view.batch_left() == 1 and _view.status == "",
+			"many: when the first is judged, the next goes")
+	_actions.refused.emit(_hands.picker.by_uid(ROCK), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_view.batch_left() == 0 and _view.status == "0 of 2 done. No room." and _carried(BOTTLE).size() == 5,
+			"many: refusals are counted at the end (%s)" % _view.status)
+	_actions.backend = _mock
+	_view.clear_selection()
+
+
+## The bar's buttons act on the selection. After _test_many: ROCK, the bottle (with its water) and the stone from
+## the ground in the sack's second pocket.
+func _test_bar() -> void:
+	var stone := _carried_in(SACK, _it["rock"], ROCK)
+	_view.rebuild()
+	var bar := _bar_buttons()
+	_check.call(bar.is_empty(), "bar: hidden with nothing selected (%s)" % [bar.keys()])
+	_click(ROCK)
+	_click(stone, false, true)
+	bar = _bar_buttons()
+	_check.call(bar.has("Drop here") and bar.has("Into the canvas sack") and bar.has("Unload") and bar.has("Clear")
+			and not bar.has("Stop"), "bar: shown for a selection, with a button per worn container (%s)" % [bar.keys()])
+	(bar["Drop here"] as Button).pressed.emit()
+	_check.call(_has_handle(P, ROCK) and _has_handle(P, stone) and _view.status == "", "bar: Drop here drops them all")
+	_view.rebuild()
+	(_bar_buttons()["Into the canvas sack"] as Button).pressed.emit()
+	_check.call(_carried(ROCK).size() == 5 and _carried(ROCK)[2] == SACK and _carried(stone).size() == 5
+			and _carried(stone)[2] == SACK, "bar: Into the sack takes them from the ground and puts them in, one by one")
+	_view.rebuild()
+	(_bar_buttons()["Unload"] as Button).pressed.emit()
+	_check.call(_view.status.begins_with("0 of 2 done.") and _view.status.contains("isn't loaded"),
+			"bar: Unload; CDDA's refusals counted (%s)" % _view.status)
+	_check.call(_view.act("into", "nearby") == "" and _view.act("into", "worn:1") == "" and _view.act("nope") == "",
+			"bar: 'into' only takes a worn container's column")
+	_actions.backend = Silent.new()
+	_view.act("drop")
+	bar = _bar_buttons()
+	_check.call(bar.has("Stop") and _view.batch_left() == 2, "bar: Stop shows while a batch runs")
+	(bar["Stop"] as Button).pressed.emit()
+	_actions.refused.emit(_hands.picker.by_uid(ROCK), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_view.batch_left() == 0 and _actions.pending(stone) == "" and not _bar_buttons().has("Stop"),
+			"bar: Stop leaves the rest where they are")
+	_actions.clear()
+	_view.act("drop")
+	_check.call(_view._batch_target == {"kind": "group", "column": "nearby", "key": P} and _view.batch_left() == 2,
+			"bar: Drop here keeps the square it started on (%s)" % [_view._batch_target])
+	_hands.picker.reach = func() -> Variant: return E   # walked a square on
+	_view._process(0.0)
+	_hands.picker.reach = Callable()
+	_check.call(_view.batch_left() == 0 and _view.status.begins_with("Stopped: you moved") and _actions.pending(stone) == "",
+			"bar: walking away stops a batch; the rest stay (%s)" % _view.status)
+	_actions.clear()
+	_view.act("drop")
+	_view.on_game_state("running")
+	var kept := _view.batch_left()
+	_view.on_game_state("ended")
+	_check.call(kept == 2 and _view.batch_left() == 0 and _view.status.begins_with("Stopped: the game"),
+			"bar: a batch stops when the game stops running")
+	_actions.clear()
+	_actions.backend = _mock
+	(_bar_buttons()["Clear"] as Button).pressed.emit()
+	_check.call(_view.selection.is_empty() and _bar_buttons().is_empty(), "bar: Clear selects none and hides it")
+
+
+## The selection bar's visible buttons by text ({} when the bar is hidden).
+func _bar_buttons() -> Dictionary:
+	var out := {}
+	var bar: Control = _view._bar
+	if not bar.visible:
+		return out
+	for b: Button in bar.find_children("*", "Button", true, false):
+		if b.is_visible_in_tree() and not b.is_queued_for_deletion():
+			out[b.text] = b
+	return out
+
+
+## The uid of the first carried item of `type` in container `parent` other than `not_uid`, -1 if none.
+func _carried_in(parent: int, type: int, not_uid: int) -> int:
+	var c := _snap.carried
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if c[i + 2] == parent and c[i + 1] == type and c[i] != not_uid:
+			return c[i]
+	return -1
+
+
+## The uid of the item in the main hand, -1 if none.
+func _wielded() -> int:
+	var c := _snap.carried
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if (c[i + 4] & Snapshot.CARRIED_WIELDED) != 0:
+			return c[i]
+	return -1
 
 
 ## An action in flight greys its row, which can't be dragged then.

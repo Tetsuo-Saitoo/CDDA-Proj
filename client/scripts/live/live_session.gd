@@ -146,6 +146,36 @@ static func list_saves(user_dir: String, world: String) -> PackedStringArray:
 	return ClassDB.instantiate("CddaSim").list_saves(user_dir, world)
 
 
+## Deleting characters from the main menu (CddaSim.delete_save, lead-bridge); false until a bridge has it.
+static func delete_save_available() -> bool:
+	return available() and ClassDB.class_has_method("CddaSim", "delete_save")
+
+
+## Deletes the character `save` from `world` under `user_dir`, and the world with it once no character is left
+## when `delete_empty_world`. "" when done, else why (plain text). Only names list_worlds / list_saves give now,
+## never while a game started in this window boots or runs; the bridge checks the names again and deletes only
+## inside user_dir's save folder.
+func delete_save(user_dir: String, world: String, save: String, delete_empty_world: bool) -> String:
+	if not delete_save_available():
+		return "this build of the bridge can't delete characters"
+	if _sim != null and not state in ["failed", "ended"]:
+		return "a game is running in this window"
+	if not user_dir.is_absolute_path() or not world in list_worlds(user_dir) or not save in list_saves(user_dir, world):
+		return "no such character"
+	var r: Variant = ClassDB.instantiate("CddaSim").delete_save(user_dir, world, save, delete_empty_world)
+	return delete_reply(r)
+
+
+## The bridge's answer to delete_save as one plain line: "" only for an empty String (done), anything else a reason.
+static func delete_reply(r: Variant) -> String:
+	if not r is String:
+		return "the bridge gave no answer"
+	if (r as String).is_empty():
+		return ""
+	var s := Snapshot.plain_text(r, MAX_BOOT_TEXT)
+	return s if not s.is_empty() else "the bridge refused"
+
+
 ## Saves the game where it stands and plays on; `saved` follows. The sim saves at the main loop's next
 ## request (also while paused), so a prompt or a long activity holds it up. False without a running game or
 ## with a bridge that can't (older than this client).
@@ -333,6 +363,19 @@ func range_spawn_monster(id: String, pos: Vector3i) -> int:
 	if not RangeInfo.monster_id_ok(id) or not ItemActions.ok_square(pos):
 		return 0
 	return _range_op("range_spawn_monster", [id, pos])
+
+
+## Cheat: teleport to square `pos` in the bubble (any game, cheats allowed; CddaSim.cheat_teleport, lead-bridge).
+## Same op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, bad square).
+func cheat_teleport(pos: Vector3i) -> int:
+	if not can_teleport() or not ItemActions.ok_square(pos):
+		return 0
+	return _range_op("cheat_teleport", [pos])
+
+
+## The teleport cheat can be asked for now (the F1 entry is greyed out otherwise).
+func can_teleport() -> bool:
+	return cheats_allowed and _can("cheat_teleport")
 
 
 func _range_op(method: String, args: Array) -> int:
