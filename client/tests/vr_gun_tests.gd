@@ -357,6 +357,15 @@ func _test_mag_out() -> void:
 	_frame()
 	_check.call(_hands.holding("vr_l").get("item") != null and _row(_mag)[0] != _gun,
 			"vr gun: ... it isn't put straight back while the hand is still at the well")
+	var rx := _rig.right.global_transform
+	_rig.right.global_position = _hands.proxy("vr_l").global_position
+	_rig.press(_rig.right, "grip_click")
+	var still: bool = _hands.holding("vr_l").get("item") != null and _hands.holding("vr_r").is_empty() and g.shown
+	_rig.release(_rig.right, "grip_click")
+	_rig.right.global_transform = rx
+	_frame()
+	_check.call(still and _hands.holding("vr_l").get("item") != null,
+			"vr gun: the gun hand's grip by the magazine just holds the gun (no hand-over)")
 
 
 ## The held magazine to the well: turned away or too far does nothing; refused: back in the hand with CDDA's reason,

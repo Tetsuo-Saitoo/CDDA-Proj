@@ -671,7 +671,9 @@ func grab_with(c: XRController3D) -> bool:
 		pt = pack.target_at(c.global_position)
 		if pt.is_empty():
 			t = hands.find_near(c.global_position, GRAB_REACH)
-	if pt.is_empty() and t.is_empty() and other != null and takes_over(i):   # touching nothing else: the other
+	# touching nothing else, the gun not in this hand (its grip just holds the gun) and the shoulder not reached: the other
+	if pt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
+			and not (looks and over_shoulder(camera.global_transform, c.global_position)):
 		var ok_over := hands.hand_over(HAND_IDS[1 - i], id, "main" if c == main_ctrl() else "off")   # hand's item
 		if ok_over:
 			hands.set_hand_pose(id, c.global_transform, true)
