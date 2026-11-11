@@ -187,6 +187,11 @@ void sim_main()
             }
         } else {
             fp3d::boot_saved_game( boot_world, boot_save, true );
+            // A saved test range (only in one of FP3D's own range worlds: the save alone never makes one) is a range
+            // game again, with the range operations allowed as when it started.
+            if( fp3d::resume_test_range() ) {
+                fp3d::set_cheats_allowed( true );
+            }
             fp3d::reset_snapshots();
         }
         // The client reads the world while the sim waits for it, so every request but a `shot` one (fp3d::ask skips
