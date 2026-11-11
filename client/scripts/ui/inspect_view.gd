@@ -16,6 +16,10 @@ extends Control
 ## column from the last clicked one; pressing a row's [ ] box and dragging over other rows sets them all as that
 ## box became (no modifier keys needed: VR pointers). Esc clears the selection before it closes the view. The
 ## selection is kept across rebuilds by uid and itype while the item is listed; opening the view starts empty.
+## Dragging a selected row takes the whole selection: the items go one after another (each waits for the one
+## before to land, so takes don't race for a hand), planned again from the newest rows when its turn comes; an
+## item inside another one on the list goes along with it. The heading counts them; at the end the status line
+## says how many couldn't go and the last reason. Closing the view doesn't stop it.
 
 signal opened
 signal closed
@@ -31,6 +35,8 @@ const BOX := Color(0.7, 0.85, 1.0)   # container rows
 const SELECTED := Color(0.25, 0.4, 0.7, 0.5)
 const TICK_ON := "[x]"
 const TICK_OFF := "[ ]"
+const MAX_BATCH := 256           # items one drag moves
+const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
 const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
 const CANT_TAKE := "You can't take that now."
@@ -63,6 +69,15 @@ var _click_uid := -1     # a plain press on a selected row: only it stays select
 var _paint := false      # a [ ] box was pressed and the button is still down
 var _paint_on := false   # what the rows a drag passes become
 var _paint_uid := -1     # the row the drag is on
+var _rows_by_uid := {}   # uid -> row of `cols`
+var _batch: Array = []   # {inspect_uid, type} still to move, in order
+var _batch_target := {}
+var _batch_now := -1     # the item moving now
+var _batch_since := 0    # when it was sent (ms)
+var _batch_failed := false   # the item moving now was refused or couldn't be sent
+var _batch_total := 0    # items in the batch; 0 = none running
+var _batch_bad := 0
+var _batch_why := ""
 var _sel_style := _style(SELECTED, 0)
 var _no_style := StyleBoxEmpty.new()
 
@@ -168,14 +183,14 @@ func refresh() -> void:
 func _process(_delta: float) -> void:
 	if _dirty and visible and not _paint and not (is_inside_tree() and get_viewport().gui_is_dragging()):
 		rebuild()
+	if _batch_total > 0:
+		_run_batch()
 
 
 ## Builds the columns again from the newest snapshot (now).
 func rebuild() -> void:
 	_dirty = false
-	cols.clear()
-	if hands != null:
-		cols = InventoryModel.columns(hands.picker, hands.world.tables, actions)
+	_fresh_cols()
 	for c in _box.get_children():
 		_box.remove_child(c)
 		c.queue_free()
@@ -186,15 +201,9 @@ func rebuild() -> void:
 	_row_col.clear()
 	_col_uids.clear()
 	_paint = false
-	var listed := {}   # uid -> itype of every row
-	for col in cols:
-		for g: Dictionary in col["groups"]:
-			for r: Dictionary in g["rows"]:
-				var it: Variant = r.get("item")
-				if it is ItemRef:
-					listed[r["uid"]] = (it as ItemRef).type
 	for uid: int in selection.keys():   # gone, or another item under its uid now
-		if listed.get(uid, -1) != selection[uid]:
+		var it: Variant = (_rows_by_uid.get(uid, {}) as Dictionary).get("item")
+		if not it is ItemRef or (it as ItemRef).type != selection[uid]:
 			selection.erase(uid)
 	for col in cols:
 		_box.add_child(_column_ui(col))
@@ -327,23 +336,81 @@ func drag_data(row: Dictionary) -> Variant:
 	var it: Variant = row.get("item")
 	if not it is ItemRef or row.get("pending", false) or actions == null or actions.pending((it as ItemRef).uid) != "":
 		return null
-	return {"inspect_uid": (it as ItemRef).uid, "type": (it as ItemRef).type}
+	var uid := (it as ItemRef).uid
+	var data := {"inspect_uid": uid, "type": (it as ItemRef).type}
+	if selection.has(uid) and selection.size() > 1:   # the whole selection, in listing order
+		var many := []
+		for u: int in _ordered_selection():
+			if many.size() < MAX_BATCH:
+				many.append([u, selection[u]])
+		data["inspect_many"] = many
+	return data
 
 
 ## The little label that follows the mouse while dragging.
 func drag_preview(row: Dictionary) -> Control:
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", _style(Color(0.15, 0.15, 0.2, 0.9), 4))
-	p.add_child(_label(str(row.get("name", "")), Color.WHITE))
+	var n := mini(selection.size(), MAX_BATCH) if selection.has(row.get("uid", -1)) else 1
+	p.add_child(_label(str(row.get("name", "")) if n <= 1 else "%d items" % n, Color.WHITE))
 	return p
 
 
 func can_drop(data: Variant, target: Dictionary) -> bool:
-	return plan(data, target)["do"] != "none"
+	var many := _many(data)
+	if many.is_empty():
+		return plan(data, target)["do"] != "none"
+	for d: Dictionary in many:
+		if plan(d, target)["do"] != "none":
+			return true
+	return false
 
 
-## Does the drop: returns the action started ("put", "drop", "take" or ""), as Hands.move / take.
+## Does the drop: returns the action started ("put", "drop", "take" or ""), as Hands.move / take; "batch" when
+## several items start moving (move_many).
 func drop(data: Variant, target: Dictionary) -> String:
+	var many := _many(data)
+	if not many.is_empty():
+		return move_many(many, target)
+	return _drop_one(data, target)
+
+
+## Moves the items in `list` ({inspect_uid, type} each) to `target` one after another (see the top). Replaces a
+## batch still running. Returns "batch" when started, "" when nothing is left to move.
+func move_many(list: Array, target: Dictionary) -> String:
+	stop_batch()
+	var on_list := {}
+	for d: Dictionary in list:
+		on_list[d["inspect_uid"]] = true
+	for d: Dictionary in list:
+		if _batch.size() < MAX_BATCH and not _inside_listed(d["inspect_uid"], on_list):
+			_batch.append(d)
+	_batch_target = target.duplicate()
+	_batch_total = _batch.size()
+	_batch_bad = 0
+	_batch_why = ""
+	_say("")
+	if _batch_total == 0:
+		return ""
+	_run_batch()   # may finish at once (a backend that answers inside the call)
+	return "batch"
+
+
+## Items of the running batch not moved yet (the one moving now included); 0 when none runs.
+func batch_left() -> int:
+	return _batch.size() + (1 if _batch_now >= 0 else 0)
+
+
+## Stops a running batch: the item moving now finishes, the rest stay where they are.
+func stop_batch() -> void:
+	_batch.clear()
+	_batch_now = -1
+	_batch_total = 0
+	_update_head()
+
+
+## Moves one item (`data` as drag_data gives it).
+func _drop_one(data: Variant, target: Dictionary) -> String:
 	var p := plan(data, target)
 	var it: ItemRef = p.get("item")
 	match p["do"]:
@@ -417,7 +484,7 @@ func _dragged(data: Variant) -> ItemRef:
 	var t: Variant = (data as Dictionary).get("type")
 	if not u is int or not t is int:
 		return null
-	var row := InventoryModel.find_row(cols, u)
+	var row: Dictionary = _rows_by_uid.get(u, {})
 	var it: ItemRef = row.get("item")
 	if it == null or it.type != t or actions.pending(it.uid) != "":
 		return null
@@ -440,10 +507,102 @@ func _target(it: ItemRef) -> Dictionary:
 			"name": InventoryModel.clean(it.display_name(hands.world.tables))}
 
 
-func _on_refused(hand: String, _target_: Dictionary, reason: String) -> void:
+func _on_refused(hand: String, target_: Dictionary, reason: String) -> void:
 	if hand == HAND:
-		_say(InventoryModel.clean(reason, MAX_STATUS))
+		var why := InventoryModel.clean(reason, MAX_STATUS)
+		_say(why)
+		var it: Variant = target_.get("item")
+		if _batch_now >= 0 and it is ItemRef and (it as ItemRef).uid == _batch_now and not _batch_failed:
+			_batch_failed = true
+			_batch_bad += 1
+			_batch_why = why
 		refresh()
+
+
+## `cols` from the newest snapshot, and the rows by uid.
+func _fresh_cols() -> void:
+	cols.clear()
+	_rows_by_uid.clear()
+	if hands != null:
+		cols = InventoryModel.columns(hands.picker, hands.world.tables, actions)
+	for col in cols:
+		for g: Dictionary in col["groups"]:
+			for r: Dictionary in g["rows"]:
+				_rows_by_uid[r["uid"]] = r
+
+
+## The items of a drag of several (drag_data's `inspect_many`) as {inspect_uid, type} each; [] for one item, or
+## when it is malformed or too long.
+static func _many(data: Variant) -> Array:
+	if not data is Dictionary:
+		return []
+	var m: Variant = (data as Dictionary).get("inspect_many")
+	if not m is Array or (m as Array).size() > MAX_BATCH:
+		return []
+	var out := []
+	for e: Variant in m:
+		if not (e is Array and (e as Array).size() == 2 and e[0] is int and e[1] is int):
+			return []
+		out.append({"inspect_uid": e[0], "type": e[1]})
+	return out
+
+
+## The selected uids in listing order (columns left to right, rows top down).
+func _ordered_selection() -> Array:
+	var out := []
+	for col in cols:
+		for u: int in _col_uids.get(col["id"], []):
+			if selection.has(u):
+				out.append(u)
+	return out
+
+
+## Item `uid` is carried inside an item in `on_list` (at any depth): it goes along with that one.
+func _inside_listed(uid: int, on_list: Dictionary) -> bool:
+	if hands == null:
+		return false
+	var r := hands.picker.by_uid(uid)
+	for i in InventoryModel.MAX_DEPTH + 1:
+		if r == null or not r.carried or r.parent <= 0:
+			return false
+		if on_list.has(r.parent):
+			return true
+		r = hands.picker.by_uid(r.parent)
+	return false
+
+
+## Sends the batch's next item once the one before has landed or was refused; called each frame while one runs.
+func _run_batch() -> void:
+	if hands == null or actions == null:
+		stop_batch()
+		return
+	while _batch_now >= 0 or not _batch.is_empty():
+		if _batch_now >= 0:
+			if hands.busy(_batch_now):
+				if Time.get_ticks_msec() - _batch_since < BATCH_STEP_MS:
+					return
+				if not _batch_failed:   # never answered (the game was left?): go on without it
+					_batch_bad += 1
+					_batch_why = "No answer for an item."
+			_batch_now = -1
+		if _batch.is_empty():
+			break
+		var d: Dictionary = _batch.pop_front()
+		if _dirty or not visible:   # the moves before changed the rows
+			_fresh_cols()
+		_batch_now = d["inspect_uid"]
+		_batch_since = Time.get_ticks_msec()
+		_batch_failed = false
+		if _drop_one(d, _batch_target) == "" and not _batch_failed:
+			_batch_failed = true
+			_batch_bad += 1
+			_batch_why = status if status != "" else CANT   # nothing to do there (already in it)
+		_update_head()
+	if _batch_bad > 0:
+		_say(InventoryModel.clean("%d of %d moved. %s" % [_batch_total - _batch_bad, _batch_total, _batch_why],
+				MAX_STATUS))
+	_batch_total = 0
+	_update_head()
 
 
 ## Adds or removes row `uid` (a shown row with an item) without redrawing.
@@ -476,12 +635,22 @@ func _show_selection() -> void:
 		var t: Label = _ticks.get(uid)
 		if t != null:
 			t.text = TICK_ON if on else TICK_OFF
+	_update_head()
+
+
+## The heading: what to do, how many are selected, a batch's progress.
+func _update_head() -> void:
 	var keys := InputActions.key_of(&"inspect")
+	var text := ""
+	if _batch_total > 0:
+		text = "Moving %d of %d...   " % [_batch_total - _batch.size(), _batch_total]
 	if selection.is_empty():
-		_head.text = ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: drag over "
+		text += ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: drag over "
 				+ "the [ ] boxes, Ctrl+click, Shift+click.   %s or Esc closes") % keys
 	else:
-		_head.text = "Inventory: %d selected.   Esc clears the selection, %s closes" % [selection.size(), keys]
+		text += "Inventory: %d selected: drag one of them to move them all.   Esc clears the selection, %s closes" \
+				% [selection.size(), keys]
+	_head.text = text
 
 
 func _say(text: String) -> void:

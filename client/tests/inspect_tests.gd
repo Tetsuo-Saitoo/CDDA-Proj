@@ -22,6 +22,9 @@ class Silent:
 	func take_item(_u: float, _t: float, _p: Vector3i, _h := "pack") -> bool:
 		return true
 
+	func drop_item(_u: float, _t: float, _p: Vector3i, _s: Vector2) -> bool:
+		return true
+
 
 var _check: Callable
 var _it := {}   # itype id -> index
@@ -50,6 +53,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_rows()
 	_test_select()
 	_test_drops()
+	_test_many()
 	_test_pending()
 	_test_toggle()
 	_view.free()
@@ -446,6 +450,76 @@ func _test_drops() -> void:
 			"inspect: a refusal shows CDDA's reason (%s)" % _view.status)
 	_hands.refused.emit("mouse", {}, "Not for this view.")
 	_check.call(_view.status.begins_with("Your hand is full"), "inspect: other hands' refusals aren't shown")
+
+
+## Dragging a selected row moves the whole selection, one item after another. After _test_drops: the bottle (with
+## its water) in the sack's first pocket, the stone in the backpack, a ground rock in the main hand, ROCK on your
+## square, the canvas bag on the ground south-east (left there for _test_pending).
+func _test_many() -> void:
+	var stone := _wielded()
+	var sack_id := "worn:%d" % SACK
+	var p2 := {"kind": "group", "column": sack_id, "key": 1}   # pocket 2: no group shown while it is empty
+	_view.rebuild()
+	_click(BOTTLE)
+	_click(WATER, false, true)
+	_click(ROCK, false, true)
+	var data: Variant = _view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO)
+	var preview := _view.drag_preview(_view.row_slot(BOTTLE).row)
+	_check.call(data is Dictionary and (data["inspect_many"] as Array).size() == 3
+			and (preview.get_child(0) as Label).text == "3 items", "many: a selected row drags the selection (%s)" % [data])
+	preview.free()
+	_view.drop(data, p2)
+	var b := _carried(BOTTLE)
+	var w := _carried(WATER)
+	var r := _carried(ROCK)
+	_check.call(b.size() == 5 and b[2] == SACK and b[3] == 1 and w.size() == 5 and w[2] == BOTTLE and r.size() == 5
+			and r[2] == SACK and r[3] == 1 and _view.status == "" and _view.batch_left() == 0
+			and not _view._head.text.begins_with("Moving"),
+			"many: into pocket 2: the bottle (its water along) and the rock from the ground (%s %s %s %s)"
+			% [b, w, r, _view.status])
+	_view.rebuild()
+	_click(stone)
+	_click(BOTTLE, false, true)
+	_view.drop(_view.row_slot(stone)._get_drag_data(Vector2.ZERO), p2)
+	var s := _carried(stone)
+	_check.call(stone > 0 and s.size() == 5 and s[2] == SACK and _view.status.begins_with("1 of 2 moved.")
+			and _view.status.contains(InspectView.CANT), "many: one is already there, the other goes; the status counts (%s)"
+			% _view.status)
+	_view.rebuild()
+	_click(BOTTLE)
+	_click(ROCK, false, true)
+	data = _view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO)
+	_check.call(not _view.can_drop(data, p2)
+			and _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, data)
+			and not _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, {"inspect_many": [[BOTTLE, "x"]]})
+			and not _view.column_slot("nearby")._can_drop_data(Vector2.ZERO, {"inspect_many": range(300).map(
+				func(i: int) -> Array: return [i, 1])}),
+			"many: no drop where none can go, or with bad or too long data")
+	_actions.backend = Silent.new()   # drops are sent and never answered: the next waits
+	_view.column_slot("nearby")._drop_data(Vector2.ZERO, data)
+	_check.call(_actions.pending(BOTTLE) == "drop" and _actions.pending(ROCK) == "" and _view.batch_left() == 2
+			and _view._head.text.begins_with("Moving 1 of 2"), "many: the second waits for the first (%s)" % _view._head.text)
+	_actions.refused.emit(_hands.picker.by_uid(BOTTLE), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_actions.pending(ROCK) == "drop" and _view.batch_left() == 1 and _view.status == "",
+			"many: when the first is judged, the next goes")
+	_actions.refused.emit(_hands.picker.by_uid(ROCK), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_view.batch_left() == 0 and _view.status == "0 of 2 moved. No room." and _carried(BOTTLE).size() == 5,
+			"many: refusals are counted at the end (%s)" % _view.status)
+	_actions.backend = _mock
+	_view.clear_selection()
+
+
+## The uid of the item in the main hand, -1 if none.
+func _wielded() -> int:
+	var c := _snap.carried
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if (c[i + 4] & Snapshot.CARRIED_WIELDED) != 0:
+			return c[i]
+	return -1
 
 
 ## An action in flight greys its row, which can't be dragged then.
