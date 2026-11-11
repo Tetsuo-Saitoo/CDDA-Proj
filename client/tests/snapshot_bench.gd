@@ -67,6 +67,7 @@ func _mock() -> void:
 	_record("mock turn apply", turn_ms)
 	# The async path: a fresh view meshes the whole town on a worker; the longest frame meanwhile.
 	var v2 := WorldView.new()
+	v2.mesh_on_worker = true   # also headless: nothing else meshes on this thread meanwhile
 	root.add_child(v2)
 	v2.set_id_tables(view.tables)
 	var done := [false]

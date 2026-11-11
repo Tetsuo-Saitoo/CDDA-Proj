@@ -146,6 +146,7 @@ func _job_stress(root: Node, data: Variant, tables: IdTables) -> void:
 	print("qa: meshing job against main-thread catalog lookups")
 	var t0 := Time.get_ticks_msec()
 	var w := WorldView.new()
+	w.mesh_on_worker = true   # also headless: this test is about the worker; only lookups on this thread meanwhile
 	w.catalog.load_registry_dir(_repo(REGISTRY))
 	root.add_child(w)
 	w.set_id_tables(tables)
