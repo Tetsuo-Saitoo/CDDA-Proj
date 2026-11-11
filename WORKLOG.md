@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Main menu: delete a character from the Load page after a confirm naming it (and its world when it is the last one); the button waits for the bridge's `delete_save` (proposed to lead-bridge). Client tests pass.
+
 - 2026-11-10 — Run and crouch in the live game: CapsLock / pad L3 toggles CDDA's run mode, B / pad R3 crouch (rebindable); the HUD shows the move mode from `player.move_mode` and mentions stamina while running low or out. Client tests pass; not tried live.
 
 - 2026-11-10 — A loaded test-range save keeps cheats allowed: when the range info says range, main forces cheats and pushes the opt-in again, so the push at "running" no longer undoes the bridge's. Item lists and the Tab view: rows, [ ] boxes and bar buttons 32 px for VR pointers (lead-vr). Client tests pass.

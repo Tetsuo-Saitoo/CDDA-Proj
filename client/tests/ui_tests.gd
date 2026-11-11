@@ -787,6 +787,86 @@ func _test_main_menu() -> void:
 	_check.call(m.select_world("Other") and m.start_load() and got[-1] == ["load", "Other", "Ann"],
 			"menu: load a save")
 	_check.call(m.select_world("World") and not m.start_load(), "menu: world without saves can't load")
+	_check.call(not _has_button(m, "Delete character...") and not m.ask_delete(), "menu: no deleter, no Delete button")
+	m.free()
+	_test_menu_delete()
+
+
+func _has_button(m: MainMenu, text: String) -> bool:
+	return m._box.get_children().any(func(c: Node) -> bool: return c is Button and (c as Button).text == text)
+
+
+## Deleting a character from the Load page: a confirm that names it (and the world when it is the last one), only
+## listed names reach the deleter, a failed delete says why, the lists come back from disk afterwards.
+func _test_menu_delete() -> void:
+	var disk := {"World": PackedStringArray(["Ann", "Bob"]), "Other": PackedStringArray(["Cid" + String.chr(0x202E) + "\nx"])}
+	var calls := []
+	var answer := [""]
+	var m := MainMenu.new()
+	ui.add_child(m)
+	m.deleter = func(w: String, s: String) -> Variant:
+		calls.append([w, s])
+		if answer[0] is String and (answer[0] as String).is_empty():
+			var left: PackedStringArray = disk[w]
+			left.remove_at(left.find(s))
+			disk[w] = left
+			if left.is_empty():
+				disk.erase(w)
+		return answer[0]
+	m.relist = func() -> PackedStringArray:
+		var k := PackedStringArray(disk.keys())
+		k.sort()
+		return k
+	m.setup(m.relist.call(), func(w: String) -> PackedStringArray: return disk.get(w, PackedStringArray()))
+	m.show_page("load")
+	_check.call(_has_button(m, "Delete character...") and m.select_world("World"), "menu delete: a Delete button on the Load page")
+	m._save_list.select(1)
+	_check.call(m.ask_delete() and m.page == "delete" and calls.is_empty() and m.pending_delete == {"world": "World", "save": "Bob", "last": false}
+			and m._box.get_node("Confirm").text.contains("Bob") and m._box.get_node("Confirm").text.contains("World")
+			and not m._box.get_node("Confirm").text.contains("last") and m._box.get_node("DeleteButton").text == "Delete Bob",
+			"menu delete: the confirm names the character and its world; nothing deleted yet")
+	m.cancel_delete()
+	_check.call(calls.is_empty() and m.page == "load" and m.pending_delete.is_empty() and disk["World"].size() == 2,
+			"menu delete: Keep it deletes nothing")
+	m._save_list.select(1)
+	m.ask_delete()
+	_check.call(m.confirm_delete() and calls == [["World", "Bob"]] and disk["World"] == PackedStringArray(["Ann"])
+			and m.page == "load" and m.message == "Deleted Bob." and m._save_list.item_count == 1,
+			"menu delete: Delete deletes that one character; the list shows what is left")
+	answer[0] = "the save folder is read-only\n<b>x</b>"
+	m.select_world("World")
+	m.ask_delete()
+	_check.call(m.pending_delete["last"] and m._box.get_node("Confirm").text.contains("last character in World"),
+			"menu delete: the last character warns that the world goes too")
+	_check.call(not m.confirm_delete() and calls.size() == 2 and disk.has("World")
+			and m.message.begins_with("Couldn't delete Ann: the save folder is read-only") and not "\n" in m.message,
+			"menu delete: a failed delete says why on one line and keeps the lists (%s)" % m.message)
+	answer[0] = 5
+	m.ask_delete()
+	_check.call(not m.confirm_delete() and m.message.ends_with("the bridge gave no answer"), "menu delete: a non-text reply is a failure")
+	answer[0] = ""
+	m.ask_delete()
+	disk["World"] = PackedStringArray(["Zed"])   # changed on disk while the confirm was open
+	_check.call(not m.confirm_delete() and calls.size() == 3 and m.message.contains("no longer"),
+			"menu delete: a character gone from the list since the confirm isn't sent")
+	disk["World"] = PackedStringArray(["Ann"])
+	m.select_world("World")
+	m.ask_delete()
+	_check.call(m.confirm_delete() and calls[-1] == ["World", "Ann"] and m.worlds == PackedStringArray(["Other"])
+			and not m.world_taken("World") and m.message == "Deleted Ann, and the world World with them." and m.page == "load",
+			"menu delete: the last character takes its world along; its name is free again")
+	m.select_world("Other")
+	m.ask_delete()
+	var confirm: String = m._box.get_node("Confirm").text
+	_check.call(not confirm.contains(String.chr(0x202E)) and confirm.contains("Cidx") and m.confirm_delete()
+			and calls[-1] == ["Other", "Cid" + String.chr(0x202E) + "\nx"] and m.worlds.is_empty() and m.page == "main",
+			"menu delete: the confirm shows the name plainly, the deleter gets the listed name; no world left: main page")
+	var s := LiveSession.new()
+	s.state = "running"
+	_check.call(LiveSession.delete_reply("") == "" and LiveSession.delete_reply(null) != "" and LiveSession.delete_reply("\n") != ""
+			and s.delete_save("C:/nowhere", "World", "Ann", true) != "" and s.delete_save("rel", "World", "Ann", true) != "",
+			"live session: delete refused without a bridge or a name it lists")
+	s.free()
 	m.free()
 
 

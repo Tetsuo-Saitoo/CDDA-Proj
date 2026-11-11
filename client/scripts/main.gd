@@ -561,6 +561,9 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
 	request_ui.get_parent().add_child(center)
+	if LiveSession.delete_save_available():   # Load page: delete a character (and its world once empty)
+		main_menu.deleter = func(w: String, sv: String) -> String: return live.delete_save(user_dir, w, sv, true)
+	main_menu.relist = func() -> PackedStringArray: return LiveSession.list_worlds(user_dir)
 	main_menu.setup(LiveSession.list_worlds(user_dir),
 			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
 	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool, setup: bool) -> void:
