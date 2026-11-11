@@ -217,6 +217,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "range_set_ai_frozen", "on" ), &CddaSim::range_set_ai_frozen );
     ClassDB::bind_method( D_METHOD( "range_heal" ), &CddaSim::range_heal );
     ClassDB::bind_method( D_METHOD( "get_range_info" ), &CddaSim::get_range_info );
+    ClassDB::bind_method( D_METHOD( "cheat_teleport", "pos" ), &CddaSim::cheat_teleport );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
@@ -819,6 +820,14 @@ int64_t CddaSim::range_teleport( int64_t zone )
     fp3d::range_op op;
     op.kind = fp3d::range_op_kind::teleport;
     op.number = zone;
+    return queue_range( op );
+}
+
+int64_t CddaSim::cheat_teleport( const Vector3i &pos )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::point_teleport;
+    op.square = range_square( pos );
     return queue_range( op );
 }
 

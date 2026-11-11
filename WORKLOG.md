@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Teleport cheat (bridge side): `cheat_teleport(pos)` moves the character to a square in the bubble (or the nearest free one) in any game with cheats allowed; the range's arrival helpers now live in `fp3d/arrival.{h,cpp}`. Sim (13 new checks), range, client and live tests pass on Windows.
 - 2026-11-10 — Range saves: loading a saved test range game resumes it as a range game (only in FP3D's range worlds), with the range operations allowed; "Test range" still starts fresh. Bridge call after lead-qa's fork change (42d18ef); sim, range, client and live tests pass.
 - 2026-11-10 — CI "Client tests (mock town)" flake: model_tests' "one model for two threads" loaded a real .glb on two threads at once, and Godot's headless renderer doesn't take textures/meshes from two threads (8 renderer errors now and then); the check now uses fake loads (`SlowLoads`), like QA's thread check; client tests pass twice.
 - 2026-11-10 — Melee on merged fp3d (fork fp3d-combat): the sim's melee scenes answer stray prompts (a grabbed avatar struggling free can tear a pocket off) and the throw scene rebuilds the map cache (a melee check's wall stayed opaque). Sim (twice), client and live tests pass.
