@@ -322,6 +322,15 @@ func _test_multi_drag() -> void:
 	_click(w, 1)
 	_check.call(_ticked(w) == [0, 2], "a disabled row is never ticked, a click on it does nothing (%s)"
 			% [_ticked(w)])
+	var dis4 := _entries(["x", "y", "z", "v"])
+	dis4[1]["enabled"] = false
+	_show(_req("item_multi", {"entries": dis4}))
+	w = ui.widget as ListRequestWidget
+	_click(w, 0)
+	_key(KEY_DOWN, true)   # onto the disabled row: it stays unticked and isn't the anchor
+	_click(w, 3, true)
+	_check.call(_ticked(w) == [0, 2, 3], "Shift+click after Shift+Down onto a disabled row ticks from the last ticked one (%s)"
+			% [_ticked(w)])
 	_show(_req("item_select", {"entries": _entries(["p", "q"])}))
 	w = ui.widget as ListRequestWidget
 	w.press_row(0, true)

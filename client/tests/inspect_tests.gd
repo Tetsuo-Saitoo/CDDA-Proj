@@ -364,6 +364,9 @@ func _test_select() -> void:
 	_check.call(_selected().is_empty() and _view._head.text.contains("Several:"), "select: Ctrl+click removes it")
 	var at := {}   # rows laid out by hand (a test has no layout pass): uid -> y
 	var y := 0.0
+	for sc: Control in _view._col_scroll.values():   # each column's list too, rows shown in it
+		sc.global_position = Vector2.ZERO
+		sc.size = Vector2(200, 400)
 	for u: int in [ROCK, BOTTLE, WATER, STONE, hammer, stone]:
 		_view.row_slot(u).global_position = Vector2(0, y)
 		_view.row_slot(u).size = Vector2(200, 28)   # at least its minimum size: rows are 60 apart
@@ -384,6 +387,20 @@ func _test_select() -> void:
 	_view.paint_at(Vector2(5, at[ROCK]))
 	_check.call(_selected() == [ROCK, hammer], "select: a drag from a ticked box unticks the rows passed (%s)"
 			% [_selected()])
+	(_view._col_scroll["nearby"] as Control).size = Vector2(200, 100)   # stone's row is scrolled out of sight now
+	_view.tick_input(_button(true), BOTTLE)
+	_view.paint_at(Vector2(5, at[stone]))
+	_view.tick_input(_button(false), BOTTLE)
+	_check.call(_selected() == [ROCK, BOTTLE, hammer], "select: a box drag never ticks rows out of sight (%s)" % [_selected()])
+	_view.set_selected(BOTTLE, false)
+	for i in InspectView.MAX_BATCH - 2:
+		_view.selection[900000 + i] = 1
+	_click(BOTTLE, false, true)
+	_check.call(_view.selection.size() == InspectView.MAX_BATCH and not _view.selection.has(BOTTLE)
+			and _view.status.contains("At most 256"), "select: at most 256 selected (%s)" % _view.status)
+	for i in InspectView.MAX_BATCH - 2:
+		_view.selection.erase(900000 + i)
+	_view._say("")
 	_view.selection[999999] = _it["rock"]   # gone since
 	_view.selection[STONE] = _it["hammer"]  # another itype under its uid now
 	_view.rebuild()
@@ -548,6 +565,23 @@ func _test_bar() -> void:
 	_view._process(0.0)
 	_check.call(_view.batch_left() == 0 and _actions.pending(stone) == "" and not _bar_buttons().has("Stop"),
 			"bar: Stop leaves the rest where they are")
+	_actions.clear()
+	_view.act("drop")
+	_check.call(_view._batch_target == {"kind": "group", "column": "nearby", "key": P} and _view.batch_left() == 2,
+			"bar: Drop here keeps the square it started on (%s)" % [_view._batch_target])
+	_hands.picker.reach = func() -> Variant: return E   # walked a square on
+	_view._process(0.0)
+	_hands.picker.reach = Callable()
+	_check.call(_view.batch_left() == 0 and _view.status.begins_with("Stopped: you moved") and _actions.pending(stone) == "",
+			"bar: walking away stops a batch; the rest stay (%s)" % _view.status)
+	_actions.clear()
+	_view.act("drop")
+	_view.on_game_state("running")
+	var kept := _view.batch_left()
+	_view.on_game_state("ended")
+	_check.call(kept == 2 and _view.batch_left() == 0 and _view.status.begins_with("Stopped: the game"),
+			"bar: a batch stops when the game stops running")
+	_actions.clear()
 	_actions.backend = _mock
 	(_bar_buttons()["Clear"] as Button).pressed.emit()
 	_check.call(_view.selection.is_empty() and _bar_buttons().is_empty(), "bar: Clear selects none and hides it")

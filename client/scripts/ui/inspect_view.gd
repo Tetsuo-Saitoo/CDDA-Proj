@@ -38,7 +38,7 @@ const SELECTED := Color(0.25, 0.4, 0.7, 0.5)
 const TICK_ON := "[x]"
 const TICK_OFF := "[ ]"
 const ROW_H := 32.0              # rows, [ ] boxes and bar buttons: tall enough for a VR laser pointer (lead-vr)
-const MAX_BATCH := 256           # items one drag moves
+const MAX_BATCH := 256           # items one drag moves, and the most that can be selected
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
 const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
@@ -72,6 +72,8 @@ var _row_slots := {}     # uid -> InspectSlot
 var _col_slots := {}     # column id -> InspectSlot
 var _group_slots := {}   # "column id|key" -> InspectSlot
 var _ticks := {}         # uid -> the row's [ ] box
+var _col_scroll := {}    # column id -> its rows' ScrollContainer (a box drag only reaches rows in sight)
+var _shown := {}         # uid -> selected as its row shows it now (only changed rows are restyled)
 var _row_col := {}       # uid -> column id
 var _col_uids := {}      # column id -> [uid, ...] in listing order
 var _anchor := -1        # the row last clicked (Shift+click selects from it)
@@ -82,6 +84,7 @@ var _paint_uid := -1     # the row the drag is on
 var _rows_by_uid := {}   # uid -> row of `cols`
 var _batch: Array = []   # {inspect_uid, type} still to move, in order
 var _batch_target := {}
+var _batch_at: Variant = null   # the square the hands reached from when the batch started (moving away stops it)
 var _batch_now := -1     # the item moving now
 var _batch_since := 0    # when it was sent (ms)
 var _batch_failed := false   # the item moving now was refused or couldn't be sent
@@ -218,6 +221,8 @@ func rebuild() -> void:
 	_col_slots.clear()
 	_group_slots.clear()
 	_ticks.clear()
+	_col_scroll.clear()
+	_shown.clear()
 	_row_col.clear()
 	_col_uids.clear()
 	_paint = false
@@ -315,7 +320,8 @@ func paint_at(point: Vector2) -> void:
 		return
 	for uid: int in _row_slots:
 		var s: InspectSlot = _row_slots[uid]
-		if uid != _paint_uid and s.is_visible_in_tree() and s.get_global_rect().has_point(point):
+		var sc: Control = _col_scroll.get(_row_col.get(uid, ""))
+		if uid != _paint_uid and s.is_visible_in_tree() and s.get_global_rect().has_point(point) and sc != null 				and sc.get_global_rect().has_point(point):   # not a row scrolled out of sight under the title or bar
 			if _row_col.get(uid) == _row_col.get(_paint_uid):
 				_put_run(_paint_uid, uid, _paint_on)
 			else:
@@ -430,10 +436,12 @@ func act(what: String, arg := "") -> String:
 
 
 ## Moves the items in `list` ({inspect_uid, type} each) to `target` one after another (see the top); op "unload"
-## unloads each into the inventory instead. Replaces a batch still running. Returns "batch" when started, "" when
-## there is nothing to do.
+## unloads each into the inventory instead. Replaces a batch still running. A batch stops when you move away
+## (the square it started from), when the game stops running (on_game_state) and on stop_batch. Returns "batch"
+## when started, "" when there is nothing to do.
 func move_many(list: Array, target: Dictionary, op := "move") -> String:
 	stop_batch()
+	target = _pinned(target)
 	var on_list := {}
 	for d: Dictionary in list:
 		on_list[d["inspect_uid"]] = true
@@ -442,6 +450,7 @@ func move_many(list: Array, target: Dictionary, op := "move") -> String:
 			_batch.append(d)
 	_batch_op = op
 	_batch_target = target.duplicate()
+	_batch_at = hands.reach_square() if hands != null else null
 	_batch_total = _batch.size()
 	_batch_bad = 0
 	_batch_why = ""
@@ -463,6 +472,25 @@ func stop_batch() -> void:
 	_batch_now = -1
 	_batch_total = 0
 	_update_head()
+
+
+## LiveSession.state_changed: a batch never outlives its game (quit, death, another game).
+func on_game_state(s: String) -> void:
+	if s != "running" and _batch_total > 0:
+		stop_batch()
+		_say("Stopped: the game isn't running.")
+
+
+## A drop on the nearby column means the square in reach now: the batch keeps that square, not wherever you are
+## when its last item goes.
+func _pinned(target: Dictionary) -> Dictionary:
+	if str(target.get("kind", "")) != "column":
+		return target
+	var col := InventoryModel.find_column(cols, str(target.get("column", "")))
+	var sq: Variant = hands.reach_square() if hands != null else null   # the nearby column's own square, as of now
+	if col.get("kind") != "nearby" or not sq is Vector3i:
+		return target
+	return {"kind": "group", "column": col["id"], "key": sq}
 
 
 ## Moves one item (`data` as drag_data gives it).
@@ -666,6 +694,11 @@ func _run_batch() -> void:
 	if hands == null or actions == null:
 		stop_batch()
 		return
+	var at: Variant = hands.reach_square()
+	if not (at is Vector3i and _batch_at is Vector3i and at == _batch_at):
+		stop_batch()
+		_say("Stopped: you moved away. The rest stay where they are.")
+		return
 	while _batch_now >= 0 or not _batch.is_empty():
 		if _batch_now >= 0:
 			if hands.busy(_batch_now):
@@ -701,6 +734,9 @@ func _put(uid: int, on: bool) -> void:
 	var s: InspectSlot = _row_slots.get(uid)
 	var it: Variant = s.row.get("item") if s != null else null
 	if on and it is ItemRef:
+		if not selection.has(uid) and selection.size() >= MAX_BATCH:
+			_say("At most %d items at once." % MAX_BATCH)
+			return
 		selection[uid] = (it as ItemRef).type
 	else:
 		selection.erase(uid)
@@ -722,6 +758,9 @@ func _put_run(a: int, b: int, on: bool) -> void:
 func _show_selection() -> void:
 	for uid: int in _row_slots:
 		var on := selection.has(uid)
+		if on == _shown.get(uid, false):   # each restyle relayouts: only the rows that changed
+			continue
+		_shown[uid] = on
 		(_row_slots[uid] as InspectSlot).add_theme_stylebox_override("panel", _sel_style if on else _no_style)
 		var t: Label = _ticks.get(uid)
 		if t != null:
@@ -782,6 +821,7 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	v.add_child(scroll)
+	_col_scroll[id] = scroll
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(rows)

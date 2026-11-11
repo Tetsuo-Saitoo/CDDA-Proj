@@ -195,7 +195,8 @@ func press_row(row: int, shift := false) -> void:
 		return
 	select(row)
 	if shift and _anchor >= 0 and _anchor < shown.size():
-		_paint_on = picks.has(item_at(_anchor)["id"])
+		var a := item_at(_anchor)
+		_paint_on = picks.has(a["id"]) if a.get("enabled", false) else true
 		set_rows(_anchor, row, _paint_on)
 	elif it["enabled"]:
 		toggle(row)
@@ -245,7 +246,8 @@ func extend(delta: int) -> void:
 	move(delta)
 	if from >= 0 and selected >= 0:
 		set_rows(from, selected, true)
-		_anchor = selected
+		if item_at(selected).get("enabled", false):   # a disabled row is never ticked: Shift+click reads the anchor
+			_anchor = selected
 
 
 ## The row at height `y` in the list (its own coordinates, scrolling doesn't matter), clamped to the first and

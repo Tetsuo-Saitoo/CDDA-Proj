@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Multi-select review fixes (lead-qa): Tab batches keep their square and stop when you walk or the game stops; selection capped at 256; box drags skip rows out of sight; fewer restyles; list anchor stays on enabled rows. Client tests pass.
+
 - 2026-11-10 — Teleport cheat, client side: J (rebindable) or F1 > Cheats teleports to the square under the crosshair, through walls and between floors, only with cheats allowed; waits for the bridge's `cheat_teleport`. Client tests pass.
 
 - 2026-11-10 — Main menu: delete a character from the Load page after a confirm naming it (and its world when it is the last one); the button waits for the bridge's `delete_save` (proposed to lead-bridge). Client tests pass.

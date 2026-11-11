@@ -261,6 +261,8 @@ func _reload() -> void:
 ## Mock mode: the hands take, put and drop items on the client's own copy of the snapshot (MockItems), so E6 can
 ## be tried without the bridge; every pile gets item handles first.
 func _use_mock_items(snap: Snapshot) -> void:
+	if inspect != null:
+		inspect.stop_batch()   # its items were the old backend's
 	item_actions.clear()
 	mock_items = MockItems.new(snap, world.tables)
 	mock_items.seed()
@@ -488,6 +490,7 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
 	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
