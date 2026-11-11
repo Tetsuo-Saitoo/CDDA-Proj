@@ -2,7 +2,8 @@ class_name CheatPanel
 extends VBoxContainer
 ## K7: the "Cheats" page of the F1 menu (KeyMenu.add_cheat_page), shown only when the debug setting is on
 ## (HudSettings.debug_cheats) or the game was started with --test / --cheats. It draws CheatModel's rows (shared
-## with the VR page): one toggle per bridge cheat, "Auto-pause on hostiles" and "Give test kit". The toggles always
+## with the VR page): one toggle per bridge cheat, "Auto-pause on hostiles", "Give test kit" and "Teleport to the
+## crosshair" (any game; greyed out while cheats aren't allowed). The toggles always
 ## show what the sim says (CheatModel.read, asked again on each refresh), never a copy kept here: a cheat asked
 ## for applies at the sim's next request, and cheats_changed brings the new state.
 ## `backend` is a LiveSession (or a test stand-in with the same methods); null = no live game.
@@ -29,6 +30,9 @@ var tables: IdTables
 var player_square := Callable()
 ## () -> Vector3i: a square ahead of where the player looks (monsters spawn there). Main sets it.
 var ahead_square := Callable()
+## () -> int: teleports to the square at the screen's centre (main.gd's _teleport), the op id or 0. Main sets it.
+var teleport := Callable()
+var teleport_button: Button
 var _range_ops := {}   # op id -> what it was, for the status line
 const MAX_RANGE_OPS := 32
 
@@ -68,6 +72,9 @@ func _init() -> void:
 		else:
 			grid.add_child(b)
 			toggles[key] = b
+	teleport_button = _button("Teleport to the crosshair", teleport_here)
+	teleport_button.name = "Teleport"
+	row.add_child(teleport_button)
 	add_child(row)
 	_build_range()
 	status = Label.new()
@@ -86,6 +93,10 @@ func refresh() -> void:
 		b.disabled = not r["enabled"]
 		if b is CheckButton:
 			b.set_pressed_no_signal(r["on"])
+	teleport_button.disabled = not (_has("can_teleport") and backend.can_teleport())
+	teleport_button.tooltip_text = ("Moves you to the square at the screen's centre, through walls and between floors. "
+			+ "Key: %s (the square under the crosshair).%s") % [InputActions.key_of(&"cheat_teleport"),
+			" Needs cheats allowed and a bridge that has it." if teleport_button.disabled else ""]
 	refresh_range()
 	if not live:
 		_say("Cheats need a running live game (start with --live).", true)
@@ -110,6 +121,17 @@ func _on_toggled(on: bool, key: String) -> void:
 		refresh()
 	elif key != CheatModel.AUTO_PAUSE:
 		_say("%s %s: applies at the next turn." % [CheatModel.LABELS[key], "on" if on else "off"], false)
+
+
+func teleport_here() -> void:
+	if teleport_button.disabled:
+		_say("Teleport: needs a running game with cheats allowed.", true)
+		return
+	var id: int = teleport.call() if teleport.is_valid() else 0
+	if id < 1:
+		_say("Teleport: not sent. Point the crosshair at a square in the loaded area.", true)
+		return
+	_sent("Teleport", id)
 
 
 func _build_range() -> void:

@@ -365,6 +365,19 @@ func range_spawn_monster(id: String, pos: Vector3i) -> int:
 	return _range_op("range_spawn_monster", [id, pos])
 
 
+## Cheat: teleport to square `pos` in the bubble (any game, cheats allowed; CddaSim.cheat_teleport, lead-bridge).
+## Same op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, bad square).
+func cheat_teleport(pos: Vector3i) -> int:
+	if not can_teleport() or not ItemActions.ok_square(pos):
+		return 0
+	return _range_op("cheat_teleport", [pos])
+
+
+## The teleport cheat can be asked for now (the F1 entry is greyed out otherwise).
+func can_teleport() -> bool:
+	return cheats_allowed and _can("cheat_teleport")
+
+
 func _range_op(method: String, args: Array) -> int:
 	if not _can(method) or _range_ops.size() >= MAX_RANGE_OPS:
 		return 0

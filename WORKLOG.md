@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Teleport cheat, client side: J (rebindable) or F1 > Cheats teleports to the square under the crosshair, through walls and between floors, only with cheats allowed; waits for the bridge's `cheat_teleport`. Client tests pass.
+
 - 2026-11-10 — Main menu: delete a character from the Load page after a confirm naming it (and its world when it is the last one); the button waits for the bridge's `delete_save` (proposed to lead-bridge). Client tests pass.
 
 - 2026-11-10 — Run and crouch in the live game: CapsLock / pad L3 toggles CDDA's run mode, B / pad R3 crouch (rebindable); the HUD shows the move mode from `player.move_mode` and mentions stamina while running low or out. Client tests pass; not tried live.

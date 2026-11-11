@@ -35,6 +35,7 @@ const ACTIONS := [
 	# CDDA's move modes; not Shift (Shift+ keys are CDDA actions, Shift alone the outside view's fast camera)
 	[&"cdda_run", "Move", "run on / off (live; uses stamina)", ["CapsLock", "pad:7"]],
 	[&"cdda_crouch", "Move", "crouch on / off (live)", ["B", "pad:8"]],
+	[&"cheat_teleport", "Move", "cheat: teleport to the square under the crosshair (live, cheats allowed)", ["J"]],
 	[&"look", "View", "hold: mouse look", ["mouse:2"]],
 	[&"look_up", "View", "look up", ["axis:3-"]],
 	[&"look_down", "View", "look down", ["axis:3+"]],
