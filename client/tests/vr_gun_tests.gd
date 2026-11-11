@@ -458,31 +458,42 @@ func _test_rack() -> void:
 			and slide.global_position.distance_to(sp * Vector3(0, 0, WeaponViewmodel.JAM_BACK)) < 0.001,
 			"vr gun: a jam: its name and how to clear it by the main hand, a buzz, the slide held open")
 	var n := _sent.size()
-	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and _sent[-1] == "reload_weapon" and g.racks == 1 and _clean(),
-			"vr gun: racked a jammed gun: CDDA's reload_weapon queued (it clears the jam), a buzz")
-	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 2 and _rig.notes[0] != null and _rig.notes[0].visible
+	_check.call(_rack(sp, 0.06) and _sent.size() == n and g.racks == 1 and g.jam == "" and _clean()
+			and slide.global_position.distance_to(sp.origin) < 0.001,
+			"vr gun: racked a jammed gun: ItemActions.clear_jam clears it (CDDA's mend, no reload), the slide closes, a buzz")
+	# without clear_jam (an older ItemActions): CDDA's reload_weapon, once per jam
+	var acts := g.actions
+	g.actions = null
+	_snap.player_gun["faults"] = ["fault_stovepipe"]
+	_captured()
+	_frame()
+	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and _sent[-1] == "reload_weapon" and g.racks == 2,
+			"vr gun: no clear_jam: CDDA's reload_weapon queued (the fork mends the jam)")
+	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 3 and _rig.notes[0] != null and _rig.notes[0].visible
 			and _rig.notes[0].text == VrGun.CLEARING,
 			"vr gun: racked again before the jam clears: nothing more queued (it would reload the cleared gun)")
 	_snap.player_gun["faults"] = []
 	_captured()
 	_frame()
 	_check.call(g.jam == "" and slide.global_position.distance_to(sp.origin) < 0.001, "vr gun: jam cleared: the slide closes")
-	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 3, "vr gun: racked a clean gun: only the motion and a buzz")
+	n = _sent.size()
+	_check.call(_rack(sp, 0.06) and _sent.size() == n and g.racks == 4, "vr gun: racked a clean gun: only the motion and a buzz")
 	b = _rig.buzzes.duplicate()
 	_rig.left.global_transform = Transform3D(sp.basis, sp * Vector3(0, 0.03, 0.09))
 	_rig.press(_rig.left, "grip_click")
 	_rig.left.global_position = sp * Vector3(0, 0.03, 0.11)
 	_frame()
 	_rig.release(_rig.left, "grip_click")
-	_check.call(_rig.buzzes == b and g.racks == 3 and _sent.size() == n + 1 and not g.racking() and _clean(),
+	_check.call(_rig.buzzes == b and g.racks == 4 and _sent.size() == n and not g.racking() and _clean(),
 			"vr gun: a short pull: nothing")
 	_accept = false
 	_snap.player_gun["faults"] = ["fault_double_feed"]
 	_captured()
 	_frame()
-	_check.call(_rack(sp, 0.06) and _sent.size() == n + 2 and _rig.notes[0].visible and _rig.notes[0].text == VrGun.CANT_CLEAR,
+	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and _rig.notes[0].visible and _rig.notes[0].text == VrGun.CANT_CLEAR,
 			"vr gun: a rack the game can't take now says so")
 	_accept = true
+	g.actions = acts
 	_snap.player_gun["faults"] = []
 	_captured()
 	_frame()
