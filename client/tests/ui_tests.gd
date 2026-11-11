@@ -278,8 +278,8 @@ func _test_multi_drag() -> void:
 	_show(req)
 	var w := ui.widget as ListRequestWidget
 	for r in w.rows.size():   # laid out as the list would be (no layout pass in a test)
-		w.rows[r].position = Vector2(0, r * 30.0)
-		w.rows[r].size = Vector2(200, 28)
+		w.rows[r].position = Vector2(0, r * 40.0)
+		w.rows[r].size = Vector2(200, 32)
 	var down := InputEventMouseButton.new()
 	down.button_index = MOUSE_BUTTON_LEFT
 	down.pressed = true

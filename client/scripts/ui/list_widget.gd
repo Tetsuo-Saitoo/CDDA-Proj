@@ -13,7 +13,7 @@ extends RequestWidget
 const FILTER_MIN := 10
 const MAX_ROWS := 200      # rows built at once; the filter reaches the rest
 const PAGE := 10
-const ROW_H := 28.0
+const ROW_H := 32.0        # tall enough for a VR laser pointer (lead-vr)
 const MAX_COUNT := 1000000
 
 var kind := ""

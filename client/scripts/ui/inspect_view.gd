@@ -37,6 +37,7 @@ const BOX := Color(0.7, 0.85, 1.0)   # container rows
 const SELECTED := Color(0.25, 0.4, 0.7, 0.5)
 const TICK_ON := "[x]"
 const TICK_OFF := "[ ]"
+const ROW_H := 32.0              # rows, [ ] boxes and bar buttons: tall enough for a VR laser pointer (lead-vr)
 const MAX_BATCH := 256           # items one drag moves
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
 const NOT_YET := "Taking a carried item into your hands: not yet."
@@ -602,6 +603,7 @@ func _bar_button(text: String, call: Callable, tip: String, parent: Control = nu
 	b.text = text
 	b.tooltip_text = tip
 	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size.y = ROW_H
 	b.pressed.connect(call)
 	(parent if parent != null else _bar).add_child(b)
 	return b
@@ -815,6 +817,9 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	var uid: int = r["uid"]
 	if r.get("item") is ItemRef:
 		var tick := _label(TICK_OFF, DIM)
+		tick.custom_minimum_size = Vector2(ROW_H, ROW_H)
+		tick.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tick.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		tick.mouse_filter = Control.MOUSE_FILTER_STOP   # a press here selects; it never starts a move
 		tick.tooltip_text = "Select; drag over more boxes to select them too"
 		tick.gui_input.connect(tick_input.bind(uid, tick))
