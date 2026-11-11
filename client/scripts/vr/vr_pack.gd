@@ -613,6 +613,7 @@ func _clear() -> void:
 	items.clear()
 	comps.clear()
 	more = 0
+	_held = {}   # the rebuilt models hide the held ones again on the next _sync_held
 	for i in 2:
 		_hover[i] = {}
 		_lit[i] = -1

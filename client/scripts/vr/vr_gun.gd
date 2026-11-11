@@ -46,6 +46,8 @@ const LOAD_CATEGORIES := ["magazines", "ammo"]   # what the off hand puts into t
 const RACK_PARTS := ["Slide", "Bolt"]
 const PARTS := ["Muzzle", "Grip", "MagWell", "Magazine", "Slide", "Bolt"]
 const CANT_CLEAR := "Not now: the game is busy."
+const CLEARING := "Clearing it..."
+const CLEAR_WAIT_S := 20.0    # after a rack asked to clear a jam, no other rack asks again until it's gone (or this)
 
 var rig: VrRig
 ## (action: String) -> bool: queues one of CDDA's main-loop actions (main.gd: LiveSession, only in the main loop).
@@ -105,6 +107,8 @@ var _op := {}                 # the gun's item action in flight: {op, uid (the g
 var _copy: MeshInstance3D     # the magazine riding in the off hand while it comes out
 var _rack := {}               # {part, hand (0 left / 1 right), start (z along the bore), max (pulled)}
 var _rearm := true
+var _clearing := ""           # the jam a rack already asked CDDA to clear ("" none)
+var _clear_left := 0.0        # seconds before another rack may ask again
 
 
 func _init() -> void:
@@ -135,6 +139,7 @@ func update(delta: float) -> void:
 	if not on:
 		return
 	_kick = move_toward(_kick, 0.0, KICK_RATE * d)
+	_clear_left = maxf(_clear_left - d, 0.0)
 	_place()
 	if _copy != null:
 		_copy.transform = rig.off_ctrl().global_transform
@@ -163,7 +168,8 @@ func trigger() -> bool:
 	var t := _fire_request()
 	if t != null:
 		fire_wait = 0.0
-		_fire_plain(t)
+		if not _fire_plain(t):
+			rig.feel(c)   # the muzzle points at nothing to shoot (or at your own square): no shot
 		return true
 	if aim.request_ui != null and aim.request_ui.target_widget() != null:
 		rig.feel(c)   # aiming something else (a throw...): not the gun's
@@ -216,12 +222,27 @@ func release(c: XRController3D) -> bool:
 	if pulled < RACK_PULL_M:
 		return true   # not pulled far enough: nothing
 	racks += 1
-	if jam != "":
-		var ok: Variant = queue_action.call("reload_weapon") if queue_action.is_valid() else false
-		if not (ok is bool and ok):
+	if jam != "" and _clearing == jam and _clear_left > 0.0:
+		rig.say(_index(c), CLEARING)   # one clear per jam: another would reload the cleared gun
+	elif jam != "":
+		if _ask_clear():
+			_clearing = jam
+			_clear_left = CLEAR_WAIT_S
+		else:
 			rig.say(_index(c), CANT_CLEAR)
 	rig.feel(c)
 	return true
+
+
+## Asks CDDA to clear the jam: ItemActions.clear_jam (the bridge's "clear" op, refused with a reason when the gun isn't
+## jammed or can't be fixed) once lead-ui's wrapper exists, else CDDA's reload_weapon on the jammed gun (the fork mends
+## the jam; one it can't mend gets a plain reload instead: only the clear op avoids that).
+func _ask_clear() -> bool:
+	if actions != null and gun != null and actions.has_method(&"clear_jam"):
+		var r: Variant = actions.call(&"clear_jam", gun)
+		return r is bool and r
+	var ok: Variant = queue_action.call("reload_weapon") if queue_action.is_valid() else false
+	return ok is bool and ok
 
 
 ## A rack is in progress (the off hand holds the slide / bolt).
@@ -326,6 +347,8 @@ func _refresh(s: Snapshot) -> void:
 	_find_rows(s, t)
 	if j != jam:
 		jam = j
+		_clearing = ""   # a new jam (or none): the next rack may ask again
+		_clear_left = 0.0
 		if j != "":
 			var c := rig.main_ctrl()
 			rig.feel(c)
@@ -483,14 +506,32 @@ func _fire_request() -> TargetRequestWidget:
 
 
 ## A fire request the client can't fly (another gun firing, no figures to test, a stop in our own square): plain
-## FIRE at CDDA's cursor, as AimController.on_fire does.
-func _fire_plain(t: TargetRequestWidget) -> void:
+## FIRE at the square the muzzle's line meets, the cursor moved there first (as AimController.on_fire moves it to
+## the crosshair's), never at CDDA's own pick. False, nothing sent: the line meets nothing, or the player's own
+## square (pointed at the floor at your feet).
+func _fire_plain(t: TargetRequestWidget) -> bool:
+	var sq: Variant = muzzle_square()
+	var s := rig.world.snapshot
+	if not sq is Vector3i or s == null or sq == s.player_pos or aim.request_ui == null \
+			or not aim.request_ui.set_target_cursor(sq):
+		return false
 	aim.shot_aim = {}   # this trigger pull replaces the kept aim: CDDA rolls its shots
 	t.fire()
 	_on_fired()
+	return true
 
 
-## Waiting for the request of the `fire` the trigger queued: fire from the muzzle as soon as it shows.
+## The square the muzzle's line meets (AimController's LookRay, as the crosshair picks), null for none.
+func muzzle_square() -> Variant:
+	var pose := live_pose()
+	if pose.is_empty() or aim == null or aim.look_ray == null:
+		return null
+	var r := aim.look_ray.cast(pose["origin"], pose["sight"])
+	return r.get("square") if r.get("hit", false) and r.get("square") is Vector3i else null
+
+
+## Waiting for the request of the `fire` the trigger queued: fire from the muzzle as soon as it shows. One it
+## can't fly waits for the next trigger pull (never a plain FIRE nobody aimed).
 func _tick_fire(d: float) -> void:
 	fire_wait = maxf(fire_wait - d, 0.0)
 	var t := _fire_request()
@@ -499,7 +540,7 @@ func _tick_fire(d: float) -> void:
 	fire_wait = 0.0
 	var pose := live_pose()
 	if pose.is_empty() or not aim.fire_from(pose["origin"], pose["sight"]):
-		_fire_plain(t)
+		rig.feel(rig.main_ctrl())   # the request stays: the next pull fires at the muzzle's square
 
 
 ## The slide / bolt follows the off hand back along the bore; the farthest pull is kept for the let go.
@@ -604,7 +645,7 @@ func _take_out(mag_uid: int) -> void:
 		return
 	rig.hands.set_hand_pose(id, c.global_transform, true)
 	if rig.hands.adopt(id, it) and rig.settings["grip"] != "toggle" and not rig.grip_down(c):
-		rig.let_go(c)
+		rig.let_go(c, false)   # never thrown: the magazine just landed in the hand
 
 
 func _on_finished(item: ItemRef, op: String) -> void:

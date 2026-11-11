@@ -357,6 +357,10 @@ func _test_take_out() -> void:
 	_rig.update_hands(0.016, true)
 	_check.call(l != null and l.uid == ROCK and l.carried and _hands.proxy("vr_l") != null and not pack.item_node(ROCK).visible
 			and _snap.seq == seq and not pack.outlines[0].visible, "vr pack: grip takes it into the hand (nothing sent); its model in the pack hides")
+	pack.refresh(true)   # a new layout while the hand holds it
+	_rig.update_hands(0.016, true)
+	_check.call(pack.item_node(ROCK) != null and not pack.item_node(ROCK).visible,
+			"vr pack: ... and stays hidden after the pack lays out again")
 	_rig.left.global_position = _over_floor()
 	_rig.release(_rig.left, "grip_click")
 	_rig.update_hands(0.016, true)

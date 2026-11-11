@@ -309,16 +309,32 @@ func _test_fire() -> void:
 			"vr gun: the game can't take the fire now: a buzz, nothing waits")
 	_accept = true
 
-	# a fire request the client doesn't fly (another gun firing): plain FIRE at CDDA's cursor
+	# a fire request the client doesn't fly (another gun firing): plain FIRE at the square the muzzle meets, never at
+	# CDDA's own pick (its cursor is on the player's square here)
 	var other := _req.duplicate()
 	other["weapon_wielded"] = false
 	_aim.on_request(other)
 	_ui.show_request(other)
 	_answers.clear()
+	_frame()
+	var msq: Variant = g.muzzle_square()
 	_rig.press(_rig.right, "trigger_click")
 	a = _answers[0] if _answers.size() == 1 else {}
-	_check.call(a.get("action") == "FIRE" and a.get("pos") == P and not a.has("shot") and g.kicks == 3 and _sent.size() == 3,
-			"vr gun: a fire request it can't fly gets plain FIRE (%s)" % [a])
+	_check.call(msq == ZP and a.get("action") == "FIRE" and a.get("pos") == ZP and not a.has("shot") and g.kicks == 3
+			and _sent.size() == 3, "vr gun: a fire request it can't fly gets plain FIRE at the muzzle's square (%s)" % [a])
+	_aim.on_request(other)
+	_ui.show_request(other)
+	_answers.clear()
+	var hand := _rig.right.global_position
+	_rig.right.look_at(hand + Vector3(0.0, -1.0, 0.01), Vector3(0, 0, -1))   # the muzzle at the floor at your feet
+	_frame()
+	var down: Variant = g.muzzle_square()
+	b = _rig.buzzes.duplicate()
+	_rig.press(_rig.right, "trigger_click")
+	_check.call(down == P and _answers.is_empty() and g.kicks == 3 and _rig.buzzes[1] == b[1] + 1
+			and _aim.request_ui.target_widget() != null, "vr gun: ... the muzzle at your own square: no shot, a buzz")
+	_rest_hands()
+	_frame()
 	_aim.on_request(_req)
 	_ui.clear()
 	_answers.clear()
@@ -428,7 +444,7 @@ func _test_mag_pending() -> void:
 
 
 ## A jam shows by the main hand and holds the slide open; racking the slide back past RACK_PULL_M and letting go queues
-## reload_weapon on a jammed gun, only buzzes on a clean one; a short pull does nothing.
+## reload_weapon on a jammed gun once per jam, only buzzes on a clean one; a short pull does nothing.
 func _test_rack() -> void:
 	var g := _rig.gun
 	var b := _rig.buzzes.duplicate()
@@ -444,18 +460,21 @@ func _test_rack() -> void:
 	var n := _sent.size()
 	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and _sent[-1] == "reload_weapon" and g.racks == 1 and _clean(),
 			"vr gun: racked a jammed gun: CDDA's reload_weapon queued (it clears the jam), a buzz")
+	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 2 and _rig.notes[0] != null and _rig.notes[0].visible
+			and _rig.notes[0].text == VrGun.CLEARING,
+			"vr gun: racked again before the jam clears: nothing more queued (it would reload the cleared gun)")
 	_snap.player_gun["faults"] = []
 	_captured()
 	_frame()
 	_check.call(g.jam == "" and slide.global_position.distance_to(sp.origin) < 0.001, "vr gun: jam cleared: the slide closes")
-	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 2, "vr gun: racked a clean gun: only the motion and a buzz")
+	_check.call(_rack(sp, 0.06) and _sent.size() == n + 1 and g.racks == 3, "vr gun: racked a clean gun: only the motion and a buzz")
 	b = _rig.buzzes.duplicate()
 	_rig.left.global_transform = Transform3D(sp.basis, sp * Vector3(0, 0.03, 0.09))
 	_rig.press(_rig.left, "grip_click")
 	_rig.left.global_position = sp * Vector3(0, 0.03, 0.11)
 	_frame()
 	_rig.release(_rig.left, "grip_click")
-	_check.call(_rig.buzzes == b and g.racks == 2 and _sent.size() == n + 1 and not g.racking() and _clean(),
+	_check.call(_rig.buzzes == b and g.racks == 3 and _sent.size() == n + 1 and not g.racking() and _clean(),
 			"vr gun: a short pull: nothing")
 	_accept = false
 	_snap.player_gun["faults"] = ["fault_double_feed"]
