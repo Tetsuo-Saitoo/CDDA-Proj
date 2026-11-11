@@ -175,6 +175,23 @@ func _test_hidden(world: WorldView, data: Variant) -> void:
 	world.set_hidden_items(many)
 	_check.call(world.hidden_items.size() == WorldView.MAX_HIDDEN and not world.hidden_items.has("x"), "items: hidden items capped, ints only")
 	world.set_hidden_items({})
+	# Two owners: what is drawn hides the union, and each owner only shows its own again.
+	world.set_hidden_items({201: true})
+	world.set_hidden_items_for(&"physics", {201: true, 202: true})
+	_check.call(world.item_slot(201).is_empty() and world.item_slot(202).is_empty() and world.hidden_items.size() == 2,
+			"items: hidden sets of two owners add up")
+	world.set_hidden_items({})
+	_check.call(world.item_slot(201).is_empty() and world.item_slot(202).is_empty(),
+			"items: one owner showing an item another still hides leaves it hidden")
+	world.set_hidden_items_for(&"physics", {})
+	_check.call(not world.item_slot(201).is_empty() and not world.item_slot(202).is_empty() and world.hidden_items.is_empty(),
+			"items: shown once no owner hides it")
+	for k in WorldView.MAX_HIDDEN_OWNERS + 1:
+		world.set_hidden_items_for(StringName("o%d" % k), {201: true})
+	world.set_hidden_items_for(StringName("o%d" % WorldView.MAX_HIDDEN_OWNERS), {})
+	for k in WorldView.MAX_HIDDEN_OWNERS:
+		world.set_hidden_items_for(StringName("o%d" % k), {})
+	_check.call(world.hidden_items.is_empty() and not world.item_slot(201).is_empty(), "items: owners capped, all cleared")
 
 
 func _test_picker(world: WorldView) -> void:
