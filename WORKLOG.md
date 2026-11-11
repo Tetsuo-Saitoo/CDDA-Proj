@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Range saves stay range games (user's decision; "Test range" still starts fresh): fork resume_test_range (fp3d-qa 42d18ef, range test 141 checks, sim "range resume"), bridge call (lead-bridge dd91ca8), client cheats (lead-ui e567f20); range_live_test saves, then reloads in a second run: same zones and built flags, AI as saved, nothing moved, ops work. Passes on Windows.
 - 2026-11-10 — A loaded test-range save keeps cheats allowed (lead-ui): when the range info says range, main forces cheats and pushes the opt-in again, so the push at "running" no longer undoes the bridge's. Client tests pass.
 - 2026-11-10 — Range saves: loading a saved test range game resumes it as a range game (only in FP3D's range worlds), with the range operations allowed; "Test range" still starts fresh. Bridge call after lead-qa's fork change (42d18ef); sim, range, client and live tests pass.
 - 2026-11-10 — CI "Client tests (mock town)" flake: model_tests' "one model for two threads" loaded a real .glb on two threads at once, and Godot's headless renderer doesn't take textures/meshes from two threads (8 renderer errors now and then); the check now uses fake loads (`SlowLoads`), like QA's thread check; client tests pass twice.
