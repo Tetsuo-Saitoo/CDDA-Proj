@@ -54,6 +54,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_select()
 	_test_drops()
 	_test_many()
+	_test_bar()
 	_test_pending()
 	_test_toggle()
 	_view.free()
@@ -482,7 +483,7 @@ func _test_many() -> void:
 	_click(BOTTLE, false, true)
 	_view.drop(_view.row_slot(stone)._get_drag_data(Vector2.ZERO), p2)
 	var s := _carried(stone)
-	_check.call(stone > 0 and s.size() == 5 and s[2] == SACK and _view.status.begins_with("1 of 2 moved.")
+	_check.call(stone > 0 and s.size() == 5 and s[2] == SACK and _view.status.begins_with("1 of 2 done.")
 			and _view.status.contains(InspectView.CANT), "many: one is already there, the other goes; the status counts (%s)"
 			% _view.status)
 	_view.rebuild()
@@ -507,10 +508,70 @@ func _test_many() -> void:
 	_actions.refused.emit(_hands.picker.by_uid(ROCK), "drop", "No room.")
 	_actions.clear()
 	_view._process(0.0)
-	_check.call(_view.batch_left() == 0 and _view.status == "0 of 2 moved. No room." and _carried(BOTTLE).size() == 5,
+	_check.call(_view.batch_left() == 0 and _view.status == "0 of 2 done. No room." and _carried(BOTTLE).size() == 5,
 			"many: refusals are counted at the end (%s)" % _view.status)
 	_actions.backend = _mock
 	_view.clear_selection()
+
+
+## The bar's buttons act on the selection. After _test_many: ROCK, the bottle (with its water) and the stone from
+## the ground in the sack's second pocket.
+func _test_bar() -> void:
+	var stone := _carried_in(SACK, _it["rock"], ROCK)
+	_view.rebuild()
+	var bar := _bar_buttons()
+	_check.call(bar.is_empty(), "bar: hidden with nothing selected (%s)" % [bar.keys()])
+	_click(ROCK)
+	_click(stone, false, true)
+	bar = _bar_buttons()
+	_check.call(bar.has("Drop here") and bar.has("Into the canvas sack") and bar.has("Unload") and bar.has("Clear")
+			and not bar.has("Stop"), "bar: shown for a selection, with a button per worn container (%s)" % [bar.keys()])
+	(bar["Drop here"] as Button).pressed.emit()
+	_check.call(_has_handle(P, ROCK) and _has_handle(P, stone) and _view.status == "", "bar: Drop here drops them all")
+	_view.rebuild()
+	(_bar_buttons()["Into the canvas sack"] as Button).pressed.emit()
+	_check.call(_carried(ROCK).size() == 5 and _carried(ROCK)[2] == SACK and _carried(stone).size() == 5
+			and _carried(stone)[2] == SACK, "bar: Into the sack takes them from the ground and puts them in, one by one")
+	_view.rebuild()
+	(_bar_buttons()["Unload"] as Button).pressed.emit()
+	_check.call(_view.status.begins_with("0 of 2 done.") and _view.status.contains("isn't loaded"),
+			"bar: Unload; CDDA's refusals counted (%s)" % _view.status)
+	_check.call(_view.act("into", "nearby") == "" and _view.act("into", "worn:1") == "" and _view.act("nope") == "",
+			"bar: 'into' only takes a worn container's column")
+	_actions.backend = Silent.new()
+	_view.act("drop")
+	bar = _bar_buttons()
+	_check.call(bar.has("Stop") and _view.batch_left() == 2, "bar: Stop shows while a batch runs")
+	(bar["Stop"] as Button).pressed.emit()
+	_actions.refused.emit(_hands.picker.by_uid(ROCK), "drop", "No room.")
+	_actions.clear()
+	_view._process(0.0)
+	_check.call(_view.batch_left() == 0 and _actions.pending(stone) == "" and not _bar_buttons().has("Stop"),
+			"bar: Stop leaves the rest where they are")
+	_actions.backend = _mock
+	(_bar_buttons()["Clear"] as Button).pressed.emit()
+	_check.call(_view.selection.is_empty() and _bar_buttons().is_empty(), "bar: Clear selects none and hides it")
+
+
+## The selection bar's visible buttons by text ({} when the bar is hidden).
+func _bar_buttons() -> Dictionary:
+	var out := {}
+	var bar: Control = _view._bar
+	if not bar.visible:
+		return out
+	for b: Button in bar.find_children("*", "Button", true, false):
+		if b.is_visible_in_tree() and not b.is_queued_for_deletion():
+			out[b.text] = b
+	return out
+
+
+## The uid of the first carried item of `type` in container `parent` other than `not_uid`, -1 if none.
+func _carried_in(parent: int, type: int, not_uid: int) -> int:
+	var c := _snap.carried
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if c[i + 2] == parent and c[i + 1] == type and c[i] != not_uid:
+			return c[i]
+	return -1
 
 
 ## The uid of the item in the main hand, -1 if none.

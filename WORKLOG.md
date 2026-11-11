@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Multi-select item UI, slices 1-4: CDDA's multi-pick lists tick runs of rows by drag, Shift+click and Shift+Up/Down; the Tab view selects rows (click, Ctrl/Shift+click, drag over the [ ] boxes), a drag of a selected row moves them all one after another, and a bar drops, puts into a worn container or unloads the selection. Client tests pass; not tried on screen.
 - 2026-11-10 — Throw and pour gestures (mouse and keyboard): flick while letting go of a carried item throws it at the square under the pointer; hold E with a liquid in hand pours into the container under the pointer or onto the square you face (a tap still uses / examines). Client tests pass.
 - 2026-11-10 — Boot status line shows the bridge's load phase, seconds and CDDA error count (`get_boot_info`) instead of "game booting (~30 s)"; failure reasons are cleaned before they are shown. Client tests pass.
 - 2026-11-10 — Client side of the bridge's new shapes: HUD effects list and hunger word from `player.effects`; Tab inventory pockets by name and capacity from itype `pockets` (empty ones listed); ItemActions throw / pour / pour into; Cheats page "Rebuild" zone. One-line game text now also drops hidden direction characters. Client tests pass.

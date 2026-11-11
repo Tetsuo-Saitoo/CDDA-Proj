@@ -19,7 +19,9 @@ extends Control
 ## Dragging a selected row takes the whole selection: the items go one after another (each waits for the one
 ## before to land, so takes don't race for a hand), planned again from the newest rows when its turn comes; an
 ## item inside another one on the list goes along with it. The heading counts them; at the end the status line
-## says how many couldn't go and the last reason. Closing the view doesn't stop it.
+## says how many couldn't go and the last reason. Closing the view doesn't stop it. A bar under the columns does
+## the same for the selection by button (VR pointers too): drop on your square, into each worn container, unload
+## each into the inventory, stop a batch, clear the selection.
 
 signal opened
 signal closed
@@ -58,6 +60,13 @@ var _dirty := false
 var _box: HBoxContainer
 var _head: Label
 var _status: Label
+var _bar: HBoxContainer   # what to do with the selection
+var _bar_drop: Button
+var _into_box: HBoxContainer
+var _bar_unload: Button
+var _bar_stop: Button
+var _bar_clear: Button
+var _batch_op := "move"  # "move" (to _batch_target) or "unload"
 var _row_slots := {}     # uid -> InspectSlot
 var _col_slots := {}     # column id -> InspectSlot
 var _group_slots := {}   # "column id|key" -> InspectSlot
@@ -116,12 +125,22 @@ func _init(h: Hands, a: ItemActions) -> void:
 	_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_box.add_theme_constant_override("separation", 8)
 	scroll.add_child(_box)
+	_bar = HBoxContainer.new()
+	_bar.visible = false
+	v.add_child(_bar)
+	_bar_drop = _bar_button("Drop here", act.bind("drop", ""), "Drop them all on your square")
+	_into_box = HBoxContainer.new()   # "Into the ..." per worn container, made again on each rebuild
+	_bar.add_child(_into_box)
+	_bar_unload = _bar_button("Unload", act.bind("unload", ""), "Unload each one into your inventory")
+	_bar_stop = _bar_button("Stop", act.bind("stop", ""), "Leave the rest where they are")
+	_bar_clear = _bar_button("Clear", act.bind("clear", ""), "Select none (Esc)")
 	_status = _label("", BAD)
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status.visible = false
 	v.add_child(_status)
 	if a != null:
 		a.changed.connect(refresh)
+		a.refused.connect(_on_action_refused)
 	if h != null:
 		h.refused.connect(_on_refused)
 
@@ -207,6 +226,13 @@ func rebuild() -> void:
 			selection.erase(uid)
 	for col in cols:
 		_box.add_child(_column_ui(col))
+	for b in _into_box.get_children():
+		_into_box.remove_child(b)
+		b.queue_free()
+	for col in cols:
+		if col["kind"] == "worn":
+			_bar_button("Into the %s" % str(col["title"]).left(30), act.bind("into", col["id"]), "Put them all in it",
+					_into_box)
 	if not _row_col.has(_anchor):
 		_anchor = -1
 	_show_selection()
@@ -375,16 +401,45 @@ func drop(data: Variant, target: Dictionary) -> String:
 	return _drop_one(data, target)
 
 
-## Moves the items in `list` ({inspect_uid, type} each) to `target` one after another (see the top). Replaces a
-## batch still running. Returns "batch" when started, "" when nothing is left to move.
-func move_many(list: Array, target: Dictionary) -> String:
+## What the bar's buttons do with the selection: "drop" (on your square), "into" (`arg`: a worn container's column
+## id), "unload" (each into the inventory), "stop" (a running batch), "clear" (the selection). Returns "batch" when
+## items start going, "stopped", "cleared" or "".
+func act(what: String, arg := "") -> String:
+	match what:
+		"stop":
+			stop_batch()
+			return "stopped"
+		"clear":
+			clear_selection()
+			return "cleared"
+	var list := []
+	for u: int in _ordered_selection():
+		if list.size() < MAX_BATCH:
+			list.append({"inspect_uid": u, "type": selection[u]})
+	match what:
+		"drop":
+			return move_many(list, {"kind": "column", "column": "nearby"})
+		"into":
+			if InventoryModel.find_column(cols, arg).get("kind") != "worn":
+				return ""
+			return move_many(list, {"kind": "column", "column": arg})
+		"unload":
+			return move_many(list, {}, "unload")
+	return ""
+
+
+## Moves the items in `list` ({inspect_uid, type} each) to `target` one after another (see the top); op "unload"
+## unloads each into the inventory instead. Replaces a batch still running. Returns "batch" when started, "" when
+## there is nothing to do.
+func move_many(list: Array, target: Dictionary, op := "move") -> String:
 	stop_batch()
 	var on_list := {}
 	for d: Dictionary in list:
 		on_list[d["inspect_uid"]] = true
-	for d: Dictionary in list:
-		if _batch.size() < MAX_BATCH and not _inside_listed(d["inspect_uid"], on_list):
+	for d: Dictionary in list:   # what is inside an item moved goes along (an unload empties each one)
+		if _batch.size() < MAX_BATCH and (op == "unload" or not _inside_listed(d["inspect_uid"], on_list)):
 			_batch.append(d)
+	_batch_op = op
 	_batch_target = target.duplicate()
 	_batch_total = _batch.size()
 	_batch_bad = 0
@@ -519,6 +574,39 @@ func _on_refused(hand: String, target_: Dictionary, reason: String) -> void:
 		refresh()
 
 
+## ItemActions refused an action the view sent without Hands (a batch's unload): the reason, counted.
+func _on_action_refused(item: ItemRef, op: String, reason: String) -> void:
+	if op != "unload" or _batch_op != "unload" or item == null or item.uid != _batch_now:
+		return
+	var why := InventoryModel.clean(reason, MAX_STATUS)
+	_say(why)
+	if not _batch_failed:
+		_batch_failed = true
+		_batch_bad += 1
+		_batch_why = why
+	refresh()
+
+
+## Unloads one item of a batch (`d`: {inspect_uid, type}) into the inventory. Returns "unload" when sent.
+func _unload_one(d: Dictionary) -> String:
+	_say("")
+	var it := _dragged(d)
+	if it == null or not actions.unload(it, "pack"):
+		return ""
+	return "unload"
+
+
+## A button of the selection bar (or of `parent`) that calls `call` when pressed.
+func _bar_button(text: String, call: Callable, tip: String, parent: Control = null) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(call)
+	(parent if parent != null else _bar).add_child(b)
+	return b
+
+
 ## `cols` from the newest snapshot, and the rows by uid.
 func _fresh_cols() -> void:
 	cols.clear()
@@ -593,13 +681,14 @@ func _run_batch() -> void:
 		_batch_now = d["inspect_uid"]
 		_batch_since = Time.get_ticks_msec()
 		_batch_failed = false
-		if _drop_one(d, _batch_target) == "" and not _batch_failed:
+		var op := _unload_one(d) if _batch_op == "unload" else _drop_one(d, _batch_target)
+		if op == "" and not _batch_failed:
 			_batch_failed = true
 			_batch_bad += 1
 			_batch_why = status if status != "" else CANT   # nothing to do there (already in it)
 		_update_head()
 	if _batch_bad > 0:
-		_say(InventoryModel.clean("%d of %d moved. %s" % [_batch_total - _batch_bad, _batch_total, _batch_why],
+		_say(InventoryModel.clean("%d of %d done. %s" % [_batch_total - _batch_bad, _batch_total, _batch_why],
 				MAX_STATUS))
 	_batch_total = 0
 	_update_head()
@@ -643,14 +732,20 @@ func _update_head() -> void:
 	var keys := InputActions.key_of(&"inspect")
 	var text := ""
 	if _batch_total > 0:
-		text = "Moving %d of %d...   " % [_batch_total - _batch.size(), _batch_total]
+		text = "%s %d of %d...   " % ["Unloading" if _batch_op == "unload" else "Moving", _batch_total - _batch.size(),
+				_batch_total]
 	if selection.is_empty():
 		text += ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: drag over "
 				+ "the [ ] boxes, Ctrl+click, Shift+click.   %s or Esc closes") % keys
 	else:
-		text += "Inventory: %d selected: drag one of them to move them all.   Esc clears the selection, %s closes" \
-				% [selection.size(), keys]
+		text += ("Inventory: %d selected: drag one of them to move them all, or pick below.   Esc clears the "
+				+ "selection, %s closes") % [selection.size(), keys]
 	_head.text = text
+	var some := not selection.is_empty()
+	for b: Control in [_bar_drop, _into_box, _bar_unload, _bar_clear]:
+		b.visible = some
+	_bar_stop.visible = _batch_total > 0
+	_bar.visible = some or _batch_total > 0
 
 
 func _say(text: String) -> void:
