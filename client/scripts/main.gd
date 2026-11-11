@@ -350,6 +350,9 @@ func _start_vr() -> void:
 	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
+	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
+	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and live.queue_action(a)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0

@@ -32,6 +32,9 @@ extends XROrigin3D
 ## stairs) is outlined. The trigger click takes it into that hand like a grip (the same one-item take: CDDA judges
 ## reach) and its copy flies from where it lay into the hand over FLY_S, a buzz on arrival; a grip click lets it go.
 ## The main trigger uses pointed stairs first; nothing pointed at all: one buzz.
+## Guns (L2, VrGun `gun`): while CDDA wields a gun its model is in the main hand and takes the main trigger right after
+## the pack (fires from its muzzle); the off grip takes its magazine out at the well or racks its slide / bolt, a held
+## magazine brought to the well goes in; the main grip on nothing just holds it.
 ## Backpack (block L8, VrPack `pack`): grip with an empty hand over the shoulder while wearing a container takes
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
@@ -152,10 +155,12 @@ var hands: Hands:
 		if pack != null:
 			pack.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
+var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
+var buzz_amp: Array[float] = [0.0, 0.0]    # the strength of each hand's last pulse (tests)
 var _note_left: Array[float] = [0.0, 0.0]
 var _grip_down: Array[bool] = [false, false]   # the grip button is held (two-handed support uses it)
 var pull_rays: Array[MeshInstance3D] = []      # each hand's faint pull ray (left, right)
@@ -261,6 +266,9 @@ func _build() -> void:
 	cook.world = world
 	cook.head = camera
 	add_child(cook)
+	gun = VrGun.new()
+	gun.rig = self
+	add_child(gun)
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -347,6 +355,7 @@ func _process(delta: float) -> void:
 	step(delta, inp)
 	update_pointer()
 	update_hands(delta)
+	gun.update(delta)
 	pose_hands()
 	drive_body()
 	place_compass()
@@ -446,7 +455,8 @@ func update_hands(delta: float, all_hands := false) -> void:
 				pt = pack.target_at(c.global_position)
 				if pt.is_empty():
 					t = hands.find_near(c.global_position, GRAB_REACH)
-				pointing = pt.is_empty() and t.is_empty() and trigger_half(i)
+				# (a finger resting on a gun's trigger points nothing)
+				pointing = pt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
 				if pointing:
 					t = _point(i, c, delta)
 			if not pointing:   # the next pointing looks at once
@@ -472,6 +482,16 @@ func update_hands(delta: float, all_hands := false) -> void:
 		elif drawn[i] is Transform3D:
 			_weigh(i, drawn[i], delta)
 	_sync_held()
+
+
+## Hand i is the main hand and a gun shows in it (VrGun).
+func _gun_hand(i: int) -> bool:
+	return gun.shown and _ctrl(i) == main_ctrl()
+
+
+## Controller c's grip button is held.
+func grip_down(c: XRController3D) -> bool:
+	return _grip_down[0 if c == left else 1]
 
 
 ## Controller i's trigger is pressed past PULL_TRIGGER (trigger_in in tests).
@@ -639,6 +659,8 @@ func grab_with(c: XRController3D) -> bool:
 	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
 		var bag := shoulder_bag(hands.picker.worn_containers(), null, world.tables)
 		ok = bag != null and pack.open_in(i, bag)
+	elif t.is_empty() and _gun_hand(i):
+		ok = true   # the gun is in that hand already (VrGun): squeezing the grip holds it
 	elif t.is_empty():
 		var it := cdda_holds(c)
 		ok = it != null and hands.adopt(id, it)
@@ -701,6 +723,8 @@ func release(c: XRController3D, n: String) -> void:
 	if n != "grip_click":
 		return
 	_grip_down[0 if c == left else 1] = false
+	if gun.release(c):
+		return   # the end of a rack (VrGun)
 	if settings["grip"] != "toggle":   # toggle: the next press lets go
 		let_go(c)
 
@@ -843,12 +867,20 @@ func _tick_notes(delta: float) -> void:
 
 ## A buzz in controller c, counted.
 func _feel(c: XRController3D) -> void:
-	buzzes[0 if c == left else 1] += 1
-	_buzz(c)
+	feel(c)
 
 
-## VrHeld (CDDA's hands, show_held) shows on a controller unless that hand holds the item's copy (it would show
-## twice).
+## A buzz in controller c of `amplitude` (0..1) for `seconds`, counted (buzzes, buzz_amp).
+func feel(c: XRController3D, amplitude := 0.5, seconds := 0.08) -> void:
+	var i := 0 if c == left else 1
+	buzzes[i] += 1
+	buzz_amp[i] = amplitude
+	if c.get_is_active():
+		c.trigger_haptic_pulse(&"haptic", 0.0, clampf(amplitude, 0.0, 1.0), maxf(seconds, 0.0), 0.0)
+
+
+## VrHeld (CDDA's hands, show_held) shows on a controller unless that hand holds the item's copy or the gun (it
+## would show twice).
 func _sync_held() -> void:
 	if left_held == null:
 		return
@@ -856,7 +888,12 @@ func _sync_held() -> void:
 		var node: VrHeld = left_held if i == 0 else right_held
 		var h: Variant = _held.get("main" if _ctrl(i) == main_ctrl() else "off")
 		node.visible = h is Dictionary and not (h as Dictionary).is_empty() \
-				and (hands == null or hands.proxy(HAND_IDS[i]) == null)
+				and (hands == null or hands.proxy(HAND_IDS[i]) == null) and not _gun_hand(i)
+
+
+## The same, now (VrGun when its gun shows or goes).
+func sync_held() -> void:
+	_sync_held()
 
 
 ## Hands from the runtime's hand tracking, else from each controller's buttons, else hidden; or the simple
@@ -1218,6 +1255,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			and (pack.hand == ci or pack.target_at(c.global_position).get("kind") == "frame"):
 		pack.close("closed")   # the trigger on the pack's frame (or holding it) closes it
 		return
+	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
+		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
@@ -1229,7 +1268,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		var holds := hands != null and (not hands.holding(hand_id(c)).is_empty() or pack.hand == ci)
 		if holds and settings["grip"] == "toggle":
 			let_go(c)
-		elif not holds:
+		elif not holds and not gun.grip(c):   # the off hand on the gun's magazine or slide first
 			grab_with(c)
 		return
 	if current_layout() == "vive":

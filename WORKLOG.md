@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — VR guns by hand (L2): the wielded gun in the main hand by its grip; the main trigger fires from its muzzle (`fire_from` / `live_aim`, else CDDA's `fire` once), a buzz per shot and kill; magazine out / in at the well by the off hand (`unload` / `reload`), rack the slide / bolt to clear a jam (`reload_weapon`) (`vr/vr_gun.gd`, `tests/vr_gun_tests.gd`); not tried live or in a headset.
 - 2026-11-10 — VR test range page (K7): VR menu "Test range >" page (monster freeze, heal, wait 1 hour, set times, Go to per zone with a pager), status from `range_done`, refusals buzz, the head follows the player after a teleport (`vr/vr_range.gd`, `tests/vr_range_tests.gd`); spawning left; not tried live or in a headset.
 - 2026-11-10 — VR cooking cards (L9, show only): a card over each pot on the heat near the head with heat, contents, CDDA's craft progress or up to 3 recipe matches (asked through LiveSession's recipe wrapper, duck-typed), steam over a lit pot (`vr/vr_cook.gd`, `tests/vr_cook_tests.gd`); not tried live or in a headset.
 - 2026-11-10 — VR point and pull (L2): a half-pressed trigger on an empty hand rays and outlines an item in reach, the click takes it and its copy flies into the hand; main trigger: pack, stairs, then pull, one buzz for nothing (`vr/vr_rig.gd`, `tests/vr_pull_tests.gd`); not tried in a headset.
