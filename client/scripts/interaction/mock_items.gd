@@ -344,6 +344,39 @@ func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
 	return _captured()
 
 
+## Move a carried, unworn item into hand "main" (wielded: out of its container, first row; refused while another item
+## is wielded) or "off" (held: it stays in its pocket; refused while another item is held there). ItemActions.hold.
+func hold_item(uid: float, type: float, hand: String) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0 or not (hand in ["main", "off"]):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	var flags := snap.carried[row * CS + 4]
+	if flags & Snapshot.CARRIED_WORN:
+		return _refuse("Take off your %s first." % _name(t))
+	var want := Snapshot.CARRIED_WIELDED if hand == "main" else Snapshot.CARRIED_OFFHAND
+	var other := _flagged(want)
+	if other >= 0 and other != row:
+		if hand == "main":
+			return _refuse("Your hand is full: you're holding your %s." % _name(snap.carried[other * CS + 1]))
+		return _refuse("Your off hand is full.")
+	if hand == "main":
+		var moved := _remove_subtree(row)
+		moved[2] = 0
+		moved[3] = -1
+		moved[4] = (flags & ~Snapshot.CARRIED_OFFHAND) | Snapshot.CARRIED_WIELDED
+		_insert_rows(0, moved)   # wielded first
+		snap.player_wielded = t
+	else:
+		snap.carried[row * CS + 4] = (flags & ~Snapshot.CARRIED_WIELDED) | Snapshot.CARRIED_OFFHAND
+		if flags & Snapshot.CARRIED_WIELDED:
+			snap.player_wielded = 0
+	return _captured()
+
+
 ## Pour onto `pos` (your square or next to it): what a carried item holds first goes (spilt, no item left).
 ## The mock can't tell liquids from other things: it pours whatever is first inside.
 func pour_item(uid: float, type: float, pos: Vector3i) -> bool:

@@ -1,13 +1,14 @@
 extends RefCounted
-## Block E2 slices 1-2 (item physics) on the mock town, rewritten around the player: WorldCollision's boxes (a slab
-## per square on the player's level and the one below, none on open air, walls and closed doors filling their square,
-## furniture boxes by coverage, a table as high as the surface its items lie on, impassable furniture full), rebuilt
-## only when the centre or the snapshot changes and then touching only the changed shapes, the shape cap; ItemBodies'
-## bodies (at the pose the pile draws the item in, asleep, mass from CDDA's weight, own layers, the static copies
-## hidden through the owner set), the caps (total, per pile), the hysteresis, items taken / moved / held / in flight,
-## nothing without WorldView owner sets. Headless runs don't step physics: only the structure is checked, not falling
-## or settling. WorldView's owner sets (set_hidden_items_for) come from another branch: OwnerWorld stands in for them.
-## Run by run_tests.gd.
+## Block E2 slices 1-2 and 5 (item physics) on the mock town, rewritten around the player: WorldCollision's boxes (a
+## slab per square on the player's level and the one below, none on open air, walls and closed doors filling their
+## square, furniture boxes by coverage, a table as high as the surface its items lie on, impassable furniture full),
+## rebuilt only when the centre or the snapshot changes and then touching only the changed shapes, the shape cap;
+## ItemBodies' bodies (at the pose the pile draws the item in, asleep, mass from CDDA's weight, own layers, the static
+## copies hidden through the owner set), the caps (total, per pile), the hysteresis, items taken / moved / held / in
+## flight, nothing without WorldView owner sets; slice 5's pointing, hold, let_go, landed / forget / expiry and
+## `settled`, and the scan's cost (one entry per uid, nearest submaps first, a pass only when nearby handles change, one
+## publish). Headless runs don't step physics: only the structure is checked, not falling or settling. WorldView's owner
+## sets (set_hidden_items_for) come from another branch: OwnerWorld stands in for them. Run by run_tests.gd.
 
 const P := Vector3i(192, 384, 0)          # the mock town's player: square 0, 0 of submap SM
 const SM := Vector3i(16, 32, 0)
@@ -35,16 +36,20 @@ var _col: WorldCollision
 var _bodies: ItemBodies
 var _centre := P
 var _full := 0   # shapes with nothing capped
+var _ms := 0     # ItemBodies.clock in _test_hands_api
 
 
 ## WorldView with hidden items per owner, as the world lead's branch has it (set_hidden_items is the hands' set).
 class OwnerWorld extends WorldView:
 	var by_owner := {}   # StringName -> {uid: true}
+	var physics_sets := 0   # calls from ItemBodies (each re-meshes what changed)
 
 	func set_hidden_items(uids: Dictionary) -> void:
 		set_hidden_items_for(&"hands", uids)
 
 	func set_hidden_items_for(who: StringName, uids: Dictionary) -> void:
+		if who == ItemBodies.OWNER:
+			physics_sets += 1
 		var mine := {}
 		for u: Variant in uids:
 			if u is int:
@@ -80,6 +85,9 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_snapshot_changes()
 	_test_held()
 	_test_hostile()
+	_test_scan()
+	_test_hands_api()
+	_test_sync_cost()
 	_bodies.clear()
 	_check.call(_world.hidden_items.is_empty() and not _world.item_slot(UID + 11).is_empty(),
 			"item physics: clear shows every static copy again")
@@ -358,7 +366,7 @@ func _test_snapshot_changes() -> void:
 	var b := _bodies.body_of(UID + 2)
 	_check.call(b != null and _bodies.square_of(UID + 2) == S and _world.coords.world_to_ms(b.global_position) == S
 			and b.sleeping and _world.hidden_items.has(UID + 2) and _world.item_slot(UID + 2).is_empty(),
-			"item physics: an item CDDA moved is made again at its new square, asleep, its copy hidden")
+			"item physics: an item CDDA moved is put down at its new square, asleep, its copy hidden")
 
 
 func _test_held() -> void:
@@ -397,3 +405,237 @@ func _test_hostile() -> void:
 	sm.handles = keep
 	_snap.seq += 1
 	_bodies.update()
+
+
+## The scan (MED 3 / LOW 4): one entry per uid, at most PILE_BODIES new items per square, bad spots dropped,
+## nearest submaps first, the player's level before a crowded basement; the static helpers; the fallback box.
+func _test_scan() -> void:
+	var plank: int = _it["2x4"]
+	var rock: int = _it["rock"]
+	var sm: Snapshot.Submap = _snap.submaps[SM]
+	var keep := sm.handles
+	var hs := keep.duplicate()
+	hs.append_array(PackedInt64Array([_tile(S), UID + 3, plank, 2000, 5]))   # the plank listed again, a bad spot
+	for k in 10:
+		hs.append_array(PackedInt64Array([_tile(S), UID + 100 + k, rock, 500, 250]))   # a big new pile on S
+	sm.handles = hs
+	var hn := _bodies._handles_near(_snap, P)
+	var new_on_s := 0
+	for k in 10:
+		new_on_s += 1 if hn.has(UID + 100 + k) else 0
+	var e3: Array = hn.get(UID + 3, [])
+	var e100: Array = hn.get(UID + 100, [])
+	_check.call(e3.size() == 4 and e3[0] == E and e3[3] == Vector2(-1, -1) and new_on_s == ItemBodies.PILE_BODIES
+			and e100.size() == 4 and (e100[3] as Vector2).is_equal_approx(Vector2(0.5, 0.25)),
+			"item physics: the scan lists a uid once, at most %d new items per square, spots checked" % ItemBodies.PILE_BODIES)
+	sm.handles = keep
+	var below: Snapshot.Submap = _snap.submaps.get(SM + Vector3i(0, 0, -1))
+	var crowded := false
+	if below != null:
+		var keep_below := below.handles
+		var many := PackedInt64Array()
+		many.resize(9000 * ItemBodies.HS)
+		for k in 9000:
+			var i := k * ItemBodies.HS
+			many[i] = k % Snapshot.TILES
+			many[i + 1] = 700_000 + k
+			many[i + 2] = rock
+			many[i + 3] = -1
+			many[i + 4] = -1
+		below.handles = many
+		hn = _bodies._handles_near(_snap, P)
+		crowded = hn.has(UID + 3) and hn.has(UID + 21) and hn.has(UID + 11) and not hn.has(700_000)
+		below.handles = keep_below
+	_check.call(crowded, "item physics: 9000 items in the basement under the player don't crowd out the player's level")
+	var c := P + Vector3i(3, 3, 0)
+	var subs := ItemBodies._subs_near(c, 9)
+	var sorted := subs.size() == 9 and subs[0] == Vector2i(SM.x, SM.y)
+	var last := -1
+	for s: Vector2i in subs:
+		var m := CddaCoords.sm_to_ms(Vector3i(s.x, s.y, 0)) + Vector3i(CddaCoords.SEEX / 2, CddaCoords.SEEX / 2, 0)
+		var d2 := (m.x - c.x) * (m.x - c.x) + (m.y - c.y) * (m.y - c.y)
+		sorted = sorted and d2 >= last
+		last = d2
+	_check.call(sorted, "item physics: submaps scanned nearest first (%s)" % [subs])
+	_check.call(ItemBodies._spot(-1, 5) == Vector2(-1, -1) and ItemBodies._spot(1000, 0) == Vector2(-1, -1)
+			and ItemBodies._spot(500, 250).is_equal_approx(Vector2(0.5, 0.25)) and ItemBodies._spot(999, 999).x <= ItemBodies.SPOT_MAX + 1e-6,
+			"item physics: a handle's spot from permille, out of range: none")
+	var empty := Node3D.new()
+	var bx := _bodies._bounds(empty, rock)
+	empty.free()
+	var lo := ItemBodies.MIN_BOX_M - 0.0001
+	var hi := ItemBodies.MAX_BOX_M + 0.0001
+	_check.call(bx.size.x >= lo and bx.size.x <= hi and bx.size.is_equal_approx(Vector3.ONE * bx.size.x)
+			and is_zero_approx(bx.position.y), "item physics: no meshes: a cube of the item's size, within the box limits (%s)" % bx)
+
+
+## A pass only when the handles near the centre change (one hash per nearby submap); a pass publishes (re-meshes)
+## once; an item CDDA moved keeps its body, put down on its new square at the handle's spot, nothing re-meshed.
+func _test_sync_cost() -> void:
+	var rock: int = _it["rock"]
+	var hammer: int = _it["hammer"]
+	_snap.seq += 1
+	_bodies.update()
+	var syn := _bodies.syncs
+	var sk := _bodies.skipped
+	var pubs := _world.physics_sets
+	_snap.seq += 1
+	_bodies.update()
+	_check.call(_bodies.syncs == syn and _bodies.skipped == sk + 1 and _world.physics_sets == pubs,
+			"item physics: a new snapshot with the same handles nearby: no pass, nothing published")
+	var far_sm: Snapshot.Submap = null
+	for pos: Vector3i in _snap.submaps:
+		if pos.z == 0 and (pos.x < SM.x - 1 or pos.x > SM.x or pos.y < SM.y - 1 or pos.y > SM.y):
+			far_sm = _snap.submaps[pos]
+			break
+	var far_ok := true   # (the mock town may have no far submap: then nothing to check)
+	if far_sm != null:
+		var keep := far_sm.handles
+		var hs := keep.duplicate()
+		hs.append_array(PackedInt64Array([0, 990_001, rock, -1, -1]))
+		far_sm.handles = hs
+		_snap.seq += 1
+		_bodies.update()
+		far_ok = _bodies.syncs == syn and _bodies.skipped == sk + 2
+		far_sm.handles = keep
+		_snap.seq += 1
+		_bodies.update()
+	_check.call(far_ok, "item physics: an item changing on a far submap: no pass")
+	var hb := _bodies.body_of(UID + 2)
+	syn = _bodies.syncs
+	pubs = _world.physics_sets
+	_mock.take_item(UID + 2, hammer, S, "pack")
+	_mock.drop_item(UID + 2, hammer, E, Vector2(0.25, 0.75))
+	_bodies.update()
+	var c := _corner(E)
+	var on_floor := false
+	if hb != null and _bodies._bodies.has(UID + 2):
+		var box: AABB = (_bodies._bodies[UID + 2] as ItemBodies.Body).box
+		on_floor = absf((hb.global_transform * box).position.y - (c.y + ItemBodies.FLOOR_UP_M)) < 0.001
+	_check.call(hb != null and _bodies.body_of(UID + 2) == hb and _bodies.square_of(UID + 2) == E and on_floor
+			and absf(hb.global_position.x - (c.x + 0.25)) < 0.001 and absf(hb.global_position.z - (c.z + 0.75)) < 0.001
+			and hb.sleeping and _bodies.syncs == syn + 1 and _world.physics_sets == pubs and _world.hidden_items.has(UID + 2),
+			"item physics: an item CDDA moved: the same body put down at its new spot, nothing re-meshed")
+	pubs = _world.physics_sets
+	syn = _bodies.syncs
+	var pile: Array = _on(PILE)
+	var x: int = pile[0] if not pile.is_empty() else -1
+	_mock.take_item(x, rock, PILE, "pack")   # its body goes; a rock of the pile lying static gets one
+	_bodies.update()
+	_check.call(pile.size() == ItemBodies.PILE_BODIES and _bodies.body_of(x) == null and _on(PILE).size() == ItemBodies.PILE_BODIES
+			and _bodies.syncs == syn + 1 and _world.physics_sets == pubs + 1,
+			"item physics: a pass that frees a body and makes one publishes once")
+
+
+## Slice 5: bodies as pointing entries (on_ray / near / slot: CDDA's reach rule, not held, not waiting), hold /
+## unhold, let_go (waiting for CDDA, awake, speed capped), `settled` once, landed (kept), forget, the expiry.
+func _test_hands_api() -> void:
+	var plank: int = _it["2x4"]
+	var rock: int = _it["rock"]
+	var b := _bodies.body_of(UID + 3)
+	var s := _bodies.slot(UID + 3)
+	var mid: Vector3 = s[3] if s.size() >= 6 else Vector3.INF
+	var hit := _bodies.on_ray(mid + Vector3(0, 0.3, 0), Vector3.DOWN, P, 4.0)
+	var nr := _bodies.near(mid + Vector3(0.01, 0, 0), 0.1, P)
+	_check.call(b != null and s.size() == 6 and s[0] == UID + 3 and s[1] == plank and s[2] == E
+			and (s[4] as Transform3D).origin.is_equal_approx(b.global_position)
+			and is_equal_approx((s[4] as Transform3D).basis.get_scale().x, ItemVisual.size_of(plank, _world))
+			and hit.size() == 6 and hit[0] == UID + 3 and nr.size() == 6 and nr[0] == UID + 3,
+			"item physics: a body is pointed at as WorldView points at a drawn item (where the body is)")
+	_check.call(_bodies.on_ray(mid + Vector3(0, 0.3, 0), Vector3.DOWN, P + Vector3i(-3, 0, 0), 4.0).is_empty()
+			and _bodies.near(mid, 0.1, P + Vector3i(0, 0, 1)).is_empty()
+			and _bodies.on_ray(Vector3(NAN, 0, 0), Vector3.DOWN, P, 4.0).is_empty()
+			and _bodies.on_ray(mid, Vector3.ZERO, P, 4.0).is_empty() and _bodies.near(mid, NAN, P).is_empty()
+			and _bodies.near(mid, -1.0, P).is_empty(), "item physics: out of reach, another level or a bad ray: nothing")
+	_bodies.hold(UID + 3)
+	var mine: Dictionary = _world.by_owner.get(ItemBodies.OWNER, {})
+	_check.call(_bodies.body_of(UID + 3) == null and _bodies.is_held(UID + 3) and _bodies.slot(UID + 3).is_empty()
+			and not mine.has(UID + 3), "item physics: a hand holds it: its body goes")
+	_snap.seq += 1
+	_bodies.update()
+	var kept_off := _bodies.body_of(UID + 3) == null
+	_bodies.unhold(UID + 3)
+	_bodies.update()
+	_check.call(kept_off and _bodies.body_of(UID + 3) != null and _bodies.square_of(UID + 3) == E and not _bodies.is_held(UID + 3),
+			"item physics: none made while held; put back: a body again")
+	for k in ItemBodies.MAX_HOLDING + 1:
+		_bodies.hold(800_000 + k)
+	var capped := _bodies.is_held(800_000 + ItemBodies.MAX_HOLDING - 1) and not _bodies.is_held(800_000 + ItemBodies.MAX_HOLDING)
+	for k in ItemBodies.MAX_HOLDING + 1:
+		_bodies.unhold(800_000 + k)
+	_bodies.hold(0)
+	_bodies.hold(-4)
+	_check.call(capped and not _bodies.is_held(0) and not _bodies.is_held(-4) and not _bodies.is_held(800_000),
+			"item physics: at most %d held items, bad uids ignored" % ItemBodies.MAX_HOLDING)
+	_ms = 5_000_000
+	_bodies.clock = func() -> int: return _ms
+	_bodies.hold(UID + 3)
+	var xf := Transform3D(Basis(Vector3.UP, 0.4).scaled(Vector3.ONE * 0.3), _corner(S) + Vector3(0.5, 0.8, 0.5))
+	var rb := _bodies.let_go(UID + 3, plank, xf, Vector3(30, 0, 40), S)
+	mine = _world.by_owner.get(ItemBodies.OWNER, {})
+	_check.call(rb != null and _bodies.is_pending(UID + 3) and not _bodies.is_held(UID + 3) and _bodies.square_of(UID + 3) == S
+			and rb.global_position.is_equal_approx(xf.origin) and rb.global_basis.is_equal_approx(Basis(Vector3.UP, 0.4))
+			and not rb.sleeping and is_equal_approx(rb.linear_velocity.length(), ItemBodies.MAX_SPEED)
+			and _bodies.slot(UID + 3).is_empty() and mine.has(UID + 3),
+			"item physics: let go: a body at the hand's pose (its scale dropped), awake, at most %d m/s, waiting for CDDA" % int(ItemBodies.MAX_SPEED))
+	_snap.seq += 1
+	_bodies.update()
+	_check.call(_bodies.body_of(UID + 3) == rb and _bodies.is_pending(UID + 3),
+			"item physics: while it waits the pile's handle doesn't make a second body")
+	var got := []
+	var on_settle := func(u: int, sq: Vector3i, sp: Vector2) -> void: got.append([u, sq, sp])
+	_bodies.settled.connect(on_settle)
+	if rb != null:
+		rb.sleeping_state_changed.emit()   # still awake: nothing
+		rb.sleeping = true
+		rb.sleeping_state_changed.emit()
+		rb.sleeping_state_changed.emit()
+	_bodies.settled.disconnect(on_settle)
+	var rest := _bodies.rest_of(UID + 3)
+	_check.call(got.size() == 1 and got[0][0] == UID + 3 and got[0][1] == S and (got[0][2] as Vector2).is_equal_approx(Vector2(0.5, 0.5))
+			and rest.get("square") == S, "item physics: the first time it comes to rest `settled` says where (%s)" % [got])
+	var early := _bodies.landed(UID + 3) and _bodies.is_pending(UID + 3)   # the world doesn't show it on S yet
+	_mock.take_item(UID + 3, plank, E, "pack")
+	_mock.drop_item(UID + 3, plank, S, Vector2(0.5, 0.5))
+	_bodies.update()
+	_check.call(early and not _bodies.is_pending(UID + 3) and _bodies.body_of(UID + 3) == rb and rb.global_position.is_equal_approx(xf.origin)
+			and not _bodies.forget(UID + 3) and not _bodies.landed(UID + 99) and not _bodies.forget(UID + 99),
+			"item physics: CDDA's drop landed and the world shows it there: that body stays where it is")
+	var pile: Array = _on(PILE)
+	var a: int = pile[0] if not pile.is_empty() else -1
+	_bodies.hold(a)
+	var r2 := _bodies.let_go(a, rock, Transform3D(Basis(), _corner(S) + Vector3(0.3, 0.5, 0.3)), Vector3(NAN, 0, 0), S)
+	var zero := r2 != null and r2.linear_velocity == Vector3.ZERO
+	var forgot := _bodies.forget(a) and _bodies.body_of(a) == null and not _bodies.forget(a)
+	_bodies.update()
+	_check.call(zero and forgot and _back_on_pile(a), "item physics: a refused drop: its body goes, the item is back in its pile")
+	pile = _on(PILE)
+	var e: int = pile[0] if not pile.is_empty() else -1
+	_bodies.hold(e)
+	var r3 := _bodies.let_go(e, rock, Transform3D(Basis(), _corner(S) + Vector3(0.7, 0.5, 0.7)), Vector3.ZERO, S)
+	_ms += ItemBodies.PENDING_MS - 1
+	_bodies.update()
+	var waiting := r3 != null and _bodies.body_of(e) == r3 and _bodies.is_pending(e)
+	_ms += 1
+	_bodies.update()
+	_check.call(waiting and _bodies.body_of(e) != r3 and _back_on_pile(e),
+			"item physics: no answer from CDDA in %d s: the body goes, the item is back in its pile" % (ItemBodies.PENDING_MS / 1000))
+	_bodies.clock = Callable()
+	var pose := Transform3D(Basis(), _corner(S) + Vector3(0.5, 0.5, 0.5))
+	var none := _bodies.let_go(UID + 41, rock, pose, Vector3.ZERO, S + Vector3i(0, 0, 1)) == null \
+			and _bodies.let_go(UID + 41, rock, pose, Vector3.ZERO, P + Vector3i(7, 0, 0)) == null \
+			and _bodies.let_go(0, rock, pose, Vector3.ZERO, S) == null and _bodies.let_go(UID + 41, 0, pose, Vector3.ZERO, S) == null \
+			and _bodies.let_go(UID + 41, rock, Transform3D(Basis(), Vector3(NAN, 0, 0)), Vector3.ZERO, S) == null \
+			and _bodies.let_go(UID + 41, rock, Transform3D(Basis.from_scale(Vector3.ZERO), pose.origin), Vector3.ZERO, S) == null
+	_bodies.max_bodies = _bodies.count()
+	none = none and _bodies.let_go(UID + 41, rock, pose, Vector3.ZERO, S) == null
+	_bodies.max_bodies = ItemBodies.MAX_BODIES
+	_check.call(none and _bodies.body_of(UID + 41) == null,
+			"item physics: no body let go onto another level, past ACTIVE_R, over the cap or from a bad pose")
+
+
+## Item u lies in its pile again, not waiting: as a body there or drawn static; the pile has its PILE_BODIES bodies.
+func _back_on_pile(u: int) -> bool:
+	var as_body: bool = _bodies.body_of(u) != null and _bodies.square_of(u) == PILE
+	var drawn: bool = _bodies.body_of(u) == null and not _world.hidden_items.has(u) and not _world.item_slot(u).is_empty()
+	return u > 0 and not _bodies.is_pending(u) and (as_body or drawn) and _on(PILE).size() == ItemBodies.PILE_BODIES

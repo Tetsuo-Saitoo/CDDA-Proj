@@ -369,8 +369,10 @@ func _test_refused() -> void:
 	_check.call(_row(bag).is_empty() and _handle(S, _it["bag_canvas"]) == bag and _clean(), "vr pull: put down again")
 
 
-## Throw: the flight's landing point, the hand's speed from its moves, a fast let go throws at that square (CDDA's
-## throw through Hands.throw), a slow one drops; a throw landing on the player's own square goes one square on.
+## Throw: the flight's landing point, the hand's speed from its moves (none while a controller isn't tracked; a
+## reading past MAX_HAND_SPEED is a jump), a fast let go throws at that square (CDDA's throw through Hands.throw), a
+## slow one drops, so does a slam down (too little of it level); a throw landing on the player's own square goes
+## one square on.
 func _test_throw() -> void:
 	var p: Variant = VrRig.throw_point(Vector3(0, 1, 0), Vector3(0, 0, -5), 0.0)
 	var t := sqrt(2.0 * VrRig.GRAVITY) / VrRig.GRAVITY
@@ -382,6 +384,7 @@ func _test_throw() -> void:
 			and VrRig.throw_point(Vector3(0, 1, 0), Vector3(INF, 0, 0), 0.0) == null,
 			"vr throw: at most %d m; straight down or a bad velocity: nowhere" % int(VrRig.THROW_MAX_M))
 	var l := _rig.left
+	_rig.assume_tracked = true   # no XR runtime: the controllers are inactive
 	l.position = Vector3(0.2, 1.0, 0.0)
 	_rig.hand_vel[0] = Vector3.ZERO
 	_rig.track_hands(0.1)
@@ -393,6 +396,24 @@ func _test_throw() -> void:
 	_check.call(absf(v.length() - 6.0) < 0.01 and v.is_equal_approx(_rig.global_basis * Vector3(0, 0, -6))
 			and _rig.hand_vel[0] == Vector3.ZERO,
 			"vr throw: the hand's speed from its moves in the rig (%.2f m/s); a jump counts as still" % v.length())
+	l.position += Vector3(1.4, 0, 0)   # 14 m/s: a hard throw
+	_rig.track_hands(0.1)
+	var fast := _rig.hand_vel[0].length()
+	l.position += Vector3(1.6, 0, 0)   # 16 m/s: past MAX_HAND_SPEED
+	_rig.track_hands(0.1)
+	_check.call(absf(fast - 14.0) < 0.01 and _rig.hand_vel[0] == Vector3.ZERO and VrRig.MAX_HAND_SPEED == 15.0,
+			"vr throw: 14 m/s counts, past 15 m/s is a tracking jump (%.2f m/s)" % fast)
+	l.position += Vector3(0.0, 0, -0.6)
+	_rig.track_hands(0.1)
+	var moving := _rig.hand_vel[0].length()
+	_rig.assume_tracked = false
+	_rig.track_hands(0.1)
+	var lost := _rig.hand_vel[0] == Vector3.ZERO and _rig._hand_was[0] == null and not _rig.tracked(0)
+	_rig.assume_tracked = true
+	l.position += Vector3(0.0, 0, -0.6)
+	_rig.track_hands(0.1)
+	_check.call(moving > 5.0 and lost and _rig.hand_vel[0] == Vector3.ZERO and _rig._hand_was[0] is Vector3,
+			"vr throw: a controller that isn't tracked has no speed and starts afresh when it is again")
 	var rock := _handle(E, _it["rock"])
 	_rig.right.global_position = _mid(rock)
 	_frame()
@@ -409,8 +430,14 @@ func _test_throw() -> void:
 	_rig.release(_rig.right, "grip_click")
 	_check.call(sq is Vector3i and _handle(sq, _it["rock"]) == rock and _row(rock).is_empty() and _handle(E, _it["rock"]) != rock
 			and _clean(), "vr throw: let go that fast: CDDA throws it to that square")
-	_rig.hand_vel[1] = Vector3(0.5, -6, 0)   # hard at the feet
+	_rig.hand_vel[1] = Vector3(1.6, -6, 0)   # hard at the feet, a little east
 	_check.call(_rig.throw_square(_rig.right) == P + Vector3i(1, 0, 0),
 			"vr throw: one landing on the player's square goes one square on along the throw")
+	_rig.hand_vel[1] = Vector3(0.5, -6, 0)   # slammed down: hardly any of it level
+	var slam: Variant = _rig.throw_square(_rig.right)
+	_rig.hand_vel[1] = Vector3(0, 6, 0)
+	_check.call(slam == null and _rig.throw_square(_rig.right) == null,
+			"vr throw: a slam down or a toss straight up is no throw (less than %.1f m/s level)" % VrRig.THROW_FLAT_SPEED)
 	_rig.hand_vel[0] = Vector3.ZERO
 	_rig.hand_vel[1] = Vector3.ZERO
+	_rig.assume_tracked = false

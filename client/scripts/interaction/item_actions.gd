@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, throw, pour) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, throw, pour, hold) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -39,7 +39,7 @@ const QUIET_OK := ["unload", "reload", "throw", "pour"]
 enum Where { STILL, MOVED, UNKNOWN }
 
 ## Anything with take_item / put_item / drop_item / unload_item / reload_item / throw_item / pour_item /
-## pour_into (-> bool; a missing one refuses that op here) and queued_actions()
+## pour_into / hold_item (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
@@ -107,6 +107,15 @@ func throw(item: ItemRef, square: Vector3i) -> bool:
 	if _snap != null and square == _snap.player_pos:
 		return false
 	return _send("throw", item, square, Vector2(-1, -1), "throw_item", [float(item.uid), float(item.type), square])
+
+
+## Moves a carried, unworn `item` into hand "main" (CDDA's wield) or "off" (held in the off hand): the hand change
+## of Hands.hand_over. Backend method hold_item(uid, type, hand) (MockItems has it; the bridge has no such op yet, so
+## a live backend without it refuses here and nothing is sent).
+func hold(item: ItemRef, hand: String) -> bool:
+	if not _ok_ref(item) or not item.carried or item.flags & Snapshot.CARRIED_WORN or not (hand in ["main", "off"]):
+		return false
+	return _send("hold", item, hand, Vector2(-1, -1), "hold_item", [float(item.uid), float(item.type), hand])
 
 
 ## Pours the liquid out of a carried `item` (a container, or the liquid in one) onto `square`: yours or one next
@@ -348,6 +357,11 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			if row < 0:
 				return Where.UNKNOWN if full else Where.MOVED
 			return Where.STILL   # also one unit thrown off a stack: QUIET_OK
+		"hold":   # in the hand asked for now
+			if row < 0:
+				return Where.UNKNOWN if full else Where.MOVED
+			var flag := Snapshot.CARRIED_WIELDED if e["target"] == "main" else Snapshot.CARRIED_OFFHAND
+			return Where.MOVED if (snap.carried[row * Snapshot.CARRIED_STRIDE + 4] & flag) != 0 else Where.STILL
 		"pour":
 			if row < 0:   # the poured liquid itself, all gone
 				return Where.UNKNOWN if full else Where.MOVED

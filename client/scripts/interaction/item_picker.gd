@@ -17,6 +17,9 @@ var world: WorldView
 var look_ray: LookRay
 ## () -> Variant: the square the player reaches from (Vector3i), or null for none. Not set: the player's square.
 var reach: Callable
+## E2 item physics (optional, Hands.bodies sets it): items lying as physics bodies are hidden in their piles, so
+## WorldView doesn't list them; they are pointed at where their bodies are now (ItemBodies.on_ray / near / slot).
+var bodies: ItemBodies
 
 
 func _init(w: WorldView) -> void:
@@ -34,7 +37,13 @@ func on_ray(origin: Vector3, dir: Vector3, max_d := RAY_M) -> ItemRef:
 	var r := look_ray.cast(origin, dir, max_d, false)
 	if r["hit"]:
 		limit = minf(max_d, _past(origin, dir, r))
-	return _ref(world.items_on_ray(origin, dir, c, limit))
+	var hit := world.items_on_ray(origin, dir, c, limit)
+	var b := _bodies()
+	if b != null:   # the nearer of the drawn item and the body along the ray
+		var bh := b.on_ray(origin, dir, c, limit)
+		if not bh.is_empty() and (hit.is_empty() or origin.distance_to(bh[3]) < origin.distance_to(hit[3])):
+			hit = bh
+	return _ref(hit)
 
 
 ## The item nearest point `p` (a hand) within `radius`, or null.
@@ -42,7 +51,22 @@ func near(p: Vector3, radius := NEAR_M) -> ItemRef:
 	var c: Variant = _centre()
 	if c == null:
 		return null
-	return _ref(world.items_near(p, maxf(radius, 0.0), c))
+	var hit := world.items_near(p, maxf(radius, 0.0), c)
+	var b := _bodies()
+	if b != null:
+		var bh := b.near(p, maxf(radius, 0.0), c)
+		if not bh.is_empty() and (hit.is_empty() or p.distance_to(bh[3]) < p.distance_to(hit[3])):
+			hit = bh
+	return _ref(hit)
+
+
+## Item `uid` as drawn now, as WorldView.item_slot gives it: its pile's slot, else its physics body's pose; [].
+func slot(uid: int) -> Array:
+	var s := world.item_slot(uid)
+	var b := _bodies()
+	if s.is_empty() and b != null:
+		s = b.slot(uid)
+	return s
 
 
 ## Whether an item on `square` is in reach: the reach square or one of the 8 around it, same level.
@@ -112,7 +136,7 @@ func by_uid(uid: int) -> ItemRef:
 			var tile := int(hs[k])
 			var sq := CddaCoords.sm_to_ms(pos) + Vector3i(tile % CddaCoords.SEEX, tile / CddaCoords.SEEX, 0)
 			var r := ItemRef.on_square(uid, int(hs[k + 2]), sq, int(hs[k + 3]), int(hs[k + 4]))
-			var s := world.item_slot(uid)
+			var s := slot(uid)
 			if not s.is_empty() and s[1] == r.type and s[2] == sq:
 				r.point = s[3]
 				r.size_m = s[5]
@@ -122,6 +146,11 @@ func by_uid(uid: int) -> ItemRef:
 
 func _snap() -> Snapshot:
 	return world.snapshot if world != null else null
+
+
+## The bodies when set and not freed, else null.
+func _bodies() -> ItemBodies:
+	return bodies if is_instance_valid(bodies) else null
 
 
 ## The square reach is measured from, or null.

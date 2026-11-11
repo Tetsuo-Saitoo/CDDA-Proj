@@ -26,14 +26,17 @@ extends XROrigin3D
 ## the biggest worn container when the hand is over the shoulder. Grip on nothing picks up what CDDA already holds
 ## in that hand, ready to put down. CDDA decides every move; a refusal buzzes and shows its reason by the hand.
 ## Heavy items lag behind the hand; a two-handed one sags in one hand and sits between both when the other hand
-## grips it too.
+## grips it too. Gripping near what the other hand holds (anything one hand carries) takes it over (Hands.hand_over:
+## CDDA moves it to that hand; refused: it goes back). Letting go passes the hand's velocity on (Hands.release: with
+## item physics on, the item falls and rolls from the hand).
 ## Point and pull (L2): an empty hand touching nothing, its trigger half pressed (PULL_TRIGGER), shows a
 ## faint ray; the item it meets in reach (Hands.find_on_ray: not a door leaf, and for the main hand not one lying on
 ## stairs) is outlined. The trigger click takes it into that hand like a grip (the same one-item take: CDDA judges
 ## reach) and its copy flies from where it lay into the hand over FLY_S, a buzz on arrival; a grip click lets it go.
 ## The main trigger uses pointed stairs first; nothing pointed at all: one buzz.
-## Throw: an item let go with the hand faster than Hands.THROW_SPEED (not into the pack or over the shoulder) is
-## thrown (Hands.throw) at the square where a flight from the hand at its velocity lands (track_hands, throw_square).
+## Throw: an item let go with the hand faster than Hands.THROW_SPEED, at least THROW_FLAT_SPEED of it level (a
+## slam down is a put down), not into the pack or over the shoulder, is thrown (Hands.throw) at the square where a
+## flight from the hand at its velocity lands (track_hands, throw_square). A hand that isn't tracked has no speed.
 ## Guns (L2, VrGun `gun`): while CDDA wields a gun its model is in the main hand and takes the main trigger right after
 ## the pack (fires from its muzzle); the off grip takes its magazine out at the well or racks its slide / bolt, a held
 ## magazine brought to the well goes in; the main grip on nothing just holds it.
@@ -147,7 +150,9 @@ const PULL_RAY_S := 0.05   # the pull ray looks again at most this often (each l
 const FLY_S := 0.2         # a pulled item's copy flies into the hand in this long
 const THROW_MAX_M := 20.0  # a throw's square is at most this far (CDDA's range, aim and rules still decide)
 const VEL_RATE := 25.0     # 1/s: hand speed smoothing (about the last 40 ms)
-const MAX_HAND_SPEED := 30.0   # m/s: a faster reading is a tracking jump, not a throw
+const MAX_HAND_SPEED := 15.0   # m/s: a faster reading is a tracking jump, not a throw
+const THROW_FLAT_SPEED := 1.5  # m/s: a throw needs at least this much level speed (else a slam down: put down)
+const HAND_OVER_M := 0.2       # a grip this near the other hand's item's grip point takes it over
 const GRAVITY := 9.8
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
@@ -170,6 +175,9 @@ var buzz_amp: Array[float] = [0.0, 0.0]    # the strength of each hand's last pu
 var hand_vel: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   # each hand's smoothed velocity (world; walking and
                                                               # turning the rig don't count): track_hands
 var _hand_was: Array = [null, null]        # each controller's last position in the rig's space
+## Tests: controllers count as tracked though inactive (no XR runtime); else a controller is tracked while active
+## with tracking data (track_hands).
+var assume_tracked := false
 var _note_left: Array[float] = [0.0, 0.0]
 var _grip_down: Array[bool] = [false, false]   # the grip button is held (two-handed support uses it)
 var pull_rays: Array[MeshInstance3D] = []      # each hand's faint pull ray (left, right)
@@ -565,7 +573,7 @@ func pull_with(c: XRController3D) -> bool:
 	var t := pointed_item(c)
 	if t.is_empty():
 		return false
-	var slot := world.item_slot((t["item"] as ItemRef).uid)   # where the pile draws it (gone once Hands hides it)
+	var slot := hands.picker.slot((t["item"] as ItemRef).uid)   # where it lies drawn or as a body (gone once held)
 	hands.set_hand_pose(id, c.global_transform, true)
 	if not hands.grab(id, t, "main" if c == main_ctrl() else "off"):
 		return false
@@ -643,8 +651,9 @@ func _supports(j: int, drawn: Variant) -> bool:
 ## Grip on controller c: an item or the frame of the open pack (VrPack.grip), else the door leaf or item it
 ## touches, else over the shoulder the biggest worn container (taken off: VrPack.open_in), else what CDDA holds in
 ## that hand (main controller: the wielded item; the other: the off-hand item). An item lying in the world is
-## taken at once into that hand. Near the other hand's two-handed item it only steadies it. False (and a buzz)
-## when there is nothing to grab; a refusal from CDDA comes later through Hands.refused.
+## taken at once into that hand. Near the other hand's two-handed item it only steadies it; touching nothing else
+## near another item the other hand holds, it takes it over (takes_over, Hands.hand_over: CDDA moves it to this
+## hand). False (and a buzz) when there is nothing to grab; a refusal from CDDA comes later through Hands.refused.
 func grab_with(c: XRController3D) -> bool:
 	if hands == null:
 		return false
@@ -655,7 +664,6 @@ func grab_with(c: XRController3D) -> bool:
 	var other := hands.proxy(HAND_IDS[1 - i])
 	if other != null and _supports(i, other.global_transform):
 		return true
-	hands.set_hand_pose(id, c.global_transform, true)   # a door starts its swing here, an adopted item shows here
 	var t := {}
 	var pt := {}
 	var looks := world.snapshot != null and not menu_open()
@@ -663,6 +671,14 @@ func grab_with(c: XRController3D) -> bool:
 		pt = pack.target_at(c.global_position)
 		if pt.is_empty():
 			t = hands.find_near(c.global_position, GRAB_REACH)
+	if pt.is_empty() and t.is_empty() and other != null and takes_over(i):   # touching nothing else: the other
+		var ok_over := hands.hand_over(HAND_IDS[1 - i], id, "main" if c == main_ctrl() else "off")   # hand's item
+		if ok_over:
+			hands.set_hand_pose(id, c.global_transform, true)
+		else:
+			_feel(c)
+		return ok_over
+	hands.set_hand_pose(id, c.global_transform, true)   # a door starts its swing here, an adopted item shows here
 	var ok := false
 	if not pt.is_empty():
 		ok = pack.grip(i, pt)
@@ -681,6 +697,19 @@ func grab_with(c: XRController3D) -> bool:
 	if not ok:
 		_feel(c)
 	return ok
+
+
+## Hand i (empty) grips near the item the other hand holds: within HAND_OVER_M of its grip point.
+func takes_over(i: int) -> bool:
+	var o: String = HAND_IDS[1 - i]
+	var p: Node3D = hands.proxy(o) if hands != null else null
+	var it: ItemRef = hands.holding(o).get("item") if p != null else null
+	if it == null or hands.holding(o).get("kind") != "item" or not hands.holding(HAND_IDS[i]).is_empty():
+		return false
+	var xf := p.global_transform
+	var s := maxf(absf(xf.basis.get_scale().x), 0.001)
+	var g := xf * (ItemVisual.grip(it.type, world).origin / s)
+	return g.is_finite() and _ctrl(i).global_position.distance_to(g) <= HAND_OVER_M
 
 
 ## What CDDA holds in controller c's hand (main: wielded; off: the item flagged off hand), as a carried ItemRef
@@ -702,9 +731,10 @@ func cdda_holds(c: XRController3D) -> ItemRef:
 ## Lets go of what hand c holds. The pack: over the shoulder it closes, elsewhere it floats open in front (nothing
 ## sent). An item: over a compartment of the open pack into that pocket (its own pocket: back, nothing sent), over
 ## the shoulder into the biggest worn container (none: a buzz, and it goes where the hand is), else where the hand
-## is (Hands.drop_at; nowhere it can go: it stays in CDDA's hand). A door settles. Returns Hands.release's action
+## is (Hands.drop_at; nowhere it can go: it stays in CDDA's hand), with the hand's velocity (item physics). A door
+## settles. `throw_ok` false: never a throw (a magazine let go in a moving hand). Returns Hands.release's action
 ## ("" when nothing was sent).
-func let_go(c: XRController3D) -> String:
+func let_go(c: XRController3D, throw_ok := true) -> String:
 	if hands == null:
 		return ""
 	var id := hand_id(c)
@@ -719,7 +749,7 @@ func let_go(c: XRController3D) -> String:
 		return hands.release(id, {})
 	var drop := pack.drop_for(c.global_position, it)
 	var shoulder := over_shoulder(camera.global_transform, c.global_position)
-	if drop.is_empty() and not shoulder:
+	if drop.is_empty() and not shoulder and throw_ok:
 		var sq: Variant = throw_square(c)
 		if sq is Vector3i:
 			return hands.throw(id, sq)   # CDDA throws it (a lying item is taken first); refused: back where it was
@@ -731,7 +761,8 @@ func let_go(c: XRController3D) -> String:
 			_feel(c)
 	if drop.is_empty():
 		drop = hands.drop_at(c.global_position, it)
-	return hands.release(id, drop)
+	var v: Vector3 = hand_vel[0 if c == left else 1]
+	return hands.release(id, drop, v if v.is_finite() else Vector3.ZERO)
 
 
 func release(c: XRController3D, n: String) -> void:
@@ -745,11 +776,16 @@ func release(c: XRController3D, n: String) -> void:
 
 
 ## Each hand's velocity (hand_vel) from its moves in the rig's space, smoothed over VEL_RATE, turned to world. A
-## reading faster than MAX_HAND_SPEED (lost tracking coming back) counts as standing still.
+## reading faster than MAX_HAND_SPEED (lost tracking coming back) counts as standing still; a controller that isn't
+## tracked (inactive, or no tracking data) has no speed and starts afresh once tracked again.
 func track_hands(delta: float) -> void:
 	if not is_finite(delta) or delta <= 0.0:
 		return
 	for i in 2:
+		if not tracked(i):
+			_hand_was[i] = null
+			hand_vel[i] = Vector3.ZERO
+			continue
 		var p := _ctrl(i).position
 		var was: Variant = _hand_was[i]
 		_hand_was[i] = p if p.is_finite() else null
@@ -759,6 +795,14 @@ func track_hands(delta: float) -> void:
 			if not v.is_finite() or v.length() > MAX_HAND_SPEED:
 				v = Vector3.ZERO
 		hand_vel[i] = hand_vel[i].lerp(v, clampf(VEL_RATE * delta, 0.0, 1.0))
+
+
+## Controller i gives a pose to trust: active with tracking data (or `assume_tracked`, tests).
+func tracked(i: int) -> bool:
+	if assume_tracked:
+		return true
+	var c := _ctrl(i)
+	return c.get_is_active() and c.get_has_tracking_data()
 
 
 ## Where a throw from `from` at `vel` (world, m/s) lands on a floor at height floor_y: a flight without drag, its
@@ -776,12 +820,13 @@ static func throw_point(from: Vector3, vel: Vector3, floor_y: float) -> Variant:
 	return Vector3(p.x, floor_y, p.z)
 
 
-## The square controller c's item is thrown at when let go now: faster than Hands.THROW_SPEED, where its flight
-## lands on the player's level (on the player's own square: the next one along the throw). null: not a throw.
+## The square controller c's item is thrown at when let go now: faster than Hands.THROW_SPEED with at least
+## THROW_FLAT_SPEED level, where its flight lands on the player's level (on the player's own square: the next one
+## along the throw). null: not a throw.
 func throw_square(c: XRController3D) -> Variant:
 	var v: Vector3 = hand_vel[0 if c == left else 1]
 	var s := world.snapshot
-	if s == null or not (v.length() > Hands.THROW_SPEED):
+	if s == null or not (v.length() > Hands.THROW_SPEED) or not (Vector2(v.x, v.z).length() >= THROW_FLAT_SPEED):
 		return null
 	var at: Variant = throw_point(c.global_position, v, world.coords.ms_to_world(s.player_pos).y)
 	if not at is Vector3:
@@ -1069,6 +1114,18 @@ func _aim(tv: Vector2) -> void:
 ## Turns about the head (positive = counter-clockwise seen from above).
 func turn_by(angle: float) -> void:
 	global_transform = VrWalk.turned(global_transform, camera.global_position, angle)
+
+
+## The map's origin moved (CddaCoords.origin_shifted): the rig and what it keeps in world space move with it (the
+## open pack is top_level; a pulled copy's start).
+func shift(d: Vector3) -> void:
+	if not d.is_finite():
+		return
+	position += d
+	if pack != null and is_instance_valid(pack):
+		pack.position += d
+	for i in _fly_from.size():
+		_fly_from[i].origin += d
 
 
 ## Moves so the head stands over `pos` (only x and z; the level stays).

@@ -16,6 +16,7 @@ var _snap: Snapshot
 var _world: WorldView
 var _actions: ItemActions
 var _hands: Hands
+var _mock: MockItems
 var _seen: Array = []   # ["confirmed" | "refused" | "lit", hand, uid (-1 none), reason]
 
 
@@ -36,10 +37,12 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_move()
 	_test_door_names()
 	_test_freed_leaf()
+	_test_bodies(root)
 	_test_flick(root)   # last: throws the bag away
 	_hands.free()
 	_actions.free()
 	_world.free()
+	_mock = null   # its `changed` holds a lambda that holds this test: break the cycle
 
 
 func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
@@ -62,6 +65,7 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 		return false
 	var mock := MockItems.new(_snap, tables)
 	mock.seed()
+	_mock = mock
 	_world = WorldView.new()
 	_world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
 	_world.set_id_tables(tables)
@@ -411,3 +415,190 @@ func _test_door_names() -> void:
 	g.free()
 	_check.call(door_ok and part_ok and _hands.door_name(null) == "",
 			"hands: doors named by terrain, parts by kind and furniture (%s, %s)" % [ter, furn])
+
+
+## E2 slice 5 (Hands.bodies): an item lying as a physics body is pointed at, outlined and grabbed where the body is
+## now, and the body goes while a hand holds it; letting go onto the floor makes a body at the hand's pose with the
+## hand's velocity while CDDA's take and drop go out as before (kept once the drop lands; a refused drop: gone); no
+## body into a container or onto a burner, nor onto furniture without moving. Hand to hand (hand_over), and a
+## container that may hold something kept upright. Ends with the bag back on SE and no bodies.
+func _test_bodies(root: Node) -> void:
+	var bag := _handle(SE, _it["bag_canvas"])
+	var bs := ItemBodies.new(_world)
+	root.add_child(bs)
+	_hands.bodies = bs
+	bs.update()
+	var rb := bs.body_of(bag)
+	_check.call(rb != null and _hands.picker.bodies == bs and _world.item_slot(bag).is_empty() and _world.hidden_items.has(bag),
+			"hands bodies: the bag lies as a body, its pile copy hidden")
+	if rb == null:
+		_hands.bodies = null
+		bs.free()
+		return
+	var tilt := Basis(Vector3.UP, 0.7) * Basis(Vector3.RIGHT, 0.4)
+	rb.global_transform = Transform3D(tilt, rb.global_position + Vector3(0.2, 0.0, 0.1))   # it rolled a little
+	var was := rb.global_transform
+	var slot := _hands.picker.slot(bag)
+	var mid: Vector3 = slot[3] if slot.size() >= 6 else Vector3.INF
+	var t := _hands.find_near(mid)
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	_check.call(slot.size() >= 6 and (slot[4] as Transform3D).origin.is_equal_approx(was.origin) and _uid(t) == bag
+			and (t["point"] as Vector3).is_equal_approx(mid) and t["square"] == SE and _uid(_hands.find_on_ray(eye, mid - eye)) == bag,
+			"hands bodies: pointed at where the body is now, hand and crosshair (%s)" % [mid])
+	_hands.hover("mouse", {})   # (GrabController's tests left the bag hovered)
+	_seen.clear()
+	_hands.hover("mouse", t)
+	var outline := _hands.hand("mouse").outline
+	_check.call(_seen == [["lit", "mouse", bag, ""]] and outline != null and outline.visible
+			and outline.global_position.distance_to(mid) < 0.001, "hands bodies: hover outlines the body where it is")
+	_hands.hover("mouse", {})
+	_check.call(_hands.grab("mouse", t) and bs.body_of(bag) == null and bs.is_held(bag) and _world.hidden_items.has(bag),
+			"hands bodies: grab: its body goes, the item stays hidden")
+	var px := _hands.proxy("mouse")
+	_check.call(px != null and px.global_position.is_equal_approx(was.origin) and _hands.keeps_upright("mouse")
+			and px.global_basis.orthonormalized().is_equal_approx(Basis(Vector3.UP, 0.7)),
+			"hands bodies: the copy starts where the body was, a container turned upright (yaw kept)")
+	_snap.seq += 1
+	bs.update()
+	_check.call(bs.body_of(bag) == null and bs.is_held(bag) and _world.hidden_items.has(bag),
+			"hands bodies: while held no body is made again")
+	var h := _hands.hand("mouse")
+	var on_floor := {"kind": "surface", "square": S}
+	var furn := _furniture_square()
+	var furn_ok := furn == NO_SQ or (_hands._loose_pose(h, {"kind": "surface", "square": furn}, Vector3.ZERO) == null
+			and _hands._loose_pose(h, {"kind": "surface", "square": furn}, Vector3(1, 0, 0)) is Transform3D)
+	_check.call(_hands._loose_pose(h, on_floor, Vector3.ZERO) is Transform3D and _hands._loose_pose(h, on_floor, Vector3(1, 0, 0)) is Transform3D
+			and _hands._loose_pose(h, {"kind": "container", "container": null}, Vector3(1, 0, 0)) == null
+			and _hands._loose_pose(h, {"kind": "burner", "square": S}, Vector3(1, 0, 0)) == null
+			and _hands._loose_pose(h, {"kind": "surface", "square": "S"}, Vector3(1, 0, 0)) == null and furn_ok and furn != NO_SQ,
+			"hands bodies: a body onto bare floor, or onto furniture when moving; never into a container or onto a burner")
+	var p := _world.coords.ms_center_to_world(S) + Vector3(-0.25, 0.4, 0.25)
+	var held: ItemRef = _hands.holding("mouse")["item"]
+	var d := _hands.drop_at(p, held)
+	_hands.set_proxy_pose("mouse", Transform3D(Basis(Vector3.UP, 0.3), p))
+	var pose := px.global_transform
+	var v := Vector3(1.5, 0.5, -0.5)
+	_seen.clear()
+	var op := _hands.release("mouse", d, v)
+	var row := _handle_row(S, bag)
+	var spot: Vector2 = d.get("spot", Vector2(-1, -1))
+	_check.call(d.get("kind") == "surface" and d.get("square") == S and op == "take" and _seen == [["confirmed", "mouse", bag, ""]]
+			and not row.is_empty() and absi(int(row[3]) - int(spot.x * 1000)) <= 1 and absi(int(row[4]) - int(spot.y * 1000)) <= 1,
+			"hands bodies: let go moving: CDDA's take and drop as before, at the spot under the hand (%s, %s)" % [op, row])
+	var nb := bs.body_of(bag)
+	_check.call(nb != null and pose.origin.is_equal_approx(p) and nb.global_position.is_equal_approx(p)
+			and nb.global_basis.is_equal_approx(Basis(Vector3.UP, 0.3)) and nb.linear_velocity.is_equal_approx(v) and not nb.sleeping
+			and bs.square_of(bag) == S and not bs.is_pending(bag) and not bs.is_held(bag) and _world.hidden_items.has(bag)
+			and _world.item_slot(bag).is_empty() and _hands.proxy("mouse") == null,
+			"hands bodies: ... and it flies on as a body from the hand's pose at the hand's velocity, kept once the drop landed")
+	bs.update()
+	var s2 := bs.slot(bag)
+	var m2: Vector3 = s2[3] if s2.size() >= 6 else Vector3.INF
+	_check.call(bs.body_of(bag) == nb and nb != null and nb.global_position.is_equal_approx(p) and _uid(_hands.find_near(m2)) == bag,
+			"hands bodies: the next pass keeps that body where it is (not made again at the pile's pose)")
+	_check.call(_hands.grab("mouse", _hands.find_near(m2)) and bs.body_of(bag) == null, "hands bodies: grab it again")
+	_seen.clear()
+	op = _hands.release("mouse", {"kind": "surface", "square": P + Vector3i(2, 0, 0), "spot": Vector2(0.5, 0.5)}, Vector3(0, 0, -2))
+	_check.call(op == "take" and _seen.size() == 1 and _seen[0][0] == "refused" and _seen[0][2] == bag and _carried(bag)
+			and bs.body_of(bag) == null and not bs.is_pending(bag) and not bs.is_held(bag) and not _world.hidden_items.has(bag)
+			and _actions.pending_count() == 0, "hands bodies: a refused drop: the body goes, the item stays in CDDA's hands (%s)" % [_seen])
+	_test_hand_over(bag, bs)
+	var it: ItemRef = _hands.holding("vr_r").get("item")
+	var put := _hands.drop_at(_world.coords.ms_center_to_world(SE) + Vector3(0.1, 0.3, 0.1), it) if it != null else {}
+	_seen.clear()
+	op = _hands.release("vr_r", put) if it != null else ""
+	var down := bs.body_of(bag)
+	_check.call(op == "drop" and _seen == [["confirmed", "vr_r", bag, ""]] and _handle(SE, _it["bag_canvas"]) == bag
+			and _hands._bare_floor(SE) and down != null and down.linear_velocity == Vector3.ZERO and not bs.is_pending(bag),
+			"hands bodies: put down on bare floor without moving: a body from the hand's pose too")
+	_hands.bodies = null
+	bs.clear()
+	bs.free()
+	_check.call(_hands.picker.bodies == null and _world.hidden_items.is_empty() and not _world.item_slot(bag).is_empty()
+			and _actions.pending_count() == 0, "hands bodies: no ItemBodies: everything drawn static again")
+
+
+## Hands.hand_over with the carried bag (`bag`, wielded) and a lying rock; containers kept upright; Hands.upright.
+func _test_hand_over(bag: int, bs: ItemBodies) -> void:
+	var c: ItemRef = null
+	for r in _hands.picker.carried():
+		if r.uid == bag:
+			c = r
+	_check.call(c != null and c.is_wielded() and _hands.adopt("vr_r", c), "hand over: (the carried bag in a hand)")
+	_check.call(not _hands.hand_over("vr_r", "vr_l") and not _hands.hand_over("vr_r", "vr_r", "main")
+			and not _hands.hand_over("vr_l", "vr_r", "main") and not _hands.hand_over("vr_r", "vr_l", "both")
+			and _hands.holding("vr_l").is_empty() and _held_uid("vr_r") == bag and _actions.pending_count() == 0,
+			"hand over: a carried item needs a CDDA hand; nothing from an empty hand or to the same hand")
+	_seen.clear()
+	_check.call(_hands.hand_over("vr_r", "vr_l", "main") and _hands.holding("vr_r").is_empty() and _hands.proxy("vr_r") == null
+			and _held_uid("vr_l") == bag and _hands.proxy("vr_l") != null and _seen.is_empty() and _actions.pending_count() == 0,
+			"hand over: already in that CDDA hand: only the hands change, nothing sent")
+	var empty_upright := _hands.keeps_upright("vr_l")
+	_check.call(_hands.hand_over("vr_l", "vr_r", "off") and _seen == [["confirmed", "vr_r", bag, ""]]
+			and (_hands.holding("vr_r")["item"] as ItemRef).is_off_hand() and not (_hands.holding("vr_r")["item"] as ItemRef).is_wielded()
+			and _hands.holding("vr_l").is_empty() and _snap.player_wielded == 0 and _actions.pending_count() == 0,
+			"hand over: CDDA moves it to the other hand (main to off); the hand holds it as CDDA has it now")
+	var extra := _mock.give(_it["rock"], 0, Snapshot.CARRIED_WIELDED)
+	_bump()
+	_seen.clear()
+	_hands.hand_over("vr_r", "vr_l", "main")
+	_check.call(extra > 0 and _seen.size() == 1 and _seen[0][0] == "refused" and _seen[0][1] == "vr_l" and _seen[0][2] == bag
+			and (_seen[0][3] as String).begins_with("Your hand is full") and _held_uid("vr_r") == bag and _hands.proxy("vr_r") != null
+			and _hands.holding("vr_l").is_empty() and _hands.proxy("vr_l") == null and _actions.pending_count() == 0,
+			"hand over: refused (the main hand is full): back in the first hand, CDDA's reason (%s)" % [_seen])
+	_mock.drop_item(extra, _it["rock"], S)
+	_seen.clear()
+	var rock_t := _hands.find_near(_mid(extra), 0.05)
+	_check.call(_uid(rock_t) == extra and _hands.grab("vr_l", rock_t) and not _hands.keeps_upright("vr_l")
+			and _hands.hand_over("vr_l", "mouse") and _held_uid("mouse") == extra and _hands.holding("vr_l").is_empty()
+			and _world.hidden_items.has(extra) and bs.is_held(extra) and _seen.is_empty() and _actions.pending_count() == 0,
+			"hand over: an item lying in the world only changes hands, still hidden, nothing sent")
+	_hands.cancel("mouse")
+	_check.call(not bs.is_held(extra) and not _world.hidden_items.has(extra) and _handle(S, _it["rock"]) == extra
+			and _actions.pending_count() == 0, "hand over: put back")
+	_mock.take_item(extra, _it["rock"], S, "pack")
+	var full_before := _hands.keeps_upright("vr_r")
+	var inside := _mock.give(_it["rock"], bag, 0)
+	_bump()
+	var full := _hands.keeps_upright("vr_r")
+	var g := ItemVisual.grip(_it["bag_canvas"], _world).origin
+	var hp := _world.coords.ms_center_to_world(P) + Vector3(0.3, 1.1, -0.2)
+	var tilt := Basis(Vector3.UP, -0.4) * Basis(Vector3.FORWARD, 0.9)
+	_hands.set_hand_pose("vr_r", Transform3D(tilt, hp), true)
+	var q := _hands.proxy("vr_r")
+	var qb := q.global_basis.orthonormalized() if q != null else Basis()
+	var hung := q != null and qb.is_equal_approx(Hands.upright(tilt)) and (q.global_position + qb * g).is_equal_approx(hp)
+	_hands.set_proxy_pose("vr_r", Transform3D(tilt, hp))
+	qb = q.global_basis.orthonormalized() if q != null else Basis()
+	var lagged := q != null and qb.is_equal_approx(Hands.upright(tilt)) and (q.global_position + qb * g).is_equal_approx(hp + tilt * g)
+	_check.call(not empty_upright and not full_before and inside > 0 and full and hung and lagged,
+			"hands upright: a carried bag with something in it hangs upright from its grip, turning only with the hand's yaw")
+	_check.call(Hands.upright(Basis.IDENTITY).is_equal_approx(Basis.IDENTITY)
+			and Hands.upright(Basis(Vector3.RIGHT, -PI / 2)).is_equal_approx(Basis.IDENTITY)
+			and Hands.upright(Basis(Vector3.UP, 0.5) * Basis(Vector3.RIGHT, 0.3)).is_equal_approx(Basis(Vector3.UP, 0.5)),
+			"hands upright: only the yaw is kept (pointing straight down: the yaw of its right side)")
+
+
+## The uid hand `id` holds, -1 for none.
+func _held_uid(id: String) -> int:
+	var it: Variant = _hands.holding(id).get("item")
+	return (it as ItemRef).uid if it is ItemRef else -1
+
+
+## A new snapshot (after MockItems.give, which doesn't send one).
+func _bump() -> void:
+	_snap.seq += 1
+	_world.apply_snapshot(_snap)
+	_actions.on_snapshot(_snap)
+
+
+## A square with furniture on the player's level in the snapshot, NO_SQ if none.
+func _furniture_square() -> Vector3i:
+	for pos: Vector3i in _snap.submaps:
+		var sm: Snapshot.Submap = _snap.submaps[pos]
+		if pos.z != P.z:
+			continue
+		for i in sm.furn.size():
+			if sm.furn[i] != 0:
+				return CddaCoords.sm_to_ms(pos) + Vector3i(i % CddaCoords.SEEX, i / CddaCoords.SEEX, 0)
+	return NO_SQ

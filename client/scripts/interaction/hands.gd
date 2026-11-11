@@ -6,6 +6,11 @@ extends Node
 ## one-item CDDA actions through ItemActions (take, then put / drop); CDDA's time, volume and weight rules decide,
 ## and a refusal brings the item back with CDDA's reason. Flat-screen input lives in ui/GrabController, VR input in
 ## vr/VrRig; both only feed this.
+## E2 item physics (`bodies` set, main.gd): items lying as physics bodies are pointed at and grabbed where their bodies
+## are now (ItemPicker asks ItemBodies); a grabbed body goes while the hand holds it; letting go with a velocity
+## onto a surface, or onto bare floor at all, makes a body at the copy's pose with that velocity, while CDDA's drop
+## goes out exactly as without it (same square and spot). A held container that may hold something stays upright
+## (yaw follows the hand). hand_over() moves an item from one hand to the other (CDDA's hand change for a carried one).
 ##
 ## A target is a Dictionary: {kind: "door" | "item", node: Grabbable (doors) or null, item: ItemRef (items) or null,
 ## square: Vector3i, point: Vector3 (world), dist: float, name: String}; {} for none.
@@ -30,12 +35,21 @@ var proxy_factory := Callable()
 ## The second step of a move (put / drop after its take) runs on the next frame, outside ItemActions' signal;
 ## tests turn it off to run it at once.
 var defer_steps := true
+## E2 item physics (optional, main.gd): the items lying near the player as physics bodies. Set: bodies are pointed at
+## and grabbed where they are, and letting go may make a body (release). Null: everything as before.
+var bodies: ItemBodies:
+	set(b):
+		bodies = b
+		if picker != null:
+			picker.bodies = b
 
 var _hands := {}           # id -> Hand
 var _held_hidden := {}     # uid -> true: items a hand holds right now (hidden in their pile)
 var _pending_hidden := {}  # uid -> true: items in flight (ItemActions.hidden_changed)
 var _owner := {}           # uid -> hand id that started the action
 var _then := {}            # uid -> Callable(item: ItemRef) -> bool: second step after a take finishes
+var _handing := {}         # uid -> hand id it was handed over from while CDDA's hand change is in flight
+var _sent_hidden := {}     # the set last given to world.set_hidden_items (the hands' owner set)
 
 static var _outline_mat: StandardMaterial3D
 static var _box_mesh: BoxMesh
@@ -48,6 +62,8 @@ class Hand:
 	var held := {}
 	var proxy: Node3D
 	var outline: MeshInstance3D
+	var upright_key := []   # what `upright` was worked out for (item, carried, snapshot)
+	var upright := false    # the held copy is kept upright (a container that may hold something)
 
 
 func _init(w: WorldView, a: ItemActions) -> void:
@@ -135,6 +151,8 @@ func set_hand_pose(id: String, xform: Transform3D, turn: bool) -> void:
 	var it: ItemRef = h.held.get("item")
 	var g := ItemVisual.grip(it.type, world) if it != null else Transform3D.IDENTITY
 	var b := xform.basis.orthonormalized() * g.basis.inverse()
+	if _keeps_upright(h):
+		b = upright(b)   # a container that may hold something hangs from the grip, only turning with the hand
 	h.proxy.global_transform = Transform3D(b.scaled(h.proxy.scale), xform.origin - b * g.origin)
 
 
@@ -145,11 +163,21 @@ func turn_held(id: String, radians: float) -> void:
 		h.proxy.global_basis = Basis(Vector3.UP, radians) * h.proxy.global_basis
 
 
-## Places what a hand holds directly (VR's weight lag): `xform` without scale, the copy keeps its item's size.
+## Places what a hand holds directly (VR's weight lag): `xform` without scale, the copy keeps its item's size. A
+## container kept upright turns only about the up axis, around its grip point.
 func set_proxy_pose(id: String, xform: Transform3D) -> void:
 	var h: Hand = _hands.get(id)
-	if h != null and h.proxy != null and is_instance_valid(h.proxy):
-		h.proxy.global_transform = Transform3D(xform.basis.orthonormalized().scaled(h.proxy.scale), xform.origin)
+	if h == null or h.proxy == null or not is_instance_valid(h.proxy):
+		return
+	var b := xform.basis.orthonormalized()
+	var o := xform.origin
+	if _keeps_upright(h):
+		var it: ItemRef = h.held.get("item")
+		var g := ItemVisual.grip(it.type, world).origin if it != null else Vector3.ZERO
+		var up := upright(b)
+		o = xform.origin + b * g - up * g   # the grip point stays where it was
+		b = up
+	h.proxy.global_transform = Transform3D(b.scaled(h.proxy.scale), o)
 
 
 ## The target under a hand now ({} for none; a door leaf freed since is forgotten).
@@ -221,18 +249,24 @@ func _grab(id: String, target: Dictionary) -> bool:
 	if it == null or not _usable(it):
 		return false
 	h.held = target
+	h.upright_key = []
 	_light(h, h.hover, false)
 	h.hover = {}
-	var slot := world.item_slot(it.uid)   # before hiding it: item_slot gives nothing for hidden items
+	var slot := picker.slot(it.uid)   # before hiding it: item_slot gives nothing for hidden items (a body: its pose)
 	if not it.carried:
 		_held_hidden[it.uid] = true
 		_sync_hidden()
+		var bs := _bodies()
+		if bs != null:
+			bs.hold(it.uid)   # its body goes (after the hand hid it: the static copy stays hidden throughout)
 	h.proxy = _make_proxy(it)
 	world.add_child(h.proxy)
 	var start := Transform3D(Basis.IDENTITY, it.point if it.is_drawn() else h.xform.origin)
 	if not slot.is_empty():   # where the pile drew it, turned the same way (the proxy has its own scale)
 		var xf: Transform3D = slot[4]
 		start = Transform3D(Basis(xf.basis.get_rotation_quaternion()), xf.origin)
+	if _keeps_upright(h):
+		start.basis = upright(start.basis)
 	h.proxy.position = Vector3.ZERO
 	h.proxy.global_position = start.origin
 	h.proxy.global_basis = start.basis.scaled(h.proxy.scale) if h.proxy.scale != Vector3.ONE else start.basis
@@ -276,7 +310,12 @@ func _drop(hit: Dictionary, under: ItemRef, held: ItemRef) -> Dictionary:
 
 ## Lets go. Doors: the leaf settles. Items: `drop` (from drop_on_ray / drop_at) says where; kind "none" (or {})
 ## puts it back. Returns the action started: "" (none or put back), "put", "drop", or "take" (first of two steps).
-func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
+## With `bodies` set, letting go onto a surface with a `velocity` (world m/s; VR: the hand's), or onto bare floor at
+## all, also makes a body where the copy was, moving at that velocity (ItemBodies.let_go): it falls and rolls while
+## CDDA's drop goes out unchanged (same square, same spot); CDDA's answer keeps it (landed) or removes it (refused:
+## the item stays carried, or back where it lay). Without `bodies` (or into a container, onto a burner, put back) the
+## velocity changes nothing: the item shows at its spot as before.
+func release(id: String, drop: Dictionary, velocity := Vector3.ZERO) -> String:
 	var h := hand(id)
 	var t := h.held
 	h.held = {}
@@ -289,12 +328,21 @@ func release(id: String, drop: Dictionary, _velocity := Vector3.ZERO) -> String:
 			(n as Grabbable).set_highlight(false)
 		return ""
 	var it: ItemRef = t["item"]
+	var loose: Variant = _loose_pose(h, drop, velocity)   # before the copy goes
 	_free_visuals(h, false)
 	_held_hidden.erase(it.uid)
 	var kind: String = drop.get("kind", "none")
 	var op := ""
+	var bs := _bodies()
+	var body := false
+	if loose is Transform3D:   # before the drop goes out: a backend may answer inside the call (MockItems)
+		body = bs.let_go(it.uid, it.type, loose, velocity, drop["square"], it.size_m) != null
 	if kind in ["surface", "burner", "container"]:
 		op = _move(id, it, drop)
+	if bs != null:
+		if body and op == "":
+			bs.forget(it.uid)   # nothing went out: the item is where it was
+		bs.unhold(it.uid)
 	_sync_hidden()
 	return op
 
@@ -334,6 +382,7 @@ func throw(id: String, square: Vector3i) -> String:
 	_held_hidden.erase(it.uid)
 	var second := func(c: ItemRef) -> bool: return actions.throw(c, square)
 	var op := _two_step(id, it, second, "throw")
+	_unhold(it.uid)
 	_sync_hidden()
 	return op
 
@@ -341,6 +390,62 @@ func throw(id: String, square: Vector3i) -> String:
 ## Cancels a hold: the item goes back, nothing is sent.
 func cancel(id: String) -> void:
 	release(id, {})
+
+
+## Hands what hand `from_id` holds to hand `to_id` (which must hold nothing). An item lying in the world that no
+## action is under yet only changes hands. A carried one: `into` ("main" / "off") is the CDDA hand `to_id` stands for;
+## when it is there already it only changes hands, else CDDA moves it (ItemActions.hold, the queued item actions: its
+## time and rules). The copy is in the new hand at once; when CDDA refuses it goes back to `from_id` (`refused` names
+## `to_id`). False (nothing changed, nothing sent) when there is nothing to hand over, `to_id` holds something, an
+## action on the item is in flight, or `into` is missing for a carried item. (Not `pass`: a GDScript keyword.)
+func hand_over(from_id: String, to_id: String, into := "") -> bool:
+	if from_id == to_id or not _hands.has(from_id):
+		return false
+	var a := hand(from_id)
+	var b := hand(to_id)
+	_forget_freed(a)
+	_forget_freed(b)
+	if a.held.is_empty() or a.held.get("kind") != "item" or not b.held.is_empty():
+		return false
+	var it: ItemRef = a.held.get("item")
+	if it == null or actions.pending(it.uid) != "" or _then.has(it.uid) or _handing.has(it.uid):
+		return false
+	var send := false
+	if it.carried:
+		if not (into in ["main", "off"]):
+			return false
+		var flag := Snapshot.CARRIED_WIELDED if into == "main" else Snapshot.CARRIED_OFFHAND
+		send = (it.flags & flag) == 0
+	_move_hold(a, b)
+	if not send:
+		return true
+	_owner[it.uid] = to_id   # before the call: a backend may answer inside it (MockItems)
+	_handing[it.uid] = from_id
+	if actions.hold(it, into):
+		return true
+	_owner.erase(it.uid)
+	_handing.erase(it.uid)
+	_move_hold(b, a)
+	return false
+
+
+## Whether hand `id`'s copy is kept upright now (tests, VR).
+func keeps_upright(id: String) -> bool:
+	return _hands.has(id) and _keeps_upright(_hands[id])
+
+
+## `b` (orthonormal) turned about the up axis only, its pitch and roll dropped: the yaw of its forward (-Z), or of
+## its right (X) when it points straight up or down.
+static func upright(b: Basis) -> Basis:
+	var f := -b.z
+	f.y = 0.0
+	if f.length_squared() < 1e-6:
+		var r := b.x
+		r.y = 0.0
+		if r.length_squared() < 1e-6:
+			return Basis.IDENTITY
+		f = Vector3.UP.cross(r)
+	return Basis.looking_at(f.normalized(), Vector3.UP)
 
 
 ## Takes the targeted item into the pack, the main hand or the off hand (E on the crosshair's item).
@@ -499,7 +604,7 @@ func _light(h: Hand, t: Dictionary, on: bool) -> void:
 		if h.outline != null and is_instance_valid(h.outline):
 			h.outline.visible = false
 		return
-	var slot := world.item_slot((t["item"] as ItemRef).uid)
+	var slot := picker.slot((t["item"] as ItemRef).uid)
 	if slot.is_empty():
 		return
 	if h.outline == null or not is_instance_valid(h.outline):
@@ -549,17 +654,30 @@ func _on_pending_hidden(uids: Dictionary) -> void:
 func _sync_hidden() -> void:
 	var all := _pending_hidden.duplicate()
 	all.merge(_held_hidden)
-	if all.hash() != world.hidden_items.hash():
+	# Against the set last given, not world.hidden_items alone: that is the union with other owners' sets (ItemBodies
+	# hides the items it has bodies for), which can equal this set while the hands' own set lacks a uid.
+	if all.hash() != _sent_hidden.hash() or not world.hidden_items.has_all(all.keys()):
+		_sent_hidden = all
 		world.set_hidden_items(all)
 
 
 func _on_finished(item: ItemRef, op: String) -> void:
 	var id: String = _owner.get(item.uid, "")
+	var bs := _bodies()
+	if op == "drop" and bs != null:
+		bs.landed(item.uid)   # a body let go with it stays (ItemBodies keeps it once the world shows it there)
+	if op == "hold":   # handed over: the hand holding it now holds it as CDDA has it now
+		_handing.erase(item.uid)
+		var hh := _holder(item.uid)
+		if hh != null:
+			hh.held = _item_target(_carried(item), 0.0)
+			hh.upright_key = []
 	if op == "take":   # a hand still holding it (taken on grab) holds a carried item now, no pile to hide it in
 		var h := _holder(item.uid)
 		if h != null:
 			var c := _carried(item)
 			h.held = _item_target(c, 0.0)
+			h.upright_key = []
 		if _held_hidden.erase(item.uid):
 			_sync_hidden()
 	if op == "take" and _then.has(item.uid):
@@ -605,7 +723,86 @@ func _drop_hold(h: Hand) -> void:
 	_free_visuals(h, false)
 	if it != null:
 		_held_hidden.erase(it.uid)
+		_unhold(it.uid)
 		_sync_hidden()
+
+
+## What hand `from` holds (its target and copy) moves to hand `to`, nothing sent; `to`'s outline goes.
+func _move_hold(from: Hand, to: Hand) -> void:
+	_light(to, to.hover, false)
+	to.hover = {}
+	to.held = from.held
+	to.proxy = from.proxy
+	to.upright_key = []
+	from.held = {}
+	from.proxy = null
+	from.upright_key = []
+
+
+## The bodies when set and not freed, else null.
+func _bodies() -> ItemBodies:
+	return bodies if is_instance_valid(bodies) else null
+
+
+## No hand holds item `uid` any more: it may lie as a body again.
+func _unhold(uid: int) -> void:
+	var bs := _bodies()
+	if bs != null:
+		bs.unhold(uid)
+
+
+## Where hand h's copy becomes a physics body as it lets go toward `drop` (release): with `bodies` set, onto a
+## surface while the hand moves, or onto bare floor at all; null otherwise (no bodies, a container, a burner, put
+## back, no copy). The copy's pose without its scale.
+func _loose_pose(h: Hand, drop: Dictionary, velocity: Vector3) -> Variant:
+	if _bodies() == null or drop.get("kind") != "surface" or not drop.get("square") is Vector3i:
+		return null
+	if h.proxy == null or not is_instance_valid(h.proxy) or not h.proxy.is_inside_tree():
+		return null
+	var moving := velocity.is_finite() and not velocity.is_zero_approx()
+	if not moving and not _bare_floor(drop["square"]):
+		return null
+	var xf := h.proxy.global_transform
+	return Transform3D(xf.basis.orthonormalized(), xf.origin) if xf.is_finite() else null
+
+
+## No furniture on square `sq` in the snapshot (unknown: false).
+func _bare_floor(sq: Vector3i) -> bool:
+	var s := world.snapshot
+	var sm: Snapshot.Submap = s.submaps.get(CddaCoords.ms_to_sm(sq)) if s != null else null
+	if sm == null:
+		return false
+	var l := CddaCoords.ms_to_local(sq)
+	var i := l.y * CddaCoords.SEEX + l.x
+	return i >= 0 and i < sm.furn.size() and sm.furn[i] == 0
+
+
+## Hand h's copy is kept upright: its item is a container (the id tables say it has pockets) that holds something
+## (carried: a carried row inside it; lying in the world: unknown, so it might). Worked out once per snapshot.
+func _keeps_upright(h: Hand) -> bool:
+	var it: ItemRef = h.held.get("item") if h.held.get("kind") == "item" else null
+	if it == null:
+		return false
+	var s := world.snapshot
+	var key := [it.uid, it.type, it.carried, s.get_instance_id() if s != null else 0, s.seq if s != null else -1]
+	if key == h.upright_key:
+		return h.upright
+	h.upright_key = key
+	h.upright = it.is_container(world.tables) and (not it.carried or _holds_any(it.uid))
+	return h.upright
+
+
+## Something carried is inside carried item `uid` (the snapshot's rows).
+func _holds_any(uid: int) -> bool:
+	var s := world.snapshot
+	if s == null:
+		return false
+	var c := s.carried
+	var n := mini(c.size(), Snapshot.MAX_CARRIED * Snapshot.CARRIED_STRIDE)
+	for k in range(0, n - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if c[k + 2] == uid and c[k] != uid:
+			return true
+	return false
 
 
 ## The put / drop after a take landed; confirmed or refused when it lands in turn.
@@ -618,6 +815,9 @@ func _second_step(item: ItemRef) -> void:
 	if next.call(_carried(item)):
 		return
 	_owner.erase(item.uid)
+	var bs := _bodies()
+	if bs != null:
+		bs.forget(item.uid)   # the drop didn't go out: it stays carried, its body goes
 	refused.emit(id, _item_target(item, 0.0), "It can't go there now (it is in your hands).")
 
 
@@ -625,9 +825,20 @@ func _on_refused(item: ItemRef, op: String, reason: String) -> void:
 	var id: String = _owner.get(item.uid, "")
 	_owner.erase(item.uid)
 	_then.erase(item.uid)
+	var bs := _bodies()
+	if bs != null:
+		bs.forget(item.uid)   # a body let go with a refused take / drop goes: carried, or back where it lay
 	var h := _holder(item.uid) if op == "take" else null
 	if h != null:   # taken on grab and refused: the hand is empty again (refused carries where it was)
 		_drop_hold(h)
+	if op == "hold" and _handing.has(item.uid):   # handed over and refused: back to the first hand
+		var back := hand(str(_handing[item.uid]))
+		_handing.erase(item.uid)
+		var now := _holder(item.uid)
+		if now != null and back.held.is_empty():
+			_move_hold(now, back)
+		elif now != null:
+			_drop_hold(now)   # the first hand holds something else now: CDDA still has it, nothing shown
 	refused.emit(id, _item_target(item, 0.0), reason)
 
 

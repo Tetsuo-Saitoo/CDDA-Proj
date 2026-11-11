@@ -173,10 +173,11 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
-	# E2 item physics (slices 1-2), desktop and VR alike, real time and turns: collision boxes and item bodies around
-	# the square the hands reach from. Client-side poses only; nothing is sent to CDDA. Bodies need WorldView's
-	# owner sets (set_hidden_items_for); without them only the collision is built. Only with --item-physics until
-	# slice 5: hidden items can't be pointed at, so bodies would hide every item near the player from the hands.
+	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
+	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
+	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
+	# only the collision is built. Only with --item-physics until its main-thread cost in crowded places (stocked
+	# stores) is shown to be low enough.
 	if _args.has("item-physics"):
 		world_collision = WorldCollision.new(world)
 		world_collision.centre = _reach_square
@@ -185,6 +186,7 @@ func _ready() -> void:
 		item_bodies.centre = _reach_square
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
+		hands.bodies = item_bodies
 	pour.actions = item_actions
 	pour.held = _held_liquid
 	pour.target = _pour_target
@@ -455,7 +457,7 @@ func _start_vr() -> void:
 	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
-	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
+	world.coords.origin_shifted.connect(vr.shift)   # the rig, its open pack and pulled copies' starts
 	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
 		xr.connect("session_stopping", _save_and_quit)
