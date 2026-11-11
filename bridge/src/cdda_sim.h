@@ -31,6 +31,8 @@ class CddaSim : public godot::RefCounted
                                   const godot::String &world, const godot::String &save );
         godot::PackedStringArray list_worlds( const godot::String &user_dir ) const;
         godot::PackedStringArray list_saves( const godot::String &user_dir, const godot::String &world ) const;
+        godot::String delete_save( const godot::String &user_dir, const godot::String &world,
+                                   const godot::String &save, bool delete_empty_world );
         void stop();
         godot::String get_state() const;
         godot::String get_error() const;

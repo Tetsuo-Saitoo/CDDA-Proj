@@ -32,6 +32,11 @@ func _initialize() -> void:
 		_check(TestDir.use_parent(OS.get_cmdline_user_args()), "run 1 named its folder (--test-run)")
 		_user_dir = TestDir.global("cdda-test")
 		_run_load()
+	elif "--delete-locked" in OS.get_cmdline_user_args():
+		_run_name = "live tests (delete from a world in use)"
+		_check(TestDir.use_parent(OS.get_cmdline_user_args()), "run 1 named its folder (--test-run)")
+		_user_dir = TestDir.global("cdda-test")
+		_run_delete_locked()
 	else:
 		_user_dir = TestDir.global("cdda-test")
 		_run()
@@ -88,6 +93,8 @@ func _run() -> void:
 		_finish()
 		return
 	_check(_sim.get_state() == "running", "state running")
+	_check(_sim.delete_save(user_dir, WORLD, "Anyone", false) == "not while a game runs",
+			"delete_save refused while a game runs")
 	var turn0: int = req["turn"]
 
 	var snap := Snapshot.parse_text(_sim.get_snapshot_json(1, 1))
@@ -201,8 +208,35 @@ func _run_load() -> void:
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
 	_check(snap.turn == saved_turn, "snapshot turn matches too (%d)" % snap.turn)
 	_check(Array(_sim.list_saves(_user_dir, WORLD)) == [expect["save"]], "the save is still there")
+	# Another process can't delete from the world this one plays (run 3 tries; it shares run 1's folder).
+	var parent: String = Array(OS.get_cmdline_user_args()).filter(
+			func(a: String) -> bool: return a.begins_with("--test-run="))[0]
+	var out := []
+	var code := OS.execute(OS.get_executable_path(), PackedStringArray(["--headless", "--path",
+			ProjectSettings.globalize_path("res://"), "--script", "res://tests/live_test.gd", "--",
+			"--delete-locked", parent]), out, true)
+	for chunk: String in out:
+		print(chunk.strip_edges(false, true).indent("  | "))
+	_check(code == 0, "another process can't delete from this world while it plays (exit %d)" % code)
 	_sim.stop()
 	_check(_sim.get_state() == "stopped", "stops")
+	# Once the game is done: the character and its now empty world go.
+	why = _sim.delete_save(_user_dir, WORLD, expect["save"], true)
+	_check(why.is_empty(), "delete_save deletes the character after its game (%s)" % why)
+	_check(_sim.list_saves(_user_dir, WORLD).is_empty() and not (WORLD in _sim.list_worlds(_user_dir)),
+			"and the world it leaves empty")
+	_finish()
+
+
+## Run 3, started by run 2 while its game holds the world: delete_save must refuse and touch nothing.
+func _run_delete_locked() -> void:
+	var sim: RefCounted = ClassDB.instantiate("CddaSim")
+	var saves := Array(sim.list_saves(_user_dir, WORLD))
+	_check(saves.size() == 1, "the save is listed (%s)" % [saves])
+	if saves.size() == 1:
+		var why: String = sim.delete_save(_user_dir, WORLD, saves[0], true)
+		_check(why == "that world is in use by another game", "delete_save refused (%s)" % why)
+		_check(Array(sim.list_saves(_user_dir, WORLD)) == saves, "the save is still there")
 	_finish()
 
 
@@ -229,6 +263,34 @@ func _check_listing() -> void:
 	_check(sim.list_saves(root, "../save/listed").is_empty() and sim.list_saves(root, "no-options").is_empty()
 			and sim.list_saves("relative", "listed").is_empty(), "list_saves refuses paths and non-worlds")
 	_check(sim.list_worlds(root.path_join("missing")).is_empty(), "no worlds in a missing user dir")
+
+	# delete_save: everything named <Alice's base>.<anything> goes (folders too, links in them removed, not
+	# followed), nothing else; the world stays while save files are left in it.
+	for name: String in ["#QWxpY2U=.log", "#QWxpY2U=.apu.json", "#QWxpY2U=X.log"]:
+		_touch(w.path_join(name))
+	DirAccess.make_dir_recursive_absolute(w.path_join("#QWxpY2U=.mm1"))
+	_touch(w.path_join("#QWxpY2U=.mm1/m.0.0.0"))
+	var outside := root.path_join("outside")
+	DirAccess.make_dir_recursive_absolute(outside)
+	_touch(outside.path_join("keep.txt"))
+	# Links need privileges on Windows: checked when one could be made.
+	var linked := DirAccess.open(w).create_link(outside, w.path_join("#QWxpY2U=.mm1/link")) == OK
+	_check(not String(sim.delete_save(root, "../save/listed", "Alice", false)).is_empty()
+			and not String(sim.delete_save(root, "listed", "Carol", false)).is_empty()
+			and not String(sim.delete_save(root, "no-options", "Alice", false)).is_empty()
+			and not String(sim.delete_save("relative", "listed", "Alice", false)).is_empty(),
+			"delete_save refuses paths, non-worlds and unlisted saves")
+	var why: String = sim.delete_save(root, "listed", "Alice", true)
+	_check(why.is_empty(), "delete_save deletes Alice (%s)" % why)
+	var left := Array(DirAccess.get_files_at(w)) + Array(DirAccess.get_directories_at(w))
+	var alice_left := left.filter(func(n: String) -> bool: return n.begins_with("#QWxpY2U=."))
+	_check(alice_left.is_empty(), "all of Alice's files and folders are gone (%s)" % [alice_left])
+	var kept := ["worldoptions.json", "#Qm9i.sav.zzip", "#QWxpY2V=.sav", "#QWxpY2U=X.log", "#Q2Fyb2w=.sav"]
+	_check(kept.all(func(n: String) -> bool: return n in left), "everything else stays (%s)" % [left])
+	_check(FileAccess.file_exists(outside.path_join("keep.txt")),
+			"a link's target stays (link made: %s)" % linked)
+	_check(Array(sim.list_saves(root, "listed")) == ["Bob"] and "listed" in Array(sim.list_worlds(root)),
+			"Bob is left, and the world with save files in it")
 
 
 func _touch(path: String) -> void:
@@ -289,7 +351,7 @@ func _drain() -> void:
 func _finish() -> void:
 	# Run 1 owns the folder (run 2 has finished by now). A failed run keeps it to look at; the next run's
 	# clean() removes it.
-	if not "--load" in OS.get_cmdline_user_args():
+	if not ("--load" in OS.get_cmdline_user_args() or "--delete-locked" in OS.get_cmdline_user_args()):
 		if _failed == 0:
 			TestDir.clean()
 		else:
