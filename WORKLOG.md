@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-10 — Character delete and the teleport cheat tried live (`tests/menu_live_test.gd`, new live script, two runs): menu delete with its confirm removes the character and its empty world, refused while a game runs; teleport by LiveSession and by the F1 entry moves the character. Passes against main's bridge build.
+
 - 2026-11-10 — `ItemActions.clear_jam(item)` (lead-vr): the bridge's "clear" op for the wielded gun's jam, judged by the gun's faults changing; MockItems clears jam faults or refuses "It isn't jammed." Client tests pass.
 - 2026-11-10 — Coordinator merged into main / fp3d after lead-qa's reviews: range saves resume as range games (fp3d-qa 42d18ef, bridge dd91ca8; the Test range button still starts fresh, user's call), WorldView hidden items per owner (world 65a061e), teleport cheat (fp3d-bridge b9fff75, bridge fc005d1, UI 657e442), multi-select item UI with review fixes, run/crouch keys, delete-character client (hidden until the bridge's delete_save lands).
 - 2026-11-10 — Multi-select review fixes (lead-qa): Tab batches keep their square and stop when you walk or the game stops; selection capped at 256; box drags skip rows out of sight; fewer restyles; list anchor stays on enabled rows. Client tests pass.
