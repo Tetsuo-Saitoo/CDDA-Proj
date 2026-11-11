@@ -507,6 +507,7 @@ func _start_live() -> void:
 	live.state_changed.connect(_apply_test_args)
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
+	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
 	live.range_done.connect(cheat_panel.on_range_done)
 	live.id_tables_ready.connect(func(t: IdTables) -> void: cheat_panel.tables = t)
 	cheat_panel.player_square = func() -> Variant:
@@ -607,6 +608,19 @@ func _menu_started(center: Control, ok: bool) -> void:
 func _sync_cheats_allowed() -> void:
 	if live != null:
 		live.set_cheats_allowed(key_menu.cheats_allowed())
+
+
+## A test-range game, started from the menu or a range save loaded (`info` from LiveSession.range_changed):
+## cheats are always allowed there, as the Test range start does, and pushed again, so the push made when the game
+## reached running doesn't undo the bridge's opt-in for the range. True when it changed something.
+static func range_forces_cheats(info: Dictionary, menu: KeyMenu, session: LiveSession) -> bool:
+	var on: Variant = info.get("range")
+	if menu == null or menu.cheats_forced or not (on is bool and on):
+		return false
+	menu.cheats_forced = true
+	if session != null:
+		session.set_cheats_allowed(menu.cheats_allowed())
+	return true
 
 
 ## --test: the test kit, once, and only for a new game (never on a load: the save already has it).
