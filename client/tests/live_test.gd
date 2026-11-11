@@ -278,6 +278,7 @@ func _check_listing() -> void:
 	_check(not String(sim.delete_save(root, "../save/listed", "Alice", false)).is_empty()
 			and not String(sim.delete_save(root, "listed", "Carol", false)).is_empty()
 			and not String(sim.delete_save(root, "no-options", "Alice", false)).is_empty()
+			and String(sim.delete_save(root, "LISTED", "Alice", false)) == "no world LISTED"
 			and not String(sim.delete_save("relative", "listed", "Alice", false)).is_empty(),
 			"delete_save refuses paths, non-worlds and unlisted saves")
 	var why: String = sim.delete_save(root, "listed", "Alice", true)
