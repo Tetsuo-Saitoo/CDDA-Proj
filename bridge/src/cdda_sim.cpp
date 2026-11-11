@@ -178,6 +178,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "start_load", "data_dir", "user_dir", "world", "save" ), &CddaSim::start_load );
     ClassDB::bind_method( D_METHOD( "list_worlds", "user_dir" ), &CddaSim::list_worlds );
     ClassDB::bind_method( D_METHOD( "list_saves", "user_dir", "world" ), &CddaSim::list_saves );
+    ClassDB::bind_method( D_METHOD( "delete_save", "user_dir", "world", "save", "delete_empty_world" ),
+                          &CddaSim::delete_save );
     ClassDB::bind_method( D_METHOD( "stop" ), &CddaSim::stop );
     ClassDB::bind_method( D_METHOD( "get_state" ), &CddaSim::get_state );
     ClassDB::bind_method( D_METHOD( "get_error" ), &CddaSim::get_error );
@@ -284,6 +286,17 @@ godot::PackedStringArray CddaSim::list_worlds( const String &user_dir ) const
         return to_names( fp3d_session::list_worlds( to_std( user_dir ), why ), why, "list_worlds" );
     } catch( const std::exception &e ) {
         return to_names( {}, e.what(), "list_worlds" );
+    }
+}
+
+String CddaSim::delete_save( const String &user_dir, const String &world, const String &save,
+                             bool delete_empty_world )
+{
+    try {
+        return to_godot( fp3d_session::delete_save( to_std( user_dir ), to_std( world ), to_std( save ),
+                         delete_empty_world ) );
+    } catch( const std::exception &e ) {
+        return to_godot( std::string( "delete_save: " ) + e.what() );
     }
 }
 
