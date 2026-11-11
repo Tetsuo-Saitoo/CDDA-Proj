@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <memory>
@@ -168,9 +169,10 @@ void check_boot_stall()
 
 namespace fs = std::filesystem;
 
-// The lock file's name: the world name in hex, ASCII letters lower-cased first (Windows folder names ignore case),
-// so no world name can make a path or a device name. The test range's worlds (fp3d-range, fp3d-range-N) share
-// one: its boot picks which itself.
+// The lock file's name: the world name's first 60 bytes in hex and a 64-bit hash of all of it, ASCII letters
+// lower-cased first (Windows folder names ignore case; callers pass the folder's own spelling, which list_worlds
+// gives, so other letters match too), so no world name can make a path, a device name or an overlong name. The test
+// range's worlds (fp3d-range, fp3d-range-N) share one: its boot picks which itself.
 fs::path lock_path( const fs::path &user, const std::string &world )
 {
     std::string key = world;
@@ -182,13 +184,21 @@ fs::path lock_path( const fs::path &user, const std::string &world )
     }
     static const char *const digits = "0123456789abcdef";
     std::string hex;
-    for( char ch : key ) {
-        unsigned char c = static_cast<unsigned char>( ch );
+    uint64_t hash = 14695981039346656037ull;   // FNV-1a
+    for( size_t i = 0; i < key.size(); i++ ) {
+        unsigned char c = static_cast<unsigned char>( key[i] );
         if( c >= 'A' && c <= 'Z' ) {
             c = static_cast<unsigned char>( c - 'A' + 'a' );
         }
-        hex += digits[c >> 4];
-        hex += digits[c & 15];
+        hash = ( hash ^ c ) * 1099511628211ull;
+        if( i < 60 ) {
+            hex += digits[c >> 4];
+            hex += digits[c & 15];
+        }
+    }
+    hex += '-';
+    for( int shift = 60; shift >= 0; shift -= 4 ) {
+        hex += digits[( hash >> shift ) & 15];
     }
     return user / "fp3d_locks" / ( hex + ".lock" );
 }
@@ -872,6 +882,15 @@ std::string delete_save( const std::string &user_dir, const std::string &world, 
     }
     if( !save_name_ok( save ) ) {
         return "bad save name";
+    }
+    // The world folder's own spelling (the lock's name depends on it), in a save folder that is no link.
+    const std::vector<std::string> worlds = list_worlds( user_dir, why );
+    if( std::find( worlds.begin(), worlds.end(), world ) == worlds.end() ) {
+        return "no world " + world;
+    }
+    std::error_code sec;
+    if( fs::symlink_status( user / "save", sec ).type() != fs::file_type::directory ) {
+        return "the save folder is a link";
     }
     const std::vector<std::string> saves = list_saves( user_dir, world, why );
     if( std::find( saves.begin(), saves.end(), save ) == saves.end() ) {

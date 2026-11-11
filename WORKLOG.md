@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — delete_save follow-up (lead-qa review): lock naming hardening, world names checked against list_worlds, contract note on the save folder. All Windows tests pass.
 - 2026-11-10 — Bridge `delete_save`: deletes a character's files from a world (and the world when it is left with no saves) for the main menu; a world played by one process can't be started or deleted from by another (OS lock file). Live test covers it; all Windows tests pass.
 - 2026-11-10 — Teleport cheat (bridge side): `cheat_teleport(pos)` moves the character to a square in the bubble (or the nearest free one) in any game with cheats allowed; the range's arrival helpers now live in `fp3d/arrival.{h,cpp}`. Sim (13 new checks), range, client and live tests pass on Windows.
 - 2026-11-10 — Range saves: loading a saved test range game resumes it as a range game (only in FP3D's range worlds), with the range operations allowed; "Test range" still starts fresh. Bridge call after lead-qa's fork change (42d18ef); sim, range, client and live tests pass.
