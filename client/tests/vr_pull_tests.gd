@@ -36,6 +36,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_stairs_and_nothing()
 	_test_far_and_door()
 	_test_refused()
+	_test_throw()
 	_rig.free()
 	_hands.free()
 	_actions.free()
@@ -366,3 +367,50 @@ func _test_refused() -> void:
 	_rig.right.global_position = _world.coords.ms_center_to_world(S) + Vector3(-0.2, 0.3, 0.2)
 	_rig.release(_rig.right, "grip_click")
 	_check.call(_row(bag).is_empty() and _handle(S, _it["bag_canvas"]) == bag and _clean(), "vr pull: put down again")
+
+
+## Throw: the flight's landing point, the hand's speed from its moves, a fast let go throws at that square (CDDA's
+## throw through Hands.throw), a slow one drops; a throw landing on the player's own square goes one square on.
+func _test_throw() -> void:
+	var p: Variant = VrRig.throw_point(Vector3(0, 1, 0), Vector3(0, 0, -5), 0.0)
+	var t := sqrt(2.0 * VrRig.GRAVITY) / VrRig.GRAVITY
+	_check.call(p is Vector3 and (p as Vector3).distance_to(Vector3(0, 0, -5.0 * t)) < 0.001,
+			"vr throw: a level throw from 1 m lands where a fall of 1 m takes it (%s)" % [p])
+	p = VrRig.throw_point(Vector3(0, 1, 0), Vector3(0, 15, -30), 0.0)
+	_check.call(p is Vector3 and absf((p as Vector3).length() - VrRig.THROW_MAX_M) < 0.001
+			and VrRig.throw_point(Vector3(0, 1, 0), Vector3(0, -8, 0), 0.0) == null
+			and VrRig.throw_point(Vector3(0, 1, 0), Vector3(INF, 0, 0), 0.0) == null,
+			"vr throw: at most %d m; straight down or a bad velocity: nowhere" % int(VrRig.THROW_MAX_M))
+	var l := _rig.left
+	l.position = Vector3(0.2, 1.0, 0.0)
+	_rig.hand_vel[0] = Vector3.ZERO
+	_rig.track_hands(0.1)
+	l.position = Vector3(0.2, 1.0, -0.6)
+	_rig.track_hands(0.1)
+	var v := _rig.hand_vel[0]
+	l.position += Vector3(5.0, 0, 0)   # 50 m/s: tracking coming back, not a throw
+	_rig.track_hands(0.1)
+	_check.call(absf(v.length() - 6.0) < 0.01 and v.is_equal_approx(_rig.global_basis * Vector3(0, 0, -6))
+			and _rig.hand_vel[0] == Vector3.ZERO,
+			"vr throw: the hand's speed from its moves in the rig (%.2f m/s); a jump counts as still" % v.length())
+	var rock := _handle(E, _it["rock"])
+	_rig.right.global_position = _mid(rock)
+	_frame()
+	_rig.press(_rig.right, "grip_click")
+	var held: ItemRef = _hands.holding("vr_r").get("item")
+	_rig.right.global_position = _world.coords.ms_center_to_world(P) + Vector3(0, 1.0, 0)
+	_rig.hand_vel[1] = Vector3(0, 0, -1.0)   # slower than Hands.THROW_SPEED
+	var slow: Variant = _rig.throw_square(_rig.right)
+	_rig.hand_vel[1] = Vector3(0, 2, -6)
+	var sq: Variant = _rig.throw_square(_rig.right)
+	var d: Vector3i = (sq as Vector3i) - P if sq is Vector3i else Vector3i.ZERO
+	_check.call(held != null and held.uid == rock and slow == null and d.x == 0 and d.z == 0 and d.y <= -3 and d.y >= -6,
+			"vr throw: slow: no throw; 6 m/s level north from 1 m up: %s squares north" % [-d.y])
+	_rig.release(_rig.right, "grip_click")
+	_check.call(sq is Vector3i and _handle(sq, _it["rock"]) == rock and _row(rock).is_empty() and _handle(E, _it["rock"]) != rock
+			and _clean(), "vr throw: let go that fast: CDDA throws it to that square")
+	_rig.hand_vel[1] = Vector3(0.5, -6, 0)   # hard at the feet
+	_check.call(_rig.throw_square(_rig.right) == P + Vector3i(1, 0, 0),
+			"vr throw: one landing on the player's square goes one square on along the throw")
+	_rig.hand_vel[0] = Vector3.ZERO
+	_rig.hand_vel[1] = Vector3.ZERO

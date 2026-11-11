@@ -32,6 +32,8 @@ extends XROrigin3D
 ## stairs) is outlined. The trigger click takes it into that hand like a grip (the same one-item take: CDDA judges
 ## reach) and its copy flies from where it lay into the hand over FLY_S, a buzz on arrival; a grip click lets it go.
 ## The main trigger uses pointed stairs first; nothing pointed at all: one buzz.
+## Throw: an item let go with the hand faster than Hands.THROW_SPEED (not into the pack or over the shoulder) is
+## thrown (Hands.throw) at the square where a flight from the hand at its velocity lands (track_hands, throw_square).
 ## Guns (L2, VrGun `gun`): while CDDA wields a gun its model is in the main hand and takes the main trigger right after
 ## the pack (fires from its muzzle); the off grip takes its magazine out at the well or racks its slide / bolt, a held
 ## magazine brought to the well goes in; the main grip on nothing just holds it.
@@ -143,6 +145,10 @@ const PULL_TRIGGER := 0.15 # a trigger past this points an empty hand's pull ray
                            # rests on Quest / Index triggers most of the time)
 const PULL_RAY_S := 0.05   # the pull ray looks again at most this often (each look casts two look rays)
 const FLY_S := 0.2         # a pulled item's copy flies into the hand in this long
+const THROW_MAX_M := 20.0  # a throw's square is at most this far (CDDA's range, aim and rules still decide)
+const VEL_RATE := 25.0     # 1/s: hand speed smoothing (about the last 40 ms)
+const MAX_HAND_SPEED := 30.0   # m/s: a faster reading is a tracking jump, not a throw
+const GRAVITY := 9.8
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
 var hands: Hands:
@@ -161,6 +167,9 @@ var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_ha
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
 var buzz_amp: Array[float] = [0.0, 0.0]    # the strength of each hand's last pulse (tests)
+var hand_vel: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   # each hand's smoothed velocity (world; walking and
+                                                              # turning the rig don't count): track_hands
+var _hand_was: Array = [null, null]        # each controller's last position in the rig's space
 var _note_left: Array[float] = [0.0, 0.0]
 var _grip_down: Array[bool] = [false, false]   # the grip button is held (two-handed support uses it)
 var pull_rays: Array[MeshInstance3D] = []      # each hand's faint pull ray (left, right)
@@ -354,6 +363,7 @@ func _process(delta: float) -> void:
 				settings["turn"] == "smooth")
 	step(delta, inp)
 	update_pointer()
+	track_hands(delta)
 	update_hands(delta)
 	gun.update(delta)
 	pose_hands()
@@ -708,7 +718,12 @@ func let_go(c: XRController3D) -> String:
 	if held.get("kind") != "item" or it == null or world.snapshot == null:
 		return hands.release(id, {})
 	var drop := pack.drop_for(c.global_position, it)
-	if drop.is_empty() and over_shoulder(camera.global_transform, c.global_position):
+	var shoulder := over_shoulder(camera.global_transform, c.global_position)
+	if drop.is_empty() and not shoulder:
+		var sq: Variant = throw_square(c)
+		if sq is Vector3i:
+			return hands.throw(id, sq)   # CDDA throws it (a lying item is taken first); refused: back where it was
+	if drop.is_empty() and shoulder:
 		var bag := shoulder_bag(hands.picker.worn_containers(), it, world.tables)
 		if bag != null:
 			drop = {"kind": "container", "container": bag}
@@ -727,6 +742,57 @@ func release(c: XRController3D, n: String) -> void:
 		return   # the end of a rack (VrGun)
 	if settings["grip"] != "toggle":   # toggle: the next press lets go
 		let_go(c)
+
+
+## Each hand's velocity (hand_vel) from its moves in the rig's space, smoothed over VEL_RATE, turned to world. A
+## reading faster than MAX_HAND_SPEED (lost tracking coming back) counts as standing still.
+func track_hands(delta: float) -> void:
+	if not is_finite(delta) or delta <= 0.0:
+		return
+	for i in 2:
+		var p := _ctrl(i).position
+		var was: Variant = _hand_was[i]
+		_hand_was[i] = p if p.is_finite() else null
+		var v := Vector3.ZERO
+		if was is Vector3 and p.is_finite():
+			v = global_basis * ((p - (was as Vector3)) / delta)
+			if not v.is_finite() or v.length() > MAX_HAND_SPEED:
+				v = Vector3.ZERO
+		hand_vel[i] = hand_vel[i].lerp(v, clampf(VEL_RATE * delta, 0.0, 1.0))
+
+
+## Where a throw from `from` at `vel` (world, m/s) lands on a floor at height floor_y: a flight without drag, its
+## flat distance at most THROW_MAX_M (floor_y's height, Vector3); null when it goes nowhere (straight up or down).
+static func throw_point(from: Vector3, vel: Vector3, floor_y: float) -> Variant:
+	if not from.is_finite() or not vel.is_finite() or not is_finite(floor_y):
+		return null
+	var flat := Vector3(vel.x, 0.0, vel.z)
+	var speed := flat.length()
+	if speed < 0.01:
+		return null
+	var h := maxf(from.y - floor_y, 0.0)
+	var t := (vel.y + sqrt(vel.y * vel.y + 2.0 * GRAVITY * h)) / GRAVITY
+	var p := from + flat / speed * minf(speed * t, THROW_MAX_M)
+	return Vector3(p.x, floor_y, p.z)
+
+
+## The square controller c's item is thrown at when let go now: faster than Hands.THROW_SPEED, where its flight
+## lands on the player's level (on the player's own square: the next one along the throw). null: not a throw.
+func throw_square(c: XRController3D) -> Variant:
+	var v: Vector3 = hand_vel[0 if c == left else 1]
+	var s := world.snapshot
+	if s == null or not (v.length() > Hands.THROW_SPEED):
+		return null
+	var at: Variant = throw_point(c.global_position, v, world.coords.ms_to_world(s.player_pos).y)
+	if not at is Vector3:
+		return null
+	var sq := world.coords.world_to_ms(at as Vector3)
+	sq.z = s.player_pos.z
+	if sq == s.player_pos:
+		var step := world.coords.world_to_ms(world.coords.ms_center_to_world(s.player_pos)
+				+ Vector3(v.x, 0.0, v.z).normalized()) - s.player_pos
+		sq = s.player_pos + Vector3i(step.x, step.y, 0)
+	return sq if sq != s.player_pos else null
 
 
 ## A hand at `hand_pos` is over the shoulder of a head at `head`: higher than SHOULDER_DROP under it and behind
