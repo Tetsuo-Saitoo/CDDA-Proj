@@ -11,6 +11,11 @@ extends Control
 ##
 ## Keys: Tab (the `inspect` action) opens it (main.gd, when allowed) and closes it, as does Esc; while open it
 ## takes those keys before the game (_input). Opening shows the mouse cursor, closing puts the old mouse mode back.
+##
+## Selecting several rows: a click selects a row, Ctrl+click adds or removes one, Shift+click selects the rows of a
+## column from the last clicked one; pressing a row's [ ] box and dragging over other rows sets them all as that
+## box became (no modifier keys needed: VR pointers). Esc clears the selection before it closes the view. The
+## selection is kept across rebuilds by uid and itype while the item is listed; opening the view starts empty.
 
 signal opened
 signal closed
@@ -23,6 +28,9 @@ const PENDING := Color(1, 1, 1, 0.4)
 const DIM := Color(0.65, 0.65, 0.7)
 const BAD := Color(1.0, 0.5, 0.45)
 const BOX := Color(0.7, 0.85, 1.0)   # container rows
+const SELECTED := Color(0.25, 0.4, 0.7, 0.5)
+const TICK_ON := "[x]"
+const TICK_OFF := "[ ]"
 const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
 const CANT_TAKE := "You can't take that now."
@@ -36,6 +44,8 @@ var mouse_hook := Callable()
 var cols: Array[Dictionary] = []
 ## The status line: the last refusal or local "can't".
 var status := ""
+## The rows picked to act on together: uid -> itype.
+var selection := {}
 
 var _prev_mouse: int = Input.MOUSE_MODE_VISIBLE
 var _dirty := false
@@ -45,6 +55,16 @@ var _status: Label
 var _row_slots := {}     # uid -> InspectSlot
 var _col_slots := {}     # column id -> InspectSlot
 var _group_slots := {}   # "column id|key" -> InspectSlot
+var _ticks := {}         # uid -> the row's [ ] box
+var _row_col := {}       # uid -> column id
+var _col_uids := {}      # column id -> [uid, ...] in listing order
+var _anchor := -1        # the row last clicked (Shift+click selects from it)
+var _click_uid := -1     # a plain press on a selected row: only it stays selected when let go without a drag
+var _paint := false      # a [ ] box was pressed and the button is still down
+var _paint_on := false   # what the rows a drag passes become
+var _paint_uid := -1     # the row the drag is on
+var _sel_style := _style(SELECTED, 0)
+var _no_style := StyleBoxEmpty.new()
 
 
 func _init(h: Hands, a: ItemActions) -> void:
@@ -98,8 +118,8 @@ func open() -> void:
 	_prev_mouse = _mouse()
 	_mouse(Input.MOUSE_MODE_VISIBLE)
 	_say("")
-	_head.text = "Inventory: drag an item onto a column, a pocket, a square or a container.   %s or Esc closes" \
-			% InputActions.key_of(&"inspect")
+	selection.clear()
+	_anchor = -1
 	visible = true
 	rebuild()
 	opened.emit()
@@ -114,7 +134,8 @@ func close() -> void:
 	closed.emit()
 
 
-## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc closes it. True when used.
+## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc clears the selection, or closes it
+## when there is none. True when used.
 func handle_key(event: InputEvent, allowed := true) -> bool:
 	if InputActions.pressed(event, &"inspect"):
 		if visible:
@@ -126,7 +147,10 @@ func handle_key(event: InputEvent, allowed := true) -> bool:
 		return false
 	var k := event as InputEventKey
 	if visible and k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE:
-		close()
+		if selection.is_empty():
+			close()
+		else:
+			clear_selection()
 		return true
 	return false
 
@@ -142,7 +166,7 @@ func refresh() -> void:
 
 
 func _process(_delta: float) -> void:
-	if _dirty and visible and not (is_inside_tree() and get_viewport().gui_is_dragging()):
+	if _dirty and visible and not _paint and not (is_inside_tree() and get_viewport().gui_is_dragging()):
 		rebuild()
 
 
@@ -158,8 +182,25 @@ func rebuild() -> void:
 	_row_slots.clear()
 	_col_slots.clear()
 	_group_slots.clear()
+	_ticks.clear()
+	_row_col.clear()
+	_col_uids.clear()
+	_paint = false
+	var listed := {}   # uid -> itype of every row
+	for col in cols:
+		for g: Dictionary in col["groups"]:
+			for r: Dictionary in g["rows"]:
+				var it: Variant = r.get("item")
+				if it is ItemRef:
+					listed[r["uid"]] = (it as ItemRef).type
+	for uid: int in selection.keys():   # gone, or another item under its uid now
+		if listed.get(uid, -1) != selection[uid]:
+			selection.erase(uid)
 	for col in cols:
 		_box.add_child(_column_ui(col))
+	if not _row_col.has(_anchor):
+		_anchor = -1
+	_show_selection()
 
 
 ## The slot of item `uid`'s row, of a column, or of a group (pocket index / square), null if none shown.
@@ -175,10 +216,114 @@ func group_slot(id: String, key: Variant) -> InspectSlot:
 	return _group_slots.get(_gkey(id, key))
 
 
+## Item `uid`'s [ ] box, null if its row isn't shown.
+func tick_box(uid: int) -> Label:
+	return _ticks.get(uid)
+
+
+# --- selecting several ---
+
+## A mouse event on item row `r` (InspectSlot). A left press: Ctrl+click adds or removes the row, Shift+click selects
+## the rows of its column from the last clicked one, a click selects only it; on a row already selected that waits
+## for the button to come up without a drag (dragging takes the selection along).
+func row_input(r: Dictionary, event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var uid: int = r.get("uid", -1)
+	if not _row_col.has(uid):
+		return
+	if not mb.pressed:
+		if uid == _click_uid:
+			select_only(uid)
+		_click_uid = -1
+		return
+	_click_uid = -1
+	if mb.ctrl_pressed or mb.meta_pressed:
+		set_selected(uid, not selection.has(uid))
+		_anchor = uid
+	elif mb.shift_pressed and _anchor >= 0:
+		select_run(_anchor, uid)
+	elif selection.has(uid):
+		_click_uid = uid
+		_anchor = uid
+	else:
+		select_only(uid)
+
+
+## A mouse event on row `uid`'s [ ] box (`box`): a left press ticks or unticks it, and until the button comes up the
+## rows a drag passes are set the same way (paint_at).
+func tick_input(event: InputEvent, uid: int, box: Control = null) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null and mb.button_index == MOUSE_BUTTON_LEFT:
+		_paint = false
+		if mb.pressed and _row_col.has(uid):
+			set_selected(uid, not selection.has(uid))
+			_paint_on = selection.has(uid)
+			_paint = true
+			_paint_uid = uid
+			_anchor = uid
+		return
+	var mm := event as InputEventMouseMotion
+	if mm != null and _paint:
+		if (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
+			_paint = false
+		elif box != null and box.is_inside_tree():
+			paint_at(box.get_global_transform() * mm.position)
+
+
+## A [ ] box drag is at `point` (global canvas position): the row there, and in the same column the rows between it
+## and the last one passed, are set as the press set its row.
+func paint_at(point: Vector2) -> void:
+	if not _paint:
+		return
+	for uid: int in _row_slots:
+		var s: InspectSlot = _row_slots[uid]
+		if uid != _paint_uid and s.is_visible_in_tree() and s.get_global_rect().has_point(point):
+			if _row_col.get(uid) == _row_col.get(_paint_uid):
+				_put_run(_paint_uid, uid, _paint_on)
+			else:
+				_put(uid, _paint_on)
+			_paint_uid = uid
+			_show_selection()
+			return
+
+
+## Only row `uid` is selected.
+func select_only(uid: int) -> void:
+	selection.clear()
+	_put(uid, true)
+	_anchor = uid
+	_show_selection()
+
+
+## Selects (`on`) or unselects row `uid`.
+func set_selected(uid: int, on: bool) -> void:
+	_put(uid, on)
+	_show_selection()
+
+
+## Only the rows from `a` to `b` are selected (listing order), when both are in one column; else only `b`.
+func select_run(a: int, b: int) -> void:
+	selection.clear()
+	if _row_col.has(a) and _row_col.get(a) == _row_col.get(b):
+		_put_run(a, b, true)
+	else:
+		_put(b, true)
+		_anchor = b
+	_show_selection()
+
+
+func clear_selection() -> void:
+	selection.clear()
+	_show_selection()
+
+
 # --- drag and drop (InspectSlot hands over) ---
 
 ## What dragging a row carries, null when it can't be dragged (in flight).
 func drag_data(row: Dictionary) -> Variant:
+	_click_uid = -1   # a drag, not a click
 	var it: Variant = row.get("item")
 	if not it is ItemRef or row.get("pending", false) or actions == null or actions.pending((it as ItemRef).uid) != "":
 		return null
@@ -301,6 +446,44 @@ func _on_refused(hand: String, _target_: Dictionary, reason: String) -> void:
 		refresh()
 
 
+## Adds or removes row `uid` (a shown row with an item) without redrawing.
+func _put(uid: int, on: bool) -> void:
+	var s: InspectSlot = _row_slots.get(uid)
+	var it: Variant = s.row.get("item") if s != null else null
+	if on and it is ItemRef:
+		selection[uid] = (it as ItemRef).type
+	else:
+		selection.erase(uid)
+
+
+## _put on the rows from `a` to `b` in `b`'s column (listing order); only `b` when `a` isn't in it.
+func _put_run(a: int, b: int, on: bool) -> void:
+	var list: Array = _col_uids.get(_row_col.get(b, ""), [])
+	var i := list.find(a)
+	var j := list.find(b)
+	if i < 0 or j < 0:
+		_put(b, on)
+		return
+	for k in range(mini(i, j), maxi(i, j) + 1):
+		_put(list[k], on)
+
+
+## Shows the selection: highlighted rows, ticked boxes, the count in the heading.
+func _show_selection() -> void:
+	for uid: int in _row_slots:
+		var on := selection.has(uid)
+		(_row_slots[uid] as InspectSlot).add_theme_stylebox_override("panel", _sel_style if on else _no_style)
+		var t: Label = _ticks.get(uid)
+		if t != null:
+			t.text = TICK_ON if on else TICK_OFF
+	var keys := InputActions.key_of(&"inspect")
+	if selection.is_empty():
+		_head.text = ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: drag over "
+				+ "the [ ] boxes, Ctrl+click, Shift+click.   %s or Esc closes") % keys
+	else:
+		_head.text = "Inventory: %d selected.   Esc clears the selection, %s closes" % [selection.size(), keys]
+
+
 func _say(text: String) -> void:
 	status = text
 	_status.text = text
@@ -323,6 +506,7 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	slot.add_theme_stylebox_override("panel", _style(Color(0.12, 0.12, 0.15, 0.95), 6))
 	_col_slots[id] = slot
+	_col_uids[id] = []
 	var v := VBoxContainer.new()
 	slot.add_child(v)
 	v.add_child(_label(col["title"], Color.WHITE))
@@ -364,6 +548,16 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		pad.custom_minimum_size.x = INDENT * depth
 		pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.add_child(pad)
+	var uid: int = r["uid"]
+	if r.get("item") is ItemRef:
+		var tick := _label(TICK_OFF, DIM)
+		tick.mouse_filter = Control.MOUSE_FILTER_STOP   # a press here selects; it never starts a move
+		tick.tooltip_text = "Select; drag over more boxes to select them too"
+		tick.gui_input.connect(tick_input.bind(uid, tick))
+		line.add_child(tick)
+		_ticks[uid] = tick
+		_row_col[uid] = col_id
+		(_col_uids[col_id] as Array).append(uid)
 	var box: bool = r["is_container"]
 	var name_label := _label(("+ " if box else "") + str(r["name"]), BOX if box else Color.WHITE)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL

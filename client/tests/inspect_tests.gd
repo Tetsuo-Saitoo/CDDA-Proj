@@ -48,6 +48,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_model()
 	_test_caps(data)
 	_test_rows()
+	_test_select()
 	_test_drops()
 	_test_pending()
 	_test_toggle()
@@ -308,6 +309,90 @@ func _test_rows() -> void:
 	var data: Variant = rock._get_drag_data(Vector2.ZERO)
 	_check.call(data is Dictionary and data["inspect_uid"] == ROCK and _view.column_slot("hands")._get_drag_data(Vector2.ZERO) == null,
 			"inspect: rows drag, columns don't")
+
+
+static func _button(down: bool, shift := false, ctrl := false) -> InputEventMouseButton:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = down
+	e.shift_pressed = shift
+	e.ctrl_pressed = ctrl
+	return e
+
+
+## A left click on item `uid`'s row, through the slot's own _gui_input.
+func _click(uid: int, shift := false, ctrl := false) -> void:
+	_view.row_slot(uid)._gui_input(_button(true, shift, ctrl))
+	_view.row_slot(uid)._gui_input(_button(false, shift, ctrl))
+
+
+func _selected() -> Array:
+	var out := _view.selection.keys()
+	out.sort()
+	return out
+
+
+## Selecting several rows: clicks with Ctrl / Shift, the [ ] boxes and a drag over them, kept across rebuilds,
+## Esc clears it before it closes the view.
+func _test_select() -> void:
+	var hammer := _handle(E, _it["hammer"])
+	var stone := _handle(E, _it["rock"])
+	_click(ROCK)
+	_click(WATER, false, true)
+	_check.call(_selected() == [ROCK, WATER] and _view.selection[ROCK] == _it["rock"]
+			and _view.row_slot(ROCK).get_theme_stylebox("panel") is StyleBoxFlat and _view.tick_box(WATER).text == "[x]"
+			and _view.tick_box(BOTTLE).text == "[ ]" and _view._head.text.begins_with("Inventory: 2 selected"),
+			"select: click, then Ctrl+click adds; rows highlighted, boxes ticked, count shown (%s)" % [_selected()])
+	_view.row_slot(ROCK)._gui_input(_button(true))
+	_check.call(_selected() == [ROCK, WATER], "select: pressing a selected row keeps the others (a drag takes them)")
+	_view.row_slot(ROCK)._get_drag_data(Vector2.ZERO)
+	_view.row_slot(ROCK)._gui_input(_button(false))
+	_check.call(_selected() == [ROCK, WATER], "select: ... and after a drag they stay")
+	_click(ROCK)
+	_check.call(_selected() == [ROCK], "select: a click on a selected row without a drag keeps only it")
+	_click(WATER, true)
+	_check.call(_selected() == [ROCK, BOTTLE, WATER], "select: Shift+click selects the run in the column (%s)"
+			% [_selected()])
+	_click(STONE, true)
+	_check.call(_selected() == [STONE], "select: Shift+click in another column selects only that row")
+	_click(STONE, false, true)
+	_check.call(_selected().is_empty() and _view._head.text.contains("Several:"), "select: Ctrl+click removes it")
+	var at := {}   # rows laid out by hand (a test has no layout pass): uid -> y
+	var y := 0.0
+	for u: int in [ROCK, BOTTLE, WATER, STONE, hammer, stone]:
+		_view.row_slot(u).global_position = Vector2(0, y)
+		_view.row_slot(u).size = Vector2(200, 28)   # at least its minimum size: rows are 60 apart
+		at[u] = y + 10
+		y += 60
+	_view.tick_input(_button(true), ROCK)
+	_view.paint_at(Vector2(5, at[WATER]))   # same column: BOTTLE is passed on the way
+	_view.paint_at(Vector2(5, at[hammer]))
+	_view.paint_at(Vector2(5000, at[stone]))   # not on a row
+	_view.tick_input(_button(false), ROCK)
+	_view.paint_at(Vector2(5, at[stone]))     # the button is up
+	_check.call(_selected() == [ROCK, BOTTLE, WATER, hammer], "select: a drag over the boxes selects the rows passed (%s)"
+			% [_selected()])
+	_view.tick_input(_button(true), BOTTLE)
+	_view.paint_at(Vector2(5, at[WATER]))
+	var motion := InputEventMouseMotion.new()   # the button came up outside the view: the next motion ends the drag
+	_view.tick_input(motion, BOTTLE)
+	_view.paint_at(Vector2(5, at[ROCK]))
+	_check.call(_selected() == [ROCK, hammer], "select: a drag from a ticked box unticks the rows passed (%s)"
+			% [_selected()])
+	_view.selection[999999] = _it["rock"]   # gone since
+	_view.selection[STONE] = _it["hammer"]  # another itype under its uid now
+	_view.rebuild()
+	_check.call(_selected() == [ROCK, hammer] and _view.tick_box(hammer).text == "[x]",
+			"select: a rebuild keeps listed rows, drops gone ones (%s)" % [_selected()])
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	_check.call(_view.handle_key(esc) and _view.visible and _selected().is_empty(), "select: Esc clears the selection first")
+	_click(ROCK)
+	_view.close()
+	_view.open()
+	_check.call(_selected().is_empty(), "select: opening the view starts with none")
 
 
 ## Drops through the slots' own _drop_data, MockItems answering inside each call.
