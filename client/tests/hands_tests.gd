@@ -557,6 +557,15 @@ func _test_hand_over(bag: int, bs: ItemBodies) -> void:
 	_check.call(not bs.is_held(extra) and not _world.hidden_items.has(extra) and _handle(S, _it["rock"]) == extra
 			and _actions.pending_count() == 0, "hand over: put back")
 	_mock.take_item(extra, _it["rock"], S, "pack")
+	# the receiving hand lets go while CDDA's hand change is in flight: its drop can't go out, and the hold keeps
+	# reporting to the hand it was handed to
+	var cr: ItemRef = _hands.picker.by_uid(extra)
+	_hands._owner[extra] = "vr_l"
+	var sent := _hands._two_step("vr_r", cr, func(_c: ItemRef) -> bool: return false, "drop") \
+			if cr != null and cr.carried else "?"
+	_check.call(sent == "" and _hands._owner.get(extra) == "vr_l",
+			"hand over: a let go that can't go out keeps the owner of the action in flight")
+	_hands._owner.erase(extra)
 	var full_before := _hands.keeps_upright("vr_r")
 	var inside := _mock.give(_it["rock"], bag, 0)
 	_bump()

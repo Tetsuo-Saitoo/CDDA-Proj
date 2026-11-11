@@ -9,8 +9,10 @@ extends Node
 ## E2 item physics (`bodies` set, main.gd): items lying as physics bodies are pointed at and grabbed where their bodies
 ## are now (ItemPicker asks ItemBodies); a grabbed body goes while the hand holds it; letting go with a velocity
 ## onto a surface, or onto bare floor at all, makes a body at the copy's pose with that velocity, while CDDA's drop
-## goes out exactly as without it (same square and spot). A held container that may hold something stays upright
-## (yaw follows the hand). hand_over() moves an item from one hand to the other (CDDA's hand change for a carried one).
+## goes out exactly as without it (same square and spot). hand_over() moves an item from one hand to the other (CDDA's
+## hand change for a carried one).
+## Always (with or without bodies): a held container that may hold something stays upright, its yaw following the
+## hand (held containers never tip or spill, PLAN L2).
 ##
 ## A target is a Dictionary: {kind: "door" | "item", node: Grabbable (doors) or null, item: ItemRef (items) or null,
 ## square: Vector3i, point: Vector3 (world), dist: float, name: String}; {} for none.
@@ -512,22 +514,31 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 
 
 ## `second` (put / drop / throw) on a carried item at once (returns `op`), else a take first and `second` when it
-## lands (returns "take"); "" when nothing was sent.
+## lands (returns "take"); "" when nothing was sent. Nothing sent: the item's owner is what it was before (an action
+## still in flight for it, e.g. a hand_over's hold, keeps reporting to its own hand).
 func _two_step(id: String, it: ItemRef, second: Callable, op: String) -> String:
+	var prev: Variant = _owner.get(it.uid)
 	_owner[it.uid] = id
 	if it.carried:
 		if second.call(it):
 			return op
-		_owner.erase(it.uid)
+		_restore_owner(it.uid, prev)
 		return ""
 	_then[it.uid] = second
 	if actions.pending(it.uid) == "take":   # taken on grab (VR) and not landed yet: go on when it does
 		return "take"
 	if actions.take(it, "main" if _main_free() else "pack"):
 		return "take"
-	_owner.erase(it.uid)
+	_restore_owner(it.uid, prev)
 	_then.erase(it.uid)
 	return ""
+
+
+func _restore_owner(uid: int, prev: Variant) -> void:
+	if prev is String:
+		_owner[uid] = prev
+	else:
+		_owner.erase(uid)
 
 
 func _main_free() -> bool:
