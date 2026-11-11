@@ -41,6 +41,7 @@ const UP := Vector3i(0, 0, 1)
 const WALKABLE := [K.FLOOR, K.ROOF, K.DOOR, K.SHRUB, K.TREE, K.LADDER_UP]
 
 static var _materials := {}
+static var _materials_lock := Mutex.new()
 
 
 class Buf:
@@ -738,7 +739,10 @@ func _mesh(bufs: Array, mats: Array) -> ArrayMesh:
 	return mesh if mesh.get_surface_count() > 0 else null
 
 
+## The shared material `name` ("solid" or "glass"), made on first use by whichever thread asks first: the meshing
+## worker and the main thread (props rebuilt for hidden items) both do, hence the lock.
 static func material(name: String) -> StandardMaterial3D:
+	_materials_lock.lock()
 	var m: StandardMaterial3D = _materials.get(name)
 	if m == null:
 		m = StandardMaterial3D.new()
@@ -751,4 +755,5 @@ static func material(name: String) -> StandardMaterial3D:
 			m.roughness = 0.1
 			m.metallic_specular = 0.8
 		_materials[name] = m
+	_materials_lock.unlock()
 	return m

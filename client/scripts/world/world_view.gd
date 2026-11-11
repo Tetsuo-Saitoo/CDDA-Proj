@@ -142,6 +142,13 @@ func apply_snapshot(snap: Snapshot) -> int:
 	return job.dirty.size()
 
 
+## Mesh submitted snapshots on a worker thread while the main thread goes on drawing. Off in headless runs: the
+## headless renderer's mesh storage isn't thread-safe (real renderers' is), so meshes made on the main thread while
+## the worker made others got their RIDs mixed up (a flaky client test). Off, submit meshes at once on this thread
+## and the commit still goes in steps. A test that only looks things up while the worker meshes may turn it on.
+var mesh_on_worker := DisplayServer.get_name() != "headless"
+
+
 ## Shows a validated snapshot without blocking: meshing runs on a worker and `applied` follows on a later
 ## frame (from _process). A snapshot submitted while one is meshing waits; only the newest waits.
 func submit(snap: Snapshot) -> void:
@@ -150,6 +157,10 @@ func submit(snap: Snapshot) -> void:
 		_waiting = snap
 		return
 	_job = _prepare(snap)
+	if not mesh_on_worker:
+		_compute(_job)
+		_take_task()
+		return
 	_task = WorkerThreadPool.add_task(_compute.bind(_job), false, "world meshing")
 
 
