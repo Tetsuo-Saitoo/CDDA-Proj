@@ -502,6 +502,11 @@ func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Ve
 			"container": int(ammo), "container_type": int(ammo_type), "pos": pos})
 
 
+## Clear the jam of the wielded gun `uid` (bridge op "clear", CDDA's mend). An older bridge refuses the op (false).
+func clear_item(uid: float, type: float) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "clear", "item": int(uid), "type": int(type)})
+
+
 ## Throw a carried, unworn item at square `pos` (one you see, on your level, in throw range, not your own):
 ## CDDA's throw without its target menu, one unit of a stack. An older bridge refuses the op (false).
 func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
