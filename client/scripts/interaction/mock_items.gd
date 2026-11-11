@@ -310,6 +310,26 @@ func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Ve
 	return _captured()
 
 
+## Clear the jam of the wielded gun: its jam faults (WeaponViewmodel.JAMS) go. Refused when it isn't the wielded
+## gun or isn't jammed.
+func clear_item(uid: float, type: float) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0:
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0 or (snap.carried[row * CS + 4] & Snapshot.CARRIED_WIELDED) == 0 or snap.player_gun.get("type") != t:
+		return _refuse("You aren't wielding that gun.")
+	var left: Array[String] = []
+	for f: String in snap.player_gun.get("faults", []):
+		if not WeaponViewmodel.JAMS.has(f):
+			left.append(f)
+	if left.size() == (snap.player_gun.get("faults", []) as Array).size():
+		return _refuse("It isn't jammed.")
+	snap.player_gun["faults"] = left
+	return _captured()
+
+
 ## Throw a carried, unworn item at `pos`: a square seen, on your level, within THROW_RANGE, not your own. It
 ## lands there whole (no stacks or charges here).
 func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
