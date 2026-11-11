@@ -7,7 +7,7 @@ extends RefCounted
 ## Everything that comes in is game data: numbers are clamped, text is cleaned (no colour tags, no control
 ## characters, capped), lists are capped.
 
-## Which groups changed: any of "body", "needs", "effects", "held", "messages", "warnings", "cheats".
+## Which groups changed: any of "body", "needs", "effects", "move", "held", "messages", "warnings", "cheats".
 signal changed(parts: PackedStringArray)
 
 enum { UNKNOWN = -1, OK = 0, HURT = 1, BAD = 2, BROKEN = 3 }
@@ -26,6 +26,8 @@ const HUNGER_LEVELS := {"hunger_engorged": HURT, "hunger_full": OK, "hunger_sati
 		"hunger_hungry": HURT, "hunger_very_hungry": HURT, "hunger_near_starving": BAD, "hunger_starving": BAD,
 		"hunger_famished": BAD}
 const NEEDS := ["stamina", "hunger", "thirst", "sleepiness", "pain", "morale"]
+## CDDA's move_mode ids (data/json/move_modes.json) -> the HUD's word; others are shown capitalized.
+const MOVE_WORDS := {"walk": "Walking", "run": "Running", "crouch": "Crouching", "prone": "Prone"}
 # CDDA's sleepiness_levels (character.h)
 const TIRED := 191
 const DEAD_TIRED := 383
@@ -41,6 +43,9 @@ var needs := {}
 ## ("Stunned", "Hurt (left arm)"), level (good OK, bad HURT, mixed HURT, neutral UNKNOWN), intensity, seconds_left
 ## (-1 permanent or unknown; CDDA doesn't show it, neither do the views)}.
 var effects: Array[Dictionary] = []
+## How the player moves (Snapshot.player_move_mode): {mode: CDDA's id ("walk", "run", "crouch", "prone"), text
+## ("Running", "Running (stamina 23%)"), level}; {} when the snapshot or the id tables don't say.
+var move := {}
 ## {main, off: ItemRef (carried) or null; main_liquid, off_liquid: String; main_fill, off_fill: 0..1 or -1;
 ## liquid, fill_frac: the first hand's (main, then off) that holds a liquid}.
 var held := {}
@@ -77,6 +82,10 @@ func update(snap: Snapshot, tables: IdTables) -> void:
 	if e != effects:
 		effects = e
 		parts.append("effects")
+	var mv := move_from(snap.get("player_move_mode") if "player_move_mode" in snap else -1, tables, needs["stamina"])
+	if mv != move:
+		move = mv
+		parts.append("move")
 	var h := _held_from(snap, _bridge_held)
 	if not _same_held(h, held):
 		held = h
@@ -210,6 +219,26 @@ static func word(kind: String, value: int) -> String:
 			if scale > 0:
 				return "Minimal pain"
 	return ""
+
+
+## The move line for move_mode `index` (see `move`); {} when unknown. Running says how much stamina is left once
+## it is low, and that it ran out at 0 (CDDA then stops the run itself: "You're too tired to run.").
+static func move_from(index: Variant, tables: IdTables, stamina: Dictionary) -> Dictionary:
+	if not index is int or tables == null or not tables.has_method("move_mode_name"):
+		return {}
+	var id := clean(tables.move_mode_name(index), MAX_NAME)
+	if id.is_empty():
+		return {}
+	var text: String = MOVE_WORDS.get(id, id.replace("_", " ").capitalize())
+	var level := OK
+	if id == "run" and stamina.get("level", UNKNOWN) != UNKNOWN:
+		var pct := _int(stamina.get("value"), 0, 100)
+		level = need_level("stamina", pct)
+		if pct <= 0:
+			text = "Running: out of stamina"
+		elif level != OK:
+			text = "Running (stamina %d%%)" % pct
+	return {"mode": id, "text": text, "level": level}
 
 
 ## A level for a need's value (UNKNOWN never comes from here).

@@ -32,6 +32,9 @@ const ACTIONS := [
 	[&"step_back_left", "Move", "step back-left (live)", ["Kp 1"]],
 	[&"step_back_right", "Move", "step back-right (live)", ["Kp 3"]],
 	[&"wait", "Move", "wait a turn (live)", ["Kp 5", "Period"]],
+	# CDDA's move modes; not Shift (Shift+ keys are CDDA actions, Shift alone the outside view's fast camera)
+	[&"cdda_run", "Move", "run on / off (live; uses stamina)", ["CapsLock", "pad:7"]],
+	[&"cdda_crouch", "Move", "crouch on / off (live)", ["B", "pad:8"]],
 	[&"look", "View", "hold: mouse look", ["mouse:2"]],
 	[&"look_up", "View", "look up", ["axis:3-"]],
 	[&"look_down", "View", "look down", ["axis:3+"]],
@@ -88,6 +91,7 @@ const CDDA := {
 	&"cdda_throw": "throw", &"cdda_fire": "fire", &"cdda_reload": "reload_weapon", &"cdda_eat": "eat", &"cdda_wear": "wear",
 	&"cdda_take_off": "take_off", &"cdda_read": "read", &"cdda_drop": "drop", &"cdda_unload": "unload",
 	&"cdda_butcher": "butcher", &"cdda_grab": "grab", &"cdda_safemode": "safemode",
+	&"cdda_run": "toggle_run", &"cdda_crouch": "toggle_crouch",
 }
 ## Live steps: action -> (right, forward) relative to where you look.
 const STEPS := {
