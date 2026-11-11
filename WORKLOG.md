@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — Read lead-vr's E2 slice 5 hands commit (2586e6d): approved with two small fixes asked for (upright containers only with item physics; a hand change in flight keeps its hand when the other hand lets go).
 - 2026-11-10 — Character delete and the teleport cheat tried live (`tests/menu_live_test.gd`, new live script, two runs): menu delete with its confirm removes the character and its empty world, refused while a game runs; teleport by LiveSession and by the F1 entry moves the character. Passes against main's bridge build.
 
 - 2026-11-10 — `ItemActions.clear_jam(item)` (lead-vr): the bridge's "clear" op for the wielded gun's jam, judged by the gun's faults changing; MockItems clears jam faults or refuses "It isn't jammed." Client tests pass.
