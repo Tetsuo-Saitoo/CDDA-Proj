@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, throw, pour, hold) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -32,13 +32,13 @@ const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
 ## Ops judged by the carried rows around the item (see above).
 const CONTENT_OPS := ["unload", "reload", "pour"]
-## Ops whose result the snapshot may not show (rounds topped up, one unit of a stack thrown, a partial pour): no
-## message after two looks is no refusal.
-const QUIET_OK := ["unload", "reload", "throw", "pour"]
+## Ops whose result the snapshot may not show (rounds topped up, one unit of a stack thrown, a partial pour, a jam
+## still being cleared): no message after two looks is no refusal.
+const QUIET_OK := ["unload", "reload", "throw", "pour", "clear"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
-## Anything with take_item / put_item / drop_item / unload_item / reload_item / throw_item / pour_item /
+## Anything with take_item / put_item / drop_item / unload_item / reload_item / clear_item / throw_item / pour_item /
 ## pour_into / hold_item (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
@@ -99,6 +99,25 @@ func reload(item: ItemRef, ammo: ItemRef) -> bool:
 			[float(item.uid), float(item.type), float(ammo.uid), float(ammo.type), ammo.square])
 
 
+## Clears the jam of the wielded gun `item` (bridge op "clear": CDDA's mend of its gun_mechanical_simple fault,
+## ~10 s a jam). Finished when the snapshot's wielded_gun faults change; the game refuses with a message when it
+## isn't wielded, isn't jammed or can't be fixed. (Not `clear()`: that forgets everything in flight.)
+func clear_jam(item: ItemRef) -> bool:
+	if not _ok_ref(item) or not item.carried or not item.is_wielded():
+		return false
+	return _send("clear", item, null, Vector2(-1, -1), "clear_item", [float(item.uid), float(item.type)])
+
+
+## The wielded gun's faults (Snapshot.player_gun) when `item` is what the player wields, else null.
+static func gun_faults(snap: Snapshot, item: ItemRef) -> Variant:
+	if snap == null or item == null:
+		return null
+	var row := carried_row(snap, item.uid, item.type)
+	if row < 0 or (snap.carried[row * Snapshot.CARRIED_STRIDE + 4] & Snapshot.CARRIED_WIELDED) == 0 			or snap.player_gun.get("type") != item.type:
+		return null
+	return (snap.player_gun.get("faults", []) as Array).duplicate()
+
+
 ## Throws a carried, unworn `item` at `square` (one you see, on your level, in throw range, not your own): CDDA's
 ## throw, one unit of a stack.
 func throw(item: ItemRef, square: Vector3i) -> bool:
@@ -140,7 +159,7 @@ func pour_into(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 			[float(item.uid), float(item.type), float(container.uid), float(container.type), pocket])
 
 
-## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "throw", "pour"), "" when none.
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour"), "" when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -300,6 +319,8 @@ func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: St
 			"seq": _seq, "messages": [], "info": "", "looks": 0}
 	if op in CONTENT_OPS:
 		e["before"] = contents_sig(_snap, item, target if target is ItemRef else null)
+	elif op == "clear":
+		e["before"] = gun_faults(_snap, item)
 	# Recorded before the call: a backend that answers inside the call (MockItems) has it judged right there.
 	_pending[item.uid] = e
 	var ok: Variant = backend.callv(method, args)
@@ -367,6 +388,11 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 				return Where.UNKNOWN if full else Where.MOVED
 			var into: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, into) != e["before"] else Where.STILL
+		"clear":   # the faults changed while it is still the wielded gun: cleared
+			var now: Variant = gun_faults(snap, item)
+			if not now is Array:
+				return Where.UNKNOWN   # not wielded any more
+			return Where.MOVED if e["before"] is Array and now != e["before"] else Where.STILL
 		"unload", "reload":
 			var other: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, other) != e["before"] else Where.STILL

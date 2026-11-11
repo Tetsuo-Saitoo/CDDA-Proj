@@ -14,6 +14,58 @@ func run(check: Callable, tables: IdTables) -> void:
 	_test_effects(tables)
 	_test_messages()
 	_test_view(tables)
+	_test_move(tables)
+
+
+## player.move_mode: the id tables name it, HudData words it, running says how much stamina is left once it runs
+## low, HudView shows it first in the needs column.
+func _test_move(tables: IdTables) -> void:
+	_check.call(tables.move_modes == PackedStringArray(["", "crouch", "prone", "run", "walk"])
+			and tables.move_mode_name(4) == "walk" and tables.move_mode_name(5) == "" and tables.move_mode_name(-1) == "",
+			"move: the id tables name the move modes")
+	var base := {"generation": 0, "ter": [], "furn": [], "trap": [], "field": [], "itype": []}
+	var ok := base.duplicate(true)
+	ok["tables"] = {"body_part": ["torso"]}
+	var bad := base.duplicate(true)
+	bad["tables"] = {"move_mode": "walk"}
+	var junk := base.duplicate(true)
+	junk["tables"] = {"move_mode": [5]}
+	_check.call(IdTables.from_data(ok).is_valid() and IdTables.from_data(ok).move_modes.is_empty()
+			and not IdTables.from_data(bad).is_valid() and not IdTables.from_data(junk).is_valid(),
+			"move: no move_mode list is fine, a malformed one fails the tables")
+	var none := {"level": HudData.UNKNOWN}
+	var low := {"value": 20, "word": "", "level": HudData.HURT}
+	var out := {"value": 0, "word": "", "level": HudData.BAD}
+	var full := {"value": 80, "word": "", "level": HudData.OK}
+	_check.call(HudData.move_from(4, tables, none) == {"mode": "walk", "text": "Walking", "level": HudData.OK}
+			and HudData.move_from(1, tables, low)["text"] == "Crouching" and HudData.move_from(2, tables, out)["text"] == "Prone"
+			and HudData.move_from(3, tables, none)["text"] == "Running" and HudData.move_from(3, tables, full)["text"] == "Running"
+			and HudData.move_from(3, tables, low) == {"mode": "run", "text": "Running (stamina 20%)", "level": HudData.HURT}
+			and HudData.move_from(3, tables, out) == {"mode": "run", "text": "Running: out of stamina", "level": HudData.BAD},
+			"move: CDDA's mode in words; running mentions stamina once it runs low or out")
+	_check.call(HudData.move_from(0, tables, none).is_empty() and HudData.move_from(9, tables, none).is_empty()
+			and HudData.move_from(-1, tables, none).is_empty() and HudData.move_from("3", tables, none).is_empty()
+			and HudData.move_from(3, null, none).is_empty(), "move: unknown index, no tables or not an int: nothing shown")
+	var h := HudData.new()
+	var v := HudView.new()
+	v.data = h
+	var seen: Array = []
+	h.changed.connect(func(p: PackedStringArray) -> void: seen.append(p))
+	var s := Snapshot.new()
+	h.update(s, tables)
+	_check.call(h.move.is_empty() and v.move_line().is_empty() and seen.is_empty(), "move: not sent, no line")
+	s.player_move_mode = 3
+	s.player_stamina = 5
+	s.player_stamina_max = 100
+	h.update(s, tables)
+	_check.call(v.move_line() == ["Running (stamina 5%)", HudData.BAD] and seen.size() == 1 and "move" in seen[0],
+			"hud view: the move line, coloured by stamina while running (%s)" % [v.move_line()])
+	h.update(s, tables)
+	s.player_move_mode = 4
+	h.update(s, tables)
+	_check.call(seen.size() == 2 and "move" in seen[1] and v.move_line() == ["Walking", HudData.OK],
+			"move: changed only when the line changes")
+	v.free()
 
 
 ## player.effects: Snapshot cleans them (bad entries skipped, never a failed snapshot), HudData shows the ones the

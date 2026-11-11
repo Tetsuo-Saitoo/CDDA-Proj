@@ -49,6 +49,14 @@ std::string error();
 constexpr size_t max_listed = 256;
 std::vector<std::string> list_worlds( const std::string &user_dir, std::string &why );
 std::vector<std::string> list_saves( const std::string &user_dir, const std::string &world, std::string &why );
+// Deletes the character `save` of world `world` under `user_dir` (names exactly as list_saves gives them): every
+// file and folder CDDA keeps for it in the world's folder (<its save file's base name>.<anything>), the save file
+// last. `delete_empty_world` then deletes the whole world folder when no save file is left in it. Links and
+// junctions are removed, never followed. Refused while this process's game hasn't finished, or while another
+// process plays that world (start() holds a lock on it until its game thread is done). "" when done, else why
+// (on a partial failure: what was left).
+std::string delete_save( const std::string &user_dir, const std::string &world, const std::string &save,
+                         bool delete_empty_world );
 
 // The newest snapshot (0 before the first one).
 uint64_t snapshot_seq();

@@ -180,6 +180,12 @@ func _test_mock(data: Variant, tables: IdTables) -> void:
 	var snap := Snapshot.load_file(_repo(MOCK))
 	_check(snap.is_valid(), "mock loads: " + snap.error)
 	_check(snap.submaps.size() == 363, "363 submaps (11 x 11 x 3)")
+	var mm := func(v: Variant) -> Snapshot: return _mutated(data, func(d: Dictionary) -> void: (d["player"] as Dictionary)["move_mode"] = v)
+	var mm_bad: Snapshot = mm.call("run")
+	var mm_neg: Snapshot = mm.call(-2)
+	_check(snap.player_move_mode == 4 and tables.move_mode_name(snap.player_move_mode) == "walk" and mm_bad.is_valid()
+			and mm_bad.player_move_mode == -1 and mm_neg.is_valid() and mm_neg.player_move_mode == -1,
+			"player.move_mode read; a bad one is -1, never a failed snapshot")
 	_check(snap.ter_names.get(0, "") == "t_null" or not snap.ter_names.is_empty(), "terrain names read")
 	var world := WorldView.new()
 	world.catalog.load_registry_dir(_repo("assets/registry"))

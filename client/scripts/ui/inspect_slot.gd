@@ -17,6 +17,11 @@ func _init() -> void:
 	focus_mode = Control.FOCUS_NONE
 
 
+func _gui_input(event: InputEvent) -> void:
+	if view != null and not row.is_empty():
+		view.row_input(row, event)   # clicks select
+
+
 func _get_drag_data(_at: Vector2) -> Variant:
 	if view == null or row.is_empty():
 		return null

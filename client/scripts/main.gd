@@ -81,6 +81,7 @@ var _save_asked := false   # the player's save (F5, closing the window), not an 
 const SAVE_ON_QUIT_MS := 20000
 var snapshot_path := ""
 var status := ""
+var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var _args := {}
 var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
@@ -276,6 +277,8 @@ func _reload() -> void:
 ## Mock mode: the hands take, put and drop items on the client's own copy of the snapshot (MockItems), so E6 can
 ## be tried without the bridge; every pile gets item handles first.
 func _use_mock_items(snap: Snapshot) -> void:
+	if inspect != null:
+		inspect.stop_batch()   # its items were the old backend's
 	item_actions.clear()
 	mock_items = MockItems.new(snap, world.tables)
 	mock_items.seed()
@@ -507,10 +510,16 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
 	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
 	live.range_done.connect(cheat_panel.on_range_done)
+	live.range_done.connect(func(id: int, err: String) -> void:
+		if _teleport_ops.erase(id):
+			status = "teleport: done" if err.is_empty() else "teleport: " + err)
+	cheat_panel.teleport = func() -> int:   # the F1 entry: the square at the screen's centre
+		return _teleport(get_viewport().get_visible_rect().size / 2.0)
 	live.id_tables_ready.connect(func(t: IdTables) -> void: cheat_panel.tables = t)
 	cheat_panel.player_square = func() -> Variant:
 		return world.snapshot.player_pos if world.snapshot != null else null
@@ -581,6 +590,9 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
 	request_ui.get_parent().add_child(center)
+	if LiveSession.delete_save_available():   # Load page: delete a character (and its world once empty)
+		main_menu.deleter = func(w: String, sv: String) -> String: return live.delete_save(user_dir, w, sv, true)
+	main_menu.relist = func() -> PackedStringArray: return LiveSession.list_worlds(user_dir)
 	main_menu.setup(LiveSession.list_worlds(user_dir),
 			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
 	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool, setup: bool) -> void:
@@ -843,16 +855,7 @@ func _live_action(event: InputEvent) -> bool:
 func _look_at_screen(pos: Vector2) -> Dictionary:
 	if world.snapshot == null:
 		return {}
-	if look_ray == null:
-		look_ray = LookRay.new(world)
-	var cam := get_viewport().get_camera_3d()
-	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		pos = get_viewport().get_visible_rect().size / 2.0
-	var v := eyes_view()
-	var dir := cam.project_ray_normal(pos)
-	var o := cam.project_ray_origin(pos)
-	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
-	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
+	var r := _cast_screen(pos)
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
@@ -872,6 +875,45 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
 	return r
+
+
+## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
+## ray's direction. {hit: false} without a snapshot or camera.
+func _cast_screen(pos: Vector2) -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	if world.snapshot == null or cam == null:
+		return {"hit": false}
+	if look_ray == null:
+		look_ray = LookRay.new(world)
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		pos = get_viewport().get_visible_rect().size / 2.0
+	var v := eyes_view()
+	var dir := cam.project_ray_normal(pos)
+	var o := cam.project_ray_origin(pos)
+	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
+	r["dir"] = dir
+	return r
+
+
+## Cheat: teleport to the square under the crosshair (or the mouse, `pos`), through walls and between floors
+## (TeleportAim picks the square, the bridge moves you). The op id (range_done says how it went), 0 when not sent.
+func _teleport(pos: Vector2) -> int:
+	if live == null or not live.can_teleport():
+		status = "teleport: needs a running game with cheats allowed (F1 > HUD > Debug: cheats page)"
+		return 0
+	var r := _cast_screen(pos)
+	var sq: Variant = TeleportAim.square(r, r.get("dir", Vector3.ZERO), world.coords.world_to_ms)
+	if not sq is Vector3i:
+		status = "teleport: point at a square in the loaded area"
+		return 0
+	var id := live.cheat_teleport(sq)
+	status = "teleport: asked for" if id > 0 else "teleport: not sent (too many waiting)"
+	if id > 0:
+		if _teleport_ops.size() >= 32:
+			_teleport_ops.clear()
+		_teleport_ops[id] = true
+	return id
 
 
 ## Where the look line starts: the chest (in first person a line from the eyes would run straight away from the view).
@@ -1385,6 +1427,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 	if live != null and InputActions.pressed(event, &"save_game"):
 		_save_game()
+		return
+	if live != null and InputActions.pressed(event, &"cheat_teleport"):
+		_teleport(get_viewport().get_mouse_position())
 		return
 	if live != null and _live_action(event):
 		return

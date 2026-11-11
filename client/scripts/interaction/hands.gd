@@ -387,6 +387,11 @@ func throw(id: String, square: Vector3i) -> String:
 	return op
 
 
+## Item `uid` has an action in flight, or a second step (put / drop / throw) waiting for its take.
+func busy(uid: int) -> bool:
+	return actions.pending(uid) != "" or _then.has(uid)
+
+
 ## Cancels a hold: the item goes back, nothing is sent.
 func cancel(id: String) -> void:
 	release(id, {})

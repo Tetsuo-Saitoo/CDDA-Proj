@@ -225,14 +225,15 @@ func _test_item_multi() -> void:
 	_expect({"id": 7, "picks": [[2, 0]]}, "Enter with nothing ticked takes the current entry")
 	_show(req)
 	w = ui.widget as ListRequestWidget
-	w.rows[1].pressed.emit()
+	_click(w, 1)
 	w.rows[1].mouse_entered.emit()
 	w.count_spin.set_value_no_signal(5)
 	w.count_spin.value_changed.emit(5.0)   # as when the player types in the box
-	w.rows[0].pressed.emit()
-	w.rows[0].pressed.emit()
+	_click(w, 0)
+	_click(w, 0)
 	_key(KEY_ENTER)
 	_expect({"id": 7, "picks": [[1, 5]]}, "click ticks, count box sets 5, second click unticks")
+	_test_multi_drag()
 	_show(req)
 	w = ui.widget as ListRequestWidget
 	w.toggle_all()
@@ -244,6 +245,99 @@ func _test_item_multi() -> void:
 	_key(KEY_TAB)
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "Tab toggles, Esc cancels")
+
+
+## A left click on list row `row` as Godot gives it to the row: press, then release.
+func _click(w: ListRequestWidget, row: int, shift := false) -> void:
+	for down: bool in [true, false]:
+		var e := InputEventMouseButton.new()
+		e.button_index = MOUSE_BUTTON_LEFT
+		e.pressed = down
+		e.shift_pressed = shift
+		w.rows[row].gui_input.emit(e)
+
+
+## Mouse motion with the left button down, at `y` relative to the row pressed (`row`), as Godot sends it there.
+func _drag(w: ListRequestWidget, row: int, y: float, held := true) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = Vector2(10, y)
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT if held else 0
+	w.rows[row].gui_input.emit(e)
+
+
+func _ticked(w: ListRequestWidget) -> Array:
+	var out := []
+	for id: Variant in w.picks:
+		out.append(id)
+	out.sort()
+	return out
+
+
+func _test_multi_drag() -> void:
+	var req := _req("item_multi", {"title": "Drop", "entries": _entries(["a", "b", "c", "d", "e", "f", "g"])})
+	_show(req)
+	var w := ui.widget as ListRequestWidget
+	for r in w.rows.size():   # laid out as the list would be (no layout pass in a test)
+		w.rows[r].position = Vector2(0, r * 40.0)
+		w.rows[r].size = Vector2(200, 32)
+	var down := InputEventMouseButton.new()
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.pressed = true
+	w.rows[1].gui_input.emit(down)
+	_drag(w, 1, 75.0)   # 30 + 75 = row 3: rows 1..3 ticked, none skipped
+	_check.call(_ticked(w) == [1, 2, 3] and w.selected == 3, "drag: a press and a drag over rows tick them all (%s)"
+			% [_ticked(w)])
+	_drag(w, 1, -100.0)   # above the list: up to the first row
+	_check.call(_ticked(w) == [0, 1, 2, 3], "drag: past the top ticks up to the first row (%s)" % [_ticked(w)])
+	_drag(w, 1, 500.0, false)   # the button was let go somewhere else: the drag is over
+	_drag(w, 1, 150.0)
+	_check.call(_ticked(w) == [0, 1, 2, 3], "drag: motion without the button ends it (%s)" % [_ticked(w)])
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	w.rows[1].gui_input.emit(up)
+	w.rows[2].gui_input.emit(down)   # a press on a ticked row: the drag unticks
+	_drag(w, 2, 40.0)
+	w.rows[2].gui_input.emit(up)
+	_check.call(_ticked(w) == [0, 1], "drag from a ticked row unticks the rows passed (%s)" % [_ticked(w)])
+	_click(w, 5, true)   # Shift+click: rows 2..5 as row 2 is (unticked)
+	_check.call(_ticked(w) == [0, 1], "Shift+click sets the run as the last clicked row is (%s)" % [_ticked(w)])
+	_click(w, 4)
+	_click(w, 6, true)
+	_check.call(_ticked(w) == [0, 1, 4, 5, 6], "Shift+click after a tick ticks the run (%s)" % [_ticked(w)])
+	answers.clear()
+	_key(KEY_ENTER)
+	_expect({"id": 7, "picks": [[0, 0], [1, 0], [4, 0], [5, 0], [6, 0]]}, "the ticked rows are taken")
+	_show(req)
+	w = ui.widget as ListRequestWidget
+	_key(KEY_DOWN, true)
+	_key(KEY_DOWN, true)
+	_check.call(_ticked(w) == [0, 1, 2] and w.selected == 2, "Shift+Down ticks the rows moved over (%s)"
+			% [_ticked(w)])
+	var dis := _entries(["x", "y", "z"])
+	dis[1]["enabled"] = false
+	_show(_req("item_multi", {"entries": dis}))
+	w = ui.widget as ListRequestWidget
+	_click(w, 0)
+	_click(w, 2, true)
+	_click(w, 1)
+	_check.call(_ticked(w) == [0, 2], "a disabled row is never ticked, a click on it does nothing (%s)"
+			% [_ticked(w)])
+	var dis4 := _entries(["x", "y", "z", "v"])
+	dis4[1]["enabled"] = false
+	_show(_req("item_multi", {"entries": dis4}))
+	w = ui.widget as ListRequestWidget
+	_click(w, 0)
+	_key(KEY_DOWN, true)   # onto the disabled row: it stays unticked and isn't the anchor
+	_click(w, 3, true)
+	_check.call(_ticked(w) == [0, 2, 3], "Shift+click after Shift+Down onto a disabled row ticks from the last ticked one (%s)"
+			% [_ticked(w)])
+	_show(_req("item_select", {"entries": _entries(["p", "q"])}))
+	w = ui.widget as ListRequestWidget
+	w.press_row(0, true)
+	w.set_rows(0, 1, true)
+	_check.call(w.picks.is_empty() and answers.is_empty(), "item_select: nothing is ticked by a press or a run")
+	w.rows[1].pressed.emit()
+	_expect({"id": 7, "entry": 1}, "item_select: a click still picks")
 
 
 func _test_popup() -> void:
@@ -702,6 +796,86 @@ func _test_main_menu() -> void:
 	_check.call(m.select_world("Other") and m.start_load() and got[-1] == ["load", "Other", "Ann"],
 			"menu: load a save")
 	_check.call(m.select_world("World") and not m.start_load(), "menu: world without saves can't load")
+	_check.call(not _has_button(m, "Delete character...") and not m.ask_delete(), "menu: no deleter, no Delete button")
+	m.free()
+	_test_menu_delete()
+
+
+func _has_button(m: MainMenu, text: String) -> bool:
+	return m._box.get_children().any(func(c: Node) -> bool: return c is Button and (c as Button).text == text)
+
+
+## Deleting a character from the Load page: a confirm that names it (and the world when it is the last one), only
+## listed names reach the deleter, a failed delete says why, the lists come back from disk afterwards.
+func _test_menu_delete() -> void:
+	var disk := {"World": PackedStringArray(["Ann", "Bob"]), "Other": PackedStringArray(["Cid" + String.chr(0x202E) + "\nx"])}
+	var calls := []
+	var answer := [""]
+	var m := MainMenu.new()
+	ui.add_child(m)
+	m.deleter = func(w: String, s: String) -> Variant:
+		calls.append([w, s])
+		if answer[0] is String and (answer[0] as String).is_empty():
+			var left: PackedStringArray = disk[w]
+			left.remove_at(left.find(s))
+			disk[w] = left
+			if left.is_empty():
+				disk.erase(w)
+		return answer[0]
+	m.relist = func() -> PackedStringArray:
+		var k := PackedStringArray(disk.keys())
+		k.sort()
+		return k
+	m.setup(m.relist.call(), func(w: String) -> PackedStringArray: return disk.get(w, PackedStringArray()))
+	m.show_page("load")
+	_check.call(_has_button(m, "Delete character...") and m.select_world("World"), "menu delete: a Delete button on the Load page")
+	m._save_list.select(1)
+	_check.call(m.ask_delete() and m.page == "delete" and calls.is_empty() and m.pending_delete == {"world": "World", "save": "Bob", "last": false}
+			and m._box.get_node("Confirm").text.contains("Bob") and m._box.get_node("Confirm").text.contains("World")
+			and not m._box.get_node("Confirm").text.contains("last") and m._box.get_node("DeleteButton").text == "Delete Bob",
+			"menu delete: the confirm names the character and its world; nothing deleted yet")
+	m.cancel_delete()
+	_check.call(calls.is_empty() and m.page == "load" and m.pending_delete.is_empty() and disk["World"].size() == 2,
+			"menu delete: Keep it deletes nothing")
+	m._save_list.select(1)
+	m.ask_delete()
+	_check.call(m.confirm_delete() and calls == [["World", "Bob"]] and disk["World"] == PackedStringArray(["Ann"])
+			and m.page == "load" and m.message == "Deleted Bob." and m._save_list.item_count == 1,
+			"menu delete: Delete deletes that one character; the list shows what is left")
+	answer[0] = "the save folder is read-only\n<b>x</b>"
+	m.select_world("World")
+	m.ask_delete()
+	_check.call(m.pending_delete["last"] and m._box.get_node("Confirm").text.contains("last character in World"),
+			"menu delete: the last character warns that the world goes too")
+	_check.call(not m.confirm_delete() and calls.size() == 2 and disk.has("World")
+			and m.message.begins_with("Couldn't delete Ann: the save folder is read-only") and not "\n" in m.message,
+			"menu delete: a failed delete says why on one line and keeps the lists (%s)" % m.message)
+	answer[0] = 5
+	m.ask_delete()
+	_check.call(not m.confirm_delete() and m.message.ends_with("the bridge gave no answer"), "menu delete: a non-text reply is a failure")
+	answer[0] = ""
+	m.ask_delete()
+	disk["World"] = PackedStringArray(["Zed"])   # changed on disk while the confirm was open
+	_check.call(not m.confirm_delete() and calls.size() == 3 and m.message.contains("no longer"),
+			"menu delete: a character gone from the list since the confirm isn't sent")
+	disk["World"] = PackedStringArray(["Ann"])
+	m.select_world("World")
+	m.ask_delete()
+	_check.call(m.confirm_delete() and calls[-1] == ["World", "Ann"] and m.worlds == PackedStringArray(["Other"])
+			and not m.world_taken("World") and m.message == "Deleted Ann, and the world World with them." and m.page == "load",
+			"menu delete: the last character takes its world along; its name is free again")
+	m.select_world("Other")
+	m.ask_delete()
+	var confirm: String = m._box.get_node("Confirm").text
+	_check.call(not confirm.contains(String.chr(0x202E)) and confirm.contains("Cidx") and m.confirm_delete()
+			and calls[-1] == ["Other", "Cid" + String.chr(0x202E) + "\nx"] and m.worlds.is_empty() and m.page == "main",
+			"menu delete: the confirm shows the name plainly, the deleter gets the listed name; no world left: main page")
+	var s := LiveSession.new()
+	s.state = "running"
+	_check.call(LiveSession.delete_reply("") == "" and LiveSession.delete_reply(null) != "" and LiveSession.delete_reply("\n") != ""
+			and s.delete_save("C:/nowhere", "World", "Ann", true) != "" and s.delete_save("rel", "World", "Ann", true) != "",
+			"live session: delete refused without a bridge or a name it lists")
+	s.free()
 	m.free()
 
 
