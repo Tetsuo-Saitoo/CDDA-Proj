@@ -40,6 +40,12 @@ const LIVE_AIM_REACH := 4.0       # m: a live_aim pose farther than this from th
 const MAX_PART_BYTES := 64        # the bridge's cap on a shot answer's `part`
 const MAX_QUALITY := 0.99         # the bridge's range for a shot answer's `quality` is 0..0.99
 const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's, at most (the bridge's cap)
+const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon strikes 2 squares off)
+const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
+const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
+const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
+		Vector2i(1, 1): "RIGHTDOWN", Vector2i(0, 1): "DOWN", Vector2i(-1, 1): "LEFTDOWN", Vector2i(-1, 0): "LEFT",
+		Vector2i(-1, -1): "LEFTUP"}
 
 var world: WorldView
 var request_ui: RequestUI
@@ -58,6 +64,7 @@ var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or 
 var view := Callable()
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
+var melee_aim := {}               # the last aimed strike: {square, uid, part, quality, time msec} (melee_from)
 var dispersion := 0.0             # arcmin, from the last target request (0 = none / old bridge)
 var shown_dispersion := 0.0       # dispersion while a fire-mode target request shows, else 0 (viewmodel sway)
 var _sim_rolls := false           # the last target request had `dispersion`: shot requests will follow FIRE
@@ -271,6 +278,76 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 	return last_shot
 
 
+## Melee: the creature figure a strike from world point `origin` along `sight` meets within MELEE_REACH_M, with
+## nothing solid in between: {square, uid, part, quality, time} or {}. Kept as melee_aim for the swing request.
+func melee_from(origin: Vector3, sight: Vector3) -> Dictionary:
+	melee_aim = {}
+	if creature_view == null or world == null or world.snapshot == null:
+		return {}
+	if not origin.is_finite() or not sight.is_finite() or sight.length_squared() < 1e-12:
+		return {}
+	var h := BulletPhysics.reach_figure(origin, sight.normalized() * MELEE_REACH_M, creature_view.figures(), look_ray)
+	if h.is_empty():
+		return {}
+	for c: Snapshot.Creature in world.snapshot.creatures:
+		if c.uid == int(h["uid"]):
+			var d := CreatureView.def_of(world, c)
+			melee_aim = {"square": c.pos, "uid": c.uid, "part": BulletPhysics.cdda_part(str(h["zone"]),
+					c.kind == Snapshot.Creature.MONSTER, d.weakpoints if d != null else {}),
+					"quality": BulletPhysics.quality_of(float(h["quality"])), "time": Time.get_ticks_msec()}
+			return melee_aim
+	return {}
+
+
+## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
+## ("fp3d_attack_<hand>_aim_<DIR>") at the creature under the crosshair through screen point `at` of `cam` when
+## it is at most MELEE_SQUARES off along one of the 8 ways on this level; else a plain strike the way you face
+## (`facing`, a direction name such as "LEFT").
+func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me: Vector3i, facing: String) -> String:
+	var plain := "fp3d_attack_%s_%s" % [hand, facing]
+	melee_aim = {}
+	if cam == null or world == null or world.snapshot == null:
+		return plain
+	var line := shot_line(cam, at, captured)
+	var aim := melee_from(line[0], line[1])
+	if aim.is_empty():
+		return plain
+	var dir := strike_dir(me, aim["square"])
+	if dir == "":
+		melee_aim = {}
+		return plain
+	return "fp3d_attack_%s_aim_%s" % [hand, dir]
+
+
+## The direction name from square `me` to `to` when it lies 1..MELEE_SQUARES off along one of the 8 ways on the
+## same level, else "".
+static func strike_dir(me: Vector3i, to: Vector3i) -> String:
+	var d := to - me
+	var n := maxi(absi(d.x), absi(d.y))
+	if d.z != 0 or n < 1 or n > MELEE_SQUARES or (d.x != 0 and absi(d.x) != n) or (d.y != 0 and absi(d.y) != n):
+		return ""
+	return DIR_NAMES.get(Vector2i(signi(d.x), signi(d.y)), "")
+
+
+## A swing request (an aimed strike, fp3d/swing.h): the kept melee aim as a `shot` answer when it is fresh and on
+## the request's cursor square with a part to name; else a cancel (CDDA picks the part). {} for an unusable id.
+func _swing_answer(req: Dictionary) -> Dictionary:
+	var id: Variant = RequestWidget.id_value(req.get("id"))
+	if id == null or id <= 0:
+		push_warning("aim: swing request without a usable id")
+		return {}
+	var cancel := fallback_answer(id)
+	var aim := melee_aim
+	melee_aim = {}   # one strike, one answer
+	if aim.is_empty() or Time.get_ticks_msec() - int(aim.get("time", 0)) > MELEE_KEEP_MS:
+		return cancel
+	var cursor: Variant = req.get("cursor")
+	var part := str(aim.get("part", ""))
+	if not cursor is Vector3i or cursor != aim.get("square") or part == "" or part.to_utf8_buffer().size() > MAX_PART_BYTES:
+		return cancel
+	return {"id": int(id), "shot": shot_answer(cursor, int(aim["uid"]), part, float(aim["quality"]))}
+
+
 ## Called by main.gd for every live request before it shows. `target`: remembers its `dispersion` and
 ## `weapon_wielded`, returns {}.
 ## `shot` (one projectile CDDA fires after a client-flown FIRE): the answer to send right away, no UI:
@@ -288,6 +365,8 @@ func on_request(req: Dictionary) -> Dictionary:
 		# old bridges don't say: the wielded gun fires; anything but true says it doesn't
 		_wielded_fires = not req.has("weapon_wielded") or (req["weapon_wielded"] is bool and req["weapon_wielded"])
 		return {}
+	if kind == "swing":
+		return _swing_answer(req)
 	if kind != "shot":
 		return {}
 	var id: Variant = RequestWidget.id_value(req.get("id"))

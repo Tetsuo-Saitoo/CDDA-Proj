@@ -87,7 +87,24 @@ var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
 
 
+## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
+static func _boot_log(what: String) -> void:
+	print("boot: %6d ms  %s" % [Time.get_ticks_msec(), what])
+
+
+func _on_first_frame_drawn() -> void:
+	_boot_log("first frame drawn")
+
+
+func _exit_tree() -> void:
+	# Nothing of ours may stay connected to an engine singleton: a headless run never draws a frame, and the callable
+	# still waiting on frame_post_draw crashed the engine as it shut down.
+	if RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+		RenderingServer.frame_post_draw.disconnect(_on_first_frame_drawn)
+
+
 func _ready() -> void:
+	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
@@ -175,6 +192,7 @@ func _ready() -> void:
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
 	_set_view(start_view(_args, hud_settings.view))
+	_boot_log("client set up")
 	if _args.has("live"):
 		_start_live()
 	else:
@@ -461,7 +479,8 @@ func _start_live() -> void:
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
-		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
+		print("live: " + status)   # in the console too: in VR the HUD isn't in the headset
+		_boot_log("game " + s))
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
@@ -548,6 +567,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
 		_sync_cheats_allowed()
@@ -601,6 +621,7 @@ static func cheat_names(v: String) -> PackedStringArray:
 
 func _after_live_start(ok: bool) -> void:
 	if ok:
+		_boot_log("game booting")
 		status = LiveSession.boot_text(live.boot_info())
 	else:
 		status = "live mode failed: " + live.error
@@ -650,6 +671,8 @@ func _save_and_quit() -> void:
 ## Live: meshing runs on a worker (WorldView.submit); _on_world_applied shows the rest when it is done.
 func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
+	if _first_live_snapshot:
+		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
 	world.submit(snap)
 
 
@@ -661,6 +684,9 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 	status = "turn %d: %s" % [snap.turn, status]
 	if first:
 		print("live: " + status)
+		_boot_log("first world built")
+		if not RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+			RenderingServer.frame_post_draw.connect(_on_first_frame_drawn, CONNECT_ONE_SHOT)
 		_frame_player()
 
 
@@ -760,9 +786,16 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike the square you face: the left (off) hand or the right (main) hand
+		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# reach (an aimed strike, AimController.strike_action), else the square you face
 		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
-		act = "fp3d_attack_%s_%s" % [hand, OCT_ACTIONS[_octant(Vector2(0, 1))]]
+		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
+		var cam := get_viewport().get_camera_3d()
+		act = "fp3d_attack_%s_%s" % [hand, facing]
+		if cam != null and world.snapshot != null:
+			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
+					captured, world.snapshot.player_pos, facing)
 	if act == "":
 		return false
 	if _in_main_loop():

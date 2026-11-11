@@ -531,10 +531,12 @@ func _test_cache(glb: PackedByteArray) -> void:
 	lib.max_image_bytes = 300   # the cupboard's 8 x 8 texture is 256 bytes decoded
 	_check.call(lib.get_model("furniture/cupboard.glb") != null and lib.get_model("furniture/cupboard_2.glb") == null
 			and lib.warnings.size() == 1 and lib.warnings[0].contains("image memory"), "image memory budget across models " + str(lib.warnings))
-	lib = _lib()
+	# Fake loads: Godot's headless renderer (all client tests) doesn't take textures or meshes from two threads at
+	# once, so two real .glb loads racing here print renderer errors now and then. The cache is what's checked.
+	var racing := SlowLoads.new()
 	var got: Array = [null]
-	var task := WorkerThreadPool.add_task(func() -> void: got[0] = lib.get_model("furniture/cupboard.glb"))
-	var here := lib.get_model("furniture/cupboard.glb")
+	var task := WorkerThreadPool.add_task(func() -> void: got[0] = racing.get_model("furniture/cupboard.glb"))
+	var here := racing.get_model("furniture/cupboard.glb")
 	WorkerThreadPool.wait_for_task_completion(task)
 	_check.call(here != null and got[0] == here, "one model for two threads asking at once")
 	lib = _lib()
@@ -795,3 +797,13 @@ func _remove(dir: String) -> void:
 		else:
 			_remove(dir.path_join(sub))
 	DirAccess.remove_absolute(dir)
+
+
+## A library whose loads make an empty model after a short wait (no file, nothing for the renderer), for checks of
+## the cache from several threads.
+class SlowLoads extends ModelLibrary:
+	func _load(rel: String) -> ModelLibrary.Model:
+		OS.delay_usec(2000)
+		var m := ModelLibrary.Model.new()
+		m.path = rel
+		return m

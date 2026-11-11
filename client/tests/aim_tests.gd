@@ -678,6 +678,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_shot_requests(aim, ui, cam, req, me, zp)
 	_test_horde(root, aim, cv, eye, head)
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
+	_test_melee(aim, eye, head, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -685,6 +686,35 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 
 
 const ZUID := 8589934593   # the test zombie
+
+
+## Melee: an aimed strike picks the figure within reach (not past MELEE_REACH_M, not through a wall), names the
+## way to it, and answers the swing request for its square once; anything else cancels.
+func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, zp: Vector3i) -> void:
+	var S := AimController
+	_check.call(S.strike_dir(me, me + Vector3i(-1, 0, 0)) == "LEFT" and S.strike_dir(me, me + Vector3i(2, -2, 0)) == "RIGHTUP"
+			and S.strike_dir(me, me + Vector3i(0, 2, 0)) == "DOWN" and S.strike_dir(me, me + Vector3i(2, 1, 0)) == ""
+			and S.strike_dir(me, me + Vector3i(3, 0, 0)) == "" and S.strike_dir(me, me) == ""
+			and S.strike_dir(me, me + Vector3i(1, 0, 1)) == "", "melee: strike ways (8 ways, 2 squares, this level)")
+	var dir := eye.direction_to(head)
+	var near := head - dir * 1.5
+	var m := aim.melee_from(near, dir)
+	_check.call(m.get("uid") == ZUID and m.get("part") == "head" and m.get("square") == zp,
+			"melee: a strike at the head picks the zombie's head (%s)" % [m])
+	var far := head - dir * (S.MELEE_REACH_M + 1.0)
+	_check.call(aim.melee_from(far, dir).is_empty() and aim.melee_aim.is_empty(), "melee: nothing past the reach")
+	aim.melee_from(near, dir)
+	var a := aim.on_request({"kind": "swing", "id": 41, "cursor": zp, "origin": me, "range": 1, "mode": "main"})
+	var s: Dictionary = a.get("shot", {})
+	_check.call(a.get("id") == 41 and s.get("end") == zp and s.get("hit_uid") == ZUID and s.get("part") == "head"
+			and _bridge_typed(s), "melee: the swing request gets the aimed part (%s)" % [a])
+	var again := aim.on_request({"kind": "swing", "id": 42, "cursor": zp})
+	aim.melee_from(near, dir)
+	var elsewhere := aim.on_request({"kind": "swing", "id": 43, "cursor": zp + Vector3i(0, 1, 0)})
+	var bad_id := aim.on_request({"kind": "swing", "id": "x", "cursor": zp})
+	_check.call(again.get("cancel") == true and not again.has("shot") and elsewhere.get("cancel") == true
+			and not elsewhere.has("shot") and bad_id.is_empty(),
+			"melee: one answer per strike, another square cancels (%s, %s)" % [again, elsewhere])
 
 
 ## Hordes: a flight tests only the figures near its line (at most 64, the nearest along it) and still hits one on it.

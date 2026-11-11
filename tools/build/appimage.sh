@@ -30,6 +30,20 @@ case "$dst" in
     /|"$HOME"|"$HOME"/|"$src"|"$src"/) echo "refusing to build in $dst" >&2; exit 1 ;;
 esac
 die() { echo "appimage.sh: $*" >&2; exit 1; }
+# git in a checkout, also in a Git worktree made on Windows: its .git file names its Git folder as D:/..., which
+# Linux can't open, so that is read as /mnt/d/... instead.
+git_in() {
+    local dir=$1
+    shift
+    git -c safe.directory='*' -C "$dir" "$@" 2>/dev/null && return
+    local gd
+    gd="$(sed -n 's/^gitdir: //p' "$dir/.git" 2>/dev/null | tr -d '\r')"
+    case "$gd" in
+        [A-Za-z]:/*) local drive="${gd:0:1}"
+                     git -c safe.directory='*' --git-dir="/mnt/${drive,,}/${gd:3}" "$@" ;;
+        *) return 1 ;;
+    esac
+}
 
 for c in mksquashfs rsync curl python3 objcopy objdump nm sha256sum dpkg-query ldconfig git; do
     command -v "$c" >/dev/null || die "missing $c (sudo apt install squashfs-tools rsync curl python3 binutils git)"
@@ -73,8 +87,10 @@ PY
 fi
 
 # --- 2. Bridge (wsl_build.sh copies this checkout to $dst and builds there) ---
-bash "$src/tools/build/wsl_build.sh" fp3d-cdda
+bash "$src/tools/build/wsl_build.sh" fp3d-cdda fp3d-json-cache
 so_built="$dst/client/bin/fp3d_cdda.linux.x86_64.so"
+json_cache="$dst/cdda/out/build/fp3d-linux/src/fp3d/fp3d-json-cache"
+[ -x "$json_cache" ] || die "no fp3d-json-cache at $json_cache"
 [ -f "$so_built" ] || die "no bridge at $so_built"
 # Nothing shipped may be a symlink: rsync -a would copy it as a link that resolves on the player's machine,
 # and Godot's export would pack whatever a link in client/ points at (any file of this machine) into the .pck.
@@ -109,6 +125,16 @@ cmp -s "$app/cdda-3d.x86_64" "$tpl" || die "the exported executable isn't Godot'
 mkdir -p "$app/cdda" "$app/assets" "$app/contracts"
 rsync -a --exclude=/data/cache/ "$dst/cdda/data" "$dst/cdda/gfx" "$app/cdda/"
 cp "$dst/cdda/LICENSE.txt" "$app/cdda/"
+# CDDA's JSON parse cache, made from exactly these files: the image is read-only, so without it every start parses
+# all of CDDA's JSON again. CDDA uses an entry only while its file keeps the modification time it was cached with,
+# to the millisecond, and squashfs keeps whole seconds, so the files get one whole-second time first. A stale or
+# missing entry is just parsed from the JSON (the bridge logs it, nothing is shown).
+# The time: SOURCE_DATE_EPOCH when set, else the fork commit's, so the same sources give the same files.
+stamp="${SOURCE_DATE_EPOCH:-$(git_in "$src/cdda" log -1 --format=%ct)}" || die "no commit time for $src/cdda"
+case "$stamp" in ''|*[!0-9]*) die "bad file time '$stamp'" ;; esac
+find "$app/cdda/data" "$app/cdda/gfx" -exec touch -h -m -d "@$stamp" {} +
+"$json_cache" "$app/cdda" >"$work/json-cache.log" 2>&1 || { tail -20 "$work/json-cache.log"; die "JSON cache failed"; }
+grep -o 'fp3d-json-cache: [0-9].*' "$work/json-cache.log" | tail -1
 rsync -a "$dst/assets/registry" "$app/assets/"
 if [ -d "$dst/assets/models" ]; then rsync -a "$dst/assets/models" "$app/assets/"; fi
 rsync -a "$dst/contracts/mock" "$app/contracts/"
@@ -164,8 +190,8 @@ done
 doc="$work/AppDir/usr/share/doc/cdda-3d"
 mkdir -p "$doc"
 cp "$dst/LICENSE.md" "$work/THIRD_PARTY_LICENSES.txt" "$doc/"
-proj="$(git -c safe.directory='*' -C "$src" rev-parse HEAD)"
-code="$(git -c safe.directory='*' -C "$src/cdda" rev-parse HEAD)"
+proj="$(git_in "$src" rev-parse HEAD)" || die "no commit for $src"
+code="$(git_in "$src/cdda" rev-parse HEAD)" || die "no commit for $src/cdda"
 cat >"$doc/BUILD_INFO.txt" <<EOF
 CDDA-3D AppImage, built $(date -u +%Y-%m-%d) on $(. /etc/os-release && echo "$PRETTY_NAME")
 CDDA-Proj $proj, CDDA-3D-code (cdda/) $code
@@ -190,6 +216,8 @@ fi
 
 # --- 5. Pack: the runtime, then the squashfs image ---
 rm -f "$work/app.squashfs"
+# 1 MiB blocks: measured in WSL, CDDA's data loads as fast as with 128 KiB blocks (faster with the JSON cache) and the
+# image is ~6 MB smaller.
 mksquashfs "$work/AppDir" "$work/app.squashfs" -root-owned -noappend -no-xattrs -comp zstd -Xcompression-level 19 \
     -b 1M -no-progress >/dev/null
 out="$src/tools/out/appimage"

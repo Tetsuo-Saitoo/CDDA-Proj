@@ -55,7 +55,7 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
 | `start_test_range(data_dir, user_dir)` | `String` | Like `start()`, in FP3D's own throwaway world `fp3d-range` (rebuilt every time; a world of that name FP3D didn't make is left alone and `fp3d-range-2`, ... is used). Fixed seed and start (spring, day 2, 10:00), a fixed character in the hub, AI frozen, achievements off, and `set_cheats_allowed(true)`. Once per process. |
 | `range_spawn_item(itype, count, pos)` | `int` | `count` (1..1000) copies or charges of item type `itype` (the id tables' itype index) on square `pos` (absolute, in the reality bubble). |
 | `range_spawn_monster(id, pos)` | `int` | A monster by CDDA id (at most 64 of `a-z A-Z 0-9 _ -`) on a passable, empty square `pos` in the bubble. |
-| `range_teleport(zone)` | `int` | Moves the character to zone index `zone` (`get_range_info().zones`), building it the first time. |
+| `range_teleport(zone)` | `int` | Moves the character to zone index `zone` (`get_range_info().zones`), building it the first time. It arrives on the zone centre or the nearest safe free square (no fire or other field, trap, deep water or open air), and leaves a vehicle it sits in. Refused (the result's `error`) while riding, or when no such square is near the centre (the character stays where it was). |
 | `range_rebuild_zone(zone)` | `int` | Clears zone index `zone` and builds it again (same layout every time). Refused (the result's `error`) while the character is in that zone, rides or is in a vehicle. The character stays on its square. |
 | `range_set_time(minute)` | `int` | Jumps forward to the next `minute` of the day (0..1439). |
 | `range_advance(minutes)` | `int` | Waits `minutes` (1..10080) as real turns (CDDA's wait; interrupted like any wait). Refused while an activity runs or while driving a moving vehicle. Answer the main loop's next request with `pause` so the wait isn't replaced. |
@@ -96,7 +96,11 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
 - Hand attacks (first person / VR, `cdda/src/fp3d/hands.h`): main-loop actions `fp3d_attack_main_<DIR>` and
   `fp3d_attack_off_<DIR>`, DIR one of the eight move actions (UP = north). Main hand: CDDA's melee attack with
   what is wielded; off hand: an unarmed strike (the `attack` event's `type` is 0), refused while the wielded item
-  needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time.
+  needs both hands or the left arm is broken. Nobody there or someone friendly: a message, no time. Nobody next
+  to you that way: the main hand's weapon with reach (a spear: 2) strikes the first creature along it, up to its
+  reach (CDDA's reach attack, which may hit someone in between). `fp3d_attack_<main|off>_aim_<DIR>` is the same
+  strike aimed: the client's crosshair (VR: the hand) is on that creature, so the swing sends one `swing`
+  request (`ui_requests.md`).
 - Held items and context use (`cdda/src/fp3d/held.h`): the off hand (left) holds one carried item, marked with
   the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it; a token the avatar keeps
   too means an item that left the avatar isn't held again on return), empty while the wielded item needs both
