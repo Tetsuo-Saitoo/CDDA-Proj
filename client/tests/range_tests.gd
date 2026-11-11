@@ -3,6 +3,8 @@ extends RefCounted
 ## range_* ops (checked here first), polls the info and emits range_changed / range_done; the cheats page shows
 ## range controls only in a range game. FakeSim answers like CddaSim. Run by run_tests.gd.
 
+const Main := preload("res://scripts/main.gd")
+
 var _check: Callable
 
 
@@ -51,9 +53,17 @@ class FakeSim extends RefCounted:
 	func range_spawn_monster(id: String, pos: Vector3i) -> int:
 		return _op("monster", [id, pos])
 
+	func cheat_teleport(pos: Vector3i) -> int:
+		return _op("tp", [pos])
+
 	func queue_action(a: String) -> bool:
 		actions.append(a)
 		return true
+
+	var allowed: Array = []   # each set_cheats_allowed
+
+	func set_cheats_allowed(on: bool) -> void:
+		allowed.append(on)
 
 
 func run(root: Node, check: Callable, tables: IdTables) -> void:
@@ -62,6 +72,102 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_clean()
 	_test_session()
 	_test_panel(root, tables)
+	_test_loaded(root)
+	_test_teleport(root)
+
+
+## The teleport cheat: TeleportAim picks the square to stand on, LiveSession sends it only with cheats allowed (in
+## any game, not only the range), its result comes back through range_done; the F1 entry is greyed out without it.
+func _test_teleport(root: Node) -> void:
+	var to_ms := func(v: Vector3) -> Vector3i: return Vector3i(floori(v.x), floori(v.z), floori(v.y / 3.0))
+	var wall := {"hit": true, "square": Vector3i(5, 0, 0), "point": Vector3(5.02, 1.5, 0.5), "what": "wall"}
+	var diag := {"hit": true, "square": Vector3i(5, 5, 0), "point": Vector3(5.0, 1.0, 5.3), "what": "furniture"}
+	_check.call(TeleportAim.square(wall, Vector3.RIGHT, to_ms) == Vector3i(4, 0, 0)
+			and TeleportAim.square(diag, Vector3(1, 0, 1), to_ms) == Vector3i(4, 5, 0),
+			"teleport aim: a wall or furniture: the square the ray crossed before it")
+	_check.call(TeleportAim.square({"hit": true, "square": Vector3i(2, 3, -1), "point": Vector3(2.5, -0.01, 3.5), "what": "floor"},
+			Vector3.DOWN, to_ms) == Vector3i(2, 3, -1) and TeleportAim.square({"hit": true, "square": Vector3i(2, 3, 1),
+			"point": Vector3(2.5, 3.0, 3.5), "what": "ceiling"}, Vector3.UP, to_ms) == Vector3i(2, 3, 1),
+			"teleport aim: a floor below or a ceiling above: the square standing on it")
+	_check.call(TeleportAim.square({"hit": false}, Vector3.RIGHT, to_ms) == null
+			and TeleportAim.square({"hit": true, "square": "x", "point": Vector3.ZERO}, Vector3.RIGHT, to_ms) == null
+			and TeleportAim.square({"hit": true, "square": Vector3i(1, 1, 0)}, Vector3.RIGHT, to_ms) == null,
+			"teleport aim: nothing hit or a malformed hit: no square")
+	var sim := FakeSim.new()
+	sim.info = {"seq": 1, "range": false, "zones": [], "results": []}
+	var ls := _session(sim)
+	var done: Array = []
+	ls.range_done.connect(func(id: int, e: String) -> void: done.append([id, e]))
+	_check.call(not ls.can_teleport() and ls.cheat_teleport(Vector3i(3, 4, 0)) == 0 and sim.calls.is_empty(),
+			"teleport: refused here while cheats aren't allowed")
+	ls.set_cheats_allowed(true)
+	var id := ls.cheat_teleport(Vector3i(3, 4, 0))
+	_check.call(ls.can_teleport() and id == 1 and sim.calls == [["tp", Vector3i(3, 4, 0)]]
+			and ls.cheat_teleport(Vector3i(1 << 30, 0, 0)) == 0 and sim.calls.size() == 1,
+			"teleport: sent with cheats allowed in a normal game; a square out of bounds isn't")
+	sim.info["results"] = [{"id": id, "error": "That square is outside the reality bubble."}]
+	ls._poll_range(0.0)
+	_check.call(done == [[1, "That square is outside the reality bubble."]], "teleport: the result comes back by its id (%s)" % [done])
+	var p := CheatPanel.new()
+	root.add_child(p)
+	p.backend = ls
+	var sent: Array = []
+	p.teleport = func() -> int:
+		sent.append(1)
+		return ls.cheat_teleport(Vector3i(6, 6, 0))
+	ls.range_done.connect(p.on_range_done)
+	p.refresh()
+	_check.call(not p.teleport_button.disabled and p.teleport_button.tooltip_text.contains("J"), "teleport panel: the F1 entry, with its key")
+	p.teleport_here()
+	sim.info["results"] = [{"id": 2, "error": ""}]
+	ls._poll_range(0.0)
+	_check.call(sent.size() == 1 and sim.calls[-1] == ["tp", Vector3i(6, 6, 0)] and p.status.text == "Teleport: done.",
+			"teleport panel: the entry sends it and says when it was done (%s)" % p.status.text)
+	ls.set_cheats_allowed(false)
+	p.refresh()
+	p.teleport_here()
+	_check.call(p.teleport_button.disabled and sent.size() == 1 and p.status.text.begins_with("Teleport: needs"),
+			"teleport panel: greyed out while cheats aren't allowed")
+	p.free()
+	ls.free()
+
+
+## A range save loaded from the menu (no Test range start, no --test): the game reaches running with cheats not
+## allowed by the player; the range info says range, so main forces them and pushes true again (main.gd wires
+## range_changed to range_forces_cheats), and the F1 Test range section shows.
+func _test_loaded(root: Node) -> void:
+	var m := KeyMenu.new()
+	m.save_path = preload("res://tests/test_dir.gd").path("range_load_keys.cfg")
+	m.hud_path = preload("res://tests/test_dir.gd").path("range_load_hud.cfg")   # not the player's debug switch
+	var p := CheatPanel.new()
+	m.add_cheat_page(p)
+	root.add_child(m)
+	var sim := FakeSim.new()
+	var ls := _session(sim)
+	p.backend = ls
+	ls.range_changed.connect(p.on_range_changed)
+	ls.range_changed.connect(func(i: Dictionary) -> void: Main.range_forces_cheats(i, m, ls))
+	ls.set_cheats_allowed(m.cheats_allowed())   # as the session does when the game reaches running
+	ls._poll_range(0.0)
+	_check.call(sim.allowed == [false, true] and m.cheats_forced and m.cheats_allowed() and ls.cheats_allowed
+			and p.range_box.visible, "range load: a loaded range game forces cheats, pushes true, shows the range (%s)"
+			% [sim.allowed])
+	sim.info["seq"] = 2
+	ls._poll_range(0.0)
+	_check.call(sim.allowed == [false, true], "range load: pushed once, not on every range change")
+	var m2 := KeyMenu.new()
+	var plain := FakeSim.new()
+	plain.info = {"seq": 1, "range": false, "zones": []}
+	var ls2 := _session(plain)
+	ls2.range_changed.connect(func(i: Dictionary) -> void: Main.range_forces_cheats(i, m2, ls2))
+	ls2.set_cheats_allowed(m2.cheats_allowed())
+	ls2._poll_range(0.0)
+	_check.call(plain.allowed == [false] and not m2.cheats_forced and not Main.range_forces_cheats({"range": "yes"}, m2, ls2)
+			and not Main.range_forces_cheats({}, null, ls2), "range load: a normal game (or junk) forces nothing")
+	ls.free()
+	ls2.free()
+	m.free()
+	m2.free()
 
 
 func _test_clean() -> void:

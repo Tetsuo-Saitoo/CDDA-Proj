@@ -4,21 +4,32 @@ extends SceneTree
 ## before queueing; spawn an item and a monster next to the player, set the time, freeze and thaw the AI, heal,
 ## wait a minute, and visit the first zone of every kind (each is built on the first visit and the player lands
 ## inside it). Ops run at the main loop's next request, so each step waits for a new one.
+## Then it thaws the AI, saves and starts run 2 (`-- --load`): a loaded range save is a range game again (the
+## user's call, PLAN.md K7): same zones and built flags, the AI as saved, nothing moved, and the ops work.
 ## Needs the DLL (build target fp3d-cdda) and the game data in ../cdda. From the repo root:
 ##   godot --headless --path client --script res://tests/range_live_test.gd
 ## Exit code 0 = all passed.
 
+const WORLD := "fp3d-range"
 const BOOT_TIMEOUT_MS := 300000
 const OP_TIMEOUT_MS := 120000
+## What run 1 saved, for run 2 (in the test's folder).
+const EXPECT_FILE := "range_expect.json"
 const TestDir := preload("res://tests/test_dir.gd")
 
 var _failed := 0
 var _sim: RefCounted
 var _req := {}   # the last main-loop request seen
+var _run_name := "range live tests"
 
 
 func _initialize() -> void:
-	_run()
+	if "--load" in OS.get_cmdline_user_args():
+		_run_name = "range live tests (load run)"
+		_check(TestDir.use_parent(OS.get_cmdline_user_args()), "run 1 named its folder (--test-run)")
+		_run_load()
+	else:
+		_run()
 
 
 func _run() -> void:
@@ -131,8 +142,128 @@ func _run() -> void:
 	e = await _op(_sim.range_teleport(zones.size()))
 	_check(e != "" and e != "no answer", "a zone past the end is refused (%s)" % e)
 	_check(_sim.get_events_dropped() == 0, "no events dropped")
+
+	# Thaw the AI (not the default, so run 2 shows it comes from the save) and save without a turn passing, so
+	# nothing moves before the save; run 2 loads it.
+	e = await _op(_sim.range_set_ai_frozen(false))
+	_check(e == "", "AI thawed before saving (%s)" % e)
+	info = _sim.get_range_info()
+	snap = _snapshot()
+	var saved_turn := int(_req.get("turn", -1))
+	_sim.set_paused(true)
+	_check(_sim.save_game(), "asks for a save (paused)")
+	var st := await _saves_done(1, OP_TIMEOUT_MS)
+	_check(st.get("ok", false), "the range game saves (%s)" % st)
+	var saves: PackedStringArray = _sim.list_saves(user_dir, WORLD)
+	_check(saves.size() == 1 and WORLD in _sim.list_worlds(user_dir), "one save in world %s (%s)" % [WORLD, saves])
+	_sim.stop()
+	if _failed > 0 or saves.size() != 1 or not snap.is_valid():
+		_finish()
+		return
+	var expect := {"save": saves[0], "turn": saved_turn, "zone": info.get("zone"),
+			"zones": _zone_keys(info), "player": str(snap.player_pos), "monsters": _places(snap)}
+	var f := FileAccess.open(TestDir.path(EXPECT_FILE), FileAccess.WRITE)
+	f.store_string(JSON.stringify(expect))
+	f.close()
+	print("  second run: load %s at turn %d" % [saves[0], saved_turn])
+	var out := []
+	var args := PackedStringArray(["--headless", "--path", ProjectSettings.globalize_path("res://"),
+			"--script", "res://tests/range_live_test.gd", "--", "--load", TestDir.child_arg()])
+	var code := OS.execute(OS.get_executable_path(), args, out, true)
+	for chunk: String in out:
+		print(chunk.strip_edges(false, true).indent("  | "))
+	_check(code == 0, "second run loads the range save and passes (exit %d)" % code)
+	_finish()
+
+
+## Run 2: loads what run 1 saved. It must be a range game again with the cheat opt-in on (the bridge turns it on
+## for a loaded range save), the same zones and built flags, the AI thawed as saved, the player and monsters
+## where they were (nothing rebuilt), and the ops must work. Deletes nothing.
+func _run_load() -> void:
+	_check(ClassDB.class_exists("CddaSim") and ClassDB.class_has_method("CddaSim", "get_range_info"),
+			"extension loaded with the test range")
+	var expect: Variant = JSON.parse_string(FileAccess.get_file_as_string(TestDir.path(EXPECT_FILE)))
+	_check(expect is Dictionary and expect.get("save") is String and expect.get("zones") is Array
+			and expect.get("player") is String and expect.get("monsters") is Array,
+			"reads what run 1 saved (%s)" % EXPECT_FILE)
+	if _failed > 0:
+		_finish()
+		return
+	var user_dir := TestDir.global("cdda-range-test")
+	_sim = ClassDB.instantiate("CddaSim")
+	_check(Array(_sim.list_saves(user_dir, WORLD)) == [expect["save"]], "the save is listed")
+	var why: String = _sim.start_load(_repo("cdda"), user_dir, WORLD, expect["save"])
+	_check(why.is_empty(), "starts loading (%s)" % why)
+	_req = await _next_request(BOOT_TIMEOUT_MS)
+	_check(not _req.is_empty(), "reaches the main loop (state %s %s)" % [_sim.get_state(), _sim.get_error()])
+	if _req.is_empty():
+		_finish()
+		return
+	_check(int(_req["turn"]) == int(expect["turn"]), "turn matches the save (%s, saved %s)"
+			% [_req["turn"], expect["turn"]])
+	var info: Dictionary = _sim.get_range_info()
+	_check(info.get("range") == true, "a range game again (range %s)" % info.get("range"))
+	_check(info.get("ai_frozen") == false, "the AI thawed as saved (ai_frozen %s)" % info.get("ai_frozen"))
+	_check(_zone_keys(info) == expect["zones"], "the same zones with the same built flags")
+	_check(int(info.get("zone", -1)) == int(expect.get("zone", -2)), "in the same zone (%s)" % info.get("zone"))
+	var snap := _snapshot()
+	_check(snap.is_valid(), "loaded snapshot passes the client's checks (%s)" % snap.error)
+	var mons := _places(snap)
+	_check(str(snap.player_pos) == expect["player"] and mons == expect["monsters"],
+			"the player and %d monster(s) where they were saved: nothing rebuilt (%s %s)"
+			% [mons.size(), snap.player_pos, mons])
+
+	# The ops work: the bridge turned the cheat opt-in on for the loaded range
+	var e := await _op(_sim.range_heal())
+	_check(e == "", "heal (%s)" % e)
+	e = await _op(_sim.range_set_ai_frozen(true))
+	_check(e == "" and (_sim.get_range_info() as Dictionary).get("ai_frozen") == true, "AI frozen again (%s)" % e)
+	var zones: Array = info.get("zones", [])
+	var target := -1
+	for i in range(1, zones.size()):
+		if zones[i].get("built") == true:
+			target = i
+			break
+	e = "no built zone"
+	if target > 0:
+		e = await _op(_sim.range_teleport(target))
+	var after: Dictionary = _sim.get_range_info()
+	_check(e == "" and after.get("zone") == target, "teleport to built zone %d (%s)" % [target, e])
+	_check(_zone_keys(after) == expect["zones"], "a built zone isn't built again, the others stay unbuilt")
+	_check(_sim.get_events_dropped() == 0, "no events dropped")
 	_sim.stop()
 	_finish()
+
+
+func _saves_done(n: int, timeout_ms: int) -> Dictionary:
+	var deadline := Time.get_ticks_msec() + timeout_ms
+	while Time.get_ticks_msec() < deadline:
+		await create_timer(0.05).timeout
+		_sim.drain_events()
+		_answer_prompts()
+		var st: Dictionary = _sim.get_save_status()
+		if int(st["done"]) >= n:
+			return st
+		if _sim.get_state() != "running":
+			return {}
+	return {}
+
+
+## Zone id + built flag per zone, to compare across the save.
+static func _zone_keys(info: Dictionary) -> Array:
+	var out := []
+	for z: Dictionary in info.get("zones", []):
+		out.append("%s:%s" % [z.get("id", ""), z.get("built") == true])
+	return out
+
+
+## The monsters' squares as sorted strings (JSON keeps them as they are).
+static func _places(snap: Snapshot) -> Array:
+	var out := []
+	for p in _monsters(snap):
+		out.append(str(p))
+	out.sort()
+	return out
 
 
 ## Waits for operation `id`'s result, then for the main loop's next request after it; the error ("" = done),
@@ -216,11 +347,13 @@ static func _monsters(snap: Snapshot) -> Array[Vector3i]:
 
 
 func _finish() -> void:
-	if _failed == 0:
-		TestDir.clean()
-	else:
-		print("  files kept in " + ProjectSettings.globalize_path(TestDir.dir()))
-	print("range live tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
+	# Run 1 owns the folder (run 2 has finished by now); a failed run keeps it to look at.
+	if not "--load" in OS.get_cmdline_user_args():
+		if _failed == 0:
+			TestDir.clean()
+		else:
+			print("  files kept in " + ProjectSettings.globalize_path(TestDir.dir()))
+	print(_run_name + ": " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
 	quit(0 if _failed == 0 else 1)
 
 

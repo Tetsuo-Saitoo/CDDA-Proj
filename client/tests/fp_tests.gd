@@ -235,6 +235,10 @@ func _test_cdda_keys() -> void:
 	for a: StringName in InputActions.CDDA:
 		ok = ok and not InputActions.info(a).is_empty()
 	_check.call(ok, "keys: every CDDA action is in the action list")
+	_check.call(InputActions.CDDA.get(&"cdda_run") == "toggle_run" and InputActions.CDDA.get(&"cdda_crouch") == "toggle_crouch"
+			and InputActions.key_of(&"cdda_run") == "CapsLock" and InputActions.key_of(&"cdda_crouch") == "B"
+			and not "Shift" in InputActions.key_of(&"cdda_run") and not "Shift" in InputActions.key_of(&"cdda_crouch"),
+			"keys: run and crouch are CDDA's own move modes, on keys without Shift")
 	# Walking, steps, hands and CDDA actions are all read in a live game: no default key may be shared.
 	var seen := {}
 	var clash := PackedStringArray()

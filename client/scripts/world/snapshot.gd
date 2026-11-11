@@ -127,6 +127,9 @@ var player_needs := {}                     # NEEDS key -> int, only the ones sen
 ## player.effects (what CDDA's @ screen lists): {id, name, body_part, intensity, rating, seconds_left}, at most
 ## MAX_EFFECTS. HUD-only data: a bad entry is skipped, not a failed snapshot. seconds_left -1 = permanent or unknown.
 var player_effects: Array[Dictionary] = []
+## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
+## (HUD-only: never fails the snapshot).
+var player_move_mode := -1
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -288,6 +291,8 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	player_effects = effects_from((v as Dictionary).get("effects"))
+	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
+	player_move_mode = mm if mm is int else -1
 
 
 ## player.effects, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).

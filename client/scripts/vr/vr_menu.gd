@@ -10,11 +10,21 @@ extends Node3D
 ## "Cheats >" row at the bottom of the settings page, shown only when `cheats_allowed` (--test / --cheats, set by
 ## the rig) and `cheats_backend` can do cheats. Same input; stick left or "< Back" returns. What it shows is read
 ## from the backend on each refresh (on open, after a press, on its cheats_changed), never kept as truth.
+## K7 test range: a third page, "Test range" (VrRange rows: monster freeze, heal, wait an hour, set times, then one
+## "Go to" per zone, ZONES_PER_PAGE at a time behind a "Zones" pager row: stick or pointer left / right half pages),
+## reached by a "Test range >" row under "Cheats >", shown only when `cheats_allowed` and a range game runs
+## (VrRange.available). A press sends one range op; the status line says "…" until the backend's range_done for
+## that op id, then "done" or the sim's reason. Read again on the backend's range_changed.
 
 ## An action row was pressed (stick right, trigger, or the pointer's trigger).
 signal action(key: String)
-## A cheat row was refused (no running game, or the sim said no): the rig buzzes the main hand.
+## A cheat row was refused (no running game, or the sim said no), or a range op was refused or failed: the rig
+## buzzes the main hand.
 signal cheat_refused(reason: String)
+## A range op was sent from the Test range page (`key`: its VrRange row) ...
+signal range_sent(op_id: int, key: String)
+## ... and came back: `error` "" done, else the sim's reason (cleaned).
+signal range_finished(op_id: int, key: String, error: String)
 
 const DIST := 0.9
 const LINE_H := 0.042
@@ -32,8 +42,15 @@ const PICKED := Color(1.0, 0.85, 0.3)
 const GREY := Color(0.55, 0.55, 0.55)
 const SETTINGS_PAGE := "settings"
 const CHEATS_PAGE := "cheats"
+const RANGE_PAGE := "range"
 const CHEATS_ROW := "#cheats"   # the settings page's "Cheats >" row
-const BACK_ROW := "#back"       # the cheats page's "< Back" row
+const RANGE_ROW := "#range"     # ... and its "Test range >" row
+const BACK_ROW := "#back"       # the cheats and range pages' "< Back" row
+const PAGER_ROW := "#zones"     # the range page's zone pager
+const PAGER := "pager"
+const ZONES_PER_PAGE := 8
+const MAX_RANGE_OPS := 16       # range ops waiting for their range_done (older ones are forgotten)
+const ERROR_MAX := 80           # characters of a range op's error from the sim
 
 var settings: Dictionary
 var row := 0
@@ -43,17 +60,27 @@ var cheats_allowed := false
 ## Who the Cheats page talks to (VrRig.cheats_backend: the LiveSession; null in the mock).
 var cheats_backend: Object:
 	set(b):
-		if is_instance_valid(cheats_backend) and cheats_backend.has_signal("cheats_changed") \
-				and cheats_backend.is_connected("cheats_changed", _on_cheats_changed):
-			cheats_backend.disconnect("cheats_changed", _on_cheats_changed)
+		if is_instance_valid(cheats_backend):
+			_link(cheats_backend, false)
 		cheats_backend = b
-		if is_instance_valid(b) and b.has_signal("cheats_changed") and not b.is_connected("cheats_changed", _on_cheats_changed):
-			b.connect("cheats_changed", _on_cheats_changed)
+		_range_ops.clear()
+		if is_instance_valid(b):
+			_link(b, true)
 ## The cheats page's rows as last read (what is on the panel; VrCheats.use reads the backend again).
 var cheat_rows: Array[Dictionary] = []
 var status := ""          # the cheats page's status line: what the last press did
 var status_warn := false
 var refreshes := 0        # cheats page reads (tests count them)
+## The range page: every VrRange row as last read, the rows on the panel (fixed rows, pager, this zone page), the
+## zone page shown (-1: the one with the zone the character is in, set on the next read) and its status line.
+var range_rows: Array[Dictionary] = []
+var range_view: Array[Dictionary] = []
+var zone_page := -1
+var _zone_pages := 1      # zone pages at the last read
+var range_status := ""
+var range_warn := false
+var range_reads := 0      # range page reads (tests count them)
+var _range_ops := {}      # op id -> [what (status text), row key]: sent from here, waiting for range_done
 var _armed := true
 var _hover := -1          # row under the pointer last frame (-1: none)
 var _lines: Array[Label3D] = []
@@ -112,16 +139,23 @@ func cheats_shown() -> bool:
 	return cheats_allowed and VrCheats.available(cheats_backend)
 
 
+## The settings page has its "Test range >" row: allowed, and a range game runs.
+func range_shown() -> bool:
+	return cheats_allowed and VrRange.available(cheats_backend)
+
+
 ## Rows on the page now.
 func row_count() -> int:
 	if page == CHEATS_PAGE:
 		return 1 + cheat_rows.size()
-	return VrSettings.ROWS.size() + (1 if cheats_shown() else 0)
+	if page == RANGE_PAGE:
+		return 1 + range_view.size()
+	return VrSettings.ROWS.size() + (1 if cheats_shown() else 0) + (1 if range_shown() else 0)
 
 
-## Lines on the page now: title, rows, (cheats page: warning, status), help.
+## Lines on the page now: title, rows, (cheats page: warning, status; range page: status), help.
 func line_count() -> int:
-	return 1 + row_count() + (2 if page == CHEATS_PAGE else 0) + 1
+	return 1 + row_count() + (2 if page == CHEATS_PAGE else (1 if page == RANGE_PAGE else 0)) + 1
 
 
 ## The row of this page under a point (menu space), -1 for none.
@@ -134,15 +168,31 @@ func covers(p: Variant) -> bool:
 	return p is Vector3 and on_panel(p, line_count())
 
 
-## The key of row i on this page: a VrSettings key, CHEATS_ROW, BACK_ROW or a VrCheats key; "" for none.
+## The key of row i on this page: a VrSettings key, CHEATS_ROW, RANGE_ROW, BACK_ROW, PAGER_ROW, a VrCheats or a
+## VrRange key; "" for none.
 func key_of(i: int) -> String:
-	if page == CHEATS_PAGE:
+	if page == CHEATS_PAGE or page == RANGE_PAGE:
+		var list: Array[Dictionary] = cheat_rows if page == CHEATS_PAGE else range_view
 		if i == 0:
 			return BACK_ROW
-		return str(cheat_rows[i - 1]["key"]) if i >= 1 and i <= cheat_rows.size() else ""
+		return str(list[i - 1]["key"]) if i >= 1 and i <= list.size() else ""
 	if i >= 0 and i < VrSettings.ROWS.size():
 		return VrSettings.ROWS[i][0]
-	return CHEATS_ROW if i == VrSettings.ROWS.size() and cheats_shown() else ""
+	var extra: Array[String] = []
+	if cheats_shown():
+		extra.append(CHEATS_ROW)
+	if range_shown():
+		extra.append(RANGE_ROW)
+	var j := i - VrSettings.ROWS.size()
+	return extra[j] if j >= 0 and j < extra.size() else ""
+
+
+## The row of this page with key `key`, -1 for none.
+func row_of(key: String) -> int:
+	for i in row_count():
+		if key_of(i) == key:
+			return i
+	return -1
 
 
 ## Stands DIST in front of `head` (rig-space transform), level, facing it.
@@ -195,11 +245,12 @@ func click_at(p: Vector3) -> bool:
 	row = r
 	_hover = r
 	var key := key_of(r)
-	return change(-1 if page == SETTINGS_PAGE and VrSettings.is_number(key) and p.x < 0.0 else 1)
+	var halves := (page == SETTINGS_PAGE and VrSettings.is_number(key)) or (page == RANGE_PAGE and key == PAGER_ROW)
+	return change(-1 if halves and p.x < 0.0 else 1)
 
 
-## Changes the picked row by `dir`. True when a setting changed (or a settings action ran); page switches and
-## cheat rows return false (they change no setting).
+## Changes the picked row by `dir`. True when a setting changed (or a settings action ran); page switches,
+## cheat and range rows return false (they change no setting).
 func change(dir: int) -> bool:
 	var key := key_of(row)
 	if page == CHEATS_PAGE:
@@ -208,9 +259,18 @@ func change(dir: int) -> bool:
 		elif not key.is_empty():
 			_use_cheat(key)
 		return false
-	if key == CHEATS_ROW:
+	if page == RANGE_PAGE:
+		if key == PAGER_ROW:
+			zone_page = wrapi(zone_page + dir, 0, _zone_pages)
+			refresh()
+		elif dir < 0 or key == BACK_ROW:
+			open_page(SETTINGS_PAGE)
+		elif not key.is_empty():
+			_use_range(key)
+		return false
+	if key == CHEATS_ROW or key == RANGE_ROW:
 		if dir > 0:
-			open_page(CHEATS_PAGE)
+			open_page(CHEATS_PAGE if key == CHEATS_ROW else RANGE_PAGE)
 		return false
 	if key.is_empty():
 		return false
@@ -227,20 +287,32 @@ func change(dir: int) -> bool:
 	return true
 
 
-## Shows a page from its first row ("< Back" on the cheats page; back on the settings page, "Cheats >").
+## Shows a page from its first row ("< Back" on the cheats and range pages; back on the settings page, the row
+## that opened the page left).
 func open_page(p: String) -> void:
-	page = CHEATS_PAGE if p == CHEATS_PAGE and cheats_shown() else SETTINGS_PAGE
-	row = 0 if page == CHEATS_PAGE else (VrSettings.ROWS.size() if cheats_shown() else 0)
+	var was := page
+	if p == CHEATS_PAGE and cheats_shown():
+		page = CHEATS_PAGE
+	elif p == RANGE_PAGE and range_shown():
+		page = RANGE_PAGE
+		zone_page = -1   # the zone page with the character's zone
+		range_status = ""
+		range_warn = false
+	else:
+		page = SETTINGS_PAGE
+	row = 0
+	if page == SETTINGS_PAGE and was != SETTINGS_PAGE:
+		row = maxi(row_of(CHEATS_ROW if was == CHEATS_PAGE else RANGE_ROW), 0)
 	_hover = -1
 	status = ""
 	status_warn = false
 	refresh()
 
 
-## Reads the page again (the cheats page asks the backend) and redraws it. Leaves the cheats page when it may no
-## longer show.
+## Reads the page again (the cheats and range pages ask the backend) and redraws it. Leaves the cheats or range
+## page when it may no longer show.
 func refresh() -> void:
-	if page == CHEATS_PAGE and not cheats_shown():
+	if (page == CHEATS_PAGE and not cheats_shown()) or (page == RANGE_PAGE and not range_shown()):
 		page = SETTINGS_PAGE
 		row = 0
 		_hover = -1
@@ -249,14 +321,90 @@ func refresh() -> void:
 		refreshes += 1
 	else:
 		cheat_rows = []
+	if page == RANGE_PAGE:
+		range_rows = VrRange.rows(cheats_backend)
+		range_reads += 1
+		_build_range_view()
+	else:
+		range_rows = []
+		range_view = []
 	row = clampi(row, 0, maxi(row_count() - 1, 0))
 	_show_page()
+
+
+## range_view from range_rows: the fixed rows, then (more than ZONES_PER_PAGE zones) the pager, then zone_page's
+## "Go to" rows. zone_page -1 picks the page with the zone the character is in (the pager wraps in change()).
+func _build_range_view() -> void:
+	var fixed: Array[Dictionary] = []
+	var zones: Array[Dictionary] = []
+	var here := -1
+	for r: Dictionary in range_rows:
+		if r.get("zone", -1) is int and int(r.get("zone", -1)) >= 0:
+			if r.get("here") == true:
+				here = zones.size()
+			zones.append(r)
+		else:
+			fixed.append(r)
+	var pages := maxi(ceili(zones.size() / float(ZONES_PER_PAGE)), 1)
+	_zone_pages = pages
+	if zone_page < 0:
+		zone_page = maxi(here, 0) / ZONES_PER_PAGE
+	zone_page = clampi(zone_page, 0, pages - 1)   # fewer zones now: the last page
+	range_view = fixed
+	if pages > 1:
+		var first := zone_page * ZONES_PER_PAGE
+		range_view.append({"key": PAGER_ROW, "kind": PAGER, "on": false, "enabled": true, "zone": -1,
+				"label": "Zones %d-%d of %d" % [first + 1, mini(first + ZONES_PER_PAGE, zones.size()), zones.size()]})
+	range_view.append_array(zones.slice(zone_page * ZONES_PER_PAGE, (zone_page + 1) * ZONES_PER_PAGE))
+
+
+## Connects (or disconnects) the backend's cheats_changed, range_changed and range_done, those it has.
+func _link(b: Object, on: bool) -> void:
+	for pair: Array in [["cheats_changed", _on_cheats_changed], ["range_changed", _on_range_changed],
+			["range_done", _on_range_done]]:
+		var sig: String = pair[0]
+		var f: Callable = pair[1]
+		if not b.has_signal(sig):
+			continue
+		if on and not b.is_connected(sig, f):
+			b.connect(sig, f)
+		elif not on and b.is_connected(sig, f):
+			b.disconnect(sig, f)
 
 
 ## The backend's cheats_changed: the sim applied a change (here or elsewhere).
 func _on_cheats_changed(_c: Variant = null) -> void:
 	if visible and page == CHEATS_PAGE:
 		refresh()
+
+
+## The backend's range_changed (zones built, the character's zone, the freeze; {} when the game stops): the range
+## page reads again, the settings page shows or hides its "Test range >" row.
+func _on_range_changed(_info: Variant = null) -> void:
+	if visible and page != CHEATS_PAGE:
+		refresh()
+
+
+## The backend's range_done: an op sent from here was done ("") or refused (the sim's reason). Others are ignored.
+func _on_range_done(op_id: Variant = 0, error: Variant = "") -> void:
+	if not op_id is int or not _range_ops.has(op_id):
+		return
+	var sent: Array = _range_ops[op_id]
+	_range_ops.erase(op_id)
+	var err := ""
+	if not error is String:
+		err = "refused"
+	elif not (error as String).is_empty():
+		err = InventoryModel.clean(error, ERROR_MAX)
+		if err.is_empty():
+			err = "refused"   # an error made only of tags or control characters still is one
+	range_status = ("%s: %s" % [sent[0], "done" if err.is_empty() else err]).left(STATUS_MAX)
+	range_warn = not err.is_empty()
+	if visible and page == RANGE_PAGE:
+		_show_page()
+	range_finished.emit(op_id, sent[1], err)
+	if range_warn:
+		cheat_refused.emit(range_status)
 
 
 func _use_cheat(key: String) -> void:
@@ -266,6 +414,26 @@ func _use_cheat(key: String) -> void:
 	refresh()
 	if status_warn:
 		cheat_refused.emit(status)
+
+
+## Sends one range op; the status line waits for its range_done. A refusal says so and buzzes.
+func _use_range(key: String) -> void:
+	var r := VrRange.use(cheats_backend, key)
+	var what := str(r.get("text", "")).left(STATUS_MAX)
+	var id: int = r.get("id", 0)
+	range_warn = id <= 0
+	if id > 0:
+		if _range_ops.size() >= MAX_RANGE_OPS:
+			_range_ops.erase(_range_ops.keys()[0])
+		_range_ops[id] = [what, key]
+		range_status = (what + ": …").left(STATUS_MAX)
+	else:
+		range_status = (what if what.begins_with("Not sent") else what + ": not sent").left(STATUS_MAX)
+	refresh()
+	if id > 0:
+		range_sent.emit(id, key)
+	else:
+		cheat_refused.emit(range_status)
 
 
 ## Lines as the page has them: [text, colour, font size] each.
@@ -287,14 +455,33 @@ func page_lines() -> Array:
 		out.append([st, Color(1.0, 0.55, 0.5) if status_warn or not live else Color.WHITE, SMALL_FONT])
 		out.append([CHEAT_HELP, Color(0.7, 0.7, 0.7), FONT])
 		return out
+	if page == RANGE_PAGE:
+		out.append(["Test range", Color.WHITE, FONT])
+		out.append([_mark(0) + "< Back", PICKED if row == 0 else Color.WHITE, FONT])
+		for i in range_view.size():
+			var c: Dictionary = range_view[i]
+			var label := str(c.get("label", "")).left(VrCheats.LABEL_MAX)
+			var text := "%s %s" % [_mark(i + 1), label]
+			if c.get("kind") == VrRange.TOGGLE:
+				text += ":  " + ("on" if c.get("on") == true else "off")
+			elif c.get("kind") == PAGER:
+				text += ":  < >"
+			var col := PICKED if row == i + 1 else (VrCheats.WARN if c.get("here") == true else Color.WHITE)
+			if c.get("enabled") != true:
+				col = col.lerp(GREY, 0.6)
+			out.append([text, col, FONT])
+		out.append([range_status, Color(1.0, 0.55, 0.5) if range_warn else Color.WHITE, SMALL_FONT])
+		out.append([CHEAT_HELP, Color(0.7, 0.7, 0.7), FONT])
+		return out
 	out.append(["VR settings", Color.WHITE, FONT])
 	for i in VrSettings.ROWS.size():
 		var r: Array = VrSettings.ROWS[i]
 		out.append(["%s %s:  %s" % [_mark(i), r[1], VrSettings.label(r[0], settings.get(r[0]))],
 				PICKED if i == row else Color.WHITE, FONT])
-	if cheats_shown():
-		var i := VrSettings.ROWS.size()
-		out.append(["%s Cheats >" % _mark(i), PICKED if i == row else VrCheats.WARN, FONT])
+	for i in range(VrSettings.ROWS.size(), row_count()):
+		var k := key_of(i)
+		out.append(["%s %s" % [_mark(i), "Cheats >" if k == CHEATS_ROW else "Test range >"],
+				PICKED if i == row else VrCheats.WARN, FONT])
 	out.append([HELP, Color(0.7, 0.7, 0.7), FONT])
 	return out
 

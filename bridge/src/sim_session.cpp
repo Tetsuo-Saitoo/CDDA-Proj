@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <memory>
@@ -33,7 +35,10 @@
 #include <process.h>
 #include "platform_win.h"
 #else
+#include <fcntl.h>
 #include <pthread.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 namespace fp3d_session
@@ -47,6 +52,9 @@ constexpr size_t max_world_name = 32;
 constexpr size_t max_name_bytes = 128;
 // Folder entries looked at per listing, so a huge or hostile folder can't stall the caller.
 constexpr size_t max_dir_entries = 4096;
+// Entries delete_save removes at most (a big world's map folders hold many files) and how deep it goes.
+constexpr size_t max_delete_entries = 1000000;
+constexpr int max_delete_depth = 8;
 // CDDA was written for a main thread; new threads get 1 MB (Windows) or 512 KB (macOS) unless asked.
 constexpr unsigned sim_stack_bytes = 8u << 20;
 
@@ -116,6 +124,21 @@ std::mutex watch_mutex;
 uint64_t watch_steps = 0;
 std::chrono::steady_clock::time_point watch_since;
 std::atomic<bool> boot_abandoned{ false };
+// The game thread has finished (its teardown done) or never started: its files are closed.
+std::atomic<bool> sim_done{ false };
+
+// One process per world: a game holds an OS lock on its world's lock file (user_dir/fp3d_locks/...) until its game
+// thread is done; the OS lets go when the process ends, crashed or not. delete_save takes it while it deletes.
+#if defined(_WIN32)
+using os_lock = HANDLE;
+const os_lock no_lock = INVALID_HANDLE_VALUE;
+#else
+using os_lock = int;
+const os_lock no_lock = -1;
+#endif
+enum class lock_result { taken, held_elsewhere, failed };
+std::mutex game_lock_mutex;
+os_lock game_lock = no_lock;
 
 void check_boot_stall()
 {
@@ -142,6 +165,94 @@ void check_boot_stall()
         boot_abandoned.store( true );
         fp3d::shutdown();
     }
+}
+
+namespace fs = std::filesystem;
+
+// The lock file's name: the world name's first 60 bytes in hex and a 64-bit hash of all of it, ASCII letters
+// lower-cased first (Windows folder names ignore case; callers pass the folder's own spelling, which list_worlds
+// gives, so other letters match too), so no world name can make a path, a device name or an overlong name. The test
+// range's worlds (fp3d-range, fp3d-range-N) share one: its boot picks which itself.
+fs::path lock_path( const fs::path &user, const std::string &world )
+{
+    std::string key = world;
+    if( key.rfind( "fp3d-range-", 0 ) == 0 && key.size() > 11 &&
+        std::all_of( key.begin() + 11, key.end(), []( char ch ) {
+        return ch >= '0' && ch <= '9';
+    } ) ) {
+        key = "fp3d-range";
+    }
+    static const char *const digits = "0123456789abcdef";
+    std::string hex;
+    uint64_t hash = 14695981039346656037ull;   // FNV-1a
+    for( size_t i = 0; i < key.size(); i++ ) {
+        unsigned char c = static_cast<unsigned char>( key[i] );
+        if( c >= 'A' && c <= 'Z' ) {
+            c = static_cast<unsigned char>( c - 'A' + 'a' );
+        }
+        hash = ( hash ^ c ) * 1099511628211ull;
+        if( i < 60 ) {
+            hex += digits[c >> 4];
+            hex += digits[c & 15];
+        }
+    }
+    hex += '-';
+    for( int shift = 60; shift >= 0; shift -= 4 ) {
+        hex += digits[( hash >> shift ) & 15];
+    }
+    return user / "fp3d_locks" / ( hex + ".lock" );
+}
+
+// Takes the world's lock without waiting. A planted link in place of the lock file is opened itself, not followed.
+lock_result take_lock( const fs::path &user, const std::string &world, os_lock &out )
+{
+    out = no_lock;
+    const fs::path dir = user / "fp3d_locks";
+    std::error_code ec;
+    fs::create_directory( dir, ec );
+    if( fs::symlink_status( dir, ec ).type() != fs::file_type::directory ) {
+        return lock_result::failed;
+    }
+    const fs::path p = lock_path( user, world );
+#if defined(_WIN32)
+    const HANDLE h = CreateFileW( p.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr );
+    if( h == INVALID_HANDLE_VALUE ) {
+        return GetLastError() == ERROR_SHARING_VIOLATION ? lock_result::held_elsewhere : lock_result::failed;
+    }
+    out = h;
+#else
+    const int fd = open( p.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600 );
+    if( fd < 0 ) {
+        return lock_result::failed;
+    }
+    if( flock( fd, LOCK_EX | LOCK_NB ) != 0 ) {
+        const int e = errno;
+        close( fd );
+        return e == EWOULDBLOCK ? lock_result::held_elsewhere : lock_result::failed;
+    }
+    out = fd;
+#endif
+    return lock_result::taken;
+}
+
+void release_lock( os_lock &l )
+{
+    if( l == no_lock ) {
+        return;
+    }
+#if defined(_WIN32)
+    CloseHandle( l );
+#else
+    close( l );
+#endif
+    l = no_lock;
+}
+
+void release_game_lock()
+{
+    std::lock_guard<std::mutex> lk( game_lock_mutex );
+    release_lock( game_lock );
 }
 
 // On the thread that made CDDA's window, before Godot unloads the DLL (see fp3d::shutdown_world).
@@ -187,6 +298,11 @@ void sim_main()
             }
         } else {
             fp3d::boot_saved_game( boot_world, boot_save, true );
+            // A saved test range (only in one of FP3D's own range worlds: the save alone never makes one) is a range
+            // game again, with the range operations allowed as when it started.
+            if( fp3d::resume_test_range() ) {
+                fp3d::set_cheats_allowed( true );
+            }
             fp3d::reset_snapshots();
         }
         // The client reads the world while the sim waits for it, so every request but a `shot` one (fp3d::ask skips
@@ -213,6 +329,8 @@ void sim_main()
     }
     fp3d::shutdown();
     teardown();
+    release_game_lock();
+    sim_done.store( true );
 }
 
 #if defined(_WIN32)
@@ -255,8 +373,6 @@ std::string checked_dir( const std::string &utf8, bool create, std::string &why 
     }
     return out;
 }
-
-namespace fs = std::filesystem;
 
 // An absolute path from a script, normalised; empty (and `why`) if not acceptable.
 fs::path checked_path( const std::string &utf8, std::string &why )
@@ -544,6 +660,17 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
             return "no save " + save + " in world " + world;
         }
     }
+    // Another process playing this world (or deleting from it) refuses the start; without a lock file at all (a
+    // folder that can't be written) the game still starts, unguarded.
+    {
+        os_lock l = no_lock;
+        if( take_lock( std::filesystem::u8path( user ), range ? "fp3d-range" : world, l ) ==
+            lock_result::held_elsewhere ) {
+            return "that world is in use by another game";
+        }
+        std::lock_guard<std::mutex> lk( game_lock_mutex );
+        game_lock = l;
+    }
     boot_data_dir = data;
     boot_user_dir = user;
     boot_world = world;
@@ -569,6 +696,8 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     if( sim_thread == nullptr ) {
         set_state( state::failed );
         set_error( "cannot create the game thread" );
+        release_game_lock();
+        sim_done.store( true );
         return "cannot create the game thread";
     }
 #else
@@ -582,6 +711,8 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     if( !started ) {
         set_state( state::failed );
         set_error( "cannot create the game thread" );
+        release_game_lock();
+        sim_done.store( true );
         return "cannot create the game thread";
     }
     sim_thread_running = true;
@@ -678,6 +809,172 @@ std::vector<std::string> list_saves( const std::string &user_dir, const std::str
     }
     sort_and_cap( out );
     return out;
+}
+
+namespace
+{
+// Removes `p` and, when it is a real folder, everything in it; a link or junction is removed itself, never
+// followed. Counts each entry against `budget`. False when anything is left.
+bool remove_tree( const fs::path &p, size_t &budget, int depth )
+{
+    std::error_code ec;
+    const fs::file_type type = fs::symlink_status( p, ec ).type();
+    if( type == fs::file_type::not_found ) {
+        return true;
+    }
+    if( ec ) {
+        return false;
+    }
+    bool ok = true;
+    if( type == fs::file_type::directory ) {
+        if( depth >= max_delete_depth ) {
+            return false;
+        }
+        std::vector<fs::path> inside;
+        fs::directory_iterator it( p, ec );
+        for( ; !ec && it != fs::directory_iterator() && inside.size() < budget; it.increment( ec ) ) {
+            inside.push_back( it->path() );
+        }
+        ok = !ec;
+        for( const fs::path &q : inside ) {
+            ok = remove_tree( q, budget, depth + 1 ) && ok;
+        }
+    }
+    if( budget == 0 ) {
+        return false;
+    }
+    budget--;
+    fs::remove( p, ec );
+    return ok && !ec;
+}
+
+bool is_save_file( const std::string &name )
+{
+    for( const std::string ext : { ".sav", ".sav.zzip" } ) {
+        if( name.size() > ext.size() && name.compare( name.size() - ext.size(), ext.size(), ext ) == 0 ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct lock_guard_os {
+    os_lock l = no_lock;
+    ~lock_guard_os() {
+        release_lock( l );
+    }
+};
+} // namespace
+
+std::string delete_save( const std::string &user_dir, const std::string &world, const std::string &save,
+                         bool delete_empty_world )
+{
+    if( get_state() != state::idle && !sim_done.load() ) {
+        return "not while a game runs";
+    }
+    std::string why;
+    const fs::path user = checked_path( user_dir, why );
+    if( user.empty() ) {
+        return why;
+    }
+    if( !world_name_ok( world ) ) {
+        return "bad world name";
+    }
+    if( !save_name_ok( save ) ) {
+        return "bad save name";
+    }
+    // The world folder's own spelling (the lock's name depends on it), in a save folder that is no link.
+    const std::vector<std::string> worlds = list_worlds( user_dir, why );
+    if( std::find( worlds.begin(), worlds.end(), world ) == worlds.end() ) {
+        return "no world " + world;
+    }
+    std::error_code sec;
+    if( fs::symlink_status( user / "save", sec ).type() != fs::file_type::directory ) {
+        return "the save folder is a link";
+    }
+    const std::vector<std::string> saves = list_saves( user_dir, world, why );
+    if( std::find( saves.begin(), saves.end(), save ) == saves.end() ) {
+        return "no save " + save + " in world " + world;
+    }
+    const fs::path dir = user / "save" / fs::u8path( world );
+    // CDDA names everything it keeps for a character <base>.<something> after its save file <base>.sav[.zzip]
+    // (base: '#' and base64, no '.'): the log, map memory folder, seen overmaps, zones, auto-pickup rules, ...
+    std::string base;
+    for( const std::string &file : dir_names( dir, fs::file_type::regular ) ) {
+        if( save_name_of_file( file ) == save ) {
+            base = file.substr( 0, file.find( '.' ) );
+            break;
+        }
+    }
+    if( base.empty() ) {
+        return "no save " + save + " in world " + world;
+    }
+    lock_guard_os held;
+    switch( take_lock( user, world, held.l ) ) {
+        case lock_result::held_elsewhere:
+            return "that world is in use by another game";
+        case lock_result::failed:
+            return "cannot check whether another game uses that world";
+        case lock_result::taken:
+            break;
+    }
+    const std::string prefix = base + ".";
+    std::vector<std::string> mine;
+    std::error_code ec;
+    fs::directory_iterator it( dir, ec );
+    for( size_t n = 0; !ec && it != fs::directory_iterator() && n < max_delete_entries; it.increment( ec ), n++ ) {
+        try {
+            std::string name = it->path().filename().u8string();
+            if( name.compare( 0, prefix.size(), prefix ) == 0 ) {
+                mine.push_back( std::move( name ) );
+            }
+        } catch( const std::exception & ) {
+            // not valid UTF-16: not CDDA's
+        }
+    }
+    if( ec ) {
+        return "cannot read the world's folder";
+    }
+    // The save file last: if anything else stays, the character is still listed and can be deleted again.
+    std::stable_partition( mine.begin(), mine.end(), []( const std::string & n ) {
+        return !is_save_file( n );
+    } );
+    size_t budget = max_delete_entries;
+    std::vector<std::string> left;
+    for( const std::string &name : mine ) {
+        if( !remove_tree( dir / fs::u8path( name ), budget, 0 ) ) {
+            left.push_back( name );
+        }
+    }
+    if( !left.empty() ) {
+        std::string list;
+        for( size_t i = 0; i < left.size() && i < 4; i++ ) {
+            list += ( i == 0 ? "" : ", " ) + left[i];
+        }
+        return "could not delete " + list + ( left.size() > 4 ? " and " + std::to_string( left.size() - 4 ) +
+                                              " more" : "" );
+    }
+    if( delete_empty_world ) {
+        // Any save file at all keeps the world (also ones list_saves doesn't show), and so does a folder that
+        // couldn't be read to the end.
+        bool keep = false;
+        size_t n = 0;
+        fs::directory_iterator w( dir, ec );
+        for( ; !ec && !keep && w != fs::directory_iterator() && n < max_delete_entries; w.increment( ec ), n++ ) {
+            try {
+                keep = is_save_file( w->path().filename().u8string() );
+            } catch( const std::exception & ) {
+                keep = true;
+            }
+        }
+        if( !keep && !ec && w == fs::directory_iterator() ) {
+            budget = max_delete_entries;
+            if( !remove_tree( dir, budget, 0 ) ) {
+                return "the character is deleted, but the world's folder could not be removed completely";
+            }
+        }
+    }
+    return "";
 }
 
 uint64_t snapshot_seq()

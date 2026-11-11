@@ -484,6 +484,13 @@ func _test_mock_guns(data: Variant, tables: IdTables) -> void:
 	_check.call(a.unload(ItemRef.on_player(rd, rt, mg, 0, 0, P)) and seen[-1] == ["refused", rd, "unload",
 			"Your %s isn't loaded." % m._name(rt)], "mock guns: nothing inside: refused")
 	_check.call(a.pending_count() == 0, "mock guns: every action judged at once")
+	var faults: Array[String] = ["fault_gun_dirt", "fault_stovepipe"]
+	snap.player_gun = {"type": gt, "dirt": 0, "rounds": -1, "faults": faults}
+	_check.call(a.clear_jam(gun) and seen[-1] == ["finished", g, "clear"] and snap.player_gun["faults"] == ["fault_gun_dirt"],
+			"mock guns: clear_jam clears the jam, other faults stay (%s)" % [seen[-1]])
+	_check.call(a.clear_jam(gun) and seen[-1] == ["refused", g, "clear", "It isn't jammed."], "mock guns: not jammed: refused")
+	_check.call(not a.clear_jam(mag) and not a.clear_jam(ItemRef.on_square(g, gt, P)) and a.pending_count() == 0,
+			"mock guns: clear_jam only for the wielded gun")
 	a.free()
 
 

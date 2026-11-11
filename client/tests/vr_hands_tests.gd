@@ -38,6 +38,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_adopt_and_held()
 	_test_toggle()
 	_test_two_hands()
+	_test_hand_over(root)
 	_rig.free()
 	_hands.free()
 	_actions.free()
@@ -382,3 +383,83 @@ func _test_two_hands() -> void:
 	_rig.release(_rig.right, "grip_click")
 	_check.call(_handle(S, _it["2x4"]) == plank and _clean(), "vr hands: put down")
 	_rig.strength = VrRig.STRENGTH
+
+
+## Gripping near what the other hand holds takes it over (CDDA: main hand to off hand, then back); 0.3 m away it
+## doesn't. With item physics (ItemBodies) letting go passes the hand's velocity to a body; let_go(c, false) never
+## throws (a hand that fast still puts it down); shift() moves the rig, its open pack and a pulled copy's start.
+func _test_hand_over(root: Node) -> void:
+	var plank := _handle(S, _it["2x4"])
+	_rig.right.global_position = _mid(plank)
+	_rig.press(_rig.right, "grip_click")
+	_rig.update_hands(0.016, true)
+	var r: ItemRef = _hands.holding("vr_r").get("item")
+	_rig.left.global_position = _grip_point("vr_r") + Vector3(0.3, 0, 0)
+	var too_far := not _rig.takes_over(0)
+	_rig.left.global_position = _grip_point("vr_r") + Vector3(0.05, 0, 0)
+	_check.call(r != null and r.uid == plank and r.is_wielded() and too_far and _rig.takes_over(0) and not _rig.takes_over(1),
+			"vr hands: (the left hand at the plank the right holds; 0.3 m away it isn't)")
+	var buzz := _rig.buzzes[0]
+	_rig.press(_rig.left, "grip_click")
+	var l: ItemRef = _hands.holding("vr_l").get("item")
+	var row := _row(plank)
+	_check.call(l != null and l.uid == plank and l.is_off_hand() and _hands.holding("vr_r").is_empty() and _hands.proxy("vr_l") != null
+			and _hands.proxy("vr_r") == null and not row.is_empty() and (int(row[1]) & Snapshot.CARRIED_WIELDED) == 0
+			and _rig.buzzes[0] == buzz and _actions.pending_count() == 0,
+			"vr hands: gripping the item the other hand holds takes it over (CDDA: main hand to off hand)")
+	_rig.release(_rig.right, "grip_click")   # the first hand's button: it holds nothing now
+	_check.call(_hands.holding("vr_l").get("item") != null and _row(plank).size() == 2,
+			"vr hands: the first hand letting its button go drops nothing")
+	_rig.update_hands(0.016, true)
+	_rig.right.global_position = _grip_point("vr_l")
+	_rig.press(_rig.right, "grip_click")
+	var back: ItemRef = _hands.holding("vr_r").get("item")
+	_rig.release(_rig.left, "grip_click")
+	_check.call(back != null and back.uid == plank and back.is_wielded() and _hands.holding("vr_l").is_empty()
+			and _hands.proxy("vr_r") != null, "vr hands: ... and back into the main hand")
+	var bs := ItemBodies.new(_world)
+	root.add_child(bs)
+	_hands.bodies = bs
+	bs.update()
+	_rig.hand_vel[1] = Vector3(0.6, 0.0, -0.4)   # slow: no throw
+	_rig.right.global_position = _over_floor()
+	_rig.update_hands(0.016, true)
+	var px := _hands.proxy("vr_r")
+	var pose := px.global_transform if px != null else Transform3D()
+	_rig.release(_rig.right, "grip_click")
+	var rb := bs.body_of(plank)
+	_check.call(_handle(S, _it["2x4"]) == plank and rb != null and rb.linear_velocity.is_equal_approx(Vector3(0.6, 0.0, -0.4))
+			and rb.global_position.is_equal_approx(pose.origin) and bs.square_of(plank) == S and not bs.is_pending(plank),
+			"vr hands: let go with item physics: CDDA drops it there, its body moves on at the hand's velocity")
+	var s2 := bs.slot(plank)
+	_rig.left.global_position = s2[3] if s2.size() >= 6 else Vector3(0, -100, 0)
+	_rig.press(_rig.left, "grip_click")
+	var held: ItemRef = _hands.holding("vr_l").get("item")
+	_rig.left.global_position = _over_floor(Vector3(0.2, 0.3, -0.2))
+	_rig.hand_vel[0] = Vector3(0, 2, -6)
+	var would: Variant = _rig.throw_square(_rig.left)
+	var op := _rig.let_go(_rig.left, false)
+	var rb2 := bs.body_of(plank)
+	_check.call(held != null and held.uid == plank and would is Vector3i and op == "drop" and _handle(S, _it["2x4"]) == plank
+			and rb2 != null and rb2.linear_velocity.is_equal_approx(Vector3(0, 2, -6)),
+			"vr hands: let_go(c, false) never throws: a hand that fast puts it down, moving (%s)" % op)
+	_rig.release(_rig.left, "grip_click")
+	_rig.hand_vel[0] = Vector3.ZERO
+	_rig.hand_vel[1] = Vector3.ZERO
+	var d := Vector3(16, 0, -8)
+	var at := _rig.position
+	var pk := _rig.pack.position
+	_rig._fly_from[1] = Transform3D(Basis(), Vector3(1, 1, 1))
+	_rig.shift(d)
+	var moved := _rig.position.is_equal_approx(at + d) and _rig.pack.position.is_equal_approx(pk + d) \
+			and _rig._fly_from[1].origin.is_equal_approx(Vector3(17, 1, -7))
+	_rig.shift(Vector3(INF, 0, 0))
+	var kept := _rig.position.is_equal_approx(at + d)
+	_rig.shift(-d)
+	_rig._fly_from[1] = Transform3D()
+	_check.call(moved and kept and _rig.position.is_equal_approx(at) and _rig.pack.position.is_equal_approx(pk),
+			"vr hands: an origin shift moves the rig, its open pack and a pulled copy's start (not by a bad shift)")
+	_hands.bodies = null
+	bs.clear()
+	bs.free()
+	_check.call(_handle(S, _it["2x4"]) == plank and _clean(), "vr hands: no bodies again, nothing held or hidden")

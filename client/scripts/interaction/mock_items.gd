@@ -310,6 +310,26 @@ func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Ve
 	return _captured()
 
 
+## Clear the jam of the wielded gun: its jam faults (WeaponViewmodel.JAMS) go. Refused when it isn't the wielded
+## gun or isn't jammed.
+func clear_item(uid: float, type: float) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0:
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0 or (snap.carried[row * CS + 4] & Snapshot.CARRIED_WIELDED) == 0 or snap.player_gun.get("type") != t:
+		return _refuse("You aren't wielding that gun.")
+	var left: Array[String] = []
+	for f: String in snap.player_gun.get("faults", []):
+		if not WeaponViewmodel.JAMS.has(f):
+			left.append(f)
+	if left.size() == (snap.player_gun.get("faults", []) as Array).size():
+		return _refuse("It isn't jammed.")
+	snap.player_gun["faults"] = left
+	return _captured()
+
+
 ## Throw a carried, unworn item at `pos`: a square seen, on your level, within THROW_RANGE, not your own. It
 ## lands there whole (no stacks or charges here).
 func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
@@ -341,6 +361,39 @@ func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
 		snap.player_wielded = 0
 	_add_handle(sm, tile, u, t, -1, -1)
 	_touch(sm)
+	return _captured()
+
+
+## Move a carried, unworn item into hand "main" (wielded: out of its container, first row; refused while another item
+## is wielded) or "off" (held: it stays in its pocket; refused while another item is held there). ItemActions.hold.
+func hold_item(uid: float, type: float, hand: String) -> bool:
+	var u := _uid(uid)
+	var t := _type(type)
+	if snap == null or u <= 0 or t <= 0 or not (hand in ["main", "off"]):
+		return false
+	var row := ItemActions.carried_row(snap, u, t)
+	if row < 0:
+		return _refuse("You don't have that any more.")
+	var flags := snap.carried[row * CS + 4]
+	if flags & Snapshot.CARRIED_WORN:
+		return _refuse("Take off your %s first." % _name(t))
+	var want := Snapshot.CARRIED_WIELDED if hand == "main" else Snapshot.CARRIED_OFFHAND
+	var other := _flagged(want)
+	if other >= 0 and other != row:
+		if hand == "main":
+			return _refuse("Your hand is full: you're holding your %s." % _name(snap.carried[other * CS + 1]))
+		return _refuse("Your off hand is full.")
+	if hand == "main":
+		var moved := _remove_subtree(row)
+		moved[2] = 0
+		moved[3] = -1
+		moved[4] = (flags & ~Snapshot.CARRIED_OFFHAND) | Snapshot.CARRIED_WIELDED
+		_insert_rows(0, moved)   # wielded first
+		snap.player_wielded = t
+	else:
+		snap.carried[row * CS + 4] = (flags & ~Snapshot.CARRIED_WIELDED) | Snapshot.CARRIED_OFFHAND
+		if flags & Snapshot.CARRIED_WIELDED:
+			snap.player_wielded = 0
 	return _captured()
 
 

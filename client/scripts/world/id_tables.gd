@@ -78,6 +78,7 @@ var trap: Array[Def] = []
 var field: Array[Def] = []
 var itype: Array[Def] = []
 var body_parts := PackedStringArray()   # body_part index -> id (tables.body_part), empty if missing
+var move_modes := PackedStringArray()   # move_mode index -> id (tables.move_mode: walk, run, ...), empty if missing
 var mtype: Array[Def] = []
 var group_bits := {}     # connect group name -> bit index
 ## Some itype row has `pockets`: the bridge sends them, so a type without any holds nothing.
@@ -173,6 +174,7 @@ func _clear() -> void:
 	_treetops.clear()
 	_roofs.clear()
 	body_parts.clear()
+	move_modes.clear()
 
 
 func _read(data: Variant) -> void:
@@ -188,20 +190,34 @@ func _read(data: Variant) -> void:
 		if not is_valid():
 			return
 	_read_body_parts(d.get("tables"))
+	move_modes = _id_list(d.get("tables"), "move_mode")
 	_index_roofs()
 
 
 func _read_body_parts(v: Variant) -> void:
-	if not v is Dictionary:
-		return
-	var a: Variant = (v as Dictionary).get("body_part")
+	body_parts = _id_list(v, "body_part")
+
+
+## tables.<name>: a list of ids; absent is fine (empty), anything else malformed fails the tables. Only while the
+## tables load: meshing workers read IdTables from other threads.
+func _id_list(v: Variant, name: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not v is Dictionary or not is_valid():
+		return out
+	var a: Variant = (v as Dictionary).get(name)
 	if a == null:
-		return
+		return out
 	if not a is Array or (a as Array).size() > MAX_ROWS:
-		_fail("tables.body_part is not a list")
-		return
+		_fail("tables.%s is not a list" % name)
+		return out
 	for i in (a as Array).size():
-		body_parts.append(_str(a[i], MAX_ID, "tables.body_part[%d]" % i))
+		out.append(_str(a[i], MAX_ID, "tables.%s[%d]" % [name, i]))
+	return out
+
+
+## The move_mode id at an index ("walk", "run", "crouch", "prone"; "" if unknown).
+func move_mode_name(index: int) -> String:
+	return move_modes[index] if index >= 0 and index < move_modes.size() else ""
 
 
 ## The body_part id at an index ("" if unknown).
