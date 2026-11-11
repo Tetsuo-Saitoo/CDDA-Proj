@@ -76,6 +76,8 @@ class CddaSim : public godot::RefCounted
         int64_t range_set_ai_frozen( bool on );
         int64_t range_heal();
         godot::Dictionary get_range_info() const;
+        // The teleport cheat, in any game while cheats are allowed (contracts/bridge_api.md "Cheats").
+        int64_t cheat_teleport( const godot::Vector3i &pos );
 
         int64_t match_recipes( const godot::Dictionary &container );
         godot::String take_query_result( int64_t id );
