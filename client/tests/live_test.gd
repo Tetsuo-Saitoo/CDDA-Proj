@@ -56,6 +56,16 @@ func _run() -> void:
 	_check(_sim.get_state() == "idle", "still idle after refusals")
 	_check(not _sim.answer({}) and not _sim.answer({"id": "1"}) and not _sim.answer({"id": 1, "picks": [[1]]}),
 			"rejects malformed answers")
+	var shot := {"end": Vector3i(1, 2, 0), "hit_uid": 0, "part": "", "quality": 0.5}
+	var many := []
+	many.resize(33)
+	many.fill({})
+	var bad_pellets: Array = ["x", [1], [{"end": Vector3i.ZERO, "quality": NAN}], [{"hit_uid": 3}],
+			[{"end": Vector3i.ZERO, "hit_uid": 1.5}], many]
+	_check(bad_pellets.all(func(b: Variant) -> bool: return not _sim.answer({"id": 1, "shot": shot.merged({"pellets": b})})),
+			"rejects malformed shot pellets")
+	# well formed: taken (no request waits, so the sim drops it)
+	_check(_sim.answer({"id": 1, "shot": shot.merged({"pellets": [{}, shot, shot]})}), "takes well-formed shot pellets")
 	_check(not _sim.queue_action(""), "rejects an empty action")
 	var take := {"op": "take", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)}
 	var bad_items: Array[Dictionary] = [{}, take.merged({"op": "eat"}, true), take.merged({"item": 5.0}, true),

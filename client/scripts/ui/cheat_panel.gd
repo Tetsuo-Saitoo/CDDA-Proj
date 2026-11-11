@@ -126,6 +126,9 @@ func _build_range() -> void:
 	zone_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	r1.add_child(zone_pick)
 	r1.add_child(_button("Go there", go_zone))
+	var rb := _button("Rebuild", rebuild_zone)
+	rb.tooltip_text = "Clears the zone and builds it again (not while you are in it)."
+	r1.add_child(rb)
 	range_box.add_child(r1)
 	var r2 := HBoxContainer.new()
 	freeze = CheckButton.new()
@@ -188,6 +191,7 @@ func refresh_range() -> void:
 	zone_pick.clear()
 	for z: Dictionary in zones:
 		zone_pick.add_item("%s%s" % [z["name"], "" if z["built"] else " (not built yet)"])
+		zone_pick.set_item_metadata(zone_pick.item_count - 1, z["name"])
 	var here: int = info.get("zone", -1)
 	zone_pick.select(keep if keep >= 0 and keep < zones.size() else here)
 	freeze.set_pressed_no_signal(info.get("ai_frozen", false))
@@ -212,7 +216,15 @@ func on_range_done(op_id: int, err: String) -> void:
 
 func go_zone() -> void:
 	var i := zone_pick.selected
-	_sent("Go to %s" % zone_pick.get_item_text(i) if i >= 0 else "Go", backend.range_teleport(i) if i >= 0 and _has("range_teleport") else 0)
+	var zone_name := str(zone_pick.get_item_metadata(i)) if i >= 0 else ""
+	_sent("Go to %s" % zone_name if i >= 0 else "Go", backend.range_teleport(i) if i >= 0 and _has("range_teleport") else 0)
+
+
+func rebuild_zone() -> void:
+	var i := zone_pick.selected
+	var zone_name := str(zone_pick.get_item_metadata(i)) if i >= 0 else ""
+	_sent("Rebuild %s" % zone_name if i >= 0 else "Rebuild",
+			backend.range_rebuild_zone(i) if i >= 0 and _has("range_rebuild_zone") else 0)
 
 
 func set_frozen(on: bool) -> void:

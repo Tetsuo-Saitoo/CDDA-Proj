@@ -14,6 +14,7 @@ const MAX_S := 2.0
 const MAX_M := 130.0           # past the loaded bubble's edge
 const ZERO_M := 25.0
 const SEGMENT_REACH := 1.5     # figures within this of a segment are tested
+const SOFT_PASSES := 4         # furniture squares one segment flies through at most (soft cover)
 const NEAR_MAX := 64           # a flight tests at most this many figures, the nearest along its line
 const NEAR_MARGIN_M := 2.0     # ... within this of the launch line, plus the drop at MAX_M
 const NEAR_DROP_CAP_M := 40.0  # (that drop capped here: slow arrows and grenades)
@@ -119,7 +120,7 @@ static func fly(origin: Vector3, dir: Vector3, speed: float, k: float, figures: 
 		var hit := _hit_figure(pos, seg, figures, shooter_uid)
 		var map_hit := {}
 		if look_ray != null and seg_len > 0.0:
-			map_hit = look_ray.cast(pos, seg, seg_len, false)
+			map_hit = _map_hit(look_ray, pos, seg / seg_len, seg_len)
 		var map_d: float = pos.distance_to(map_hit["point"]) if map_hit.get("hit", false) else INF
 		if not hit.is_empty() and hit["d"] <= map_d:
 			path.append(hit["point"])
@@ -137,6 +138,35 @@ static func fly(origin: Vector3, dir: Vector3, speed: float, k: float, figures: 
 		travelled += seg_len
 		path.append(pos)
 	return {"path": path, "time": t, "hit": "", "point": pos, "uid": 0, "zone": "", "quality": 1.0}
+
+
+## The first thing that stops a bullet along a segment (unit `dir`, `seg_len` m) on the map, as LookRay.cast, or
+## {}. Furniture is soft cover: the bullet flies on through it (at most SOFT_PASSES squares a segment) and CDDA's
+## own path decides what it stops (map::shoot); walls, doors, floors, stairs and the like stop it.
+static func _map_hit(look_ray: LookRay, from: Vector3, dir: Vector3, seg_len: float) -> Dictionary:
+	var start := from
+	var left := seg_len
+	for i in SOFT_PASSES + 1:
+		var h := look_ray.cast(start, dir, left, false)
+		if not h.get("hit", false) or h.get("what") != "furniture":
+			return h
+		var past: Vector3 = h["point"] + dir * LookRay.STEP_M   # on from inside that square (cast skips its start)
+		left -= start.distance_to(past)
+		if left <= 0.0:
+			return {}
+		start = past
+	return {}
+
+
+## The nearest body part a straight segment from `from` along `seg` passes through, if no wall, door, floor or
+## furniture is in the way first: {d, point, uid, zone, quality} or {} (melee picks, AimController.melee_from).
+static func reach_figure(from: Vector3, seg: Vector3, figures: Dictionary, look_ray: LookRay,
+		shooter_uid := 1) -> Dictionary:
+	var hit := _hit_figure(from, seg, figures, shooter_uid)
+	if hit.is_empty() or look_ray == null:
+		return hit
+	var m := look_ray.cast(from, seg.normalized(), hit["d"], false)
+	return {} if m.get("hit", false) else hit
 
 
 ## The nearest body part a segment passes through: {d, point, uid, zone, quality} or {}.

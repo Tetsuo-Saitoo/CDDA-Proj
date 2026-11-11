@@ -7,7 +7,7 @@ extends RefCounted
 ## Everything that comes in is game data: numbers are clamped, text is cleaned (no colour tags, no control
 ## characters, capped), lists are capped.
 
-## Which groups changed: any of "body", "needs", "held", "messages", "warnings", "cheats".
+## Which groups changed: any of "body", "needs", "effects", "held", "messages", "warnings", "cheats".
 signal changed(parts: PackedStringArray)
 
 enum { UNKNOWN = -1, OK = 0, HURT = 1, BAD = 2, BROKEN = 3 }
@@ -18,6 +18,13 @@ const MAX_TEXT := 200
 const MAX_NAME := 64
 const MAX_WARNINGS := 8
 const MAX_EVENTS := 4096
+const MAX_EFFECTS := 32
+## Effects the HUD shows elsewhere: the body bars carry these (per part), the hunger need the hunger_* ones.
+const EFFECTS_SHOWN_ELSEWHERE := ["bleed", "bandaged", "disinfected", "bite", "infected"]
+## CDDA's hunger effects (effects.json; display.cpp shows them as the hunger word) -> level.
+const HUNGER_LEVELS := {"hunger_engorged": HURT, "hunger_full": OK, "hunger_satisfied": OK, "hunger_blank": OK,
+		"hunger_hungry": HURT, "hunger_very_hungry": HURT, "hunger_near_starving": BAD, "hunger_starving": BAD,
+		"hunger_famished": BAD}
 const NEEDS := ["stamina", "hunger", "thirst", "sleepiness", "pain", "morale"]
 # CDDA's sleepiness_levels (character.h)
 const TIRED := 191
@@ -30,6 +37,10 @@ var body: Array[Dictionary] = []
 ## kind (NEEDS) -> {value: int, word: String, level}; level UNKNOWN when the snapshot doesn't carry it.
 ## stamina's value is its fraction in percent.
 var needs := {}
+## The player's other effects (Snapshot.player_effects, CDDA's @ screen order) at most MAX_EFFECTS: {id, text
+## ("Stunned", "Hurt (left arm)"), level (good OK, bad HURT, mixed HURT, neutral UNKNOWN), intensity, seconds_left
+## (-1 permanent or unknown; CDDA doesn't show it, neither do the views)}.
+var effects: Array[Dictionary] = []
 ## {main, off: ItemRef (carried) or null; main_liquid, off_liquid: String; main_fill, off_fill: 0..1 or -1;
 ## liquid, fill_frac: the first hand's (main, then off) that holds a liquid}.
 var held := {}
@@ -62,6 +73,10 @@ func update(snap: Snapshot, tables: IdTables) -> void:
 	if n != needs:
 		needs = n
 		parts.append("needs")
+	var e := effects_from(snap.player_effects, tables)
+	if e != effects:
+		effects = e
+		parts.append("effects")
 	var h := _held_from(snap, _bridge_held)
 	if not _same_held(h, held):
 		held = h
@@ -125,8 +140,33 @@ static func level_color(level: int) -> Color:
 	return Color(0.6, 0.6, 0.6)
 
 
+## The HUD's effect rows from Snapshot.player_effects (already cleaned there): the ones shown elsewhere left out.
+static func effects_from(list: Array[Dictionary], tables: IdTables) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for e: Dictionary in list:
+		var id: String = e["id"]
+		if id in EFFECTS_SHOWN_ELSEWHERE or id.begins_with("hunger_"):
+			continue
+		var text: String = e["name"]
+		var bp: int = e["body_part"]
+		if bp > 0:
+			var part := tables.body_part_name(bp) if tables != null else ""
+			text += " (%s)" % (part_name(clean(part, MAX_NAME)) if not part.is_empty() else "part %d" % bp)
+		var rating: int = e["rating"]
+		var level := UNKNOWN
+		if rating == Snapshot.EFFECT_GOOD:
+			level = OK
+		elif rating == Snapshot.EFFECT_BAD or rating == Snapshot.EFFECT_MIXED:
+			level = HURT
+		out.append({"id": id, "text": clean(text, MAX_NAME + 20), "level": level, "intensity": e["intensity"],
+				"seconds_left": e["seconds_left"]})
+		if out.size() >= MAX_EFFECTS:
+			break
+	return out
+
+
 ## CDDA's word for a need's value ("" when it says nothing): display.cpp's thirst, sleepiness and pain texts.
-## Hunger is shown from effects in CDDA (stomach and kcal), which the snapshot doesn't carry yet: "".
+## Hunger comes from CDDA's hunger effects instead (HUNGER_LEVELS, _needs_from).
 static func word(kind: String, value: int) -> String:
 	match kind:
 		"thirst":
@@ -204,7 +244,11 @@ static func clean(v: Variant, cap: int) -> String:
 	var s := CddaText.plain((v as String).left(cap * 4))
 	var out := ""
 	for c in s.left(cap):
-		out += " " if c.unicode_at(0) < 32 or c.unicode_at(0) == 127 else c
+		var u := c.unicode_at(0)
+		if u < 32:
+			out += " "
+		elif not CddaText.is_hidden(u):
+			out += c
 	return out.strip_edges()
 
 
@@ -249,6 +293,13 @@ func _needs_from(snap: Snapshot) -> Dictionary:
 			if v is int or v is float:
 				var x := _int(v, -32768, 32767)
 				out[k] = {"value": x, "word": word(k, x), "level": need_level(k, x) if k != "hunger" else UNKNOWN}
+	for e: Dictionary in snap.player_effects:   # CDDA's hunger word is the name of its hunger_* effect
+		var id: String = e["id"]
+		if id.begins_with("hunger_"):
+			var h: Dictionary = out["hunger"]
+			var lv: int = HUNGER_LEVELS.get(id, BAD if e["rating"] == Snapshot.EFFECT_BAD else OK)
+			out["hunger"] = {"value": h["value"], "word": "" if id == "hunger_blank" else str(e["name"]), "level": lv}
+			break
 	if "player_stamina" in snap and "player_stamina_max" in snap:   # -1: not sent
 		var st := _int(snap.get("player_stamina"), -1, 1 << 30)
 		var mx := _int(snap.get("player_stamina_max"), -1, 1 << 30)

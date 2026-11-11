@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -79,6 +81,69 @@ void set_error( const std::string &e )
     error_text = fp3d::sanitize_text( e, 1024 );
 }
 
+bool move_state( state from, state to )
+{
+    int f = static_cast<int>( from );
+    return cur_state.compare_exchange_strong( f, static_cast<int>( to ) );
+}
+
+// The game thread's last word (and the boot watchdog's): only over booting or running, so a boot the watchdog gave
+// up on stays failed with its reason even if the game thread gets going again later.
+bool finish( state to, const std::string &e )
+{
+    std::lock_guard<std::mutex> lk( error_mutex );
+    if( !move_state( state::booting, to ) && !move_state( state::running, to ) ) {
+        return false;
+    }
+    error_text = fp3d::sanitize_text( e, 1024 );
+    return true;
+}
+
+// The last debug message CDDA logged, for a failure's reason.
+std::string with_last_cdda_error( const std::string &e )
+{
+    const fp3d::boot_progress p = fp3d::latest_boot_progress();
+    return p.last_error.empty() ? e : e + " (CDDA's last error: " + p.last_error + ")";
+}
+
+// A boot that stopped moving: no boot step (CDDA's loading screen notes one per data file) and no request waiting
+// on the client for boot_stall_limit. Waiting on the player (character creation, world settings) doesn't count.
+// The game thread can't be stopped from outside: the boot is reported failed, the game thread is told to shut
+// down (it ends at its next request if it ever gets there), and stop() waits for it only so long.
+constexpr std::chrono::seconds boot_stall_limit{ 180 };
+constexpr std::chrono::seconds abandoned_join_limit{ 10 };
+std::mutex watch_mutex;
+uint64_t watch_steps = 0;
+std::chrono::steady_clock::time_point watch_since;
+std::atomic<bool> boot_abandoned{ false };
+
+void check_boot_stall()
+{
+    if( static_cast<state>( cur_state.load() ) != state::booting ) {
+        return;
+    }
+    const fp3d::boot_progress p = fp3d::latest_boot_progress();
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lk( watch_mutex );
+    if( p.steps != watch_steps || watch_since == std::chrono::steady_clock::time_point() ||
+        fp3d::wait_request( 0 ).has_value() ) {
+        watch_steps = p.steps;
+        watch_since = now;
+        return;
+    }
+    if( now - watch_since < boot_stall_limit ) {
+        return;
+    }
+    const std::string why = with_last_cdda_error( "the game stopped booting: nothing moved for " +
+                            std::to_string( boot_stall_limit.count() ) + " s in \"" +
+                            ( p.phase.empty() ? std::string( "the start" ) : p.phase ) +
+                            "\"; CDDA's log is config/debug.log in the game's user folder" );
+    if( finish( state::failed, why ) ) {
+        boot_abandoned.store( true );
+        fp3d::shutdown();
+    }
+}
+
 // On the thread that made CDDA's window, before Godot unloads the DLL (see fp3d::shutdown_world).
 void teardown()
 {
@@ -92,11 +157,13 @@ void teardown()
 void sim_main()
 {
     try {
+        fp3d::note_boot_step( "Paths and log" );
         fp3d::init_paths( boot_data_dir, boot_user_dir );
         setupDebug( DebugOutput::file );
         rng_set_engine_seed( std::random_device{}() );
         if( boot_range ) {
             fp3d::boot_new_game_data( boot_world, true, true, false, true );
+            fp3d::note_boot_step( "Building the test range" );
             fp3d::boot_test_range( 1 );
             fp3d::set_cheats_allowed( true );
         } else if( boot_save.empty() ) {
@@ -104,6 +171,7 @@ void sim_main()
                 fp3d::boot_new_game_data( boot_world, boot_fresh_world, true, boot_world_setup,
                                           boot_replace_world );
                 if( boot_chargen ) {
+                    fp3d::note_boot_step( "Character creation" );
                     if( !fp3d::run_chargen() ) {
                         throw std::runtime_error( "character creation cancelled" );
                     }
@@ -113,6 +181,7 @@ void sim_main()
             } else {
                 fp3d::boot_world( boot_world, true );
             }
+            fp3d::note_boot_step( "Starting the game (world and map)" );
             if( !fp3d_game_access::start_game( *g ) ) {
                 throw std::runtime_error( "start_game failed" );
             }
@@ -129,17 +198,18 @@ void sim_main()
             fp3d::publish_snapshot( fp3d::capture_snapshot() );
             fp3d::publish_held();
         } );
-        set_state( state::running );
-        while( !do_turn() ) {
+        fp3d::note_boot_step( "Running" );
+        // Not when the boot watchdog gave up on it meanwhile (check_boot_stall): that stays failed.
+        if( move_state( state::booting, state::running ) ) {
+            while( !do_turn() ) {
+            }
+            finish( state::ended, g->uquit == QUIT_DIED || g->uquit == QUIT_WATCH ? "the character died" :
+                    g->uquit == QUIT_SAVED ? "saved and quit" : "the game ended" );
         }
-        set_error( g->uquit == QUIT_DIED || g->uquit == QUIT_WATCH ? "the character died" :
-                   g->uquit == QUIT_SAVED ? "saved and quit" : "the game ended" );
-        set_state( state::ended );
     } catch( const fp3d::shutdown_signal & ) {
-        set_state( state::stopped );
+        finish( state::stopped, "" );
     } catch( const std::exception &e ) {
-        set_error( e.what() );
-        set_state( state::failed );
+        finish( state::failed, with_last_cdda_error( e.what() ) );
     }
     fp3d::shutdown();
     teardown();
@@ -485,6 +555,13 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     boot_range = range;
     fp3d::set_active( true );
     fp3d::set_events_enabled( true );
+    fp3d::begin_boot();
+    {
+        std::lock_guard<std::mutex> lk( watch_mutex );
+        watch_steps = 0;
+        watch_since = std::chrono::steady_clock::time_point();
+    }
+    boot_abandoned.store( false );
     set_state( state::booting );
 #if defined(_WIN32)
     sim_thread = reinterpret_cast<HANDLE>( _beginthreadex( nullptr, sim_stack_bytes, sim_entry, nullptr,
@@ -517,25 +594,41 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
 void stop()
 {
     fp3d::shutdown();
+    // A game thread stuck in a boot the watchdog gave up on may never return: wait for it only so long, then
+    // leave it to the process's exit (its own teardown can't run then).
+    const bool abandoned = boot_abandoned.load();
 #if defined(_WIN32)
     if( sim_thread != nullptr ) {
-        WaitForSingleObject( sim_thread, INFINITE );
+        const DWORD ms = abandoned ? static_cast<DWORD>( abandoned_join_limit.count() * 1000 ) : INFINITE;
+        WaitForSingleObject( sim_thread, ms );
         CloseHandle( sim_thread );
         sim_thread = nullptr;
     }
 #else
     if( sim_thread_running ) {
-        pthread_join( sim_thread, nullptr );
+        if( abandoned ) {
+#if defined(__GLIBC__)
+            timespec until{};
+            clock_gettime( CLOCK_REALTIME, &until );
+            until.tv_sec += abandoned_join_limit.count();
+            if( pthread_timedjoin_np( sim_thread, nullptr, &until ) != 0 ) {
+                pthread_detach( sim_thread );
+            }
+#else
+            pthread_detach( sim_thread );
+#endif
+        } else {
+            pthread_join( sim_thread, nullptr );
+        }
         sim_thread_running = false;
     }
 #endif
-    if( get_state() == state::booting || get_state() == state::running ) {
-        set_state( state::stopped );
-    }
+    finish( state::stopped, "" );
 }
 
 state get_state()
 {
+    check_boot_stall();
     return static_cast<state>( cur_state.load() );
 }
 

@@ -87,6 +87,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(corpse.shape == "item_corpse" and corpse.scale >= 0.9,
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
+	_test_views(world, me, zp, ui, aim, cam, req)
 	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
@@ -364,6 +365,20 @@ func _test_shot_requests(aim: AimController, ui: RequestUI, cam: Camera3D, req: 
 	mreq["shot_angle"] = 0.0
 	var miss := aim.on_request(mreq)
 	_check.call(_bridge_typed(miss.get("shot", {})) and miss["shot"]["hit_uid"] == 0, "shots: a miss's answer is typed too (%s)" % [miss])
+	var preq := mreq.duplicate()
+	preq["shot_error"] = 0.0
+	preq["pellets"] = [0.0, 30.0, -30.0, 1200.0]
+	var pr := aim.on_request(preq)
+	var pl: Variant = pr.get("shot", {}).get("pellets")
+	_check.call(pl is Array and pl.size() == 4 and pl[0].get("hit_uid") == 8589934593 and pl[3].get("hit_uid") == 0
+			and pl.all(func(x: Dictionary) -> bool: return _bridge_typed(x)),
+			"shots: a shell flies each pellet, 20° right misses (%s)" % [pr])
+	var junk_pellets := []
+	for junk: Variant in ["1,2", [1.0, NAN], [1.0, "2"], [2000.0], range(AimController.MAX_PELLETS + 1)]:
+		preq["pellets"] = junk
+		junk_pellets.append(aim.on_request(preq).get("shot", {}))
+	_check.call(junk_pellets.all(func(x: Dictionary) -> bool: return x.has("end") and not x.has("pellets")),
+			"shots: bad pellets fly one bullet (%s)" % [junk_pellets])
 	var bad_ids := []
 	for id: Variant in ["31", -3, 0, 1.5, null]:
 		sreq["id"] = id
@@ -549,6 +564,43 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	ev.free()
 
 
+## C9 views: over the shoulder the pick still finds what's under the crosshair but the bullet leaves the eyes;
+## top-down (the screen centre is the player) mouse-look aiming follows the facing, a click picks what's under the
+## mouse, and no crosshair shows.
+func _test_views(world: WorldView, me: Vector3i, zp: Vector3i, ui: RequestUI, aim: AimController, cam: Camera3D,
+		req: Dictionary) -> void:
+	var keep := cam.global_transform
+	var eye := world.coords.ms_center_to_world(me) + Vector3(0, 1.5, 0)
+	var east := world.coords.ms_center_to_world(zp) + Vector3(0, 1.2, 0)
+	var facing := ((east - eye) * Vector3(1, 0, 1)).normalized()
+	var mode := ["shoulder"]
+	aim.view = func() -> Dictionary: return {"mode": mode[0], "eye": eye, "facing": facing}
+	aim.first_person = true
+	ui.show_request(req)
+	cam.global_position = eye - facing * ViewCamera.SHOULDER_BACK + Vector3(0, ViewCamera.SHOULDER_UP, 0) \
+			+ facing.cross(Vector3.UP) * ViewCamera.SHOULDER_RIGHT
+	cam.look_at(east)
+	var centre := cam.get_viewport().get_visible_rect().size / 2.0
+	var line := aim.shot_line(cam, centre, true)
+	_check.call(aim.pick(cam, centre, true) == zp and (line[0] as Vector3).is_equal_approx(eye)
+			and (line[1] as Vector3).dot((east - eye).normalized()) > 0.98,
+			"aim views: over the shoulder the crosshair picks the zombie, the bullet leaves the eyes towards it")
+	mode[0] = "top"
+	cam.global_position = eye - facing * 8.0 + Vector3(0, 12, 0)
+	cam.look_at(eye - Vector3(0, 0.8, 0))
+	var top_line := aim.shot_line(cam, centre, true)
+	_check.call(aim.pick(cam, centre, true) == zp and (top_line[0] as Vector3).is_equal_approx(eye)
+			and (top_line[1] as Vector3).is_equal_approx(facing),
+			"aim views: top-down, mouse-look aims along the facing, not at the player under the screen centre")
+	var at_zombie := cam.unproject_position(east)
+	_check.call(aim.pick(cam, at_zombie) == zp, "aim views: top-down, a click on the zombie picks it")
+	aim.update(cam, false)
+	_check.call(not aim.crosshair.visible, "aim views: no crosshair top-down")
+	ui.clear()
+	aim.view = Callable()
+	cam.global_transform = keep
+
+
 func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i, zp: Vector3i, ui: RequestUI,
 		aim: AimController, cam: Camera3D, req: Dictionary) -> void:
 	var B := BulletPhysics
@@ -587,6 +639,21 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	for want: Array in [["head", head], ["leg_l", leg]]:
 		var r := B.fly(eye, B.launch_dir(eye.direction_to(want[1]), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
 		_check.call(r["hit"] == "creature" and r["zone"] == want[0], "bullets: aimed at the %s, hit the %s (%s)" % [want[0], r.get("zone"), r["hit"]])
+	# soft cover: furniture in front of the zombie's legs doesn't stop the client's bullet (CDDA's path decides)
+	var cover := zp - Vector3i(signi(zp.x - me.x), signi(zp.y - me.y), 0)
+	var csm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(cover))
+	var cl := CddaCoords.ms_to_local(cover)
+	var stopped := {}
+	var through := {}
+	if cover != me and csm != null:
+		var ci := cl.y * CddaCoords.SEEX + cl.x
+		var old_furn: int = csm.furn[ci]
+		csm.furn[ci] = 1
+		stopped = aim.look_ray.cast(eye, eye.direction_to(leg), 30.0, false)
+		through = B.fly(eye, B.launch_dir(eye.direction_to(leg), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
+		csm.furn[ci] = old_furn
+	_check.call(stopped.get("what") == "furniture" and through.get("hit") == "creature",
+			"bullets: furniture is soft cover, the bullet flies through it (%s, %s)" % [stopped.get("what"), through.get("hit")])
 	_check.call(B.cdda_part("head", true, {"head": true}) == "head" and B.cdda_part("torso", true, {"head": true}) == ""
 			and B.cdda_part("arm_l", false, {}) == "arm_l", "bullets: zones map to weak points / body parts")
 	# through the aim controller: a gun in hand answers FIRE with the shot
@@ -611,6 +678,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_shot_requests(aim, ui, cam, req, me, zp)
 	_test_horde(root, aim, cv, eye, head)
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
+	_test_melee(aim, eye, head, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -618,6 +686,35 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 
 
 const ZUID := 8589934593   # the test zombie
+
+
+## Melee: an aimed strike picks the figure within reach (not past MELEE_REACH_M, not through a wall), names the
+## way to it, and answers the swing request for its square once; anything else cancels.
+func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, zp: Vector3i) -> void:
+	var S := AimController
+	_check.call(S.strike_dir(me, me + Vector3i(-1, 0, 0)) == "LEFT" and S.strike_dir(me, me + Vector3i(2, -2, 0)) == "RIGHTUP"
+			and S.strike_dir(me, me + Vector3i(0, 2, 0)) == "DOWN" and S.strike_dir(me, me + Vector3i(2, 1, 0)) == ""
+			and S.strike_dir(me, me + Vector3i(3, 0, 0)) == "" and S.strike_dir(me, me) == ""
+			and S.strike_dir(me, me + Vector3i(1, 0, 1)) == "", "melee: strike ways (8 ways, 2 squares, this level)")
+	var dir := eye.direction_to(head)
+	var near := head - dir * 1.5
+	var m := aim.melee_from(near, dir)
+	_check.call(m.get("uid") == ZUID and m.get("part") == "head" and m.get("square") == zp,
+			"melee: a strike at the head picks the zombie's head (%s)" % [m])
+	var far := head - dir * (S.MELEE_REACH_M + 1.0)
+	_check.call(aim.melee_from(far, dir).is_empty() and aim.melee_aim.is_empty(), "melee: nothing past the reach")
+	aim.melee_from(near, dir)
+	var a := aim.on_request({"kind": "swing", "id": 41, "cursor": zp, "origin": me, "range": 1, "mode": "main"})
+	var s: Dictionary = a.get("shot", {})
+	_check.call(a.get("id") == 41 and s.get("end") == zp and s.get("hit_uid") == ZUID and s.get("part") == "head"
+			and _bridge_typed(s), "melee: the swing request gets the aimed part (%s)" % [a])
+	var again := aim.on_request({"kind": "swing", "id": 42, "cursor": zp})
+	aim.melee_from(near, dir)
+	var elsewhere := aim.on_request({"kind": "swing", "id": 43, "cursor": zp + Vector3i(0, 1, 0)})
+	var bad_id := aim.on_request({"kind": "swing", "id": "x", "cursor": zp})
+	_check.call(again.get("cancel") == true and not again.has("shot") and elsewhere.get("cancel") == true
+			and not elsewhere.has("shot") and bad_id.is_empty(),
+			"melee: one answer per strike, another square cancels (%s, %s)" % [again, elsewhere])
 
 
 ## Hordes: a flight tests only the figures near its line (at most 64, the nearest along it) and still hits one on it.

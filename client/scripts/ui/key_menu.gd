@@ -356,7 +356,15 @@ func take(event: InputEvent) -> bool:
 		return false
 	var pad: bool = _capture[1] >= SLOTS
 	if InputActions.is_pad(event):   # pad presses only go in the pad column
-		return _bind(InputActions.pad_binding_from(event)) if pad else false
+		if pad:
+			return _bind(InputActions.pad_binding_from(event))
+		var pb := event as InputEventJoypadButton
+		if pb != null and pb.pressed and pb.button_index in [JOY_BUTTON_B, JOY_BUTTON_BACK, JOY_BUTTON_START]:
+			_capture = []   # a key slot picked with the pad: B / Back / Start back out without a keyboard
+			refresh()
+			_status.text = "Cancelled."
+			return true
+		return false
 	if k != null and not k.pressed:
 		if not pad and _pending_mod != KEY_NONE and k.physical_keycode == _pending_mod:
 			return _bind(InputActions.binding_from(k))   # a modifier let go alone: bind it bare

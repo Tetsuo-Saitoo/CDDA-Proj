@@ -107,7 +107,10 @@ static func clean(s: String, cap := MAX_NAME) -> String:
 	var out := ""
 	for c in CddaText.plain(s.left(cap * 4)).left(cap):
 		var u := c.unicode_at(0)
-		out += " " if u < 32 or u == 127 else c
+		if u < 32:
+			out += " "
+		elif not CddaText.is_hidden(u):
+			out += c
 	return out.strip_edges()
 
 
@@ -135,13 +138,49 @@ static func _worn_column(c: ItemRef, kids: Dictionary, tables: IdTables, actions
 		if not by_pocket.has(r.pocket):
 			by_pocket[r.pocket] = []
 		(by_pocket[r.pocket] as Array).append(r)
+	# The type's own pockets (id tables) are listed even when empty, so items can be dropped into them; ones the
+	# player can't use only when something is in them.
+	var def: IdTables.Def = tables.def_at("itype", c.type) if tables != null else null
+	var known: Array[Dictionary] = []
+	if def != null:
+		known = def.pockets   # read only: Defs never change after loading
+	for p in known.size():
+		if by_pocket.has(p) or not int(known[p]["flags"]) & IdTables.POCKET_FORBIDDEN:
+			by_pocket[p] = by_pocket.get(p, [])
 	var pockets := by_pocket.keys()
 	pockets.sort()
 	for p: int in pockets:
-		var g := _group(col, p, "pocket %d" % (p + 1) if p >= 0 else "pocket ?")
+		var g := _group(col, p, pocket_title(known[p], p) if p >= 0 and p < known.size()
+				else ("pocket %d" % (p + 1) if p >= 0 else "pocket ?"))
 		for r: ItemRef in by_pocket[p]:
 			_add_tree(col, g, r, 0, kids, tables, actions, seen)
 	return col
+
+
+## A pocket heading from its id tables entry: "holster (max 1.00 L, 2.00 kg)"; the name when sent, else
+## "pocket N" / "holster N".
+static func pocket_title(pocket: Dictionary, index: int) -> String:
+	var flags := int(pocket.get("flags", 0))
+	var title := clean(str(pocket.get("name", "")), MAX_NAME)
+	if title.is_empty():
+		title = "%s %d" % ["holster" if flags & IdTables.POCKET_HOLSTER else "pocket", index + 1]
+	var cap := PackedStringArray()
+	if int(pocket.get("volume_ml", 0)) > 0:
+		cap.append(volume_text(mini(int(pocket["volume_ml"]), MAX_ITEM)))
+	if int(pocket.get("max_weight_g", 0)) > 0:
+		cap.append(weight_text(mini(int(pocket["max_weight_g"]), MAX_ITEM)))
+	var notes := PackedStringArray()
+	if not cap.is_empty():
+		notes.append("max " + ", ".join(cap))
+	if flags & IdTables.POCKET_WATERTIGHT:
+		notes.append("watertight")
+	if flags & IdTables.POCKET_AMMO_ONLY:
+		notes.append("ammo only")
+	elif flags & IdTables.POCKET_RESTRICTED:
+		notes.append("some items only")
+	if flags & IdTables.POCKET_FORBIDDEN:
+		notes.append("can't use")
+	return title + (" (%s)" % "; ".join(notes) if not notes.is_empty() else "")
 
 
 ## Ground items on the squares in reach, from the snapshot's handles (seen tiles only). A container lying there is

@@ -11,8 +11,67 @@ func run(check: Callable, tables: IdTables) -> void:
 	_test_words()
 	_test_body_and_held(tables)
 	_test_needs()
+	_test_effects(tables)
 	_test_messages()
 	_test_view(tables)
+
+
+## player.effects: Snapshot cleans them (bad entries skipped, never a failed snapshot), HudData shows the ones the
+## body bars and needs don't (hunger_* gives the hunger word), HudView lists at most EFFECT_LINES.
+func _test_effects(tables: IdTables) -> void:
+	var arm := tables.body_parts.find("arm_l")
+	var raw: Array = [
+		{"id": "stunned", "name": "<color_red>Stun" + String.chr(0x202E) + "ned</color>\n", "body_part": 0.0, "intensity": 1.0, "rating": -1.0,
+			"seconds_left": 300.0},
+		{"id": "drunk", "name": "", "rating": 2, "seconds_left": -1},
+		{"id": "high", "name": "High", "rating": 1, "seconds_left": 1e30},
+		{"id": "bad_rating", "rating": 7}, {"id": "", "name": "no id"}, {"id": "x", "body_part": 1.5},
+		{"id": "y", "intensity": NAN}, {"id": "z", "body_part": -1}, {"id": 5}, "junk", 5, null,
+		{"id": "bleed", "name": "Bleeding", "body_part": arm, "intensity": 2, "rating": -1, "seconds_left": 60},
+		{"id": "hunger_starving", "name": "Starving!", "rating": -1},
+		{"id": "hurt", "name": "Hurt", "body_part": arm, "rating": -1},
+	]
+	var e := Snapshot.effects_from(raw)
+	_check.call(e.size() == 6 and e[0] == {"id": "stunned", "name": "Stunned", "body_part": 0, "intensity": 1, "rating": -1,
+			"seconds_left": 300} and e[1]["name"] == "drunk" and e[1]["seconds_left"] == -1 and e[1]["intensity"] == 1
+			and e[2]["seconds_left"] == -1 and e[3]["id"] == "bleed",
+			"effects: read and cleaned, bad entries skipped, long or missing time is -1 (%s)" % [e])
+	var many: Array = []
+	for i in 100:
+		many.append({"id": "e%d" % i})
+	_check.call(Snapshot.effects_from(many).size() == Snapshot.MAX_EFFECTS and Snapshot.effects_from({}).is_empty()
+			and Snapshot.effects_from("x").is_empty(), "effects: capped at 64; not a list: none")
+	var h := HudData.new()
+	var seen: Array = []
+	h.changed.connect(func(p: PackedStringArray) -> void: seen.append(p))
+	var s := Snapshot.new()
+	s.player_effects = e
+	h.update(s, tables)
+	var texts: Array = h.effects.map(func(x: Dictionary) -> String: return x["text"])
+	var levels: Array = h.effects.map(func(x: Dictionary) -> int: return x["level"])
+	_check.call(arm > 0 and texts == ["Stunned", "drunk", "High", "Hurt (left arm)"]
+			and levels == [HudData.HURT, HudData.HURT, HudData.OK, HudData.HURT] and seen.size() == 1 and "effects" in seen[0],
+			"hud: effects shown but bleeding and hunger, coloured by rating (%s)" % [texts])
+	_check.call(h.needs["hunger"]["word"] == "Starving!" and h.needs["hunger"]["level"] == HudData.BAD
+			and h.warnings.any(func(w: Dictionary) -> bool: return w["text"] == "Starving!"),
+			"hud: the hunger word comes from CDDA's hunger effect and warns when bad")
+	var full: Array[Dictionary] = [{"id": "hunger_blank", "name": "", "body_part": 0, "intensity": 1, "rating": 0,
+			"seconds_left": -1}]
+	s.player_effects = full
+	h.update(s, tables)
+	_check.call(h.effects.is_empty() and h.needs["hunger"]["word"] == "" and h.needs["hunger"]["level"] == HudData.OK,
+			"hud: normal hunger shows no word")
+	var v := HudView.new()
+	var lots: Array[Dictionary] = []
+	for i in 11:
+		lots.append({"id": "e%d" % i, "name": "Effect %d" % i, "body_part": 0, "intensity": 1, "rating": 0, "seconds_left": -1})
+	s.player_effects = lots
+	h.update(s, tables)
+	v.data = h
+	var lines := v.effect_lines()
+	_check.call(lines.size() == HudView.EFFECT_LINES and lines[0] == ["Effect 0", HudData.UNKNOWN] and lines[-1][0] == "+4 more",
+			"hud view: at most 8 effect lines, the last says how many more (%s)" % [lines])
+	v.free()
 
 
 ## HudView draws what HudData decided: body rows, the feed (newest 6), warnings, need words.

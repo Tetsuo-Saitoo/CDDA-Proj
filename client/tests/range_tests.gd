@@ -30,6 +30,9 @@ class FakeSim extends RefCounted:
 	func range_teleport(zone: int) -> int:
 		return _op("teleport", [zone])
 
+	func range_rebuild_zone(zone: int) -> int:
+		return _op("rebuild", [zone])
+
 	func range_set_time(minute: int) -> int:
 		return _op("time", [minute])
 
@@ -111,7 +114,8 @@ func _test_session() -> void:
 	_check.call(t == 1 and a == 2 and sim.calls == [["teleport", 1], ["advance", 60]] and sim.actions == ["pause"],
 			"range: ops send and return their ids; a wait answers the next request with pause")
 	var n := sim.calls.size()
-	_check.call(ls.range_teleport(-1) == 0 and ls.range_set_time(1440) == 0 and ls.range_advance(0) == 0
+	_check.call(ls.range_teleport(-1) == 0 and ls.range_rebuild_zone(-1) == 0
+			and ls.range_rebuild_zone(RangeInfo.MAX_ZONES) == 0 and ls.range_set_time(1440) == 0 and ls.range_advance(0) == 0
 			and ls.range_advance(10081) == 0 and ls.range_spawn_item(0, 1, Vector3i.ZERO) == 0
 			and ls.range_spawn_item(5, 1001, Vector3i.ZERO) == 0 and ls.range_spawn_monster("a b", Vector3i.ZERO) == 0
 			and ls.range_spawn_item(5, 1, Vector3i(1 << 30, 0, 0)) == 0 and sim.calls.size() == n,
@@ -132,7 +136,14 @@ func _test_session() -> void:
 	_check.call(changed.size() == 2 and changed[1]["zone"] == 1 and not changed[1]["ai_frozen"], "range: a new zone shows")
 	ls._range_ops[3] = Time.get_ticks_msec() - LiveSession.QUERY_TIMEOUT_MS - 1
 	ls._poll_range(0.0)
-	_check.call(done.has([3, "no answer"]), "range: an op whose result never came is given up")
+	_check.call(done.has([3, LiveSession.NO_ANSWER]), "range: an op whose result never came is given up")
+	var waiting := ls._range_ops.size()
+	for i in LiveSession.MAX_RANGE_OPS:
+		if ls._range_ops.size() < LiveSession.MAX_RANGE_OPS:
+			ls.range_heal()
+	_check.call(waiting < LiveSession.MAX_RANGE_OPS and ls.range_heal() == 0 and LiveSession.MAX_RANGE_OPS == RangeInfo.MAX_RESULTS,
+			"range: no more ops wait than results are kept (%d)" % LiveSession.MAX_RANGE_OPS)
+	ls._range_ops.clear()
 	sim.refuse = true
 	_check.call(ls.range_heal() == 0, "range: the bridge's 0 is a refusal")
 	# A normal game: looked at about once a second only.
@@ -182,6 +193,10 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	p.wait_hour()
 	_check.call(sim.calls == [["teleport", 1], ["frozen", false], ["time", 1320], ["heal"], ["advance", 60]],
 			"range page: buttons send their ops (%s)" % [sim.calls])
+	p.rebuild_zone()
+	_check.call(sim.calls.pop_back() == ["rebuild", 1] and p.status.text == "Rebuild Guns: asked for.",
+			"range page: Rebuild sends the picked zone (%s)" % p.status.text)
+	p._range_ops.erase(p._range_ops.keys()[-1])
 	var rock := tables.index_of("itype", "rock")
 	p.item_id.text = " rock "
 	p.item_count.value = 5
@@ -201,8 +216,8 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	p.on_range_done(1, "")
 	var ok_text := p.status.text
 	p.on_range_done(5, "You can't wait now.")
-	_check.call(ok_text.ends_with("done.") and p.status.text.ends_with("You can't wait now.") and p._range_ops.size() == 5,
-			"range page: results show in the status line")
+	_check.call(ok_text == "Go to Guns: done." and p.status.text.ends_with("You can't wait now.") and p._range_ops.size() == 5,
+			"range page: results show in the status line, zones by name (%s)" % ok_text)
 	p.on_range_done(12345, "")
 	_check.call(p.status.text.ends_with("You can't wait now."), "range page: results of other ops ignored")
 	# Typing in an id field: the menu lets the keys through, Esc still closes.

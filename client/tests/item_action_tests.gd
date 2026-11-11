@@ -46,6 +46,18 @@ class FakeBackend:
 		calls.append(["reload", uid, type, ammo, ammo_type, pos])
 		return ok
 
+	func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
+		calls.append(["throw", uid, type, pos])
+		return ok
+
+	func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
+		calls.append(["pour", uid, type, pos])
+		return ok
+
+	func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
+		calls.append(["pour_into", uid, type, container, container_type, pocket])
+		return ok
+
 	func queued_actions() -> int:
 		return queued
 
@@ -59,11 +71,14 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_judge()
 	_test_messages_timeout()
 	_test_content_ops()
+	_test_throw_pour()
+	_test_pour_hold()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)
 	_test_mock_with_actions(data, tables)
 	_test_mock_guns(data, tables)
+	_test_mock_throw_pour(data, tables)
 	print("drop target")
 	_test_drop_target(data, tables)
 
@@ -284,6 +299,147 @@ func _test_content_ops() -> void:
 	_check.call(ItemActions.contents_sig(_snap(1, [], loaded), gun) == PackedInt64Array([32, 31, 0, 33, 32, 0])
 			and ItemActions.contents_sig(_snap(1, [], loaded), floor_gun).size() == 9,
 			"item actions: contents seen are what is inside a carried item, else everything carried")
+	a.free()
+
+
+## Hold E to pour (PourHold): with a liquid in hand a tap still does E's usual thing, a hold pours once onto the
+## square or into the container it is given; no liquid: E isn't touched; a cancelled press sends nothing.
+func _test_pour_hold() -> void:
+	InputActions.ensure(false)
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var s := _snap(5, [], [[43, 32, 0, -1, WIELDED]])
+	s.player_pos = SQ
+	a.on_snapshot(s)
+	var jug := ItemRef.on_player(43, 32, 0, -1, WIELDED, SQ)
+	var p := PourHold.new()
+	p.actions = a
+	var hold: Array = [jug]
+	p.held = func() -> Variant: return hold[0]
+	var next := SQ + Vector3i(1, 0, 0)
+	var where: Array = [{"square": next}]
+	p.target = func() -> Dictionary: return where[0]
+	var taps := [0]
+	p.tap = func() -> void: taps[0] += 1
+	var down := InputActions.slots(&"use_held")[0].duplicate() as InputEventKey
+	down.pressed = true
+	var echo := down.duplicate() as InputEventKey
+	echo.echo = true
+	var release := down.duplicate() as InputEventKey
+	release.pressed = false
+	_check.call(p.handle(down, 0) and p.waiting() and p.update(100) == "" and p.handle(echo, 200) and p.handle(release, 300)
+			and taps[0] == 1 and not p.waiting() and b.calls.is_empty(), "pour hold: a tap does E's usual thing, nothing poured")
+	_check.call(p.hint(null) == "hold %s: pour it out" % InputActions.key_of(&"use_held"), "pour hold: hint (%s)" % p.hint(null))
+	p.handle(down, 1000)
+	_check.call(p.update(1000 + PourHold.HOLD_MS) == "pour" and b.calls[-1] == ["pour", 43.0, 32.0, next]
+			and not p.handle(release, 1600) and taps[0] == 1, "pour hold: held long enough: poured onto the square, no tap")
+	hold[0] = ItemRef.on_player(44, 32, 0, -1, WIELDED, SQ)   # another jug: the first one's pour is still in flight
+	where[0] = {"container": ItemRef.on_square(50, 34, next)}
+	p.handle(down, 2000)
+	_check.call(p.update(2000 + PourHold.HOLD_MS) == "pour_into" and b.calls[-1] == ["pour_into", 44.0, 32.0, 50.0, 34.0, -1],
+			"pour hold: into the container under the pointer")
+	hold[0] = ItemRef.on_player(45, 32, 0, -1, WIELDED, SQ)
+	where[0] = {"square": SQ + Vector3i(3, 0, 0)}
+	var n := b.calls.size()
+	p.handle(down, 3000)
+	_check.call(p.update(3000 + PourHold.HOLD_MS) == "refused" and b.calls.size() == n, "pour hold: too far: refused here")
+	p.handle(down, 4000)
+	p.cancel()
+	_check.call(p.update(9000) == "" and b.calls.size() == n and taps[0] == 1, "pour hold: a cancelled press sends nothing")
+	hold[0] = null
+	_check.call(not p.handle(down, 5000) and not p.waiting() and p.hint(null) == "", "pour hold: no liquid in hand: E isn't touched")
+	a.free()
+
+
+## Throw and pour: what they send, what they refuse here, and how later snapshots judge them.
+func _test_throw_pour() -> void:
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var now := [1000]
+	a.clock = func() -> int: return now[0]
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	var seq := [5]
+	var look := func(rows: Array) -> void:
+		var s := _snap(seq[0], [], rows)
+		s.player_pos = SQ
+		seq[0] += 1
+		a.on_snapshot(s)
+	# a rock held; a worn bag holding a bottle of water
+	var all := [[41, 30, 0, -1, WIELDED], [42, 31, 0, -1, WORN], [43, 32, 42, 0, 0], [44, 33, 43, 0, 0]]
+	look.call(all)
+	var rock := ItemRef.on_player(41, 30, 0, -1, WIELDED, SQ)
+	var bag := ItemRef.on_player(42, 31, 0, -1, WORN, SQ)
+	var bottle := ItemRef.on_player(43, 32, 42, 0, 0, SQ)
+	var there := SQ + Vector3i(4, 0, 0)
+	var n := b.calls.size()
+	_check.call(not a.throw(bag, there) and not a.throw(rock, SQ) and not a.pour(bottle, SQ + Vector3i(2, 0, 0))
+			and not a.pour(bottle, SQ + Vector3i(0, 0, 1)) and not a.pour_into(bottle, bottle)
+			and not a.pour_into(bottle, ItemRef.on_square(45, 34, SQ), 999) and b.calls.size() == n,
+			"throw / pour: worn, at your own square, too far to pour, into itself or a bad pocket: nothing sent")
+	_check.call(a.throw(rock, there) and b.calls[-1] == ["throw", 41.0, 30.0, there], "throw: sends the item and the square")
+	look.call(all.slice(1))
+	_check.call(seen[-1] == ["finished", 41, "throw"], "throw: finished when it left your hands")
+	var stack := ItemRef.on_player(42, 31, 0, -1, 0, SQ)   # one of a stack flies, the row stays
+	all[1] = [42, 31, 0, -1, 0]
+	look.call(all.slice(1))
+	a.throw(stack, there)
+	look.call(all.slice(1))
+	look.call(all.slice(1))
+	now[0] += ItemActions.TIMEOUT_MS
+	a.check_timeouts()
+	_check.call(seen[-1] == ["finished", 42, "throw"], "throw: one unit off a stack, no refusal: finished at the timeout")
+	var next := SQ + Vector3i(1, 0, 0)
+	_check.call(a.pour(bottle, next) and b.calls[-1] == ["pour", 43.0, 32.0, next], "pour: sends the item and the square")
+	look.call(all.slice(1, 3))
+	_check.call(seen[-1] == ["finished", 43, "pour"], "pour: finished when the water left the bottle")
+	var jug := ItemRef.on_square(45, 34, next)
+	_check.call(a.pour_into(bottle, jug, 0) and b.calls[-1] == ["pour_into", 43.0, 32.0, 45.0, 34.0, 0],
+			"pour into: sends the item, the container and the pocket")
+	a.on_events([MockItems.message_event("There's no room in the jug.")])
+	look.call(all.slice(1, 3))
+	_check.call(seen[-1] == ["refused", 43, "pour", "There's no room in the jug."], "pour into: refused with CDDA's message")
+	a.free()
+
+
+## MockItems' throw and pour.
+func _test_mock_throw_pour(data: Variant, tables: IdTables) -> void:
+	var snap := _town(data, tables)
+	var m := MockItems.new(snap, tables)
+	var a := ItemActions.new()
+	a.backend = m
+	m.changed.connect(a.on_snapshot)
+	m.message.connect(func(t: String) -> void: a.on_events([MockItems.message_event(t)]))
+	a.on_snapshot(snap)
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	var rock: int = _it["rock"]
+	var r := m.give(rock, 0, WIELDED)
+	var held := ItemRef.on_player(r, rock, 0, -1, WIELDED, P)
+	var far := P + Vector3i(MockItems.THROW_RANGE + 1, 0, 0)
+	_check.call(a.throw(held, far) and (seen[-1][3] as String).begins_with("That's too far"),
+			"mock throw: out of range refused (%s)" % [seen[-1]])
+	var at := P + Vector3i(0, 3, 0)
+	var thrown := a.throw(held, at)
+	_check.call(thrown and seen[-1] == ["finished", r, "throw"] and _row(snap, r).is_empty() and snap.player_wielded == 0
+			and _handle(snap, at, rock) == r, "mock throw: the rock lands on the square (%s)" % [seen[-1]])
+	var bottle := m.give(_it["bag_plastic"])
+	var water := m.give(rock, bottle)   # a stand-in: the mock pours whatever is inside
+	var b := ItemRef.on_player(bottle, _it["bag_plastic"], 0, -1, 0, P)
+	_check.call(a.pour(b, S) and seen[-1] == ["finished", bottle, "pour"] and _row(snap, water).is_empty(),
+			"mock pour: what the bottle held is gone")
+	_check.call(a.pour(b, S) and seen[-1] == ["refused", bottle, "pour", "Your %s is empty." % m._name(_it["bag_plastic"])],
+			"mock pour: an empty bottle refused")
+	var refill := m.give(rock, bottle)
+	var box := m.give(_it["box_small"])
+	_check.call(a.pour_into(b, ItemRef.on_player(box, _it["box_small"], 0, -1, 0, P), 0)
+			and seen[-1] == ["finished", bottle, "pour"] and _row(snap, refill)[2] == box,
+			"mock pour into: the contents go into the box")
+	_check.call(a.pending_count() == 0, "mock throw / pour: every action judged at once")
 	a.free()
 
 

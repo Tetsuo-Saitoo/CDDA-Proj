@@ -49,7 +49,7 @@ const ACTIONS := [
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike, left (off) hand", ["1"]],
 	[&"hand_main", "Act", "strike, right (main) hand", ["2"]],
-	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it", ["E"]],
+	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold", ["E"]],
 	[&"carry_farther", "Act", "carrying an item: hold it farther away", ["mouse:4"]],
 	[&"carry_closer", "Act", "carrying an item: hold it closer", ["mouse:5"]],
 	[&"carry_turn_left", "Act", "carrying an item: turn it left", ["mouse:Shift+4"]],

@@ -114,6 +114,13 @@ Dictionary request_dict( const fp3d::ui_request &r )
         d["shot_error"] = std::isfinite( r.shot_error ) ? r.shot_error : 0.0f;
         d["shot_angle"] = std::isfinite( r.shot_angle ) ? r.shot_angle : 0.0f;
         d["dispersion"] = std::isfinite( r.dispersion ) ? r.dispersion : 0.0f;
+        if( !r.pellets.empty() ) {
+            Array pellets;
+            for( size_t i = 0; i < r.pellets.size() && i < fp3d::max_shot_pellets; i++ ) {
+                pellets.push_back( std::isfinite( r.pellets[i] ) ? r.pellets[i] : 0.0f );
+            }
+            d["pellets"] = pellets;
+        }
     }
     return d;
 }
@@ -174,6 +181,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "stop" ), &CddaSim::stop );
     ClassDB::bind_method( D_METHOD( "get_state" ), &CddaSim::get_state );
     ClassDB::bind_method( D_METHOD( "get_error" ), &CddaSim::get_error );
+    ClassDB::bind_method( D_METHOD( "get_boot_info" ), &CddaSim::get_boot_info );
     ClassDB::bind_method( D_METHOD( "get_request" ), &CddaSim::get_request );
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
@@ -203,6 +211,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "range_spawn_item", "itype", "count", "pos" ), &CddaSim::range_spawn_item );
     ClassDB::bind_method( D_METHOD( "range_spawn_monster", "id", "pos" ), &CddaSim::range_spawn_monster );
     ClassDB::bind_method( D_METHOD( "range_teleport", "zone" ), &CddaSim::range_teleport );
+    ClassDB::bind_method( D_METHOD( "range_rebuild_zone", "zone" ), &CddaSim::range_rebuild_zone );
     ClassDB::bind_method( D_METHOD( "range_set_time", "minute" ), &CddaSim::range_set_time );
     ClassDB::bind_method( D_METHOD( "range_advance", "minutes" ), &CddaSim::range_advance );
     ClassDB::bind_method( D_METHOD( "range_set_ai_frozen", "on" ), &CddaSim::range_set_ai_frozen );
@@ -303,6 +312,18 @@ String CddaSim::get_error() const
     return to_godot( fp3d_session::error() );
 }
 
+Dictionary CddaSim::get_boot_info() const
+{
+    const fp3d::boot_progress p = fp3d::latest_boot_progress();
+    Dictionary d;
+    d["phase"] = to_godot( p.phase );
+    d["seconds"] = p.seconds;
+    d["phase_seconds"] = p.phase_seconds;
+    d["errors"] = static_cast<int64_t>( std::min<uint64_t>( p.errors, INT64_MAX ) );
+    d["last_error"] = to_godot( p.last_error );
+    return d;
+}
+
 Dictionary CddaSim::get_request() const
 {
     const std::optional<fp3d::ui_request> r = fp3d::wait_request( 0 );
@@ -373,30 +394,69 @@ bool CddaSim::answer( const Dictionary &d )
         return false;
     }
     if( d.has( "shot" ) ) {
-        // {end: Vector3i, hit_uid: int, part: String, quality: float}; the sim checks it again.
+        // {end: Vector3i, hit_uid: int, part: String, quality: float}, also each of `pellets`; the sim checks
+        // them again.
+        const auto point = []( const Dictionary & s, fp3d::pellet_answer & out ) {
+            Variant e;
+            Variant u;
+            Variant p;
+            Variant q;
+            if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) ||
+                !field( s, "hit_uid", Variant::INT, u ) || !field( s, "part", Variant::STRING, p ) ||
+                !field( s, "quality", Variant::FLOAT, q ) ) {
+                return false;
+            }
+            const Vector3i end = e;
+            out.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
+                                      std::clamp( end.y, -max_abs_coord, max_abs_coord ),
+                                      std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
+            out.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
+            out.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
+            const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
+            if( !std::isfinite( quality ) ) {
+                return false;
+            }
+            out.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
+            return true;
+        };
         const Dictionary s = v;
-        Variant e;
-        Variant u;
-        Variant p;
-        Variant q;
-        if( !s.has( "end" ) || !field( s, "end", Variant::VECTOR3I, e ) || !field( s, "hit_uid", Variant::INT, u ) ||
-            !field( s, "part", Variant::STRING, p ) || !field( s, "quality", Variant::FLOAT, q ) ) {
+        fp3d::pellet_answer main;
+        if( !point( s, main ) ) {
             return false;
         }
         fp3d::shot_answer sa;
-        const Vector3i end = e;
-        sa.end = fp3d::ui_point{ std::clamp( end.x, -max_abs_coord, max_abs_coord ),
-                                 std::clamp( end.y, -max_abs_coord, max_abs_coord ),
-                                 std::clamp( end.z, -max_abs_coord, max_abs_coord ) };
-        sa.hit_uid = s.has( "hit_uid" ) ? static_cast<uint64_t>( std::max<int64_t>( u, 0 ) ) : 0;
-        sa.part = s.has( "part" ) ? fp3d::sanitize_text( to_std( p ), 64 ) : std::string();
-        const double quality = s.has( "quality" ) ? static_cast<double>( q ) : 0.3;
-        if( !std::isfinite( quality ) ) {
-            return false;
-        }
-        sa.quality = static_cast<float>( std::clamp( quality, 0.0, 0.99 ) );
+        sa.end = main.end;
+        sa.hit_uid = main.hit_uid;
+        sa.part = std::move( main.part );
+        sa.quality = main.quality;
         // `fly` (target answers): a bool; anything else counts as false.
         sa.fly = s.has( "fly" ) && s["fly"].get_type() == Variant::BOOL && static_cast<bool>( s["fly"] );
+        // `pellets` (shot answers): an Array of at most max_shot_pellets Dictionaries, {} for a pellet not flown.
+        Variant ps;
+        if( !field( s, "pellets", Variant::ARRAY, ps ) ) {
+            return false;
+        }
+        if( s.has( "pellets" ) ) {
+            const Array arr = ps;
+            if( arr.size() > static_cast<int64_t>( fp3d::max_shot_pellets ) ) {
+                return false;
+            }
+            for( int64_t i = 0; i < arr.size(); i++ ) {
+                if( arr[i].get_type() != Variant::DICTIONARY ) {
+                    return false;
+                }
+                const Dictionary pd = arr[i];
+                if( pd.is_empty() ) {
+                    sa.pellets.emplace_back();
+                    continue;
+                }
+                fp3d::pellet_answer pa;
+                if( !point( pd, pa ) ) {
+                    return false;
+                }
+                sa.pellets.emplace_back( std::move( pa ) );
+            }
+        }
         a.shot = sa;
     }
     fp3d::answer( std::move( a ) );
@@ -429,6 +489,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::unload;
     } else if( op == "reload" ) {
         a.op = fp3d::item_op::reload;
+    } else if( op == "clear" ) {
+        a.op = fp3d::item_op::clear;
+    } else if( op == "throw" ) {
+        a.op = fp3d::item_op::throw_;
+    } else if( op == "pour" ) {
+        a.op = fp3d::item_op::pour;
     } else {
         return false;
     }
@@ -463,7 +529,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
-    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop ) {
+    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ) {
+        return false;
+    }
+    // pour goes to exactly one place: a container (no pos) or a square (pos, no container and no pocket).
+    if( a.op == fp3d::item_op::pour && ( d.has( "container" ) ? d.has( "pos" ) :
+                                         !d.has( "pos" ) || d.has( "container_type" ) || d.has( "pocket" ) ) ) {
         return false;
     }
     if( !field( d, "hand", Variant::STRING, v ) ) {
@@ -484,7 +555,7 @@ bool CddaSim::queue_item_action( const Dictionary &d )
     if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
-    if( a.op == fp3d::item_op::put ) {
+    if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
         if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
             return false;
         }
@@ -747,6 +818,14 @@ int64_t CddaSim::range_teleport( int64_t zone )
 {
     fp3d::range_op op;
     op.kind = fp3d::range_op_kind::teleport;
+    op.number = zone;
+    return queue_range( op );
+}
+
+int64_t CddaSim::range_rebuild_zone( int64_t zone )
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::rebuild_zone;
     op.number = zone;
     return queue_range( op );
 }

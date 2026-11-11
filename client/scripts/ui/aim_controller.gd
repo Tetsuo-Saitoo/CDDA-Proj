@@ -6,7 +6,8 @@ extends Node3D
 ##   FPS: the square under the crosshair becomes the cursor as you turn (attack modes only), and `aim_fire`
 ##   (LMB / F) shoots at it;
 ## - with a free mouse, `aim_fire` on a creature or square picks it, a second click on the same square shoots.
-## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors). Answers go through
+## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors); in the shoulder and top
+## views it starts in front of the player and bullets fly from the eyes (`view`). Answers go through
 ## TargetRequestWidget (pos + FIRE etc.), so CDDA still checks range, line of fire and ammo.
 ## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera; `fired` kicks it.
 ## Guns (fire mode with a wielded gun): the client flies the bullet (BulletPhysics: speed, drag, drop, sights
@@ -16,7 +17,8 @@ extends Node3D
 ## Newer bridges (target requests carry `dispersion`, arcmin) then roll CDDA's error per projectile and send a
 ## `shot` request (shot_error arcmin, shot_angle degrees): on_request() turns the kept sight line by it
 ## (ShotError), flies that bullet, draws its tracer and answers at once with the outcome, or cancels so CDDA
-## rolls it. While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
+## rolls it. A shotgun shell's request names each pellet's spread (`pellets`): every pellet is flown and answered
+## (pellet_turns). Bullets fly through furniture (soft cover, BulletPhysics). While aiming, the crosshair shows the dispersion as a circle and the viewmodel sways with it.
 ## Shot requests have no time limit and no UI: main.gd sends their answer through send_shot(), which cancels
 ## instead when the bridge refuses it, so CDDA never waits on one. Answers hold exactly the bridge's types
 ## (shot_answer()).
@@ -37,6 +39,13 @@ const MAX_TRACERS := 32
 const LIVE_AIM_REACH := 4.0       # m: a live_aim pose farther than this from the kept origin is refused
 const MAX_PART_BYTES := 64        # the bridge's cap on a shot answer's `part`
 const MAX_QUALITY := 0.99         # the bridge's range for a shot answer's `quality` is 0..0.99
+const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's, at most (the bridge's cap)
+const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon strikes 2 squares off)
+const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
+const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
+const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
+		Vector2i(1, 1): "RIGHTDOWN", Vector2i(0, 1): "DOWN", Vector2i(-1, 1): "LEFTDOWN", Vector2i(-1, 0): "LEFT",
+		Vector2i(-1, -1): "LEFTUP"}
 
 var world: WorldView
 var request_ui: RequestUI
@@ -48,8 +57,14 @@ var _marker: MeshInstance3D
 var creature_view: CreatureView   # bullets hit its figures; null = CDDA rolls the shot as before
 var wielded_gun := Callable()     # -> IdTables.Def of the wielded gun, or null (main.gd)
 var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or {}; shot requests fly from it
+## () -> Dictionary: the eyes when the shown camera is away from them (C9 shoulder and top views,
+## main.eyes_view: {mode, eye, facing}); {} otherwise. Picks then start in front of the player
+## (ViewCamera.ray_start), bullets fly from the eyes to what the pick meets, and in the top view, where the
+## screen centre is the player, mouse-look aiming follows the facing (no crosshair).
+var view := Callable()
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
+var melee_aim := {}               # the last aimed strike: {square, uid, part, quality, time msec} (melee_from)
 var dispersion := 0.0             # arcmin, from the last target request (0 = none / old bridge)
 var shown_dispersion := 0.0       # dispersion while a fire-mode target request shows, else 0 (viewmodel sway)
 var _sim_rolls := false           # the last target request had `dispersion`: shot requests will follow FIRE
@@ -72,12 +87,54 @@ func _init(w: WorldView, ui: RequestUI) -> void:
 	hits.hit_confirmed.connect(_on_hit)
 
 
-## The square a ray through screen point `pos` of camera `cam` meets, or null.
-func pick(cam: Camera3D, pos: Vector2) -> Variant:
+## The square a ray through screen point `pos` of camera `cam` meets, or null. `captured`: mouse-look aiming
+## (the top view then follows the eyes' facing).
+func pick(cam: Camera3D, pos: Vector2, captured := false) -> Variant:
 	if cam == null or world.snapshot == null:
 		return null
-	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	var line := pick_line(cam, pos, captured)
+	var r := look_ray.cast(line[0], line[1], LookRay.MAX_M, true, line[2])
 	return r["square"] if r["hit"] else null
+
+
+func _view() -> Dictionary:
+	var v: Variant = view.call() if view.is_valid() else {}
+	return v if v is Dictionary else {}
+
+
+func _top() -> bool:
+	return _view().get("mode", "") == "top"
+
+
+## [origin, unit direction, skip_start (LookRay.cast)] of a pick through screen point `at` of `cam` (see `view`).
+## Top-down camera rays start at eye height, maybe in the very square clicked: that square counts.
+func pick_line(cam: Camera3D, at: Vector2, captured := false) -> Array:
+	var v := _view()
+	var mode := str(v.get("mode", ""))
+	var eye: Variant = v.get("eye")
+	var f: Variant = v.get("facing")
+	if captured and mode == "top" and eye is Vector3 and f is Vector3 and (eye as Vector3).is_finite() \
+			and (f as Vector3).is_finite() and (f as Vector3).length_squared() > 1e-6:
+		return [eye, (f as Vector3).normalized(), true]
+	var d := cam.project_ray_normal(at)
+	var o := cam.project_ray_origin(at)
+	var s := ViewCamera.ray_start(mode, o, d, eye)
+	return [s, d, not (mode == "top" and s != o)]
+
+
+## [origin, sight] of a client-flown bullet through screen point `at`: the pick line in first person; with the
+## camera away from the eyes, from the eyes to what the pick line meets.
+func shot_line(cam: Camera3D, at: Vector2, captured := false) -> Array:
+	var line := pick_line(cam, at, captured)
+	var eye: Variant = _view().get("eye")
+	if not eye is Vector3 or not (eye as Vector3).is_finite():
+		return line
+	var o: Vector3 = line[0]
+	var d: Vector3 = line[1]
+	var r := look_ray.cast(o, d, LookRay.MAX_M, true, line[2])
+	var p: Vector3 = r["point"] if r["hit"] else o + d * LookRay.MAX_M
+	var sight := p - (eye as Vector3)
+	return [eye, sight.normalized() if sight.length_squared() > 1e-4 else d, true]
 
 
 ## Where the crosshair (or the mouse) points: the screen centre while the mouse is captured.
@@ -89,7 +146,7 @@ func aim_point(cam: Camera3D, mouse: Vector2, captured: bool) -> Vector2:
 func update(cam: Camera3D, captured: bool) -> void:
 	var t := request_ui.target_widget()
 	crosshair.show_cross = t != null
-	crosshair.visible = first_person and (t != null or crosshair.marking())
+	crosshair.visible = first_person and not _top() and (t != null or crosshair.marking())
 	crosshair.aiming = captured
 	shown_dispersion = dispersion if t != null and t.mode == "fire" else 0.0
 	var spread := 0.0
@@ -103,7 +160,7 @@ func update(cam: Camera3D, captured: bool) -> void:
 		_marker.visible = false
 		return
 	if first_person and captured and TargetRequestWidget.is_attack_mode(t.mode):
-		var sq: Variant = pick(cam, aim_point(cam, Vector2.ZERO, true))
+		var sq: Variant = pick(cam, aim_point(cam, Vector2.ZERO, true), true)
 		if sq != null and sq != t.cursor:
 			request_ui.set_target_cursor(sq)
 	_place_marker(t.cursor)
@@ -129,11 +186,12 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 	if t == null:
 		return false
 	var at := aim_point(cam, mouse, captured)
-	var sq: Variant = pick(cam, at)
+	var sq: Variant = pick(cam, at, captured)
 	if captured or (sq != null and sq == t.cursor) or sq == null:
 		if sq != null:
 			request_ui.set_target_cursor(sq)
-		if not _fire_flown(t, cam.project_ray_origin(at), cam.project_ray_normal(at)):
+		var line := shot_line(cam, at, captured)
+		if not _fire_flown(t, line[0], line[1]):
 			if TargetRequestWidget.is_attack_mode(t.mode):
 				fired.emit()
 				shot_aim = {}   # a new trigger pull replaces the kept aim
@@ -177,9 +235,10 @@ func _fire_flown(t: TargetRequestWidget, origin: Vector3, sight: Vector3) -> boo
 	return true
 
 
-## Flies a bullet through screen point `at` of `cam` (see fly_from).
+## Flies a bullet through screen point `at` of `cam` (see fly_from and shot_line).
 func fly_shot(cam: Camera3D, at: Vector2, ammo: String) -> Dictionary:
-	return fly_from(cam.project_ray_origin(at), cam.project_ray_normal(at), ammo)
+	var line := shot_line(cam, at)
+	return fly_from(line[0], line[1], ammo)
 
 
 ## Flies a bullet from world point `origin` with sights along `sight` (the bore is zeroed from it), e.g. the
@@ -219,6 +278,76 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 	return last_shot
 
 
+## Melee: the creature figure a strike from world point `origin` along `sight` meets within MELEE_REACH_M, with
+## nothing solid in between: {square, uid, part, quality, time} or {}. Kept as melee_aim for the swing request.
+func melee_from(origin: Vector3, sight: Vector3) -> Dictionary:
+	melee_aim = {}
+	if creature_view == null or world == null or world.snapshot == null:
+		return {}
+	if not origin.is_finite() or not sight.is_finite() or sight.length_squared() < 1e-12:
+		return {}
+	var h := BulletPhysics.reach_figure(origin, sight.normalized() * MELEE_REACH_M, creature_view.figures(), look_ray)
+	if h.is_empty():
+		return {}
+	for c: Snapshot.Creature in world.snapshot.creatures:
+		if c.uid == int(h["uid"]):
+			var d := CreatureView.def_of(world, c)
+			melee_aim = {"square": c.pos, "uid": c.uid, "part": BulletPhysics.cdda_part(str(h["zone"]),
+					c.kind == Snapshot.Creature.MONSTER, d.weakpoints if d != null else {}),
+					"quality": BulletPhysics.quality_of(float(h["quality"])), "time": Time.get_ticks_msec()}
+			return melee_aim
+	return {}
+
+
+## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
+## ("fp3d_attack_<hand>_aim_<DIR>") at the creature under the crosshair through screen point `at` of `cam` when
+## it is at most MELEE_SQUARES off along one of the 8 ways on this level; else a plain strike the way you face
+## (`facing`, a direction name such as "LEFT").
+func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me: Vector3i, facing: String) -> String:
+	var plain := "fp3d_attack_%s_%s" % [hand, facing]
+	melee_aim = {}
+	if cam == null or world == null or world.snapshot == null:
+		return plain
+	var line := shot_line(cam, at, captured)
+	var aim := melee_from(line[0], line[1])
+	if aim.is_empty():
+		return plain
+	var dir := strike_dir(me, aim["square"])
+	if dir == "":
+		melee_aim = {}
+		return plain
+	return "fp3d_attack_%s_aim_%s" % [hand, dir]
+
+
+## The direction name from square `me` to `to` when it lies 1..MELEE_SQUARES off along one of the 8 ways on the
+## same level, else "".
+static func strike_dir(me: Vector3i, to: Vector3i) -> String:
+	var d := to - me
+	var n := maxi(absi(d.x), absi(d.y))
+	if d.z != 0 or n < 1 or n > MELEE_SQUARES or (d.x != 0 and absi(d.x) != n) or (d.y != 0 and absi(d.y) != n):
+		return ""
+	return DIR_NAMES.get(Vector2i(signi(d.x), signi(d.y)), "")
+
+
+## A swing request (an aimed strike, fp3d/swing.h): the kept melee aim as a `shot` answer when it is fresh and on
+## the request's cursor square with a part to name; else a cancel (CDDA picks the part). {} for an unusable id.
+func _swing_answer(req: Dictionary) -> Dictionary:
+	var id: Variant = RequestWidget.id_value(req.get("id"))
+	if id == null or id <= 0:
+		push_warning("aim: swing request without a usable id")
+		return {}
+	var cancel := fallback_answer(id)
+	var aim := melee_aim
+	melee_aim = {}   # one strike, one answer
+	if aim.is_empty() or Time.get_ticks_msec() - int(aim.get("time", 0)) > MELEE_KEEP_MS:
+		return cancel
+	var cursor: Variant = req.get("cursor")
+	var part := str(aim.get("part", ""))
+	if not cursor is Vector3i or cursor != aim.get("square") or part == "" or part.to_utf8_buffer().size() > MAX_PART_BYTES:
+		return cancel
+	return {"id": int(id), "shot": shot_answer(cursor, int(aim["uid"]), part, float(aim["quality"]))}
+
+
 ## Called by main.gd for every live request before it shows. `target`: remembers its `dispersion` and
 ## `weapon_wielded`, returns {}.
 ## `shot` (one projectile CDDA fires after a client-flown FIRE): the answer to send right away, no UI:
@@ -236,6 +365,8 @@ func on_request(req: Dictionary) -> Dictionary:
 		# old bridges don't say: the wielded gun fires; anything but true says it doesn't
 		_wielded_fires = not req.has("weapon_wielded") or (req["weapon_wielded"] is bool and req["weapon_wielded"])
 		return {}
+	if kind == "swing":
+		return _swing_answer(req)
 	if kind != "shot":
 		return {}
 	var id: Variant = RequestWidget.id_value(req.get("id"))
@@ -254,10 +385,34 @@ func on_request(req: Dictionary) -> Dictionary:
 		origin = pose["origin"]
 		sight = pose["sight"]
 	var dir := ShotError.apply(sight, _finite(req.get("shot_error")), _finite(req.get("shot_angle")))
-	var shot := fly_from(origin, dir, str(shot_aim.get("ammo", "")))
+	var ammo := str(shot_aim.get("ammo", ""))
+	var turns := pellet_turns(req.get("pellets"))
+	var shot := fly_from(origin, dir, ammo, turns.is_empty())
 	if shot.is_empty():
 		return cancel
-	return {"id": int(id), "shot": shot["answer"]}
+	if turns.is_empty():
+		return {"id": int(id), "shot": shot["answer"]}
+	# a shell: each pellet flown along the shell's line turned by its spread ({}: not flown, CDDA rolls that one)
+	var answer: Dictionary = (shot["answer"] as Dictionary).duplicate()
+	var pellets: Array = []
+	for t: float in turns:
+		var p := fly_from(origin, ShotError.apply(dir, absf(t), 90.0 if t >= 0.0 else 270.0), ammo)
+		pellets.append(p["answer"] if not p.is_empty() else {})
+	answer["pellets"] = pellets
+	return {"id": int(id), "shot": answer}
+
+
+## A shot request's `pellets` (a shotgun shell): each pellet's turn off the shot's line, arcmin, + to the right. At
+## most MAX_PELLETS finite numbers within ShotError.MAX_ERROR_ARCMIN; anything else gives [] (one bullet).
+static func pellet_turns(v: Variant) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+	if not (v is Array or v is PackedFloat32Array or v is PackedFloat64Array) or v.size() > MAX_PELLETS:
+		return out
+	for x: Variant in v:
+		if not (x is float or x is int) or not is_finite(float(x)) or absf(float(x)) > ShotError.MAX_ERROR_ARCMIN:
+			return PackedFloat32Array()
+		out.append(float(x))
+	return out
 
 
 ## A `shot` answer of exactly the types the bridge takes (contracts/bridge_api.md `answer`): end Vector3i,

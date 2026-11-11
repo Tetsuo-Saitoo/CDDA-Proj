@@ -31,8 +31,12 @@ const OCT_STEPS := [Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1,
 
 var world: WorldView
 var camera: FlyCamera          # the outside view
-var fp: FirstPersonCamera      # the first-person view (C9)
-var first_person := true
+var fp: FirstPersonCamera      # the first-person view (C9): the player's eyes in every view but outside
+var first_person := true       # the eyes drive (first, shoulder, top); false = the outside fly camera
+var view_cam: ViewCamera       # C9: shoulder and top views, following the eyes
+var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
+const VIEW_MODES := HudSettings.VIEWS
+var _top_z := 0                # top view: the level cut at (follows the player's level)
 var sun: DirectionalLight3D
 var hud: Label
 var request_ui: RequestUI
@@ -56,6 +60,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -63,6 +68,9 @@ var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
+## Where CDDA keeps its saves and config; empty: user://cdda. Live scripts set it before adding main, so they
+## never touch the player's saves.
+var cdda_user_dir := ""
 var vr: VrRig
 var vr_perf: VrPerf
 var _quitting := false
@@ -79,7 +87,24 @@ var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
 
 
+## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
+static func _boot_log(what: String) -> void:
+	print("boot: %6d ms  %s" % [Time.get_ticks_msec(), what])
+
+
+func _on_first_frame_drawn() -> void:
+	_boot_log("first frame drawn")
+
+
+func _exit_tree() -> void:
+	# Nothing of ours may stay connected to an engine singleton: a headless run never draws a frame, and the callable
+	# still waiting on frame_post_draw crashed the engine as it shut down.
+	if RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+		RenderingServer.frame_post_draw.disconnect(_on_first_frame_drawn)
+
+
 func _ready() -> void:
+	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
@@ -103,6 +128,14 @@ func _ready() -> void:
 	add_child(camera)
 	fp = FirstPersonCamera.new(world)
 	add_child(fp)
+	view_cam = ViewCamera.new(fp)
+	add_child(view_cam)
+	view_cam.blocked = func(from: Vector3, to: Vector3) -> float:   # the shoulder boom stops at walls
+		if look_ray == null:
+			look_ray = LookRay.new(world)
+		var d := to - from
+		var r := look_ray.cast(from, d.normalized(), d.length(), false)
+		return from.distance_to(r["point"]) if r.get("hit", false) and r.get("point") is Vector3 else INF
 	world.coords.origin_shifted.connect(func(d: Vector3) -> void: camera.position += d)
 	world.coords.origin_shifted.connect(fp.shift)
 	world.coords.origin_shifted.connect(creature_view.shift)
@@ -131,11 +164,17 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(grab.icon)
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
+	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	pour.actions = item_actions
+	pour.held = _held_liquid
+	pour.target = _pour_target
+	pour.tap = _use_tap
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
@@ -152,10 +191,8 @@ func _ready() -> void:
 	viewmodel = WeaponViewmodel.new()
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
-	var view := FirstPersonCamera.view_from_args(_args)
-	if _args.has("view") and _args["view"] != view:
-		push_warning("--view= takes first or outside; starting in %s" % view)
-	_set_first_person(view == "first")
+	_set_view(start_view(_args, hud_settings.view))
+	_boot_log("client set up")
 	if _args.has("live"):
 		_start_live()
 	else:
@@ -289,7 +326,7 @@ func _place_player_body() -> void:
 	if world.snapshot == null:
 		player_body.visible = false
 		return
-	var own := vr != null or first_person
+	var own := vr != null or (first_person and view_mode == "first")
 	player_body.show_head = not own
 	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	var yaw := fp.yaw
@@ -311,6 +348,14 @@ func _fp_active() -> bool:
 	return vr == null and first_person
 
 
+## C9: the eyes when the shown camera is away from them (shoulder, top), for aiming, grabbing and looking:
+## {mode, eye (Vector3), facing (level, unit)}; {} in first person, outside and VR.
+func eyes_view() -> Dictionary:
+	if not _fp_active() or fp == null or not view_mode in ViewCamera.MODES:
+		return {}
+	return {"mode": view_mode, "eye": fp.global_position, "facing": ViewCamera.facing(fp.yaw)}
+
+
 ## C9: first person (true) or the outside fly camera. VR has its own rig and ignores this.
 func _set_first_person(on: bool) -> void:
 	if on and not first_person:
@@ -324,12 +369,50 @@ func _set_first_person(on: bool) -> void:
 	(fp if on else camera).make_current()
 
 
+## The start view: --view=first|shoulder|top|outside, else --camera= (a fly pose) means outside, else the
+## saved one.
+static func start_view(args: Dictionary, saved: String) -> String:
+	var v := String(args.get("view", ""))
+	if v in VIEW_MODES:
+		return v
+	if args.has("view"):
+		push_warning("--view= takes %s; starting in %s" % [", ".join(VIEW_MODES), saved])
+	if args.has("camera"):
+		return "outside"
+	return saved if saved in VIEW_MODES else "first"
+
+
+## C9: "first" (the eyes), "shoulder" / "top" (ViewCamera follows the eyes) or "outside" (the fly camera).
+func _set_view(m: String) -> void:
+	if not m in VIEW_MODES:
+		m = "first"
+	var was_top := view_mode == "top"
+	view_mode = m
+	_set_first_person(m != "outside")
+	if m in ViewCamera.MODES:
+		view_cam.mode = m
+		view_cam.follow()
+		view_cam.make_current()
+	view_cam.set_process(m in ViewCamera.MODES)
+	if m == "top":
+		_top_z = fp.z
+		world.set_view_z_max(fp.z)   # see the player from above: the levels over them cut away
+	elif was_top and m != "outside":
+		world.set_view_z_max(world.coords.z_max)
+	world.lighting.min_brightness = WorldLighting.OUTSIDE_MIN if m in ["top", "outside"] else 0.0
+
+
+## V: first person -> over the shoulder -> top-down -> outside (fly) -> first person; saved for next time.
 func _toggle_view() -> void:
 	if vr != null:
 		return
-	_set_first_person(not first_person)
-	if not first_person:
+	_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
+	if view_mode == "outside":
 		_frame_outside(fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0))
+	hud_settings.view = view_mode
+	var err := hud_settings.save_file()
+	if err != OK:
+		push_warning("view not saved: %s" % error_string(err))
 
 
 ## The headset view (block L1). OpenXR only starts when Godot runs with --xr-mode on.
@@ -400,7 +483,8 @@ func _start_live() -> void:
 	live.events_arrived.connect(_on_live_events)
 	live.state_changed.connect(func(s: String) -> void:
 		status = "game " + s + ("" if live.error.is_empty() else ": " + live.error)
-		print("live: " + status))   # in the console too: in VR the HUD isn't in the headset
+		print("live: " + status)   # in the console too: in VR the HUD isn't in the headset
+		_boot_log("game " + s))
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
@@ -429,7 +513,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if _args.has("world") or _args.has("save"):
@@ -487,6 +571,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
 		_sync_cheats_allowed()
@@ -540,7 +625,8 @@ static func cheat_names(v: String) -> PackedStringArray:
 
 func _after_live_start(ok: bool) -> void:
 	if ok:
-		status = "game booting (~30 s)"
+		_boot_log("game booting")
+		status = LiveSession.boot_text(live.boot_info())
 	else:
 		status = "live mode failed: " + live.error
 		push_error(status)
@@ -589,6 +675,8 @@ func _save_and_quit() -> void:
 ## Live: meshing runs on a worker (WorldView.submit); _on_world_applied shows the rest when it is done.
 func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
+	if _first_live_snapshot:
+		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
 	world.submit(snap)
 
 
@@ -600,6 +688,9 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 	status = "turn %d: %s" % [snap.turn, status]
 	if first:
 		print("live: " + status)
+		_boot_log("first world built")
+		if not RenderingServer.frame_post_draw.is_connected(_on_first_frame_drawn):
+			RenderingServer.frame_post_draw.connect(_on_first_frame_drawn, CONNECT_ONE_SHOT)
 		_frame_player()
 
 
@@ -699,9 +790,16 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike the square you face: the left (off) hand or the right (main) hand
+		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# reach (an aimed strike, AimController.strike_action), else the square you face
 		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
-		act = "fp3d_attack_%s_%s" % [hand, OCT_ACTIONS[_octant(Vector2(0, 1))]]
+		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
+		var cam := get_viewport().get_camera_3d()
+		act = "fp3d_attack_%s_%s" % [hand, facing]
+		if cam != null and world.snapshot != null:
+			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
+					captured, world.snapshot.player_pos, facing)
 	if act == "":
 		return false
 	if _in_main_loop():
@@ -720,7 +818,11 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
-	var r := look_ray.cast(cam.project_ray_origin(pos), cam.project_ray_normal(pos))
+	var v := eyes_view()
+	var dir := cam.project_ray_normal(pos)
+	var o := cam.project_ray_origin(pos)
+	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
@@ -856,7 +958,7 @@ func _update_aim() -> void:
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
 	viewmodel.sway_arcmin = aim.shown_dispersion
-	viewmodel.visible = _fp_active()
+	viewmodel.visible = _fp_active() and view_mode == "first"
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
@@ -864,6 +966,35 @@ func _update_aim() -> void:
 
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
+
+
+## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
+func _held_liquid() -> Variant:
+	for h: String in ["main", "off"]:
+		var it: Variant = hud_data.held.get(h)
+		if it is ItemRef and not str(hud_data.held.get(h + "_liquid", "")).is_empty():
+			return it
+	return null
+
+
+## Where holding E pours: into the container under the pointer, else onto the square you face.
+func _pour_target() -> Dictionary:
+	var t := grab.item_hover
+	if not t.is_empty() and t.get("item") is ItemRef and (t["item"] as ItemRef).is_container(world.tables):
+		return {"container": t["item"]}
+	if world.snapshot == null:
+		return {}
+	var s := _screen_step(Vector2(0, 1))
+	return {"square": world.snapshot.player_pos + Vector3i(s.x, s.y, 0)}
+
+
+## E's tap with a liquid in hand: what E does otherwise (take the item under the pointer, else use / examine
+## the square you face).
+func _use_tap() -> void:
+	if grab.take_hover() or live == null or not _in_main_loop():
+		return
+	grab.ask = {}
+	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
 
 
 ## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
@@ -985,6 +1116,7 @@ func _setup_hud() -> void:
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
+	request_ui.held = func() -> bool: return key_menu != null and key_menu.visible   # F1: its fields get the keys
 	request_ui.answered.connect(_on_request_answered)
 	request_ui.queue_after.connect(func(acts: PackedStringArray) -> void:
 		for a in acts:
@@ -1010,7 +1142,7 @@ func _open_key_menu() -> void:
 
 func _on_key_menu_closed() -> void:
 	if vr == null:
-		_set_first_person(first_person)   # cameras take their input again
+		_set_view(view_mode)   # cameras take their input again
 
 
 ## --demo-creatures (mock town): one of several body types each, and an NPC, near the player. Every second
@@ -1073,6 +1205,9 @@ func _demo_tick() -> void:
 func _process(_delta: float) -> void:
 	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
+	if vr == null and view_mode == "top" and fp.z != _top_z:   # top-down: the cut follows the player's level
+		_top_z = fp.z
+		world.set_view_z_max(fp.z)
 	fp.set_process(_fp_active() and not typing)
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
@@ -1085,6 +1220,10 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	if typing or vr != null or (live != null and not _in_main_loop()):
+		pour.cancel()   # a menu or prompt took the keys: its release won't come here
+	elif pour.update(Time.get_ticks_msec()) == "refused":
+		grab.flash("You can't pour that there.", true)
 	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	_update_look_line()
@@ -1098,8 +1237,11 @@ func _process(_delta: float) -> void:
 	if vr != null:   # the VR Cheats page follows the F1 menu's gate (debug switch, --test / --cheats, test range)
 		vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()
 	var tile := world.coords.world_to_ms(_view().global_position)
-	var view := "first person" if _fp_active() else "outside, speed %.0f" % camera.speed
+	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
+			"outside, speed %.0f" % camera.speed)
 	var help := _help()
+	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
+		status = LiveSession.boot_text(live.boot_info())
 	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
 			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
 			Engine.get_frames_per_second()], help])
@@ -1127,14 +1269,14 @@ func _help() -> String:
 	if _fp_active():
 		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
-		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s outside view" % [
+		out += "%s or %s walk where you look  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s cutaway  %s roofs  %s next view" % [
 				walk, steps, k.call(&"wait"), lv, cut, k.call(&"roofs_toggle"), k.call(&"view_toggle")]
 	elif live != null:
 		out += "%s fly  %s/%s up/down  %s walk  %s wait  %s stairs  prompts: mouse or keys, Esc cancels  %s level  %s roofs  %s player  %s first person" % [
 				walk, k.call(&"fly_up"), k.call(&"fly_down"), steps, k.call(&"wait"), lv, cut,
 				k.call(&"roofs_toggle"), k.call(&"frame_player"), k.call(&"view_toggle")]
 	elif _fp_active():
-		out += "%s walk  %s fast  %s level down/up  %s cutaway  %s roofs  %s reload  %s player  %s outside view" % [
+		out += "%s walk  %s fast  %s level down/up  %s cutaway  %s roofs  %s reload  %s player  %s next view" % [
 				walk, k.call(&"move_fast"), lv, cut, k.call(&"roofs_toggle"), k.call(&"reload"),
 				k.call(&"frame_player"), k.call(&"view_toggle")]
 	else:
@@ -1152,6 +1294,9 @@ func _act_help() -> String:
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
 	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
+	var p := pour.hint(world.tables)
+	if not p.is_empty():
+		parts.append(p)
 	parts.append("%s save" % InputActions.key_of(&"save_game"))
 	return "  ".join(parts)
 
@@ -1177,9 +1322,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and (live == null or _in_main_loop()) and pour.handle(event, Time.get_ticks_msec()):
+		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
 		return   # E on an item you look at takes it (else E uses / examines, below)
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):
+		return
+	var wheel := event as InputEventMouseButton
+	if vr == null and view_mode == "top" and wheel != null and wheel.pressed \
+			and wheel.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		view_cam.zoom(-1 if wheel.button_index == MOUSE_BUTTON_WHEEL_UP else 1)   # top-down: the wheel zooms
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
 		var mb := event as InputEventMouseButton

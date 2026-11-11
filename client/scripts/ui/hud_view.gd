@@ -1,12 +1,15 @@
 class_name HudView
 extends Control
 ## G1: the flat-screen view of HudData. Left edge, middle: the body (one bar per main body part, coloured by
-## level) and the needs CDDA has words for, the message feed under them (the look panel keeps the bottom left); top centre: warnings, worst first, pulsing while one is
+## level) and the needs CDDA has words for, then the player's effects (coloured by rating), the message feed under
+## them (the look panel keeps the bottom left); top centre: warnings, worst first, pulsing while one is
 ## bad; top right: an orange marker while any testing cheat is on. It only draws what HudData decided (VR draws the same data on the wrist, vr/). All text is plain Label
 ## text or draw_string, never BBCode.
 
 const FEED_LINES := 6
 const WARN_LINES := 3
+const EFFECT_LINES := 8
+const EFFECT_W := 220.0
 const BAR_W := 90.0
 const ROW_H := 16.0
 const FONT_SIZE := 14
@@ -19,7 +22,7 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_on_changed(PackedStringArray(["body", "needs", "messages", "warnings", "cheats"]))
+		_on_changed(PackedStringArray(["body", "needs", "effects", "messages", "warnings", "cheats"]))
 
 var feed: Label
 var warn: Label
@@ -52,7 +55,7 @@ func _init() -> void:
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	_body.position = Vector2(12, -100)
-	_body.size = Vector2(320, 130)
+	_body.size = Vector2(330 + EFFECT_W, 130)
 	_body.draw.connect(_draw_body)
 	add_child(_body)
 
@@ -102,6 +105,20 @@ func need_lines() -> PackedStringArray:
 	return out
 
 
+## [text, level] per effect line shown (at most EFFECT_LINES; the last says how many more when cut).
+func effect_lines() -> Array:
+	var out: Array = []
+	if data == null:
+		return out
+	var n := data.effects.size()
+	for i in mini(n, EFFECT_LINES):
+		if i == EFFECT_LINES - 1 and n > EFFECT_LINES:
+			out.append(["+%d more" % (n - i), HudData.UNKNOWN])
+			break
+		out.append([data.effects[i]["text"], data.effects[i]["level"]])
+	return out
+
+
 ## "CHEATS: invincible, night vision" for the names on, "" for none.
 static func cheat_text(names: PackedStringArray) -> String:
 	if names.is_empty():
@@ -133,7 +150,7 @@ func _on_changed(parts: PackedStringArray) -> void:
 		warn.add_theme_color_override("font_color", HudData.level_color(worst))
 	if "cheats" in parts:
 		cheat_mark.text = cheat_text(data.cheats)
-	if "body" in parts or "needs" in parts:
+	if "body" in parts or "needs" in parts or "effects" in parts:
 		_body.queue_redraw()
 
 
@@ -157,3 +174,11 @@ func _draw_body() -> void:
 				Color.BLACK)
 		_body.draw_string(font, Vector2(x, ny + ROW_H - 3), line, HORIZONTAL_ALIGNMENT_LEFT, 105, FONT_SIZE - 2, Color(1, 1, 0.9))
 		ny += ROW_H
+	var ey := 0.0
+	for r in effect_lines():
+		var text: String = r[0]
+		_body.draw_string_outline(font, Vector2(330, ey + ROW_H - 3), text, HORIZONTAL_ALIGNMENT_LEFT, EFFECT_W,
+				FONT_SIZE - 2, 3, Color.BLACK)
+		_body.draw_string(font, Vector2(330, ey + ROW_H - 3), text, HORIZONTAL_ALIGNMENT_LEFT, EFFECT_W, FONT_SIZE - 2,
+				HudData.level_color(r[1]))
+		ey += ROW_H

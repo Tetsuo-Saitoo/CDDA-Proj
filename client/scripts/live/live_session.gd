@@ -24,8 +24,8 @@ signal recipes_matched(container_uid: int, result: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
-## A range_* operation sent from here was done (error "") or refused (the game's reason; "no answer" when its
-## result never came).
+## A range_* operation sent from here was done (error "") or refused (the game's reason; NO_ANSWER when its
+## result didn't come within QUERY_TIMEOUT_MS: a prompt may hold the game up, and the op may still run).
 signal range_done(op_id: int, error: String)
 
 ## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
@@ -37,6 +37,10 @@ const Z_BELOW := 1
 const Z_ABOVE := 1
 ## Real seconds of play between autosaves (skipped while nothing happens).
 const AUTOSAVE_S := 300.0
+const MAX_BOOT_TEXT := 160            # characters of a boot phase or CDDA error shown
+const MAX_BOOT_SECONDS := 1.0e7
+const MAX_BOOT_ERRORS := 1 << 30
+const MAX_ERROR_TEXT := 600           # characters of get_error() kept
 
 var state := "idle"
 var error := ""
@@ -60,7 +64,9 @@ var _range := {}
 var _range_seq := -1
 var _range_ops := {}
 var _range_poll_s := 0.0
-const MAX_RANGE_OPS := 32           # the bridge refuses more waiting
+## Waiting range ops at most: the bridge keeps 32 waiting but only the last 16 results, so more could lose theirs.
+const MAX_RANGE_OPS := RangeInfo.MAX_RESULTS
+const NO_ANSWER := "no answer yet (it may still run later)"
 const RANGE_POLL_S := 1.0           # outside a range game, how often to look again
 ## The running game was started new (not loaded): --test gives its test kit only then.
 var new_game := false
@@ -183,6 +189,44 @@ func cheats() -> Dictionary:
 	return clean_cheats(_sim.get_cheats())
 
 
+## The boot's progress (CddaSim.get_boot_info, any state), cleaned: {phase, seconds, phase_seconds, errors,
+## last_error}; {} without a game or with an older bridge.
+func boot_info() -> Dictionary:
+	if _sim == null or not _sim.has_method("get_boot_info"):
+		return {}
+	return clean_boot_info(_sim.get_boot_info())
+
+
+## get_boot_info's reply as plain one-line texts (capped) and clamped numbers; junk gives {}.
+static func clean_boot_info(d: Variant) -> Dictionary:
+	if not d is Dictionary:
+		return {}
+	var src: Dictionary = d
+	var e: Variant = src.get("errors", 0)
+	var errors := int(clampf(e, 0, MAX_BOOT_ERRORS)) if (e is int or e is float) and is_finite(float(e)) else 0
+	return {"phase": Snapshot.plain_text(src.get("phase"), MAX_BOOT_TEXT), "seconds": _seconds(src.get("seconds")),
+			"phase_seconds": _seconds(src.get("phase_seconds")), "errors": errors,
+			"last_error": Snapshot.plain_text(src.get("last_error"), MAX_BOOT_TEXT)}
+
+
+static func _seconds(v: Variant) -> float:
+	if not (v is int or v is float) or not is_finite(float(v)):
+		return 0.0
+	return clampf(float(v), 0.0, MAX_BOOT_SECONDS)
+
+
+## The status line while booting: "booting: Loading files (12 s; 3 CDDA errors)"; an older bridge gives no phase.
+static func boot_text(info: Dictionary) -> String:
+	var phase: String = info.get("phase", "")
+	if phase.is_empty():
+		return "game booting (~30 s)"
+	var out := "booting: %s (%d s" % [phase, int(info.get("seconds", 0.0))]
+	var n: int = info.get("errors", 0)
+	if n > 0:
+		out += "; %d CDDA error%s" % [n, "" if n == 1 else "s"]
+	return out + ")"
+
+
 ## Only known names, only bools: the reply is the sim's, but a wrong one must not reach the UI as anything else.
 static func clean_cheats(d: Variant) -> Dictionary:
 	var out := {}
@@ -240,6 +284,14 @@ func range_teleport(zone: int) -> int:
 	if zone < 0 or zone >= RangeInfo.MAX_ZONES:
 		return 0
 	return _range_op("range_teleport", [zone])
+
+
+## Clears zone index `zone` and builds it again (same layout); the game refuses it while you are in it, ride or
+## sit in a vehicle.
+func range_rebuild_zone(zone: int) -> int:
+	if zone < 0 or zone >= RangeInfo.MAX_ZONES:
+		return 0
+	return _range_op("range_rebuild_zone", [zone])
 
 
 ## Jumps forward to the next `minute` of the day (0..1439).
@@ -407,6 +459,25 @@ func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Ve
 			"container": int(ammo), "container_type": int(ammo_type), "pos": pos})
 
 
+## Throw a carried, unworn item at square `pos` (one you see, on your level, in throw range, not your own):
+## CDDA's throw without its target menu, one unit of a stack. An older bridge refuses the op (false).
+func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "throw", "item": int(uid), "type": int(type), "pos": pos})
+
+
+## Pour the liquid out of carried `uid` (a container, or the liquid itself) onto square `pos`: yours or one next
+## to it, all of it.
+func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type), "pos": pos})
+
+
+## Pour the liquid out of carried `uid` into `container` (carried, or on or next to your square), as much as
+## fits; `pocket` -1 = CDDA's pick.
+func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
+	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
+			"container": int(container), "container_type": int(container_type), "pocket": pocket})
+
+
 ## Actions waiting in the bridge's queue (0 without a game).
 func queued_actions() -> int:
 	return _sim.get_queued_actions() if _sim != null else 0
@@ -433,7 +504,7 @@ func _poll(delta: float) -> void:
 	if s != state:
 		state = s
 		if s == "ended" or s == "failed":
-			error = _sim.get_error()
+			error = Snapshot.plain_text(_sim.get_error(), MAX_ERROR_TEXT)
 		if s == "running":
 			_push_cheats_allowed()   # before state_changed: --test / --cheats are applied on it
 		state_changed.emit(s)
@@ -480,24 +551,26 @@ func _poll_range(delta: float) -> void:
 			range_changed.emit({})
 		return
 	_range_poll_s += delta
-	if not in_range() and _range_ops.is_empty() and _range_poll_s < RANGE_POLL_S and _range_seq >= 0:
+	if _range_ops.is_empty() and _range_poll_s < RANGE_POLL_S and _range_seq >= 0:
 		return
 	_range_poll_s = 0.0
 	var d: Variant = _sim.get_range_info()
-	var info := RangeInfo.clean(d)
-	if info.is_empty():
+	if not d is Dictionary:
 		return
 	if not _range_ops.is_empty():
-		for r: Dictionary in info["results"]:
+		for r: Dictionary in RangeInfo.results(d):
 			if _range_ops.erase(r["id"]):
 				range_done.emit(r["id"], r["error"])
 		var now := Time.get_ticks_msec()
 		for id: int in _range_ops.keys():
-			if now - int(_range_ops[id]) > QUERY_TIMEOUT_MS:   # pushed out of the 16 kept, or the game held up
+			if now - int(_range_ops[id]) > QUERY_TIMEOUT_MS:   # the game held up (a prompt open), or pushed out
 				_range_ops.erase(id)
-				range_done.emit(id, "no answer")
+				range_done.emit(id, NO_ANSWER)
 	var seq: Variant = (d as Dictionary).get("seq", 0)
 	if not (seq is int or seq is float) or int(seq) == _range_seq:
+		return   # the zones only cleaned when something changed (~1 ms for 58 of them)
+	var info := RangeInfo.clean(d)
+	if info.is_empty():
 		return
 	_range_seq = int(seq)
 	info.erase("results")

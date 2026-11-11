@@ -6,7 +6,9 @@ extends Node
 ## (Grabbable.drag_mouse) and lets go with the button. Items (with `hands` set): E takes the one you look at into
 ## the pack; holding LMB carries it in front of you (the wheel moves it nearer / farther, Shift+wheel turns it),
 ## and letting go puts it into the container, onto the surface (it keeps the spot) or onto the burner you point
-## at, through Hands -> ItemActions (one CDDA action each; CDDA decides). Esc while carrying puts it back.
+## at, through Hands -> ItemActions (one CDDA action each; CDDA decides). Esc while carrying puts it back. Letting
+## go during a flick (the mouse moving fast: FLICK_PX_S over the last FLICK_MS) throws it instead, at the square
+## the pointer is on then (Hands.throw: CDDA's throw, its range and aim).
 ## Outside view: no hover, but a press on a door still grabs it. In a live game it also remembers which door
 ## crossed its threshold, so main.gd can answer the "Open where?" / "Close where?" prompt that CDDA's open /
 ## close asks (`want`, `answer_for`).
@@ -18,11 +20,18 @@ const CARRY_MAX_M := 2.5
 const CARRY_STEP_M := 0.1
 const TURN_STEP := PI / 12
 const FLASH_MS := 2500
+const FLICK_MS := 100           # a flick: the mouse's travel over this long before letting go ...
+const FLICK_PX_S := 2500.0      # ... at least this fast (pixels a second)
+const MAX_MOTION := 64          # motion samples kept
+const THROW_M := 30.0           # the pointer's ray looks this far for the square to throw at
 
 var world: WorldView
 var look_ray: LookRay
 var icon: GrabIcon
 var reach: Callable          # () -> Variant: the square you reach from (Vector3i), or null
+## () -> Dictionary: the eyes when the shown camera is away from them (main.eyes_view: {mode, eye, facing});
+## {} otherwise. Reach and carrying then count from in front of the player, not from the camera.
+var view := Callable()
 var grabbed: Grabbable
 var hover: Grabbable
 var ask := {}                # {word, pos, until}: the door prompt a queued open / close will bring
@@ -43,6 +52,7 @@ var drop := {}               # carrying: what letting go does now (Hands.drop_on
 var _flash := ""
 var _flash_until := 0
 var _flash_bad := false
+var _motion: Array = []       # carrying: [msec, pixels] per mouse motion event, newest last
 
 
 func _init(w: WorldView) -> void:
@@ -66,13 +76,27 @@ func pick(cam: Camera3D, pt: Vector2, max_m := LookRay.MAX_M) -> Array:
 	var centre: Variant = reach.call() if reach.is_valid() else null
 	if centre == null or cam == null or world.snapshot == null:
 		return []
-	var o := cam.project_ray_origin(pt)
-	var d := cam.project_ray_normal(pt)
-	var r := look_ray.cast(o, d, max_m)
+	var ray := ray_from(cam, pt)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
+	var r := look_ray.cast(o, d, max_m, true, ray[2])
 	var limit := max_m
 	if r["hit"]:   # nothing behind the first wall; a closed door's leaf stands inside its square
 		limit = o.distance_to(r["point"]) + (1.5 if r["what"] == "door" else 0.3)
 	return world.grabbable_on_ray(o, d, centre, limit)
+
+
+## [origin, direction, skip_start (LookRay.cast)] of the pointer's ray. With `view` set the origin moves along the
+## ray to in front of the player (ViewCamera.ray_start), so hover and carry distances count from the player; a
+## top-down ray then starts at eye height, maybe in the very square pointed at, which counts.
+func ray_from(cam: Camera3D, pt: Vector2) -> Array:
+	var d := cam.project_ray_normal(pt)
+	var o := cam.project_ray_origin(pt)
+	var v: Variant = view.call() if view.is_valid() else {}
+	var vd: Dictionary = v if v is Dictionary else {}
+	var mode := str(vd.get("mode", ""))
+	var s := ViewCamera.ray_start(mode, o, d, vd.get("eye"))
+	return [s, d, not (mode == "top" and s != o)]
 
 
 ## A short line under the pointer for a while (a refusal's reason in red).
@@ -100,11 +124,12 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 	if hands != null and cam != null and carrying():
 		_carry(cam, pt)
 		icon.mode = GrabIcon.FIST
-		text = Hands.drop_hint(drop, world.tables)
+		text = Hands.drop_hint(drop, world.tables) + "\nflick and let go: throw it"
 	elif hands != null:
 		var t := {}
 		if grabbed == null and enabled and cam != null:
-			t = hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), HOVER_M)
+			var ray := ray_from(cam, pt)
+			t = hands.find_on_ray(ray[0], ray[1], HOVER_M)
 		hands.hover("mouse", t)
 		hover = t["node"] if not t.is_empty() and t["kind"] == "door" else null
 		item_hover = t if not t.is_empty() and t["kind"] == "item" else {}
@@ -142,8 +167,9 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 ## The carried item floats `carry_m` in front of the camera, or rests where the pointer meets a place it can go.
 func _carry(cam: Camera3D, pt: Vector2) -> void:
 	var held: ItemRef = hands.holding("mouse")["item"]
-	var o := cam.project_ray_origin(pt)
-	var d := cam.project_ray_normal(pt)
+	var ray := ray_from(cam, pt)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
 	drop = hands.drop_on_ray(o, d, held)
 	var pos := o + d * carry_m
 	var p: Variant = drop.get("point")
@@ -167,7 +193,7 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 	if grabbed != null and not is_instance_valid(grabbed):
 		grabbed = null
 	if carrying():
-		return _carry_event(event)
+		return _carry_event(event, cam, pt)
 	if grabbed != null:
 		if event is InputEventMouseMotion and cam != null:
 			grabbed.drag_mouse((event as InputEventMouseMotion).relative, cam.global_basis)
@@ -181,7 +207,8 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 	if hands != null:
 		if cam == null:
 			return false
-		var t := hands.find_on_ray(cam.project_ray_origin(pt), cam.project_ray_normal(pt), LookRay.MAX_M)
+		var ray := ray_from(cam, pt)
+		var t := hands.find_on_ray(ray[0], ray[1], LookRay.MAX_M)
 		if t.is_empty() or not hands.grab("mouse", t):
 			return false
 		if t["kind"] == "door":
@@ -189,6 +216,7 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 		else:
 			carry_m = clampf(float(t["dist"]), CARRY_MIN_M + 0.1, 1.2)
 			item_hover = {}
+			_motion.clear()
 		return true
 	var p := pick(cam, pt)
 	if p.is_empty():
@@ -199,9 +227,21 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 	return true
 
 
-func _carry_event(event: InputEvent) -> bool:
+func _carry_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
+	var now := Time.get_ticks_msec()
+	if event is InputEventMouseMotion:   # the look still turns: only noted, for a flick
+		_motion.append([now, (event as InputEventMouseMotion).relative.length()])
+		if _motion.size() > MAX_MOTION:
+			_motion.pop_front()
+		return false
 	if event.is_action_released(&"look_at"):
-		hands.release("mouse", drop)
+		var sq: Variant = throw_square(cam, pt) if flick_speed(now) >= FLICK_PX_S else null
+		_motion.clear()
+		if sq is Vector3i:
+			if hands.throw("mouse", sq) == "":
+				flash("You can't throw that.", true)
+		else:
+			hands.release("mouse", drop)
 		drop = {}
 		return true
 	if InputActions.pressed(event, &"carry_farther"):
@@ -221,9 +261,50 @@ func _carry_event(event: InputEvent) -> bool:
 	return true
 
 
+## How fast the mouse moved over the last FLICK_MS before `now` (pixels a second).
+func flick_speed(now: int) -> float:
+	var px := 0.0
+	for m: Array in _motion:
+		if now - int(m[0]) <= FLICK_MS:
+			px += float(m[1])
+	return px * 1000.0 / FLICK_MS
+
+
+## The square to throw at: where the pointer's ray meets something within THROW_M (else that far along it), on
+## the player's level; never the player's own square (one step along the ray instead). null without a world.
+func throw_square(cam: Camera3D, pt: Vector2) -> Variant:
+	var snap := world.snapshot
+	if cam == null or snap == null:
+		return null
+	var ray := ray_from(cam, pt)
+	var o: Vector3 = ray[0]
+	var d: Vector3 = ray[1]
+	var r := look_ray.cast(o, d, THROW_M, true, ray[2])
+	var p: Vector3 = r["point"] if r.get("hit", false) and r.get("point") is Vector3 else o + d * THROW_M
+	var sq := world.coords.world_to_ms(p)
+	sq.z = snap.player_pos.z
+	if sq == snap.player_pos:
+		var flat := Vector2(d.x, d.z)
+		if flat.length() < 0.01:
+			return null   # straight down at your feet: nowhere to throw
+		var step := world.coords.world_to_ms(world.coords.ms_center_to_world(snap.player_pos)
+				+ Vector3(flat.x, 0.0, flat.y).normalized()) - snap.player_pos
+		sq = snap.player_pos + Vector3i(step.x, step.y, 0)
+		if sq == snap.player_pos:
+			return null
+	return sq
+
+
 ## E on the item under the pointer takes it into the pack; true when the event was used that way.
 func take_hovered(event: InputEvent) -> bool:
-	if hands == null or item_hover.is_empty() or carrying() or not InputActions.pressed(event, &"use_held"):
+	if not InputActions.pressed(event, &"use_held"):
+		return false
+	return take_hover()
+
+
+## Takes the item under the pointer into the pack (E's tap); false when there is none.
+func take_hover() -> bool:
+	if hands == null or item_hover.is_empty() or carrying():
 		return false
 	if not hands.take("mouse", item_hover, "pack"):
 		flash("You can't take that now.", true)
