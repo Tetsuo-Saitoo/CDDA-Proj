@@ -1,14 +1,12 @@
 # WORKLOG
 
 - 2026-11-10 — Multi-select review fixes (lead-qa): Tab batches keep their square and stop when you walk or the game stops; selection capped at 256; box drags skip rows out of sight; fewer restyles; list anchor stays on enabled rows. Client tests pass.
-
 - 2026-11-10 — Teleport cheat, client side: J (rebindable) or F1 > Cheats teleports to the square under the crosshair, through walls and between floors, only with cheats allowed; waits for the bridge's `cheat_teleport`. Client tests pass.
-
 - 2026-11-10 — Main menu: delete a character from the Load page after a confirm naming it (and its world when it is the last one); the button waits for the bridge's `delete_save` (proposed to lead-bridge). Client tests pass.
-
 - 2026-11-10 — Run and crouch in the live game: CapsLock / pad L3 toggles CDDA's run mode, B / pad R3 crouch (rebindable); the HUD shows the move mode from `player.move_mode` and mentions stamina while running low or out. Client tests pass; not tried live.
-
-- 2026-11-10 — A loaded test-range save keeps cheats allowed: when the range info says range, main forces cheats and pushes the opt-in again, so the push at "running" no longer undoes the bridge's. Item lists and the Tab view: rows, [ ] boxes and bar buttons 32 px for VR pointers (lead-vr). Client tests pass.
+- 2026-11-10 — Range saves stay range games (user's decision; "Test range" still starts fresh): fork resume_test_range (fp3d-qa 42d18ef, range test 141 checks, sim "range resume"), bridge call (lead-bridge dd91ca8), client cheats (lead-ui e567f20); range_live_test saves, then reloads in a second run: same zones and built flags, AI as saved, nothing moved, ops work. Passes on Windows.
+- 2026-11-10 — A loaded test-range save keeps cheats allowed (lead-ui): when the range info says range, main forces cheats and pushes the opt-in again, so the push at "running" no longer undoes the bridge's. Item lists and the Tab view: rows, [ ] boxes and bar buttons 32 px for VR pointers (lead-vr). Client tests pass.
+- 2026-11-10 — Range saves: loading a saved test range game resumes it as a range game (only in FP3D's range worlds), with the range operations allowed; "Test range" still starts fresh. Bridge call after lead-qa's fork change (42d18ef); sim, range, client and live tests pass.
 - 2026-11-10 — Multi-select item UI, slices 1-4: CDDA's multi-pick lists tick runs of rows by drag, Shift+click and Shift+Up/Down; the Tab view selects rows (click, Ctrl/Shift+click, drag over the [ ] boxes), a drag of a selected row moves them all one after another, and a bar drops, puts into a worn container or unloads the selection. Client tests pass; not tried on screen.
 - 2026-11-10 — CI "Client tests (mock town)" flake: model_tests' "one model for two threads" loaded a real .glb on two threads at once, and Godot's headless renderer doesn't take textures/meshes from two threads (8 renderer errors now and then); the check now uses fake loads (`SlowLoads`), like QA's thread check; client tests pass twice.
 - 2026-11-10 — Melee on merged fp3d (fork fp3d-combat): the sim's melee scenes answer stray prompts (a grabbed avatar struggling free can tear a pocket off) and the throw scene rebuilds the map cache (a melee check's wall stayed opaque). Sim (twice), client and live tests pass.

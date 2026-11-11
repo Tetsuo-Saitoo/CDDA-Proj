@@ -69,7 +69,9 @@ var _content_levels := PackedInt32Array()   # the levels with a node, ascending
 var _view_want := CddaCoords.Z_LIMIT        # the cutaway asked for; Z_LIMIT: every level
 ## Items not drawn (uid -> true), e.g. one held in a hand. Read only: change it with set_hidden_items.
 var hidden_items := {}
-const MAX_HIDDEN := 64
+const MAX_HIDDEN := 64         # per owner
+const MAX_HIDDEN_OWNERS := 8
+var _hidden_by_owner := {}     # StringName -> {uid: true}, see set_hidden_items_for
 ## An item is hit as a ball around the middle of what is drawn: this share of its size, ITEM_HIT_MIN_M to
 ## ITEM_HIT_MAX_M (a long item's ball would swallow its neighbours: a can next to a rifle).
 const ITEM_HIT_SCALE := 0.6
@@ -747,16 +749,33 @@ func _set_slots(pos: Vector3i, slots: Array) -> void:
 	b["slots"] = by_tile
 
 
-## Hides items (uid -> true; a copy is kept, MAX_HIDDEN at most) and shows the ones no longer listed: the
-## props of the submaps that draw or hold a changed uid are rebuilt now, on this thread (only those), so a
-## grabbed item leaves its pile in the same frame. A job meshed meanwhile with the old set is fixed as it commits.
+## Hides items for Hands (its owner set, see set_hidden_items_for).
 func set_hidden_items(uids: Dictionary) -> void:
-	var next := {}
+	set_hidden_items_for(&"hands", uids)
+
+
+## Hides items (uid -> true; a copy is kept, MAX_HIDDEN at most per owner) for one owner, e.g. the hands holding
+## copies or the physics bodies standing in for items; hidden_items is the union of all owners' sets, and an
+## empty set drops the owner. Shows the ones no longer hidden by anyone: the props of the submaps that draw or
+## hold a changed uid are rebuilt now, on this thread (only those), so a grabbed item leaves its pile in the same
+## frame. A job meshed meanwhile with the old set is fixed as it commits.
+func set_hidden_items_for(owner: StringName, uids: Dictionary) -> void:
+	var mine := {}
 	for u: Variant in uids:
-		if u is int and next.size() < MAX_HIDDEN:
-			next[u] = true
-	if next.size() < uids.size():
-		push_warning("hidden items: %d given, kept %d (ints only, at most %d)" % [uids.size(), next.size(), MAX_HIDDEN])
+		if u is int and mine.size() < MAX_HIDDEN:
+			mine[u] = true
+	if mine.size() < uids.size():
+		push_warning("hidden items: %d given, kept %d (ints only, at most %d)" % [uids.size(), mine.size(), MAX_HIDDEN])
+	if mine.is_empty():
+		_hidden_by_owner.erase(owner)
+	elif _hidden_by_owner.has(owner) or _hidden_by_owner.size() < MAX_HIDDEN_OWNERS:
+		_hidden_by_owner[owner] = mine
+	else:
+		push_warning("hidden items: more than %d owners, %s ignored" % [MAX_HIDDEN_OWNERS, owner])
+		return
+	var next := {}
+	for o: StringName in _hidden_by_owner:
+		next.merge(_hidden_by_owner[o])
 	var changed := _changed(hidden_items, next)
 	hidden_items = next
 	if changed.is_empty():
