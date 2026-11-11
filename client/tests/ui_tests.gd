@@ -225,14 +225,15 @@ func _test_item_multi() -> void:
 	_expect({"id": 7, "picks": [[2, 0]]}, "Enter with nothing ticked takes the current entry")
 	_show(req)
 	w = ui.widget as ListRequestWidget
-	w.rows[1].pressed.emit()
+	_click(w, 1)
 	w.rows[1].mouse_entered.emit()
 	w.count_spin.set_value_no_signal(5)
 	w.count_spin.value_changed.emit(5.0)   # as when the player types in the box
-	w.rows[0].pressed.emit()
-	w.rows[0].pressed.emit()
+	_click(w, 0)
+	_click(w, 0)
 	_key(KEY_ENTER)
 	_expect({"id": 7, "picks": [[1, 5]]}, "click ticks, count box sets 5, second click unticks")
+	_test_multi_drag()
 	_show(req)
 	w = ui.widget as ListRequestWidget
 	w.toggle_all()
@@ -244,6 +245,90 @@ func _test_item_multi() -> void:
 	_key(KEY_TAB)
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "Tab toggles, Esc cancels")
+
+
+## A left click on list row `row` as Godot gives it to the row: press, then release.
+func _click(w: ListRequestWidget, row: int, shift := false) -> void:
+	for down: bool in [true, false]:
+		var e := InputEventMouseButton.new()
+		e.button_index = MOUSE_BUTTON_LEFT
+		e.pressed = down
+		e.shift_pressed = shift
+		w.rows[row].gui_input.emit(e)
+
+
+## Mouse motion with the left button down, at `y` relative to the row pressed (`row`), as Godot sends it there.
+func _drag(w: ListRequestWidget, row: int, y: float, held := true) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = Vector2(10, y)
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT if held else 0
+	w.rows[row].gui_input.emit(e)
+
+
+func _ticked(w: ListRequestWidget) -> Array:
+	var out := []
+	for id: Variant in w.picks:
+		out.append(id)
+	out.sort()
+	return out
+
+
+func _test_multi_drag() -> void:
+	var req := _req("item_multi", {"title": "Drop", "entries": _entries(["a", "b", "c", "d", "e", "f", "g"])})
+	_show(req)
+	var w := ui.widget as ListRequestWidget
+	for r in w.rows.size():   # laid out as the list would be (no layout pass in a test)
+		w.rows[r].position = Vector2(0, r * 30.0)
+		w.rows[r].size = Vector2(200, 28)
+	var down := InputEventMouseButton.new()
+	down.button_index = MOUSE_BUTTON_LEFT
+	down.pressed = true
+	w.rows[1].gui_input.emit(down)
+	_drag(w, 1, 75.0)   # 30 + 75 = row 3: rows 1..3 ticked, none skipped
+	_check.call(_ticked(w) == [1, 2, 3] and w.selected == 3, "drag: a press and a drag over rows tick them all (%s)"
+			% [_ticked(w)])
+	_drag(w, 1, -100.0)   # above the list: up to the first row
+	_check.call(_ticked(w) == [0, 1, 2, 3], "drag: past the top ticks up to the first row (%s)" % [_ticked(w)])
+	_drag(w, 1, 500.0, false)   # the button was let go somewhere else: the drag is over
+	_drag(w, 1, 150.0)
+	_check.call(_ticked(w) == [0, 1, 2, 3], "drag: motion without the button ends it (%s)" % [_ticked(w)])
+	var up := InputEventMouseButton.new()
+	up.button_index = MOUSE_BUTTON_LEFT
+	w.rows[1].gui_input.emit(up)
+	w.rows[2].gui_input.emit(down)   # a press on a ticked row: the drag unticks
+	_drag(w, 2, 40.0)
+	w.rows[2].gui_input.emit(up)
+	_check.call(_ticked(w) == [0, 1], "drag from a ticked row unticks the rows passed (%s)" % [_ticked(w)])
+	_click(w, 5, true)   # Shift+click: rows 2..5 as row 2 is (unticked)
+	_check.call(_ticked(w) == [0, 1], "Shift+click sets the run as the last clicked row is (%s)" % [_ticked(w)])
+	_click(w, 4)
+	_click(w, 6, true)
+	_check.call(_ticked(w) == [0, 1, 4, 5, 6], "Shift+click after a tick ticks the run (%s)" % [_ticked(w)])
+	answers.clear()
+	_key(KEY_ENTER)
+	_expect({"id": 7, "picks": [[0, 0], [1, 0], [4, 0], [5, 0], [6, 0]]}, "the ticked rows are taken")
+	_show(req)
+	w = ui.widget as ListRequestWidget
+	_key(KEY_DOWN, true)
+	_key(KEY_DOWN, true)
+	_check.call(_ticked(w) == [0, 1, 2] and w.selected == 2, "Shift+Down ticks the rows moved over (%s)"
+			% [_ticked(w)])
+	var dis := _entries(["x", "y", "z"])
+	dis[1]["enabled"] = false
+	_show(_req("item_multi", {"entries": dis}))
+	w = ui.widget as ListRequestWidget
+	_click(w, 0)
+	_click(w, 2, true)
+	_click(w, 1)
+	_check.call(_ticked(w) == [0, 2], "a disabled row is never ticked, a click on it does nothing (%s)"
+			% [_ticked(w)])
+	_show(_req("item_select", {"entries": _entries(["p", "q"])}))
+	w = ui.widget as ListRequestWidget
+	w.press_row(0, true)
+	w.set_rows(0, 1, true)
+	_check.call(w.picks.is_empty() and answers.is_empty(), "item_select: nothing is ticked by a press or a run")
+	w.rows[1].pressed.emit()
+	_expect({"id": 7, "entry": 1}, "item_select: a click still picks")
 
 
 func _test_popup() -> void:
