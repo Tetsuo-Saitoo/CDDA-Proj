@@ -3,6 +3,8 @@ extends RefCounted
 ## range_* ops (checked here first), polls the info and emits range_changed / range_done; the cheats page shows
 ## range controls only in a range game. FakeSim answers like CddaSim. Run by run_tests.gd.
 
+const Main := preload("res://scripts/main.gd")
+
 var _check: Callable
 
 
@@ -55,6 +57,11 @@ class FakeSim extends RefCounted:
 		actions.append(a)
 		return true
 
+	var allowed: Array = []   # each set_cheats_allowed
+
+	func set_cheats_allowed(on: bool) -> void:
+		allowed.append(on)
+
 
 func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_check = check
@@ -62,6 +69,45 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_clean()
 	_test_session()
 	_test_panel(root, tables)
+	_test_loaded(root)
+
+
+## A range save loaded from the menu (no Test range start, no --test): the game reaches running with cheats not
+## allowed by the player; the range info says range, so main forces them and pushes true again (main.gd wires
+## range_changed to range_forces_cheats), and the F1 Test range section shows.
+func _test_loaded(root: Node) -> void:
+	var m := KeyMenu.new()
+	m.save_path = preload("res://tests/test_dir.gd").path("range_load_keys.cfg")
+	m.hud_path = preload("res://tests/test_dir.gd").path("range_load_hud.cfg")   # not the player's debug switch
+	var p := CheatPanel.new()
+	m.add_cheat_page(p)
+	root.add_child(m)
+	var sim := FakeSim.new()
+	var ls := _session(sim)
+	p.backend = ls
+	ls.range_changed.connect(p.on_range_changed)
+	ls.range_changed.connect(func(i: Dictionary) -> void: Main.range_forces_cheats(i, m, ls))
+	ls.set_cheats_allowed(m.cheats_allowed())   # as the session does when the game reaches running
+	ls._poll_range(0.0)
+	_check.call(sim.allowed == [false, true] and m.cheats_forced and m.cheats_allowed() and ls.cheats_allowed
+			and p.range_box.visible, "range load: a loaded range game forces cheats, pushes true, shows the range (%s)"
+			% [sim.allowed])
+	sim.info["seq"] = 2
+	ls._poll_range(0.0)
+	_check.call(sim.allowed == [false, true], "range load: pushed once, not on every range change")
+	var m2 := KeyMenu.new()
+	var plain := FakeSim.new()
+	plain.info = {"seq": 1, "range": false, "zones": []}
+	var ls2 := _session(plain)
+	ls2.range_changed.connect(func(i: Dictionary) -> void: Main.range_forces_cheats(i, m2, ls2))
+	ls2.set_cheats_allowed(m2.cheats_allowed())
+	ls2._poll_range(0.0)
+	_check.call(plain.allowed == [false] and not m2.cheats_forced and not Main.range_forces_cheats({"range": "yes"}, m2, ls2)
+			and not Main.range_forces_cheats({}, null, ls2), "range load: a normal game (or junk) forces nothing")
+	ls.free()
+	ls2.free()
+	m.free()
+	m2.free()
 
 
 func _test_clean() -> void:

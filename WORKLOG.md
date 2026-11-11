@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-10 — A loaded test-range save keeps cheats allowed (lead-ui): when the range info says range, main forces cheats and pushes the opt-in again, so the push at "running" no longer undoes the bridge's. Client tests pass.
 - 2026-11-10 — CI "Client tests (mock town)" flake: model_tests' "one model for two threads" loaded a real .glb on two threads at once, and Godot's headless renderer doesn't take textures/meshes from two threads (8 renderer errors now and then); the check now uses fake loads (`SlowLoads`), like QA's thread check; client tests pass twice.
 - 2026-11-10 — Melee on merged fp3d (fork fp3d-combat): the sim's melee scenes answer stray prompts (a grabbed avatar struggling free can tear a pocket off) and the throw scene rebuilds the map cache (a melee check's wall stayed opaque). Sim (twice), client and live tests pass.
 - 2026-11-10 — Melee review follow-up (fork fp3d-combat): reach strikes only at creatures the player sees; sim check for one behind a wall. Sim test passes.
