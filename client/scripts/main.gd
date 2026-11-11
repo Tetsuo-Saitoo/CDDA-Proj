@@ -56,6 +56,8 @@ var aim: AimController           # FPS aiming for target requests: crosshair, 3D
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
 var item_actions: ItemActions     # one-item take / put / drop for mouse and VR hands (E6 / L2 / L8)
 var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
+var world_collision: WorldCollision   # E2 item physics: floor / wall / furniture boxes near the player
+var item_bodies: ItemBodies           # E2 item physics: the items near the player as physics bodies
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
@@ -171,6 +173,18 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	# E2 item physics (slices 1-2), desktop and VR alike, real time and turns: collision boxes and item bodies around
+	# the square the hands reach from. Client-side poses only; nothing is sent to CDDA. Bodies need WorldView's
+	# owner sets (set_hidden_items_for); without them only the collision is built. Only with --item-physics until
+	# slice 5: hidden items can't be pointed at, so bodies would hide every item near the player from the hands.
+	if _args.has("item-physics"):
+		world_collision = WorldCollision.new(world)
+		world_collision.centre = _reach_square
+		add_child(world_collision)
+		item_bodies = ItemBodies.new(world, world_collision)
+		item_bodies.centre = _reach_square
+		item_bodies.held = item_actions.hidden   # items being taken stay static
+		add_child(item_bodies)
 	pour.actions = item_actions
 	pour.held = _held_liquid
 	pour.target = _pour_target
