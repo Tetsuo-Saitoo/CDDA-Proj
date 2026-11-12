@@ -66,6 +66,7 @@ var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messa
 var hud_view: HudView             # the screen view of hud_data
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
+var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
@@ -1171,6 +1172,9 @@ func _aim_sun(alt_deg: float, az_deg: float) -> void:
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	mood_cue = MoodCue.new()   # first: everything else draws over it
+	mood_cue.data = hud_data
+	layer.add_child(mood_cue)
 	hud = Label.new()
 	hud.position = Vector2(10, 50)   # under the compass's hostile markers
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -1188,6 +1192,7 @@ func _setup_hud() -> void:
 	if why != "":
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
+	mood_cue.enabled = hud_settings.mood_cues
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1219,7 +1224,9 @@ func _setup_hud() -> void:
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
-	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
+	key_menu.hud_changed.connect(func() -> void:
+		compass.opacity = hud_settings.compass_opacity
+		mood_cue.enabled = hud_settings.mood_cues)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 
