@@ -841,9 +841,9 @@ func _live_action(event: InputEvent) -> bool:
 		act = "LEVEL_DOWN"
 	elif InputActions.pressed(event, &"level_up"):
 		act = "LEVEL_UP"
-	elif InputActions.pressed(event, &"use_held") or InputActions.pressed(event, &"click"):
-		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); a left
-		# click on nothing grabbable does the same
+	elif InputActions.pressed(event, &"use_held"):
+		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
+		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
@@ -1354,7 +1354,7 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at (again: close)  %s take / use, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+	var out := "%s look  %s look at (again: close)  %s take, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
 			k.call(&"look"), k.call(&"look_at"), k.call(&"click"), k.call(&"use_held")]
 	if _fp_active():
 		out += "%s inventory  " % k.call(&"inspect")
@@ -1437,7 +1437,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var st: Dictionary = StairUse.find(world, hit["square"], _stair_z()) if hit.get("hit", false) else {}
 		if not st.is_empty():   # clicking stairs in first person takes them
 			use_stair(st)
-			return   # else like E: use / examine what you face (_live_action)
+		return   # a click on nothing does nothing (E uses what you hold on what you face)
 	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()
 		return

@@ -1,6 +1,6 @@
 # WORKLOG
 
-- 2026-11-11 — Left click interacts (user): a quick click takes an item as E does, holding carries it or drags a door, clicking stairs takes them, else it uses / examines what you face; while aiming it still picks and fires. Look at moved to L / middle click and toggles. Old key files lose left click from look at. Client tests pass.
+- 2026-11-11 — Left click interacts (user): a quick click takes an item as E does, holding carries it or drags a door, clicking stairs takes them, a click on nothing does nothing (E still uses what you hold on what you face); while aiming it still picks and fires. Look at moved to L / middle click and toggles. Old key files lose left click from look at. Client tests pass.
 - 2026-11-11 — CDDA's prompts on the VR panel are drawn 1.35x (text ~22 px, readable in the headset); a row held while its prompt goes answers nothing (checked). Client tests pass.
 - 2026-11-11 — On-screen keyboard for CDDA's text prompts (letters, digits, Shift, Space, Back), worked by pointer: a Keyboard button on screen, open from the start on the VR panel. Client tests pass.
 - 2026-11-11 — CDDA's prompts answer to a pad (D-pad, A, B, shoulders) and to ui_* actions, and work inside a SubViewport by pointer clicks (first step of menus in VR). Client tests pass.
