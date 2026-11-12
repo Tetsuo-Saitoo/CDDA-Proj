@@ -17,12 +17,21 @@ const AMBIENT_ENERGY := 0.8
 const EYE_M := 1.6
 const INDOOR_CLEAR_M := 8.0   # under a roof the fog starts this far out: the room is clear, the windows show it
 const INDOOR_CLEAR_S := 1.5   # seconds it takes to clear or close in when the player goes under or leaves a roof
-const FLASH_S := 0.5          # a lightning flash: two quick pulses
-const FLASH_GAP_S := 0.3      # a second strike this soon is the same flash
-const FLASH_LIGHT := 2.5      # energy of the flash's light at its peak
-const FLASH_FOG := 3.0        # how much brighter the haze and the storm sky get
-const FLASH_FLOOR := 0.55     # the light pass shows the dark world at least this bright at the peak
+## The lightning flash brightens the whole view, so it is kept safe for photosensitive players whatever arrives:
+## one pulse per flash, never two flashes within FLASH_EVERY_S (far under three a second), none while game time
+## runs fast (waiting, sleeping: CDDA's flashes arrive packed together) or the character sleeps, weaker in VR,
+## and off altogether with flash_enabled (the F1 menu's "Lightning flash").
+const FLASH_S := 0.5          # one pulse, fading out
+const FLASH_EVERY_S := 3.0    # the least time from one strike (flash and thunder) to the next
+const FLASH_LIGHT := 1.5      # energy of the flash's light at its peak
+const FLASH_FOG := 1.5        # how much brighter the haze and the storm sky get
+const FLASH_FLOOR := 0.35     # the light pass shows the dark world at least this bright at the peak
 const FLASH_INDOORS := 0.5    # share of the flash that reaches under a roof
+const FLASH_VR := 0.6         # share of the flash shown in a headset (flash_scale)
+const FAST_TURNS_S := 15.0    # game turns a second from which time counts as running fast (walking is under 10)
+const FAST_TURNS_BATCH := 3   # or this many turns ending in one batch of events
+const RATE_WINDOW_S := 0.5    # the turn rate is measured over this long
+const SLEEP_EFFECT := "sleep" # CDDA's effect while the character sleeps
 const NIGHT_FOG := 0.05       # share of the fog's colour left at night
 const WET_IN_S := 120.0       # game seconds of heavy rain that soak the ground
 const DRY_IN_S := 1800.0      # game seconds a soaked ground takes to dry
@@ -42,6 +51,14 @@ var precip := PrecipView.new()     # rain and snow around the player
 var sound := WeatherSound.new()    # rain, wind and thunder
 var lighting: WorldLighting        # the light pass, for the lightning flash at night (may be null)
 var flashes := 0                   # lightning flashes shown
+var flash_enabled := true          # the player's setting: false shows no flash at all (thunder stays)
+var flash_scale := 1.0             # FLASH_VR in a headset
+var fast_forward := false          # game time is running fast: no flash
+var asleep := false                # the character sleeps: no flash
+var clock_ms: Callable = Time.get_ticks_msec   # real time (tests put their own in)
+var _strike_age := INF             # seconds since the last strike began
+var _rate_from_ms := 0             # start of the window the turn rate is measured over
+var _rate_turns := 0               # turns ended in it
 var wet := 0.0                     # how wet the ground is, 0 dry .. 1 soaked
 var _wet_shown := -1.0
 var _wet_turn := -1                # the game turn `wet` is for, -1 none yet
@@ -104,6 +121,9 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	if coords != null:
 		focus = coords.ms_center_to_world(snap.player_pos) + Vector3(0.0, EYE_M, 0.0)
 	aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
+	asleep = false
+	for e in snap.player_effects:
+		asleep = asleep or e.get("id") == SLEEP_EFFECT
 	var next := WeatherState.from_snapshot(snap)
 	# The same weather as the last snapshot's (light and wind drift a little each turn): a blend toward it goes on.
 	var same_goal := _shown and _close(target, next)
@@ -143,35 +163,61 @@ func _soak(turn: int) -> void:
 
 
 ## The game's events: a `lightning` event (the bridge sends one each time CDDA flashes) lights the scene for a
-## moment and brings thunder. Anything else, junk included, is ignored.
+## moment and brings thunder; `turn_end` events tell how fast game time runs. Anything else, junk included, is
+## ignored.
 func on_events(events: Array) -> void:
+	var turns := 0
+	var lightning := false
 	for e: Variant in events:
-		if e is Dictionary and (e as Dictionary).get("kind") is String and e["kind"] == "lightning":
-			strike()
-			return
+		if e is Dictionary and (e as Dictionary).get("kind") is String:
+			turns += int(e["kind"] == "turn_end")
+			lightning = lightning or e["kind"] == "lightning"
+	_note_turns(turns)
+	if lightning:
+		strike()
 
 
-## A lightning flash now, thunder a moment later.
-func strike() -> void:
-	if _flash_t >= 0.0 and _flash_t < FLASH_GAP_S:
-		return
-	flashes += 1
-	_flash_t = 0.0
+## Counts turns that ended, to tell waiting and sleeping (many turns a second) from playing.
+func _note_turns(turns: int) -> void:
+	var now: int = clock_ms.call()
+	var elapsed := (now - _rate_from_ms) / 1000.0
+	_rate_turns += turns
+	if turns >= FAST_TURNS_BATCH:
+		fast_forward = true
+	elif elapsed >= RATE_WINDOW_S:
+		fast_forward = _rate_turns / elapsed > FAST_TURNS_S
+	if elapsed >= RATE_WINDOW_S:
+		_rate_from_ms = now
+		_rate_turns = 0
+
+
+## Lightning struck: thunder a moment later, and a flash now unless it is off or wouldn't be safe or seen (see
+## FLASH_S). A strike within FLASH_EVERY_S of the last one is dropped whole. Returns whether it flashed.
+func strike() -> bool:
+	if _strike_age < FLASH_EVERY_S:
+		return false
+	_strike_age = 0.0
 	sound.strike()
-	_show_flash()
+	var shown := flash_enabled and not fast_forward and not asleep and target.depth == 0
+	if shown:
+		flashes += 1
+		_flash_t = 0.0
+		_show_flash()
 	_update_processing()
+	return shown
 
 
-## How bright the flash is `t` seconds in (0..1): a pulse, a dip, a weaker second pulse, gone by FLASH_S.
+## How bright the flash is `t` seconds in (0..1): full at once, fading, gone by FLASH_S. One pulse.
 static func flash_curve(t: float) -> float:
 	if t < 0.0 or t >= FLASH_S:
 		return 0.0
-	var second := 0.75 * exp(-(t - 0.14) * 12.0) if t >= 0.14 else 0.0
-	return maxf(exp(-t * 16.0), second) * minf((FLASH_S - t) * 10.0, 1.0)
+	return exp(-t * 9.0) * minf((FLASH_S - t) * 10.0, 1.0)
 
 
 func _show_flash() -> void:
-	var f := flash_curve(_flash_t) * (FLASH_INDOORS if target.sheltered else 1.0)
+	var f := flash_curve(_flash_t) * clampf(flash_scale, 0.0, 1.0) * (FLASH_INDOORS if target.sheltered else 1.0)
+	if not flash_enabled:
+		f = 0.0
 	if target.depth > 0:
 		f = 0.0   # underground
 	_flash_light.visible = f > 0.0
@@ -208,6 +254,7 @@ func blending() -> bool:
 
 
 func _process(delta: float) -> void:
+	_strike_age += delta
 	if _flash_t >= 0.0:
 		_flash_t += delta
 		if _flash_t >= FLASH_S:
@@ -225,7 +272,8 @@ func _process(delta: float) -> void:
 
 
 func _update_processing() -> void:
-	set_process(_blend_t < 1.0 or _flash_t >= 0.0 or (_env != null and _env.fog_enabled))
+	set_process(_blend_t < 1.0 or _flash_t >= 0.0 or _strike_age < FLASH_EVERY_S
+			or (_env != null and _env.fog_enabled))
 
 
 static func _close(a: WeatherState, b: WeatherState) -> bool:

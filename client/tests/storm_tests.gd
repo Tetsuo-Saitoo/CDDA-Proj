@@ -1,6 +1,7 @@
 extends RefCounted
 ## Blocks C6 / I2 checks, run by run_tests.gd: the lightning flash (the bridge's `lightning` event, junk events,
-## the flash's curve, what it lights and that it ends), thunder after it, and the weather's sound (the four noise
+## the flash's curve, what it lights and that it ends; its safety limits: one pulse, a floor between flashes, none
+## in fast-forward or asleep, the player's setting), thunder after it, and the weather's sound (the four noise
 ## clips, what is heard outdoors, under a roof, in snow and in wind, the glides, and that nothing runs in still,
 ## dry weather), and the wet ground (open-sky terrain and roofs have their own material; it soaks in rain and dries
 ## in game time). Headless can't render or be heard: how it looks and sounds is checked on screen.
@@ -25,18 +26,24 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_soak(root)
 
 
-func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0) -> Snapshot:
+func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0, asleep := false) -> Snapshot:
 	var env := {"sun_alt_deg": 45.0, "sun_az_deg": 0.0, "ambient_light": 100, "precip": w[0], "precip_kind": w[1],
 			"sight_penalty": w[2], "light_modifier": w[3], "sun_multiplier": w[4], "weather_sound": w[5],
 			"sheltered": sheltered, "wind_speed": wind, "wind_dir_deg": 0.0}
 	if wind_here >= 0.0:
 		env["wind_at_player"] = wind_here
 	return Snapshot.from_data({"contract_version": 0, "turn": turn, "seq": 1, "bubble_origin": [0, 0, 0],
-			"submaps": [], "env": env, "player": {"pos": [66, 66, z]}})
+			"submaps": [], "env": env, "player": {"pos": [66, 66, z], "effects": [{"id": "sleep", "name": "Asleep",
+			"body_part": 0, "intensity": 1, "rating": 0, "seconds_left": 600}] if asleep else []}})
 
 
 func _state(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0) -> WeatherState:
 	return WeatherState.from_snapshot(_snap(w, sheltered, wind, wind_here))
+
+
+func _wait(view: WeatherView, secs: float) -> void:
+	for i in roundi(secs / 0.05) + 1:   # one step more: twenty steps of 0.05 are a hair under a second
+		view._process(0.05)
 
 
 func _test_flash(root: Node) -> void:
@@ -45,9 +52,12 @@ func _test_flash(root: Node) -> void:
 	var odd := _snap(STORM)
 	_check.call(odd.is_valid() and odd.weather_sound == Snapshot.WEATHER_SOUND_THUNDER, "storm: weather_sound is read")
 	var c := WeatherView.flash_curve
-	_check.call(c.call(0.0) == 1.0 and c.call(0.1) < 0.3 and c.call(0.15) > 0.6 and c.call(0.15) < 0.8
-			and c.call(0.45) < 0.05 and c.call(WeatherView.FLASH_S) == 0.0 and c.call(-1.0) == 0.0 and c.call(9.0) == 0.0,
-			"storm: a flash is two quick pulses, over in %.1f s" % WeatherView.FLASH_S)
+	var falling := true
+	for i in 50:
+		falling = falling and c.call(i * 0.01) > c.call(i * 0.01 + 0.01)
+	_check.call(c.call(0.0) == 1.0 and falling and c.call(0.25) < 0.15 and c.call(WeatherView.FLASH_S) == 0.0
+			and c.call(-1.0) == 0.0 and c.call(9.0) == 0.0, "storm: a flash is one pulse that only fades, over in %.1f s" %
+			WeatherView.FLASH_S)
 	var env := Environment.new()
 	var lighting := WorldLighting.new()
 	root.add_child(lighting)
@@ -57,13 +67,15 @@ func _test_flash(root: Node) -> void:
 	lighting.flash = 0.0
 	var view := WeatherView.new()
 	root.add_child(view)
+	var clock := [1000]
+	view.clock_ms = func() -> int: return clock[0]
 	view.blend_s = 0.0
 	view.lighting = lighting
 	view.setup(env, null)
 	view.apply(_snap(CLEAR), null, true)
 	var light: DirectionalLight3D = view.get("_flash_light")
-	_check.call(not light.visible and not light.shadow_enabled and view.flashes == 0 and not view.is_processing(),
-			"storm: no flash, no work in clear weather")
+	_check.call(not light.visible and not light.shadow_enabled and view.flashes == 0 and not view.is_processing()
+			and view.flash_enabled and view.flash_scale == 1.0, "storm: no flash, no work in clear weather")
 	view.on_events([1, "lightning", null, {"kind": 5}, {"kind": "sound"}, {"type": "lightning"}, []])
 	_check.call(view.flashes == 0 and not light.visible, "storm: other events and junk do nothing")
 	view.on_events([{"kind": "sound"}, {"kind": "lightning", "pos": [1, 2, 0]}, {"kind": "lightning"}])
@@ -71,34 +83,81 @@ func _test_flash(root: Node) -> void:
 			and is_equal_approx(lighting.flash, WeatherView.FLASH_FLOOR)
 			and is_equal_approx(env.fog_light_energy, 1.0 + WeatherView.FLASH_FOG) and view.is_processing(),
 			"storm: a lightning event lights the scene, the haze and the dark at once")
-	view.strike()
-	_check.call(view.flashes == 1, "storm: a second strike right away is the same flash")
-	view._process(0.1)
-	var dip := light.light_energy
-	view._process(0.05)
-	_check.call(dip < 0.3 * WeatherView.FLASH_LIGHT and light.light_energy > dip and lighting.flash > 0.3,
-			"storm: it flickers (down to %.2f, up to %.2f)" % [dip, light.light_energy])
-	view._process(0.2)
-	view.strike()
-	_check.call(view.flashes == 2 and is_equal_approx(light.light_energy, WeatherView.FLASH_LIGHT),
-			"storm: a strike %.2f s later is a new flash" % 0.35)
-	for i in 12:
+	_check.call(not view.strike() and view.flashes == 1, "storm: a second strike right away is dropped")
+	view._process(0.15)
+	var later := light.light_energy
+	view._process(0.15)
+	_check.call(later < 0.4 * WeatherView.FLASH_LIGHT and light.light_energy < later, "storm: it fades and never rises again")
+	_wait(view, 0.3)
+	_check.call(not light.visible and lighting.flash == 0.0 and is_equal_approx(env.fog_light_energy, 1.0),
+			"storm: after %.1f s everything is as before" % WeatherView.FLASH_S)
+	_check.call(not view.strike() and view.flashes == 1, "storm: a strike a second later is dropped too")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	_check.call(not view.is_processing(), "storm: and then no more work")
+	_check.call(view.strike() and view.flashes == 2, "storm: %.0f s after the last one a strike flashes again" %
+			WeatherView.FLASH_EVERY_S)
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	# Lightning in every batch of events (a bad bridge, or CDDA's flashes packed together): the floor holds.
+	var before := view.flashes
+	var most_in_a_second := 0
+	var recent: Array[float] = []
+	for i in 100:
+		var n := view.flashes
+		view.on_events([{"kind": "lightning"}, {"kind": "turn_end"}])
+		if view.flashes > n:
+			recent.append(i * 0.05)
+		var in_window := 0
+		for t in recent:
+			in_window += int(i * 0.05 - t < 1.0)
+		most_in_a_second = maxi(most_in_a_second, in_window)
 		view._process(0.05)
-	_check.call(not light.visible and lighting.flash == 0.0 and is_equal_approx(env.fog_light_energy, 1.0)
-			and not view.is_processing(), "storm: then everything is as before, and no more work")
-	# Under a roof the flash is weaker.
+	_check.call(view.flashes - before == 2 and most_in_a_second == 1,
+			"storm: lightning in every batch for 5 s flashes twice, never twice in a second (lead-qa)")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	# Game time running fast (waiting, sleeping): thunder, no flash.
+	before = view.flashes
+	view.on_events([{"kind": "turn_end"}, {"kind": "turn_end"}, {"kind": "turn_end"}, {"kind": "lightning"}])
+	_check.call(view.fast_forward and view.flashes == before and not light.visible and view.sound.get("_thunder_in") > 0.0,
+			"storm: several turns in one batch is fast-forward: thunder without a flash")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	for i in 12:   # 12 turns in 0.6 s, one a batch: 20 a second
+		clock[0] += 50
+		view.on_events([{"kind": "turn_end"}])
+	_check.call(view.fast_forward and not view.strike(), "storm: twenty turns a second is fast-forward too")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	for i in 6:   # walking: a turn every 0.15 s
+		clock[0] += 150
+		view.on_events([{"kind": "turn_end"}])
+	_check.call(not view.fast_forward and view.strike(), "storm: walking pace is not; the flash is back")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	# Asleep: none.
+	view.apply(_snap(STORM, false, 0.0, -1.0, 1, 0, true), null, true)
+	_check.call(view.asleep and not view.strike(), "storm: no flash while the character sleeps")
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	view.apply(_snap(STORM), null, true)
+	# The player's setting: off shows none.
+	view.flash_enabled = false
+	_check.call(not view.asleep and not view.strike() and not light.visible and lighting.flash == 0.0
+			and view.sound.get("_thunder_in") > 0.0, "storm: the setting off shows no flash; the thunder stays")
+	view.flash_enabled = true
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	# In a headset, and under a roof, it is weaker.
+	view.flash_scale = WeatherView.FLASH_VR
+	view.strike()
+	_check.call(is_equal_approx(lighting.flash, WeatherView.FLASH_FLOOR * WeatherView.FLASH_VR) and lighting.flash < 0.25,
+			"storm: weaker in a headset (the dark lifts to %.2f at most)" % lighting.flash)
+	view.flash_scale = 1.0
+	_wait(view, WeatherView.FLASH_EVERY_S)
 	view.apply(_snap(STORM, true), null, true)
 	view.strike()
 	_check.call(is_equal_approx(light.light_energy, WeatherView.FLASH_LIGHT * WeatherView.FLASH_INDOORS)
 			and is_equal_approx(lighting.flash, WeatherView.FLASH_FLOOR * WeatherView.FLASH_INDOORS),
 			"storm: half the flash reaches under a roof")
 	# Underground there is no flash.
-	for i in 12:
-		view._process(0.05)
+	_wait(view, WeatherView.FLASH_EVERY_S)
 	view.apply(_snap(STORM, true, 0.0, -1.0, 1, -1), null, true)
-	view.strike()
-	_check.call(not light.visible and lighting.flash == 0.0 and is_equal_approx(env.fog_light_energy, 1.0),
-			"storm: no flash underground")
+	_check.call(not view.strike() and not light.visible and lighting.flash == 0.0
+			and is_equal_approx(env.fog_light_energy, 1.0), "storm: no flash underground")
 	# Without a light pass or an environment it still works.
 	var bare := WeatherView.new()
 	root.add_child(bare)
@@ -109,6 +168,26 @@ func _test_flash(root: Node) -> void:
 	for n: Node in [bare, view, lighting]:
 		root.remove_child(n)
 		n.free()
+	# The setting: on by default, the F1 box turns it off and saves it; junk in the file leaves it on.
+	var path := preload("res://tests/test_dir.gd").path("hud_flash.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var seen := [0]
+	menu.hud_changed.connect(func() -> void: seen[0] += 1)
+	var was_on := hs.weather_flash and menu.flash_check.button_pressed
+	menu.flash_check.button_pressed = false
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(was_on and not hs.weather_flash and not back.weather_flash and back.mood_cues and seen[0] == 1,
+			"storm: the flash is on by default; the F1 box turns it off and saves it")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[compass]\nopacity=0.5\n[weather]\nflash=3\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	_check.call(junk.weather_flash, "storm: a non-bool in the file leaves it on")
+	menu.free()
 
 
 ## Loudness (root mean square, 0..1) and how often the wave crosses zero per second (brightness).

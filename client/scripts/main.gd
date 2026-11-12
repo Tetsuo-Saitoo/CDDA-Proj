@@ -448,6 +448,7 @@ func _start_vr() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
@@ -1190,6 +1191,7 @@ func _setup_hud() -> void:
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
+	weather.flash_enabled = hud_settings.weather_flash
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1223,7 +1225,8 @@ func _setup_hud() -> void:
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void:
 		compass.opacity = hud_settings.compass_opacity
-		mood_cue.enabled = hud_settings.mood_cues)
+		mood_cue.enabled = hud_settings.mood_cues
+		weather.flash_enabled = hud_settings.weather_flash)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 
