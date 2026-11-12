@@ -7,7 +7,9 @@ extends RefCounted
 ## copies hidden through the owner set), the caps (total, per pile), the hysteresis, items taken / moved / held / in
 ## flight, nothing without WorldView owner sets; slice 5's pointing, hold, let_go, landed / forget / expiry and
 ## `settled`, and the scan's cost (one entry per uid, nearest submaps first, a pass only when nearby handles change, one
-## publish). Headless runs don't step physics: only the structure is checked, not falling or settling. WorldView's owner
+## publish); slices 3-4: ItemPlacer tells a stand-in bridge where a body came to rest (spot on its own square, place
+## square by square to another, the limits, refusals and silence putting the body back, odd events ignored).
+## Headless runs don't step physics: only the structure is checked, not falling or settling. WorldView's owner
 ## sets (set_hidden_items_for) come from another branch: OwnerWorld stands in for them. Run by run_tests.gd.
 
 const P := Vector3i(192, 384, 0)          # the mock town's player: square 0, 0 of submap SM
@@ -88,9 +90,14 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_scan()
 	_test_hands_api()
 	_test_sync_cost()
+	_test_placer()
 	_bodies.clear()
-	_check.call(_world.hidden_items.is_empty() and not _world.item_slot(UID + 11).is_empty(),
-			"item physics: clear shows every static copy again")
+	var drawn := 0   # the pile's rocks drawn static again (one of the six was taken into the pack in _test_sync_cost)
+	for k in 6:
+		if not _world.item_slot(UID + 11 + k).is_empty():
+			drawn += 1
+	_check.call(_world.hidden_items.is_empty() and drawn == 5 and _bodies.count() == 0,
+			"item physics: clear shows every static copy again (%d of the pile's 5 left)" % drawn)
 	_bodies.free()
 	_col.free()
 	_world.free()
@@ -620,6 +627,32 @@ func _test_hands_api() -> void:
 	_bodies.update()
 	_check.call(waiting and _bodies.body_of(e) != r3 and _back_on_pile(e),
 			"item physics: no answer from CDDA in %d s: the body goes, the item is back in its pile" % (ItemBodies.PENDING_MS / 1000))
+	# A drop that landed but never shows on its square (a charge stack merged into another there: a new uid).
+	pile = _on(PILE)
+	var m: int = pile[0] if not pile.is_empty() else -1
+	_bodies.hold(m)
+	var r4 := _bodies.let_go(m, rock, Transform3D(Basis(), _corner(S) + Vector3(0.4, 0.5, 0.6)), Vector3.ZERO, S)
+	_ms += ItemBodies.PENDING_MS - ItemBodies.LANDED_MS - 100   # late in its wait: landing starts its own clock
+	var m_landed := r4 != null and _bodies.landed(m)
+	_ms += ItemBodies.LANDED_MS - 1
+	_bodies.landed(m)   # told twice: the clock doesn't start again
+	_bodies.update()
+	var m_waits := _bodies.body_of(m) == r4 and _bodies.is_pending(m)
+	_ms += 1
+	_bodies.update()
+	_check.call(m_landed and m_waits and _bodies.body_of(m) != r4 and not _bodies.is_pending(m),
+			"item physics: landed but never shown on its square (merged into a stack): its body goes after %.1f s"
+			% (ItemBodies.LANDED_MS / 1000.0))
+	# The game stops: nothing is held any more.
+	_bodies.hold(UID + 3)
+	var was_held := _bodies.is_held(UID + 3)
+	_bodies.clear()
+	var cleared := not _bodies.is_held(UID + 3) and _bodies.count() == 0
+	_bodies.hold(UID + 3)
+	_bodies.clear()   # no bodies left: still forgets the hold
+	_check.call(was_held and cleared and not _bodies.is_held(UID + 3), "item physics: clear() forgets what the hands held")
+	_snap.seq += 1
+	_bodies.update()
 	_bodies.clock = Callable()
 	var pose := Transform3D(Basis(), _corner(S) + Vector3(0.5, 0.5, 0.5))
 	var none := _bodies.let_go(UID + 41, rock, pose, Vector3.ZERO, S + Vector3i(0, 0, 1)) == null \
@@ -635,6 +668,297 @@ func _test_hands_api() -> void:
 
 
 ## Item u lies in its pile again, not waiting: as a body there or drawn static; the pile has its PILE_BODIES bodies.
+## Stands in for the live session's place / spot ops (lead-bridge's shapes): keeps what was sent.
+class FakeBridge extends RefCounted:
+	var ops: Array[Dictionary] = []
+	var take := true
+
+	func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+		ops.append({"op": "place", "uid": int(uid), "type": int(type), "pos": pos, "to": to, "spot": spot, "yaw": yaw,
+				"side": side, "tag": tag})
+		return take
+
+	func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+		ops.append({"op": "spot", "uid": int(uid), "type": int(type), "pos": pos, "spot": spot, "yaw": yaw, "side": side,
+				"tag": tag})
+		return take
+
+
+## The body of `uid` now lies at `spot` across square sq, turned `rot`, and comes to rest there.
+func _rest_at(uid: int, sq: Vector3i, spot: Vector2, rot := Basis.IDENTITY) -> void:
+	var rb := _bodies.body_of(uid)
+	if rb == null:
+		return
+	var c := _corner(sq)
+	rb.global_transform = Transform3D(rot, Vector3(c.x + spot.x, rb.global_position.y, c.z + spot.y))
+	rb.sleeping = true
+	rb.sleeping_state_changed.emit()
+
+
+## The snapshot now has item `uid` on square `to` (in submap SM), as CDDA's place leaves it, `turns` game turns on.
+func _cdda_moves(uid: int, to: Vector3i, turns := 1) -> void:
+	var sm: Snapshot.Submap = _world.snapshot.submaps[SM]
+	var hs := sm.handles
+	for k in range(0, hs.size() - ItemBodies.HS + 1, ItemBodies.HS):
+		if hs[k + 1] == uid:
+			hs[k] = _tile(to)
+	sm.handles = hs
+	_world.snapshot.seq += 1
+	_world.snapshot.turn += turns
+	_bodies.update()
+
+
+static func _result(uid: int, tag: int, done: bool, text := "") -> Dictionary:
+	return {"kind": "item_result", "uid": uid, "detail": tag, "amount": 1 if done else 0, "text": text}
+
+
+## Slices 3-4: ItemPlacer and the stand-in bridge. X and Y are two items lying next to the player, put on E first
+## (the tests before this one moved things about).
+func _test_placer() -> void:
+	var a := P + Vector3i(2, 0, 0)    # floor next to E
+	var b := P + Vector3i(0, 2, 0)    # floor two squares from A, by way of PILE
+	_snap = _world.snapshot
+	_snap.seq += 1
+	_bodies.update()
+	var near: Array = _on(E) + _on(S) + _on(TABLE)
+	var x: int = near[0] if near.size() >= 2 else -1
+	var y: int = near[1] if near.size() >= 2 else -1
+	for u: int in [x, y]:
+		if u > 0 and _bodies.square_of(u) != E:
+			_cdda_moves(u, E)
+	var rock := _bodies.type_of(x)     # X's itype
+	var hammer := _bodies.type_of(y)   # Y's itype
+	var fake := FakeBridge.new()
+	var placer := ItemPlacer.new()
+	_ms = 9_000_000
+	placer.clock = func() -> int: return _ms
+	placer.centre = func() -> Variant: return P
+	placer.bodies = _bodies
+	placer.backend = fake
+	var refusals: Array = []
+	placer.refused.connect(func(u: int, why: String) -> void: refusals.append([u, why]))
+	var rx := _bodies.body_of(x)
+	_check.call(rx != null and _bodies.body_of(y) != null and _bodies.square_of(x) == E and _bodies.square_of(y) == E
+			and rock > 0 and hammer > 0, "item placer: two items lie on E as bodies (%s of %s)" % [[x, y], near])
+	if rx == null or _bodies.body_of(y) == null:
+		placer.free()
+		return
+	# at rest where it was made, or a hair off: nothing to tell
+	rx.sleeping_state_changed.emit()
+	rx.global_position += Vector3(ItemBodies.MOVED_M * 0.5, 0, 0)
+	rx.sleeping_state_changed.emit()
+	placer.update()
+	_check.call(placer.waiting() == 0 and fake.ops.is_empty(), "item placer: a body at rest where it lay tells nothing")
+	# moved and turned on its own square: one spot op
+	_rest_at(x, E, Vector2(0.7, 0.6), Basis(Vector3.UP, PI / 2.0))
+	var want := placer.waiting() == 1
+	placer.update()
+	var op: Dictionary = fake.ops[-1] if not fake.ops.is_empty() else {}
+	_check.call(want and fake.ops.size() == 1 and op.get("op") == "spot" and op.get("uid") == x and op.get("type") == rock
+			and op.get("pos") == E and (op.get("spot", Vector2.INF) as Vector2).distance_to(Vector2(0.7, 0.6)) < 0.01
+			and op.get("yaw") == 90 and op.get("side") == false and op.get("tag") == 1 and placer.spots == 1,
+			"item placer: moved on its own square: one spot op with where it lies and its yaw (%s)" % [op])
+	# odd events: not this op's result
+	var n_ref := placer.refusals
+	placer.on_events([5, {"kind": "item_result"}, _result(x, 77, true), _result(y, 1, true), {"kind": "item_result", "uid": x,
+			"detail": NAN, "amount": 1}, {"kind": "message", "uid": x, "detail": 1, "amount": 1}, _result(x, -1, false)])
+	placer.update()
+	_check.call(placer.waiting() == 1 and fake.ops.size() == 1 and placer.refusals == n_ref,
+			"item placer: results for another tag or item, odd events: ignored, the op stays in flight")
+	placer.on_events([_result(x, 1, true)])
+	rx.sleeping_state_changed.emit()   # still where it was told
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_check.call(placer.waiting() == 0 and fake.ops.size() == 1, "item placer: CDDA took the spot: nothing more to tell")
+	# a refused spot: the body stays, the reason is passed on (bounded)
+	_rest_at(x, E, Vector2(0.3, 0.3))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	placer.on_events([_result(x, int(op.get("tag", 0)), false, "No. " + "x".repeat(500))])
+	var why: String = refusals[-1][1] if not refusals.is_empty() else ""
+	_check.call(op.get("op") == "spot" and placer.refusals == n_ref + 1 and placer.waiting() == 0 and _bodies.body_of(x) == rx
+			and refusals.size() == 1 and refusals[0][0] == x and why.begins_with("No.") and why.length() <= ItemPlacer.MAX_REASON,
+			"item placer: a refused spot: the body stays where it lies, CDDA's reason is passed on, capped")
+	# onto the next square, lying on its side: one place with the pose; the body stays put when the snapshot shows it
+	_rest_at(x, a, Vector2(0.5, 0.5), Basis(Vector3.UP, PI / 2.0) * Basis(Vector3.RIGHT, PI / 2.0))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	var at := rx.global_position
+	_check.call(op.get("op") == "place" and op.get("pos") == E and op.get("to") == a and op.get("yaw") == 90 and op.get("side") == true
+			and (op.get("spot", Vector2.INF) as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.01 and placer.places == 1,
+			"item placer: at rest on the next square, on its side: one place there with the pose (%s)" % [op])
+	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var waits := placer.waiting() == 1 and fake.ops.size() == 3   # done, but the snapshot doesn't show it yet
+	_cdda_moves(x, a)
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_check.call(waits and _bodies.body_of(x) == rx and rx.global_position.is_equal_approx(at) and _bodies.square_of(x) == a
+			and placer.waiting() == 0 and fake.ops.size() == 3 and not _bodies._transit.has(x),
+			"item placer: CDDA placed it: the body keeps its pose, its CDDA square is the new one, nothing more sent")
+	# two squares away: a place per turn, the first without a pose, the last with it
+	_rest_at(x, b, Vector2(0.2, 0.8))
+	_ms += ItemPlacer.PLACE_GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	var step1: bool = op.get("op") == "place" and op.get("pos") == a and op.get("to") == PILE and op.get("spot") == Vector2(-1, -1) \
+			and _bodies._transit.has(x)
+	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
+	_cdda_moves(x, PILE, 0)   # the snapshot shows it there, in the same game turn
+	var kept: bool = _bodies.body_of(x) == rx and _bodies.square_of(x) == PILE and _bodies.rest_of(x).get("square") == b
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_ms += ItemPlacer.PLACE_GAP_MS * 3
+	placer.update()
+	var too_soon := fake.ops.size() == 4   # CDDA moves an item once a turn: the turn hasn't passed (a pause, the player's turn)
+	_world.snapshot.turn += 1
+	placer.update()
+	op = fake.ops[-1]
+	var step2: bool = fake.ops.size() == 5 and op.get("pos") == PILE and op.get("to") == b \
+			and (op.get("spot", Vector2.INF) as Vector2).distance_to(Vector2(0.2, 0.8)) < 0.01
+	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
+	_cdda_moves(x, b)
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_check.call(step1 and kept and too_soon and step2 and placer.waiting() == 0 and _bodies.square_of(x) == b
+			and _bodies.body_of(x) == rx and not _bodies._transit.has(x) and placer.places == 3,
+			"item placer: two squares away: one place per game turn, square by square, the body lying still meanwhile (%s %s %s %s)"
+			% [step1, kept, too_soon, step2])
+	# a refused place: the body goes back where CDDA has the item
+	var ry := _bodies.body_of(y)
+	_rest_at(y, a, Vector2(0.5, 0.5))
+	_ms += ItemPlacer.PLACE_GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	placer.on_events([_result(y, int(op.get("tag", 0)), false, "There's no room.")])
+	_snap.seq += 1
+	_bodies.update()
+	var back := _bodies.body_of(y)
+	_check.call(op.get("op") == "place" and op.get("uid") == y and op.get("type") == hammer and placer.put_backs == 1
+			and back != null and back != ry and _bodies.square_of(y) == E and _bodies.rest_of(y).get("square") == E
+			and placer.waiting() == 0 and refusals[-1] == [y, "There's no room."],
+			"item placer: a refused place: the body is back where CDDA has the item")
+	# no answer: nothing is given up while the game's clock stands (a pause); then MAX_TRIES tries and it is put back
+	var sent := fake.ops.size()
+	_rest_at(y, a, Vector2(0.5, 0.5))
+	_ms += ItemPlacer.PLACE_GAP_MS
+	_world.snapshot.turn += 1
+	placer.update()
+	_ms += ItemPlacer.RESULT_MS * 3
+	placer.update()
+	_check.call(fake.ops.size() == sent + 1 and placer.waiting() == 1 and placer.put_backs == 1 and _bodies._transit.has(y),
+			"item placer: no answer while the game's clock stands: the op stays in flight, nothing is put back")
+	for k in ItemPlacer.MAX_TRIES + 2:
+		_world.snapshot.turn += ItemPlacer.RESULT_TURNS
+		_ms += ItemPlacer.RESULT_MS + ItemPlacer.PLACE_GAP_MS
+		placer.update()
+	_snap.seq += 1
+	_bodies.update()
+	_check.call(fake.ops.size() == sent + ItemPlacer.MAX_TRIES and placer.put_backs == 2 and placer.waiting() == 0
+			and _bodies.rest_of(y).get("square") == E,
+			"item placer: no answer %d times with the clock running: the body is put back (%d sent)"
+			% [ItemPlacer.MAX_TRIES, fake.ops.size() - sent])
+	# the game is busy (the op isn't taken): tried again later, then a spot is just forgotten
+	sent = fake.ops.size()
+	fake.take = false
+	_rest_at(y, E, Vector2(0.8, 0.2))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	placer.update()
+	var once := fake.ops.size() == sent + 1
+	for k in ItemPlacer.MAX_TRIES + 1:
+		_ms += ItemPlacer.RETRY_MS
+		placer.update()
+	fake.take = true
+	_check.call(once and fake.ops.size() == sent + ItemPlacer.MAX_TRIES and placer.waiting() == 0 and placer.put_backs == 2,
+			"item placer: an op the game doesn't take is tried again a second later, %d times in all" % ItemPlacer.MAX_TRIES)
+	# out of CDDA's reach, moving again, no such op: nothing sent
+	sent = fake.ops.size()
+	placer.centre = func() -> Variant: return P + Vector3i(4, 0, 0)
+	_rest_at(y, E, Vector2(0.4, 0.4))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var far_spot := placer.waiting() == 0 and placer.put_backs == 2
+	_rest_at(y, a, Vector2(0.5, 0.5))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	placer.centre = func() -> Variant: return P
+	_snap.seq += 1
+	_bodies.update()
+	_check.call(far_spot and fake.ops.size() == sent and placer.put_backs == 3 and _bodies.rest_of(y).get("square") == E,
+			"item placer: an item out of CDDA's reach: nothing sent; lying on another square it is put back")
+	_rest_at(y, E, Vector2(0.6, 0.6))
+	var moving := _bodies.body_of(y)
+	if moving != null:
+		moving.sleeping = false
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	placer.backend = RefCounted.new()
+	_rest_at(y, E, Vector2(0.65, 0.35))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	placer.backend = null
+	_rest_at(y, E, Vector2(0.35, 0.65))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_check.call(fake.ops.size() == sent and placer.waiting() == 0,
+			"item placer: a body moving again, a backend without the ops, no backend: nothing sent, nothing kept waiting")
+	# a body a hand let go waits for CDDA's own drop
+	placer.backend = fake
+	_bodies.clock = func() -> int: return _ms
+	_bodies.hold(y)
+	var let := _bodies.let_go(y, hammer, Transform3D(Basis(), _corner(a) + Vector3(0.5, 0.3, 0.5)), Vector3.ZERO, a)
+	if let != null:
+		let.sleeping = true
+		let.sleeping_state_changed.emit()
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var pending := let != null and placer.waiting() == 1 and fake.ops.size() == sent
+	_bodies.forget(y)
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	_bodies.clock = Callable()
+	_check.call(pending and placer.waiting() == 0 and fake.ops.size() == sent,
+			"item placer: a body a hand let go: nothing sent before CDDA's drop lands; a refused drop: nothing at all")
+	# a result for an item that was dropped meanwhile (a hand took it: its body went) doesn't bring it back
+	_rest_at(x, b, Vector2(0.4, 0.6))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	var asked: bool = op.get("op") == "spot" and op.get("uid") == x
+	_bodies.hold(x)
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var dropped := placer.waiting() == 0
+	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
+	_check.call(asked and dropped and placer.waiting() == 0 and placer._flight.is_empty(),
+			"item placer: a result for an item no longer waiting (a hand took it) doesn't put it back on the list")
+	_bodies.unhold(x)
+	_snap.seq += 1
+	_bodies.update()
+	_rest_at(y, E, Vector2(0.2, 0.2))
+	var listed := placer.waiting() == 1
+	placer.clear()
+	_check.call(listed and placer.waiting() == 0 and placer._flight.is_empty(), "item placer: clear forgets everything")
+	# the game's clock goes back (another save loaded): what was in flight is forgotten, not left stuck
+	_rest_at(y, E, Vector2(0.7, 0.3))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var flying := placer._flight.size() == 1 and placer.waiting() == 1
+	_world.snapshot.turn -= 50
+	placer.update()
+	_world.snapshot.turn += 50
+	_check.call(flying and placer.waiting() == 0 and placer._flight.is_empty() and placer._by_uid.is_empty(),
+			"item placer: the game's clock went back: everything waiting or in flight is forgotten")
+	placer.bodies = null
+	placer.free()
+	_snap.seq += 1
+	_bodies.update()
+
+
 func _back_on_pile(u: int) -> bool:
 	var as_body: bool = _bodies.body_of(u) != null and _bodies.square_of(u) == PILE
 	var drawn: bool = _bodies.body_of(u) == null and not _world.hidden_items.has(u) and not _world.item_slot(u).is_empty()

@@ -12,7 +12,7 @@ Positions are absolute squares (`ui_point`, like the snapshot). Creature uids ar
 
 ```cpp
 struct event {
-    event_kind kind;   // sound, message, attack, damage, projectile, explosion, death, anim, turn_end
+    event_kind kind;   // sound, message, attack, damage, projectile, explosion, death, anim, turn_end, lightning
     int64 turn; uint64 seq;
     uint64 uid;        // actor (0 none)
     uint64 other;      // second creature (0 none)
@@ -35,6 +35,7 @@ struct event {
 | `death` | the dead | | where | | | `mtype` (monsters) | | | the player sees it | `monster::die`, `Character::die` |
 | `anim` | busy character | | where | | | `activity` (e.g. ACT_WAIT) | | | the player sees them | `Character::assign_activity` |
 | `turn_end` | | | | | | | | | every turn | `do_turn` |
+| `lightning` | | | the player's square | | | | | | CDDA flashes lightning (a lightning storm, above ground; about once in 10 minutes of storm), whether or not the player is outside | the `lightning` effect in `npctalk.cpp` (`f_lightning`) |
 
 A melee hit's `attack` event comes before its `damage`, once per hit; a hit may have no `damage` event (no HP
 lost, or a technique that kills at once: then its `death` follows).
@@ -47,6 +48,9 @@ then the oldest event of any kind; `drain_events` returns how many were dropped.
 - `map_changed`: not needed; the snapshot's per-submap revisions tell the client what to rebuild.
 - `ui_sound` (menus, inventory moves) and CDDA's `sfx::` calls (gun, melee hit, footstep variants): SOUND is off in
   our build, so they are stubs; hook them when the client's audio needs them.
+- Thunder: CDDA plays it through `sfx::` too (`thunder_near` with each flash, `thunder_far` about once in 50 turns of a
+  thunder or lightning storm), so no `sound` event carries it. The client plays near thunder on a `lightning` event and
+  distant rumbles itself while `env.weather_sound` is 4 (thunder). CDDA's messages for both still come as `message`.
 - Ammo itype for bullets, sub-tile offsets, spell effects (`draw_custom_explosion` callers
   outside explosion.cpp).
 

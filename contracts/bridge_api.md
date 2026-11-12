@@ -29,7 +29,7 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `get_snapshot_seq()` | `int` | seq of the newest snapshot, 0 before the first. A snapshot is taken right before every request but `shot`. |
 | `get_snapshot_json(z_below, z_above)` | `String` | The newest snapshot as `snapshot.md` JSON, levels from the player's z − `z_below` to z + `z_above`. "" before the first. Treat as hostile input like any snapshot (`Snapshot.parse_text`). |
 | `get_id_tables_json()` | `String` | `id_tables.md` JSON; "" before the data has loaded. Fetch again when a snapshot's `ids_generation` changes. |
-| `drain_events()` | `Array` | Events since the last call (`events.md`), each a Dictionary: `kind` (sound, message, attack, damage, projectile, explosion, death, anim, turn_end), `turn`, `seq`, `uid`, `other`, `pos` (Vector3i), `amount`, `heard`, `type`, `detail`, `text`, `path` (Array of Vector3i). Drain every frame: the queue holds 4096. |
+| `drain_events()` | `Array` | Events since the last call (`events.md`), each a Dictionary: `kind` (sound, message, attack, damage, projectile, explosion, death, anim, turn_end, lightning), `turn`, `seq`, `uid`, `other`, `pos` (Vector3i), `amount`, `heard`, `type`, `detail`, `text`, `path` (Array of Vector3i). Drain every frame: the queue holds 4096. |
 | `get_events_dropped()` | `int` | Events lost to overflow since start. |
 | `get_clock()` | `Dictionary` | `real_time`, `timescale`, `paused`, `pause_reason`, `auto_pause` (bool, the setting below). |
 | `set_real_time(on)` / `set_timescale(s)` / `set_paused(on)` / `interrupt()` | | The clock (`ui_requests.md`); timescale clamps to 0.25-16. |

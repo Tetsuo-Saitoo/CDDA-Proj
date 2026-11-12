@@ -12,6 +12,10 @@ const MIN_COMPASS_OPACITY := 0.0   # 0 hides the compass; the F1 slider brings i
 var compass_opacity := DEFAULT_COMPASS_OPACITY
 ## The F1 menu's Cheats page (testing). Off unless turned on; only a real bool in the file turns it on.
 var debug_cheats := false
+## The mood's screen tint (MoodCue). On unless turned off; anything but a real bool in the file leaves it on.
+var mood_cues := true
+## The lightning flash (WeatherView.flash_enabled). On unless turned off, like the mood tint.
+var weather_flash := true
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
@@ -41,6 +45,10 @@ func load_file(path := FILE) -> String:
 		return "%s doesn't parse" % path
 	var d: Variant = cfg.get_value("debug", "cheats", false)
 	debug_cheats = d if d is bool else false
+	var mc: Variant = cfg.get_value("mood", "cues", true)
+	mood_cues = mc if mc is bool else true
+	var wf: Variant = cfg.get_value("weather", "flash", true)
+	weather_flash = wf if wf is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
@@ -54,5 +62,7 @@ func save_file(path := FILE) -> Error:
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)
+	cfg.set_value("mood", "cues", mood_cues)
+	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	return cfg.save(path)

@@ -40,6 +40,7 @@ var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
 var sun: DirectionalLight3D
+var weather: WeatherView       # C6 / I2: sky, sun and fog by CDDA's weather
 var hud: Label
 var request_ui: RequestUI
 var main_menu: MainMenu
@@ -60,12 +61,14 @@ var item_actions: ItemActions     # one-item take / put / drop for mouse and VR 
 var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
 var world_collision: WorldCollision   # E2 item physics: floor / wall / furniture boxes near the player
 var item_bodies: ItemBodies           # E2 item physics: the items near the player as physics bodies
+var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
+var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
@@ -190,6 +193,18 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
+		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
+		item_placer = ItemPlacer.new()
+		item_placer.bodies = item_bodies
+		item_placer.centre = func() -> Variant: return world.snapshot.player_pos if world.snapshot != null else null
+		item_placer.refused.connect(func(_uid: int, why: String) -> void:   # CDDA wouldn't move it: its reason
+			if why.is_empty():
+				return
+			hud_data.on_events([MockItems.message_event(why)])
+			if vr != null:
+				vr.refused_here(why))
+		add_child(item_placer)
 	pour.actions = item_actions
 	pour.held = _held_liquid
 	pour.target = _pour_target
@@ -282,6 +297,8 @@ func _use_mock_items(snap: Snapshot) -> void:
 	if inspect != null:
 		inspect.stop_batch()   # its items were the old backend's
 	item_actions.clear()
+	if item_placer != null:
+		item_placer.clear()
 	mock_items = MockItems.new(snap, world.tables)
 	mock_items.seed()
 	item_actions.backend = mock_items
@@ -314,7 +331,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
-	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
+	weather.apply(snap, world.coords, world.lighting.enabled)
 	if vr != null:
 		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
@@ -446,6 +463,7 @@ func _start_vr() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
@@ -549,6 +567,9 @@ func _start_live() -> void:
 	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
+	if item_placer != null:
+		item_placer.backend = live
+		live.events_arrived.connect(item_placer.on_events)   # item_result: the answer to a place / spot op
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
@@ -795,6 +816,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	weather.on_events(events)   # lightning
 	aim.hits.on_events(events)   # CDDA's hit confirmations: the crosshair's hit marker
 	hud_data.on_events(events)
 	for e: Dictionary in events:
@@ -1153,24 +1175,22 @@ func _setup_environment() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 200.0
 	add_child(sun)
-	_aim_sun(45.0, 0.0)
-
-
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
-## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
-func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
-	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
-	var az := deg_to_rad(az_deg)
-	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
-	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
-	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
+	# The sun's aim and strength, the sky and the fog follow each snapshot's time and weather (WeatherView).
+	weather = WeatherView.new()
+	add_child(weather)
+	weather.light_pass = world.lighting.enabled
+	weather.lighting = world.lighting
+	weather.setup(env, sun)
+	world.coords.origin_shifted.connect(weather.shift)
+	weather.aim_sun(45.0, 0.0)
 
 
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	mood_cue = MoodCue.new()   # first: everything else draws over it
+	mood_cue.data = hud_data
+	layer.add_child(mood_cue)
 	hud = Label.new()
 	hud.position = Vector2(10, 50)   # under the compass's hostile markers
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -1188,6 +1208,8 @@ func _setup_hud() -> void:
 	if why != "":
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
+	mood_cue.enabled = hud_settings.mood_cues
+	weather.flash_enabled = hud_settings.weather_flash
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1219,7 +1241,10 @@ func _setup_hud() -> void:
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
-	key_menu.hud_changed.connect(func() -> void: compass.opacity = hud_settings.compass_opacity)
+	key_menu.hud_changed.connect(func() -> void:
+		compass.opacity = hud_settings.compass_opacity
+		mood_cue.enabled = hud_settings.mood_cues
+		weather.flash_enabled = hud_settings.weather_flash)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 

@@ -40,6 +40,8 @@ extends XROrigin3D
 ## Guns (L2, VrGun `gun`): while CDDA wields a gun its model is in the main hand and takes the main trigger right after
 ## the pack (fires from its muzzle); the off grip takes its magazine out at the well or racks its slide / bolt, a held
 ## magazine brought to the well goes in; the main grip on nothing just holds it.
+## Melee (L3, VrSwing `swing`): a hand moving fast whose striking line (to the tip of what it holds, else a fist's
+## reach) meets a creature next to the player sends CDDA's aimed strike for that hand; CDDA rolls the hit.
 ## Backpack (block L8, VrPack `pack`): grip with an empty hand over the shoulder while wearing a container takes
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
@@ -54,6 +56,9 @@ extends XROrigin3D
 ## rig is separate from the body).
 
 signal level_changed(z: int)
+## A VR menu row asked for one of the game's own menus (VrSettings.UI_ROWS: "keys" the F1 menu, "inventory" the Tab
+## view): main.gd opens it on the panel. The settings menu closes first, so the laser works the panel.
+signal ui_asked(which: String)
 ## The main-hand trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's
 ## actions.
 signal stair_used(stair: Dictionary)
@@ -168,6 +173,7 @@ var hands: Hands:
 			pack.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
+var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
@@ -289,6 +295,8 @@ func _build() -> void:
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
+	swing = VrSwing.new()
+	swing.rig = self
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -372,12 +380,13 @@ func _process(delta: float) -> void:
 	if current_layout() == "vive":
 		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
 				settings["turn"] == "smooth")
-	panel.update(delta, camera.transform)
+	update_panel(delta)
 	step(delta, inp)
 	update_pointer()
 	track_hands(delta)
 	update_hands(delta)
 	gun.update(delta)
+	swing.update(delta)   # L3: a fast hand whose striking line meets a creature strikes it (CDDA's aimed strike)
 	pose_hands()
 	drive_body()
 	place_compass()
@@ -1261,6 +1270,14 @@ func menu_open() -> bool:
 	return menu != null and menu.visible
 
 
+## The CDDA panel this frame: its text size from the settings (`panel_text`), then shown / hidden and placed.
+func update_panel(delta: float) -> void:
+	var ts: Variant = settings.get("panel_text")
+	if ts is float or ts is int:
+		panel.text_scale = ts   # a no-op while unchanged
+	panel.update(delta, camera.transform)
+
+
 ## The settings menu or a CDDA menu / prompt (panel) is up: the triggers and sticks work it, not the world.
 func ui_open() -> bool:
 	return menu_open() or (panel != null and panel.shown)
@@ -1293,6 +1310,10 @@ func toggle_menu() -> void:
 func _menu_action(key: String) -> void:
 	if key == "calibrate":
 		calibrate_height()
+	elif VrSettings.UI_ROWS.has(key):
+		if menu_open():
+			toggle_menu()
+		ui_asked.emit(VrSettings.UI_ROWS[key])
 
 
 ## The menu sent a range op: a teleport remembers where the player stands now.

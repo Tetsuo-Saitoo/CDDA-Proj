@@ -29,6 +29,8 @@ var hud_path := HudSettings.FILE
 var compass_slider: HSlider
 var _compass_value: Label
 var debug_check: CheckBox
+var mood_check: CheckBox
+var flash_check: CheckBox
 var cheat_page: CheatPanel    # set by add_cheat_page
 var cheats_button: Button
 ## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
@@ -136,6 +138,20 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	row.add_child(compass_slider)
 	_compass_value = Label.new()
 	row.add_child(_compass_value)
+	mood_check = CheckBox.new()
+	mood_check.text = "Mood tint"
+	mood_check.tooltip_text = "Tints the edges of the view when your character's mood is low or high."
+	mood_check.focus_mode = Control.FOCUS_NONE
+	mood_check.button_pressed = settings.mood_cues
+	mood_check.toggled.connect(_on_mood_cues)
+	row.add_child(mood_check)
+	flash_check = CheckBox.new()
+	flash_check.text = "Lightning flash"
+	flash_check.tooltip_text = "Brightens the view for a moment when lightning strikes. Off: thunder only."
+	flash_check.focus_mode = Control.FOCUS_NONE
+	flash_check.button_pressed = settings.weather_flash
+	flash_check.toggled.connect(_on_weather_flash)
+	row.add_child(flash_check)
 	debug_check = CheckBox.new()
 	debug_check.text = "Debug: cheats page"
 	debug_check.tooltip_text = "Shows the Cheats button here (testing only; off by default)."
@@ -192,6 +208,22 @@ func _on_debug_cheats(on: bool) -> void:
 	if err != OK:
 		_status.text = "Debug setting not saved: %s" % error_string(err)
 	_update_cheats_button()
+	hud_changed.emit()
+
+
+func _on_weather_flash(on: bool) -> void:
+	hud.weather_flash = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Lightning flash setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _on_mood_cues(on: bool) -> void:
+	hud.mood_cues = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Mood tint setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

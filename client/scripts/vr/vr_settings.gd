@@ -10,9 +10,10 @@ const MAX_FILE_BYTES := 4096
 ## and shows the wielded item; the compass is on the other wrist. `height`: metres added to the head (seated
 ## play: the rig's origin stands this far over the level's floor). `grip`: "hold" carries while the grip is held,
 ## "toggle" takes on one press and lets go on the next. `wrist_hud`: the HUD panel inside the off forearm (VrHud).
+## `panel_text`: the size of everything on the menu / prompt panel (VrPanel.text_scale), 1 = as designed.
 const DEFAULTS := {"move": "smooth", "move_dir": "head", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0,
 		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false,
-		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0, "wrist_hud": "on"}
+		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0, "wrist_hud": "on", "panel_text": 1.0}
 ## Key -> allowed words, or [min, max, menu step] for numbers. Bools are on/off.
 const SPEC := {
 	"move": ["smooth", "teleport"], "move_dir": ["head", "hand"], "turn": ["snap", "smooth", "off"],
@@ -20,21 +21,26 @@ const SPEC := {
 	"compass": ["wrist", "belt", "both", "off"], "main_hand": ["right", "left"], "grip": ["hold", "toggle"],
 	"wrist_hud": ["on", "off"],
 	"snap_deg": [15.0, 90.0, 15.0], "turn_speed": [30.0, 360.0, 30.0], "speed": [0.5, 5.0, 0.5],
-	"vignette": [0.0, 1.0, 0.2], "height": [-0.5, 1.0, 0.05], "blink": [], "swap_sticks": [],
+	"vignette": [0.0, 1.0, 0.2], "height": [-0.5, 1.0, 0.05], "panel_text": [0.8, 1.6, 0.1], "blink": [],
+	"swap_sticks": [],
 }
 ## Command-line option (after `--`) -> key.
 const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", "vr-snap": "snap_deg",
 		"vr-turn-speed": "turn_speed", "vr-speed": "speed", "vr-vignette": "vignette", "vr-blink": "blink",
 		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass",
-		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height", "vr-hud": "wrist_hud"}
+		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height", "vr-hud": "wrist_hud",
+		"vr-panel-text": "panel_text"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
-const ACTIONS := {"calibrate": "press to set from your head"}
+const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open"}
+## Action rows that open one of the game's own menus on the panel (VrRig.ui_asked): row key -> what is asked for.
+const UI_ROWS := {"keys": "keys", "inventory": "inventory"}
 ## Menu rows: key (a setting or an action), label.
 const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move speed"], ["turn", "Turn"],
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
 		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
-		["wrist_hud", "Wrist HUD"], ["height", "Height"], ["calibrate", "Calibrate height"]]
+		["wrist_hud", "Wrist HUD"], ["panel_text", "Menu text size"], ["height", "Height"],
+		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["keys", "Keys and HUD settings"]]
 
 
 ## `value` checked against SPEC: the cleaned value, or null when it isn't allowed. Strings from the command
@@ -138,6 +144,8 @@ static func label(key: String, v: Variant) -> String:
 			return {"hold": "hold to carry", "toggle": "press to take, again to let go"}.get(v, str(v))
 		"vignette":
 			return "off" if v <= 0.0 else "%d %%" % roundi(v * 100.0)
+		"panel_text":
+			return "%d %%" % roundi((float(v) if v is float or v is int else 1.0) * 100.0)
 		"snap_deg":
 			return "%d deg" % roundi(v)
 		"turn_speed":
