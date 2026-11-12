@@ -281,6 +281,22 @@ func _test_view(root: Node) -> void:
 	view.blend_s = 0.0
 	view.apply(fog_snap, coords, true)
 	var day_fog := env.fog_light_color
+	# The light pass is told where the fog is (seen on screen: unseen squares far off were black strips in the mist).
+	var pass_node := WorldLighting.new()
+	root.add_child(pass_node)
+	view.lighting = pass_node
+	view.apply(fog_snap, coords, true)
+	_check.call(is_equal_approx(pass_node.fog.x, env.fog_depth_begin) and is_equal_approx(pass_node.fog.y, env.fog_depth_end)
+			and pass_node.fog.z == 1.0 and pass_node.get("_mat").get_shader_parameter("fog_amount") == 1.0,
+			"weather: the light pass leaves fogged distance to the fog (%.0f..%.0f m)" % [pass_node.fog.x, pass_node.fog.y])
+	view.apply(_snap(_env(CLEAR)), coords, true)
+	_check.call(pass_node.fog.z == 0.0, "weather: and knows when there is none")
+	pass_node.set_fog(-5.0, -9.0, 7.0)
+	_check.call(pass_node.fog.x == 0.0 and pass_node.fog.y > 0.0 and pass_node.fog.z == 1.0, "weather: the pass's fog is kept sane")
+	view.lighting = null
+	root.remove_child(pass_node)
+	pass_node.free()
+	view.apply(fog_snap, coords, true)
 	# Night: the light pass darkens (a moon-like light at 0.8), the weather doesn't dim it again.
 	view.apply(_snap(_env(LIGHTNING, 2, -30.0)), coords, true)
 	_check.call(is_equal_approx(sun.light_energy, 0.8) and sun.sky_mode == DirectionalLight3D.SKY_MODE_LIGHT_ONLY

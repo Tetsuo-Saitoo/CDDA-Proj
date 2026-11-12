@@ -27,6 +27,7 @@ const FLASH_LIGHT := 1.5      # energy of the flash's light at its peak
 const FLASH_FOG := 1.5        # how much brighter the haze and the storm sky get
 const FLASH_FLOOR := 0.35     # the light pass shows the dark world at least this bright at the peak
 const FLASH_INDOORS := 0.5    # share of the flash that reaches under a roof
+const FLASH_MIST := 0.5       # how far a full flash lifts the night's fog and storm sky toward their day colour
 const FLASH_VR := 0.6         # share of the flash shown in a headset (flash_scale)
 const FAST_TURNS_S := 15.0    # game turns a second from which time counts as running fast (walking is under 10)
 const FAST_TURNS_BATCH := 3   # or this many turns ending in one batch of events
@@ -224,6 +225,8 @@ func _show_flash() -> void:
 	_flash_light.light_energy = FLASH_LIGHT * f
 	if _env != null:
 		_env.fog_light_energy = 1.0 + FLASH_FOG * f
+		if _env.fog_enabled:
+			_env.fog_light_color = _fog_color(f)
 	if lighting != null:
 		lighting.flash = FLASH_FLOOR * f
 
@@ -302,11 +305,27 @@ func _show() -> void:
 		if _env.fog_enabled:
 			# Dark at night, with the light pass too: what is drawn after the pass (flames, sparks, markers) takes
 			# the fog's own colour, and what is drawn before it is night-dark anyway.
-			var c := state.fog_color()
-			var night := lerpf(NIGHT_FOG, 1.0, state.daylight)
-			_env.fog_light_color = Color(c.r * night, c.g * night, c.b * night)
+			_env.fog_light_color = _fog_color(0.0)
 			_env.fog_density = state.fog   # depth mode: the most the distance fades
 			_env.fog_sky_affect = state.fog
+	_fog_to_pass()
+
+
+## The fog's colour now; `flash` 0..1 lights it up (lightning lights the mist and the storm sky, at night too).
+func _fog_color(flash: float) -> Color:
+	var c := state.fog_color()
+	var night := lerpf(NIGHT_FOG, 1.0, maxf(state.daylight, FLASH_MIST * flash))
+	return Color(c.r * night, c.g * night, c.b * night)
+
+
+## Tells the light pass where the fog is.
+func _fog_to_pass() -> void:
+	if lighting == null:
+		return
+	if _env != null and _env.fog_enabled:
+		lighting.set_fog(_env.fog_depth_begin, _env.fog_depth_end, _env.fog_density)
+	elif lighting.fog.z != 0.0:
+		lighting.set_fog(0.0, 1.0, 0.0)
 
 
 ## Only real changes reach the sky material: every one makes the engine filter the sky's light again.
@@ -333,6 +352,7 @@ func _place_fog(delta: float) -> void:
 	if absf(_env.fog_depth_begin - away) > 0.05 or absf(_env.fog_depth_end - end) > 0.05:
 		_env.fog_depth_begin = away
 		_env.fog_depth_end = end
+		_fog_to_pass()
 
 
 ## The cloud layer for the sky's cover (equirectangular, L8), made once: soft noise shapes on a flat layer overhead

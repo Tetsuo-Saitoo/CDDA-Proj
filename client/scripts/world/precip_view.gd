@@ -23,6 +23,9 @@ const WIND_SHARE := 0.6        # how much of the region's wind the drops near th
 const MAX_POINTS := 2048       # start points, several per square so drops don't fall in a grid
 const POINTS_PER_SQUARE := 4
 const POINTS_W := 64           # width of the start point texture
+const NEAR_GONE_M := 0.7       # drops nearer to the camera than this aren't drawn
+const NEAR_FULL_M := 2.5       # and from here on they are drawn in full
+const FLAKE_PX := 32           # the snow flake's texture: a soft round dot
 const RAIN_COLOR := Color(0.8, 0.85, 0.95, 0.3)
 const SNOW_COLOR := Color(1.0, 1.0, 1.0, 0.9)
 const BOUNDS_UP := 12.0        # the drops' box reaches this far above their start and below the player's level
@@ -36,11 +39,12 @@ var _key := []                 # what the start points were made for
 var _tex: ImageTexture
 var _starts := PackedVector3Array()   # the start points, as placed (world space)
 var _bounds := AABB()                 # the box around all drops, in this node's space
+static var _flake: ImageTexture
 
 
 func _init() -> void:
 	_setup(rain, MAX_RAIN, Vector2(0.012, 0.45), RAIN_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD_Y_TO_VELOCITY)
-	_setup(snow, MAX_SNOW, Vector2(0.035, 0.035), SNOW_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD)
+	_setup(snow, MAX_SNOW, Vector2(0.05, 0.05), SNOW_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD)
 	add_child(rain)
 	add_child(snow)
 
@@ -54,6 +58,12 @@ func _setup(p: GPUParticles3D, amount: int, size: Vector2, color: Color, align: 
 	mat.disable_receive_shadows = true
 	# Before the light pass, like glass: the drops take the darkness of what is behind them.
 	mat.render_priority = WorldLighting.UNDER_PRIORITY
+	# A drop right at the eye would cover half the view: they fade out on the last metres to the camera.
+	mat.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+	mat.distance_fade_min_distance = NEAR_GONE_M
+	mat.distance_fade_max_distance = NEAR_FULL_M
+	if p == snow:
+		mat.albedo_texture = flake_texture()
 	var quad := QuadMesh.new()
 	quad.size = size
 	quad.material = mat
@@ -99,6 +109,23 @@ func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
 	p.amount_ratio = amount_ratio(state.precip, squares)
 	p.visibility_aabb = _bounds
 	p.emitting = true
+
+
+## A soft round white dot (made once, on the main thread).
+static func flake_texture() -> ImageTexture:
+	if _flake == null:
+		_flake = ImageTexture.create_from_image(flake_image())
+	return _flake
+
+
+static func flake_image() -> Image:
+	var img := Image.create(FLAKE_PX, FLAKE_PX, false, Image.FORMAT_RGBA8)
+	var mid := (FLAKE_PX - 1) / 2.0
+	for y in FLAKE_PX:
+		for x in FLAKE_PX:
+			var r := Vector2(x - mid, y - mid).length() / (FLAKE_PX / 2.0)
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, 1.0 - smoothstep(0.35, 1.0, r)))
+	return img
 
 
 ## The bubble moved: the falling drops and their start points move with the world (CddaCoords.origin_shifted).

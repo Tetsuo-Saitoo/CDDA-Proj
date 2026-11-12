@@ -153,6 +153,18 @@ func _test_flash(root: Node) -> void:
 	_check.call(is_equal_approx(light.light_energy, WeatherView.FLASH_LIGHT * WeatherView.FLASH_INDOORS)
 			and is_equal_approx(lighting.flash, WeatherView.FLASH_FLOOR * WeatherView.FLASH_INDOORS),
 			"storm: half the flash reaches under a roof")
+	# At night the flash lights the mist and the storm sky too (seen on screen: the sky stayed black).
+	_wait(view, WeatherView.FLASH_EVERY_S)
+	var night := _snap(STORM)
+	night.ambient_light = 2
+	night.sun_alt_deg = -30.0
+	view.apply(night, null, true)
+	var dark_fog := env.fog_light_color.get_luminance()
+	view.strike()
+	var lit_fog := env.fog_light_color.get_luminance()
+	_wait(view, 1.0)
+	_check.call(env.fog_enabled and lit_fog > 5.0 * dark_fog and is_equal_approx(env.fog_light_color.get_luminance(), dark_fog),
+			"storm: at night the flash lights the mist too, then it is dark again (%.3f, %.3f)" % [dark_fog, lit_fog])
 	# Underground there is no flash.
 	_wait(view, WeatherView.FLASH_EVERY_S)
 	view.apply(_snap(STORM, true, 0.0, -1.0, 1, -1), null, true)

@@ -143,6 +143,18 @@ func _test_emitters(root: Node) -> void:
 	var mat := (view.rain.draw_pass_1 as QuadMesh).material as StandardMaterial3D
 	_check.call(mat.render_priority == WorldLighting.UNDER_PRIORITY and mat.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED,
 			"rain: drawn before the light pass (dark at night like the scene)")
+	# Seen on screen: a drop right at the eye covered half the view, and square flakes looked like confetti.
+	var snow_mat := (view.snow.draw_pass_1 as QuadMesh).material as StandardMaterial3D
+	_check.call(mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+			and snow_mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+			and is_equal_approx(mat.distance_fade_min_distance, PrecipView.NEAR_GONE_M)
+			and is_equal_approx(mat.distance_fade_max_distance, PrecipView.NEAR_FULL_M)
+			and PrecipView.NEAR_GONE_M < PrecipView.NEAR_FULL_M, "rain: drops fade out on the last metres to the camera")
+	var flake := PrecipView.flake_image()
+	var mid := PrecipView.FLAKE_PX / 2
+	_check.call(snow_mat.albedo_texture != null and mat.albedo_texture == null and flake.get_pixel(mid, mid).a > 0.99
+			and flake.get_pixel(0, 0).a == 0.0 and flake.get_pixel(mid, 0).a < 0.05
+			and is_same(PrecipView.flake_texture(), PrecipView.flake_texture()), "snow: flakes are soft round dots")
 	var snap := Snapshot.from_data(_near(RAIN))
 	coords.set_bubble_origin(snap.bubble_origin)
 	var t0 := Time.get_ticks_usec()
