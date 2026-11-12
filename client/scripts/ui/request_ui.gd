@@ -35,6 +35,8 @@ var direction_mapper := Callable()
 var world_state := Callable()
 ## () -> bool: another menu has the keys now (the F1 menu: its text fields take typing), so input is left to it.
 var held := Callable()
+## Text prompts open with the on-screen keyboard showing (TextKeys): set while hosted on the VR panel (main.gd).
+var keyboard := false
 var widget: RequestWidget
 var request_id := 0
 var _panel: PanelContainer
@@ -83,6 +85,8 @@ func show_request(req: Dictionary) -> bool:
 	widget.direction_mapper = direction_mapper
 	if widget is TargetRequestWidget:
 		(widget as TargetRequestWidget).world_state = world_state
+	if widget is StringRequestWidget:
+		(widget as StringRequestWidget).show_keys = keyboard
 	widget.answered.connect(_on_answered)
 	_panel.add_child(widget)
 	widget.setup(req)

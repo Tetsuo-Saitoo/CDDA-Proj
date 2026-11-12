@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-11 — On-screen keyboard for CDDA's text prompts (letters, digits, Shift, Space, Back), worked by pointer: a Keyboard button on screen, open from the start on the VR panel. Client tests pass.
 - 2026-11-11 — CDDA's prompts answer to a pad (D-pad, A, B, shoulders) and to ui_* actions, and work inside a SubViewport by pointer clicks (first step of menus in VR). Client tests pass.
 - 2026-11-11 — Hands: when ItemActions forgets everything in flight (a new game or snapshot), the hands let go and forget their own steps too, so those items can be grabbed again. Client tests pass.
 - 2026-11-11 — CI's Linux build was red since the melee merge (sim_test's request switch lacked `swing`; GCC -Werror=switch, MSVC doesn't warn): fixed in fork 40b0aa4; lead-world's headless meshing race fix (4698ee9) merged; GitHub CI green on main 83b91ad.

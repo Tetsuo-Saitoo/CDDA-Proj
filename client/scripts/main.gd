@@ -486,6 +486,7 @@ func _start_vr() -> void:
 	if panel != null:
 		request_ui.reparent(panel, false)
 		request_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 	print("VR on: %s" % vr.settings)
 
 

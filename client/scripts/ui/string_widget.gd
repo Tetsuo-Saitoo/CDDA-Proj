@@ -2,10 +2,15 @@ class_name StringRequestWidget
 extends RequestWidget
 ## `string` requests (string_input_popup): a text field holding CDDA's default text (`entries[0].label`).
 ## Enter sends, Esc cancels. The text goes out without control characters, within `max_len` characters and the
-## bridge's 1024 bytes. Answer: `text`.
+## bridge's 1024 bytes. Answer: `text`. An on-screen keyboard (TextKeys) under the field, for the laser or a mouse:
+## shown from the start when `show_keys` (RequestUI.keyboard: on the VR panel), else behind the Keyboard button.
 
 var edit: LineEdit
 var max_len := MAX_ANSWER_TEXT_BYTES
+## Open with the on-screen keyboard showing (set before setup).
+var show_keys := false
+var keys: TextKeys
+var keys_button: Button
 
 
 func setup(req: Dictionary) -> void:
@@ -21,13 +26,24 @@ func setup(req: Dictionary) -> void:
 	edit.custom_minimum_size.x = 420
 	edit.text_submitted.connect(func(_t: String) -> void: submit())
 	add_child(edit)
+	keys = TextKeys.new()
+	keys.target = edit
+	keys.visible = show_keys
+	add_child(keys)
 	var bar := HBoxContainer.new()
 	bar.alignment = BoxContainer.ALIGNMENT_END
 	add_child(bar)
+	keys_button = add_button("Keyboard", toggle_keys, bar)
 	add_button("OK (Enter)", submit, bar)
 	if allow_cancel:
 		add_button("Cancel (Esc)", cancel, bar)
 	focus_later(edit)
+
+
+## Shows or hides the on-screen keyboard.
+func toggle_keys() -> void:
+	keys.visible = not keys.visible
+	mark(keys_button, keys.visible)
 
 
 func submit() -> void:
