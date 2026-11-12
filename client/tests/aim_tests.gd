@@ -715,6 +715,30 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 	_check.call(again.get("cancel") == true and not again.has("shot") and elsewhere.get("cancel") == true
 			and not elsewhere.has("shot") and bad_id.is_empty(),
 			"melee: one answer per strike, another square cancels (%s, %s)" % [again, elsewhere])
+	# by hand (VR): a segment from the hand to the weapon's tip
+	var tip := head + dir * 0.2
+	var seg := aim.melee_segment(near, tip)
+	_check.call(seg.get("uid") == ZUID and seg.get("part") == "head" and seg.get("square") == zp and aim.melee_aim == seg,
+			"melee: a hand segment through the head picks the zombie's head (%s)" % [seg])
+	var short := aim.melee_segment(near, near + dir * 0.3).is_empty() and aim.melee_aim.is_empty()
+	var too_long := aim.melee_segment(head - dir * (S.MELEE_REACH_M + 0.5), head + dir * 0.2).is_empty()
+	var junk := aim.melee_segment(Vector3(NAN, 0, 0), tip).is_empty() and aim.melee_segment(near, Vector3(INF, 0, 0)).is_empty() \
+			and aim.melee_segment(near, near).is_empty() and aim.melee_aim.is_empty()
+	_check.call(short and too_long and junk, "melee: a segment short of the figure, over the reach, or junk picks nothing (%s)"
+			% [[short, too_long, junk]])
+	var beside := zp + Vector3i(1, 0, 0)   # the player's square for these: the zombie is one square west
+	var act := aim.strike_segment("off", near, tip, beside)
+	var kept: Dictionary = aim.melee_aim.duplicate()
+	var by_hand := aim.on_request({"kind": "swing", "id": 44, "cursor": zp, "origin": beside, "range": 1, "mode": "off"})
+	_check.call(act == "fp3d_attack_off_aim_LEFT" and kept.get("uid") == ZUID
+			and by_hand.get("shot", {}).get("hit_uid") == ZUID and by_hand.get("shot", {}).get("part") == "head",
+			"melee: a strike by hand is the aimed action and answers the swing request (%s, %s)" % [act, by_hand])
+	var off_way := aim.strike_segment("main", near, tip, zp + Vector3i(2, 1, 0)) == "" and aim.melee_aim.is_empty()
+	var bad_hand := aim.strike_segment("left", near, tip, beside) == "" and aim.strike_segment("", near, tip, beside) == "" \
+			and aim.melee_aim.is_empty()
+	var miss := aim.strike_segment("main", near, near + dir * 0.3, beside) == "" and aim.melee_aim.is_empty()
+	_check.call(off_way and bad_hand and miss, "melee: by hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
+			% [[off_way, bad_hand, miss]])
 
 
 ## Hordes: a flight tests only the figures near its line (at most 64, the nearest along it) and still hits one on it.
@@ -924,11 +948,15 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 		d["other"] = source
 		return d
 	var said := {"kind": "message", "text": "You hit the zombie."}
+	var strikes := []
+	hf.strike_confirmed.connect(func(uid: int, part: String, amount: int, killed: bool) -> void:
+		strikes.append([uid, part, amount, killed]))
 	hf.on_events([strike.call(me, z + 6, 1), said, hurt_by.call(z + 6, 9, torso, me)])
-	var one := got == [[z + 6, "torso", 9, false]]
+	var one := got == [[z + 6, "torso", 9, false]] and strikes == got
 	hf.on_events([strike.call(me, z + 6, 1), hurt_by.call(z + 6, 11, head, me), {"kind": "sound", "amount": 5},
 			death.call(z + 6), shot_by.call(me, z + 6)])
-	_check.call(one and got.size() == 3 and got[1] == [z + 6, "head", 11, false] and got[2] == [z + 6, "head", 11, true],
+	_check.call(one and got.size() == 3 and got[1] == [z + 6, "head", 11, false] and got[2] == [z + 6, "head", 11, true]
+			and strikes == got,
 			"hits: melee: the player's hit, then its damage and death confirm, never again for a shot (%s)" % [got])
 	got.clear()
 	hf.on_events([strike.call(me, z + 7, 0), hurt_by.call(z + 7, 5, torso, me)])
@@ -949,6 +977,10 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 			hurt_by.call(z + 7, 5, torso, me), strike.call(me, z + 7, 2), hurt_by.call(z + 7, 5, torso, me),
 			strike.call(NAN, z + 7, 1), hurt_by.call(z + 7, 5, torso, me), {"kind": "attack"}, hurt_by.call(z + 7, 5, torso, me)])
 	var junk := got.is_empty()
+	var strikes_before := strikes.size()
+	hf.on_events([dmg.call(z + 7, 7, torso), shot_by.call(me, z + 7)])
+	_check.call(got.size() == 1 and strikes.size() == strikes_before, "hits: a shot's hit isn't a strike (%s)" % [strikes])
+	got.clear()
 	_check.call(miss and ally_hit and bleed and no_source and elsewhere and next_turn and no_damage and junk,
 			"hits: melee: a miss, an ally's hit, other or no source, another creature, a later turn, junk: nothing (%s)"
 			% [[miss, ally_hit, bleed, no_source, elsewhere, next_turn, no_damage, junk]])
