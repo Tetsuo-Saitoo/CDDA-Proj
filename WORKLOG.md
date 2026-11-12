@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-12 — Mood tint: the edges of the view darken (cold) at low mood and warm faintly at high mood, fading in and out; the F1 menu's "Mood tint" box turns it off (saved in hud.cfg). Client tests pass; not looked at on screen.
 - 2026-11-12 — Player mood on the HUD: a mood line with CDDA's morale level as a word and the strongest reasons (once the bridge sends the morale entries), and a mood warning by its word. Client tests pass; not looked at on screen.
 - 2026-11-12 — Range weather fix merged (fork ea33efe, QA lead): every Windows suite passes. A three-lens review of the fork diff with a second reader per finding found nothing that blocks; two small leftovers go back to the QA lead (TASKS K7).
 - 2026-11-11 — Sim flake "a shot never fires" (combat lead, fork fp3d-combat 26e6fd0): CDDA's random gun malfunction (about 1 in 300 shots), not timing; the sim's shooting scenes give their guns NEVER_JAMS, the head-shot check wants all 20 shots again. Windows sim x2 + a 300-shot run, Linux (WSL) sim x2 pass.
