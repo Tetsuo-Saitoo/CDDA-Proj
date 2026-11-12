@@ -659,6 +659,13 @@ func _on_finished(item: ItemRef, op: String) -> void:
 
 
 func _on_refused(item: ItemRef, op: String, reason: String) -> void:
+	if op == "clear" and item != null and gun != null and item.uid == gun.uid and _clearing != "":
+		_clearing = ""   # CDDA wouldn't clear the jam a rack asked for: its reason by the racking hand, and the
+		_clear_left = 0.0   # next rack may ask again
+		var oc := rig.off_ctrl()
+		rig.feel(oc)
+		rig.say(_index(oc), reason)
+		return
 	if _op.is_empty() or item == null or item.uid != _op.get("uid") or op != _op.get("op"):
 		return
 	var o := _op
