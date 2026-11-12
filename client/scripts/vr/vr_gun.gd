@@ -250,6 +250,12 @@ func racking() -> bool:
 	return not _rack.is_empty()
 
 
+## The hand racking the slide or bolt now (0 left / 1 right), -1 none.
+func rack_hand() -> int:
+	var h: Variant = _rack.get("hand")
+	return h if h is int else -1
+
+
 ## AimController.live_aim: the muzzle now ({origin, sight}) while the gun shows, else {}.
 func live_pose() -> Dictionary:
 	if not shown or not _local.has("Muzzle"):

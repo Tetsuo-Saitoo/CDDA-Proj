@@ -2,10 +2,12 @@ extends RefCounted
 ## L3: melee by hand in VR (VrSwing on VrRig.swing) on the mock town with a zombie next to the player. A fast hand
 ## whose fist line meets the zombie sends CDDA's aimed strike for that hand (main / off by controller, left-handed
 ## too) and AimController answers the swing request with the part touched (the head; the body leaves CDDA's pick);
-## one strike per swing (re-arm, gap, one in flight); a confirmed hit buzzes the striking hand once; nothing from a
-## slow hand, a hand off the figure, a creature off the 8 ways, with a menu open, from an untracked hand, the pack
-## hand or the gun hand with a finger on the trigger; a refused queue sends nothing on; a held plank reaches where a
-## fist doesn't, with either end. No XR runtime: the test places the controllers and sets their speed.
+## one strike per swing (re-arm, gap, one in flight until its swing request is answered); a confirmed hit buzzes the
+## striking hand once; nothing from a slow hand, a hand off the figure, a creature off the 8 ways, with a menu open,
+## from an untracked hand, the pack hand, a hand racking the gun or pulling an item in, the gun hand with a finger on
+## the trigger or a hand steadying the other hand's two-handed item; a refused queue sends nothing on; a held plank
+## reaches where a fist doesn't, with either end. No XR runtime: the test places the controllers and sets their
+## speed.
 ## Run by run_tests.gd.
 
 const P := Vector3i(192, 384, 0)       # the mock town's player
@@ -36,6 +38,7 @@ var _reach := 0.0              # from the torso's middle back along _toward to i
 var _head := Vector3.ZERO      # the same for its head
 var _head_reach := 0.0
 var _zdef: IdTables.Def        # the zombie's type: the test gives it a head weak point (as aim_tests does)
+var _req := 500                # ids of the swing requests the test answers
 var _old_wp := {}
 
 
@@ -55,6 +58,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hands()
 	_test_blocked()
 	_test_held_item()
+	_test_steadying()
 	if _zdef != null:
 		_zdef.weakpoints = _old_wp
 	_rig.free()
@@ -186,9 +190,15 @@ func _swing(i: int, speed: float, d := DT) -> void:
 	_rig.swing.update(d)
 
 
-## Slows both hands, lets the gap pass and shows a newer snapshot: the next swing may strike.
+## CDDA's swing request for the last strike arrives and is answered (the kept aim is used up).
+func _answer() -> Dictionary:
+	_req += 1
+	return _aim.on_request({"kind": "swing", "id": _req, "cursor": ZP, "origin": P, "range": 1, "mode": "main"})
+
+
+## The strike in flight is answered, both hands slow and the gap passes: the next swing may strike.
 func _rest() -> void:
-	_world.snapshot.seq += 1
+	_answer()
 	_swing(0, 0.0, VrSwing.GAP_S + 0.01)
 
 
@@ -211,20 +221,24 @@ func _test_fist() -> void:
 	_swing(1, SLOW)
 	_swing(1, FAST)
 	_check.call(_sent.size() == 1, "vr swing: one strike per swing, and none right after it")
-	_world.snapshot.seq += 1
 	_swing(1, SLOW, VrSwing.GAP_S + 0.01)
 	_swing(1, FAST)
-	_check.call(_sent.size() == 2, "vr swing: slowed, the gap passed and a newer snapshot: the next swing strikes")
+	_check.call(_sent.size() == 2, "vr swing: slowed, the gap passed and the swing request answered: the next swing strikes")
+	# the second strike's request isn't answered yet: nobody strikes, and nobody's probe replaces the kept aim
+	var kept: Dictionary = _aim.melee_aim.duplicate()
 	_swing(1, SLOW, VrSwing.GAP_S + 0.01)
 	_swing(1, FAST)
-	var waits := _sent.size() == 2
+	_hand_at_head(_rig.left)
+	_swing(0, FAST)
+	_rig.left.global_position = Vector3(0, -50, 0)
+	var waits: bool = _sent.size() == 2 and not kept.is_empty() and _aim.melee_aim == kept
 	_swing(1, SLOW, 1.0)   # (a frame counts for 1 s at most)
 	_swing(1, SLOW, 1.0)
 	_swing(1, FAST)
-	_check.call(waits and _sent.size() == 3, "vr swing: no newer snapshot: the next strike waits %.1f s for the one in flight"
-			% VrSwing.FLIGHT_S)
-	var body := _aim.on_request({"kind": "swing", "id": 42, "cursor": ZP, "origin": P, "range": 1, "mode": "main"})
-	_check.call(body.get("id") == 42 and body.get("cancel") == true,
+	_check.call(waits and _sent.size() == 3,
+			"vr swing: the swing request not answered yet: no hand strikes or replaces the kept aim for %.1f s" % VrSwing.FLIGHT_S)
+	var body := _answer()
+	_check.call(body.get("cancel") == true,
 			"vr swing: a strike on the body (no weak point there) leaves the part to CDDA (%s)" % [body])
 	_rest()
 
@@ -271,10 +285,17 @@ func _test_blocked() -> void:
 	_rig.pack.hand = 1
 	_swing(1, FAST)
 	_rig.pack.hand = -1
+	_rig._fly_t[1] = 0.05   # a pulled item still flying into this hand
+	_swing(1, FAST)
+	_rig._fly_t[1] = -1.0
+	_rig.gun._rack = {"part": "Slide", "hand": 1, "start": 0.0, "max": 0.0}
+	_swing(1, FAST)
+	_rig.gun._rack = {}
 	_rig.hand_vel[1] = Vector3(NAN, 0, 0)
 	_rig.swing.update(DT)
 	_rig.swing.update(NAN)
-	_check.call(_sent.size() == n, "vr swing: an untracked hand, the hand holding the pack, a bad speed: no strike")
+	_check.call(_sent.size() == n and _rig.gun.rack_hand() == -1,
+			"vr swing: an untracked hand, the hand holding the pack, pulling an item in or racking the gun, a bad speed: no strike")
 	_rig.gun.shown = true
 	_rig.trigger_in[1] = 0.5
 	_swing(1, FAST)
@@ -293,6 +314,37 @@ func _test_blocked() -> void:
 	_hand_at(_rig.right)
 	_swing(1, FAST)   # still fast: the swing that met nothing is still on
 	_check.call(missed and _sent.size() == n + 1, "vr swing: a fast hand off the figure strikes nothing until it meets it")
+	_rest()
+
+
+## The right hand holds the plank (from _test_held_item), now two-handed (a weak character); the left hand grips it
+## too: it steadies, and its fast fist on the zombie strikes nothing (CDDA has both hands on the plank).
+func _test_steadying() -> void:
+	var held: ItemRef = _hands.holding("vr_r").get("item")
+	var p := _hands.proxy("vr_r")
+	if held == null or p == null:
+		_check.call(false, "vr swing: the right hand still holds the plank")
+		return
+	_rig.strength = 3
+	_rig.right.global_position = _torso - _toward * (_reach + 0.25)
+	for k in 40:
+		_rig.update_hands(0.05, true)
+	_hand_at(_rig.left)   # its fist line ends inside the torso, within reach of the plank's grip
+	_rig.press(_rig.left, "grip_click")
+	_rig.update_hands(0.016, true)
+	var steadies := held.two_handed(_world.tables, _rig.strength) and _hands.holding("vr_l").is_empty() \
+			and _rig._supports(0, p.global_transform)
+	var n := _sent.size()
+	_swing(0, FAST)
+	_check.call(steadies and not _rig.swing.can_swing(0) and _sent.size() == n,
+			"vr swing: a hand steadying the other hand's two-handed item strikes nothing (steadies %s, %s)" % [steadies, _sent.slice(n)])
+	_rig.release(_rig.left, "grip_click")
+	_rig.update_hands(0.016, true)
+	_swing(0, SLOW)
+	_swing(0, FAST)
+	_check.call(_rig.swing.can_swing(0) and _sent.size() == n + 1 and _sent.back() == "fp3d_attack_off_aim_DOWN",
+			"vr swing: its grip let go, the same hand strikes as the off hand")
+	_rig.strength = VrRig.STRENGTH
 	_rest()
 
 
