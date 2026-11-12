@@ -1,14 +1,15 @@
 class_name GrabController
 extends Node
 ## Block E6: the mouse's hand, Amnesia-style. In first person the door leaf (Grabbable) or the single item under the
-## pointer (the mouse, or the screen centre while the mouse looks around) on a square you can reach gets an
-## outline and the pointer becomes a hand. Doors: hold `look_at` (LMB) on one and drag; the leaf follows the mouse
-## (Grabbable.drag_mouse) and lets go with the button. Items (with `hands` set): E takes the one you look at into
-## the pack; holding LMB carries it in front of you (the wheel moves it nearer / farther, Shift+wheel turns it),
-## and letting go puts it into the container, onto the surface (it keeps the spot) or onto the burner you point
-## at, through Hands -> ItemActions (one CDDA action each; CDDA decides). Esc while carrying puts it back. Letting
-## go during a flick (the mouse moving fast: FLICK_PX_S over the last FLICK_MS) throws it instead, at the square
-## the pointer is on then (Hands.throw: CDDA's throw, its range and aim).
+## pointer (the mouse, or the screen centre while the mouse looks around) on a square you can reach gets an outline
+## and the pointer becomes a hand. Doors: hold `click` (LMB) on one and drag; the leaf follows the mouse
+## (Grabbable.drag_mouse) and lets go with the button. Items (with `hands` set): E takes the one you look at into the
+## pack, and so does a quick click (let go within CLICK_MS, barely moved); holding LMB carries it in front of you
+## (the wheel moves it nearer / farther, Shift+wheel turns it), and letting go puts it into the container, onto the
+## surface (it keeps the spot) or onto the burner you point at, through Hands -> ItemActions (one CDDA action each;
+## CDDA decides). Esc while carrying puts it back. Letting go during a flick (the mouse moving fast: FLICK_PX_S over
+## the last FLICK_MS) throws it instead, at the square the pointer is on then (Hands.throw: CDDA's throw, its range
+## and aim).
 ## Outside view: no hover, but a press on a door still grabs it. In a live game it also remembers which door
 ## crossed its threshold, so main.gd can answer the "Open where?" / "Close where?" prompt that CDDA's open /
 ## close asks (`want`, `answer_for`).
@@ -24,6 +25,8 @@ const FLICK_MS := 100           # a flick: the mouse's travel over this long bef
 const FLICK_PX_S := 2500.0      # ... at least this fast (pixels a second)
 const MAX_MOTION := 64          # motion samples kept
 const THROW_M := 30.0           # the pointer's ray looks this far for the square to throw at
+const CLICK_MS := 250           # a click on an item: let go this soon after the press ...
+const CLICK_PX := 6.0           # ... with the mouse moved less than this, the wheel untouched: take it (as E)
 
 var world: WorldView
 var look_ray: LookRay
@@ -53,6 +56,9 @@ var _flash := ""
 var _flash_until := 0
 var _flash_bad := false
 var _motion: Array = []       # carrying: [msec, pixels] per mouse motion event, newest last
+## () -> int msec, for tests; not set: Time.get_ticks_msec().
+var clock := Callable()
+var _press_ms := -1           # carrying: when the press that picked it up came; -1 once it can't be a click
 
 
 func _init(w: WorldView) -> void:
@@ -138,10 +144,10 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 		elif not t.is_empty():
 			icon.mode = GrabIcon.HAND
 			if not item_hover.is_empty():
-				text = "%s\n%s take   hold %s carry" % [t["name"], InputActions.key_of(&"use_held"),
-						InputActions.key_of(&"look_at")]
+				text = "%s\n%s or %s take   hold %s carry" % [t["name"], InputActions.key_of(&"use_held"),
+						InputActions.key_of(&"click"), InputActions.key_of(&"click")]
 			else:   # a door leaf or furniture part (drawer, lid)
-				text = "%s\nhold %s and drag" % [t["name"], InputActions.key_of(&"look_at")]
+				text = "%s\nhold %s and drag" % [t["name"], InputActions.key_of(&"click")]
 		else:
 			icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
 	else:
@@ -198,11 +204,11 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 		if event is InputEventMouseMotion and cam != null:
 			grabbed.drag_mouse((event as InputEventMouseMotion).relative, cam.global_basis)
 			return true
-		if event.is_action_released(&"look_at"):
+		if event.is_action_released(&"click"):
 			release()
 			return true
 		return false
-	if not InputActions.pressed(event, &"look_at"):
+	if not InputActions.pressed(event, &"click"):
 		return false
 	if hands != null:
 		if cam == null:
@@ -217,6 +223,7 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 			carry_m = clampf(float(t["dist"]), CARRY_MIN_M + 0.1, 1.2)
 			item_hover = {}
 			_motion.clear()
+			_press_ms = now_ms()
 		return true
 	var p := pick(cam, pt)
 	if p.is_empty():
@@ -228,22 +235,32 @@ func handle_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 
 
 func _carry_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
-	var now := Time.get_ticks_msec()
+	var now := now_ms()
 	if event is InputEventMouseMotion:   # the look still turns: only noted, for a flick
 		_motion.append([now, (event as InputEventMouseMotion).relative.length()])
 		if _motion.size() > MAX_MOTION:
 			_motion.pop_front()
 		return false
-	if event.is_action_released(&"look_at"):
+	if event.is_action_released(&"click"):
 		var sq: Variant = throw_square(cam, pt) if flick_speed(now) >= FLICK_PX_S else null
+		var quick := _press_ms >= 0 and now - _press_ms <= CLICK_MS and _moved_px() < CLICK_PX
 		_motion.clear()
-		if sq is Vector3i:
+		_press_ms = -1
+		var t := hands.holding("mouse")
+		if quick and t.get("item") is ItemRef and not (t["item"] as ItemRef).carried:
+			hands.cancel("mouse")   # a click, not a carry: back where it lay, then taken as E takes it
+			if not hands.take("mouse", t, "pack"):
+				flash("You can't take that now.", true)
+		elif sq is Vector3i:
 			if hands.throw("mouse", sq) == "":
 				flash("You can't throw that.", true)
 		else:
 			hands.release("mouse", drop)
 		drop = {}
 		return true
+	if InputActions.pressed(event, &"carry_farther") or InputActions.pressed(event, &"carry_closer") \
+			or InputActions.pressed(event, &"carry_turn_left") or InputActions.pressed(event, &"carry_turn_right"):
+		_press_ms = -1   # moved on purpose: letting go puts it down
 	if InputActions.pressed(event, &"carry_farther"):
 		carry_m = minf(carry_m + CARRY_STEP_M, CARRY_MAX_M)
 	elif InputActions.pressed(event, &"carry_closer"):
@@ -256,9 +273,22 @@ func _carry_event(event: InputEvent, cam: Camera3D, pt: Vector2) -> bool:
 			and (event as InputEventKey).physical_keycode == KEY_ESCAPE:
 		hands.cancel("mouse")
 		drop = {}
-	elif not InputActions.pressed(event, &"look_at"):
+	elif not InputActions.pressed(event, &"click"):
 		return false
 	return true
+
+
+## Pixels the mouse moved since the press (the motion kept while carrying).
+func _moved_px() -> float:
+	var px := 0.0
+	for m: Array in _motion:
+		px += float(m[1])
+	return px
+
+
+## The time in msec; tests set `clock`.
+func now_ms() -> int:
+	return int(clock.call()) if clock.is_valid() else Time.get_ticks_msec()
 
 
 ## How fast the mouse moved over the last FLICK_MS before `now` (pixels a second).

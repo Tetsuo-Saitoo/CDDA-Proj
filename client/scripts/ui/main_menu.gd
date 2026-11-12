@@ -1,7 +1,8 @@
 class_name MainMenu
 extends PanelContainer
 ## The live game's main menu (CDDA's own main menu, drawn by the client): New game (new or existing world,
-## custom or random character), Load game (world, then character), Quit. It only picks; main.gd starts the
+## custom or random character), Load game (world, then character; a character can be deleted
+## there after a confirm naming it), Quit. It only picks; main.gd starts the
 ## game through LiveSession. World and save names come from CddaSim.list_worlds / list_saves (the folders
 ## under the user dir), so they are shown as plain text and a new world may not reuse an existing name (the
 ## bridge would replace that world). Plain Controls, so it can later sit on a world-space panel in VR.
@@ -24,12 +25,20 @@ var worlds := PackedStringArray()
 var _taken := {}   # lower-case name -> true, every existing world
 ## world -> PackedStringArray of saves; Callable(world) -> PackedStringArray.
 var saves_of := Callable()
+## Deletes a character: Callable(world, save) -> String, "" when done, else why (main.gd: LiveSession.delete_save).
+## Unset: the Load page has no Delete button.
+var deleter := Callable()
+## Callable() -> PackedStringArray: the worlds again after a delete (the last character takes its world along).
+var relist := Callable()
+## {world, save, last} while the "delete" page asks to confirm.
+var pending_delete := {}
 var page := ""
 ## Shows the "Test range" entry (main.gd: only when the bridge has start_test_range).
 var test_range := false
 var message := ""
 var _box: VBoxContainer
 var _msg: Label
+var _msg_ok := false
 var _world_list: ItemList
 var _save_list: ItemList
 var _world_edit: LineEdit
@@ -54,6 +63,12 @@ func _init() -> void:
 
 ## Fills the menu: `world_names` from list_worlds, `saves` a Callable(world) -> PackedStringArray.
 func setup(world_names: PackedStringArray, saves: Callable) -> void:
+	_set_worlds(world_names)
+	saves_of = saves
+	show_page("main")
+
+
+func _set_worlds(world_names: PackedStringArray) -> void:
 	worlds = PackedStringArray()
 	_taken = {}
 	for w in world_names:
@@ -61,8 +76,6 @@ func setup(world_names: PackedStringArray, saves: Callable) -> void:
 			worlds.append(w)
 		if _taken.size() < MAX_KNOWN:
 			_taken[w.to_lower()] = true
-	saves_of = saves
-	show_page("main")
 
 
 ## A world of this name exists, in any case ("world" is taken when "World" exists: folders may not tell them
@@ -164,18 +177,38 @@ func show_page(p: String) -> void:
 				_world_list.select(0)
 				_fill_saves()
 			_button("Load", start_load)
+			if deleter.is_valid():
+				_button("Delete character...", ask_delete)
 			_button("Back", func() -> void: show_page("main"))
+		"delete":
+			title.text = "Delete character"
+			var l := Label.new()
+			l.name = "Confirm"
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size.x = 420
+			l.text = delete_text(pending_delete)
+			_box.add_child(l)
+			var del := _button("Delete %s" % shown(pending_delete.get("save", "")), confirm_delete)
+			del.name = "DeleteButton"
+			del.add_theme_color_override("font_color", Color(1.0, 0.45, 0.4))
+			var keep := _button("Keep it", cancel_delete)
+			keep.name = "KeepButton"
+			(func() -> void:   # Enter keeps the character
+				if is_instance_valid(keep) and keep.is_inside_tree():
+					keep.grab_focus()).call_deferred()
 	_msg = Label.new()
-	_msg.add_theme_color_override("font_color", Color(1.0, 0.5, 0.45))
 	_msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_msg.text = message
 	_box.add_child(_msg)
+	set_message(message, _msg_ok)
 
 
-func set_message(m: String) -> void:
+## Red for a problem, green when `ok` (a delete done).
+func set_message(m: String, ok := false) -> void:
 	message = m
+	_msg_ok = ok
 	if _msg != null:
 		_msg.text = m
+		_msg.add_theme_color_override("font_color", Color(0.55, 0.9, 0.55) if ok else Color(1.0, 0.5, 0.45))
 
 
 ## "New game" page: emits new_game if the choice is valid; true if it did.
@@ -215,6 +248,80 @@ func start_load() -> bool:
 	set_message("")
 	load_game.emit(world, save)
 	return true
+
+
+## Load page: asks to confirm deleting the selected character (the "delete" page); true if it asks.
+func ask_delete() -> bool:
+	var world := _selected(_world_list, worlds)
+	var saves := _saves(world)
+	var save := _selected(_save_list, saves)
+	if not deleter.is_valid() or world.is_empty() or save.is_empty():
+		set_message("Pick a world and a character.")
+		return false
+	set_message("")
+	pending_delete = {"world": world, "save": save, "last": saves.size() == 1}
+	show_page("delete")
+	return true
+
+
+## The confirm's text, naming the character and its world; says when the world goes too.
+static func delete_text(p: Dictionary) -> String:
+	var save := shown(p.get("save", ""))
+	var world := shown(p.get("world", ""))
+	var t := "Delete the character %s from the world %s?
+Their save is deleted for good: this can't be undone." % [save, world]
+	if p.get("last", false):
+		t += "
+%s is the last character in %s, so the world and its map are deleted too." % [save, world]
+	return t
+
+
+## A name as the confirm shows it: one plain line (hidden and control characters out), capped.
+static func shown(n: Variant) -> String:
+	return Snapshot.plain_text(n, 64)
+
+
+## "Delete" on the confirm: deletes the character asked about if it is still listed, lists the worlds again and
+## goes back to the Load page (the main page when no world is left). True when it was deleted.
+func confirm_delete() -> bool:
+	var p := pending_delete
+	pending_delete = {}
+	var world: String = p.get("world", "")
+	var save: String = p.get("save", "")
+	if not deleter.is_valid() or world.is_empty() or save.is_empty():
+		_back_to_load(world)
+		return false
+	if not world in worlds or not save in _saves(world):   # gone since the confirm opened
+		set_message("%s is no longer in %s." % [shown(save), shown(world)])
+		_back_to_load(world)
+		return false
+	var err := LiveSession.delete_reply(deleter.call(world, save))
+	if relist.is_valid():
+		var v: Variant = relist.call()
+		if v is PackedStringArray:
+			_set_worlds(v)
+	if not err.is_empty():
+		set_message("Couldn't delete %s: %s" % [shown(save), err])
+	elif world in worlds:
+		set_message("Deleted %s." % shown(save), true)
+	else:
+		set_message("Deleted %s, and the world %s with them." % [shown(save), shown(world)], true)
+	_back_to_load(world)
+	return err.is_empty()
+
+
+## "Keep it" on the confirm.
+func cancel_delete() -> void:
+	var world: String = pending_delete.get("world", "")
+	pending_delete = {}
+	set_message("")
+	_back_to_load(world)
+
+
+func _back_to_load(world: String) -> void:
+	show_page("load" if not worlds.is_empty() else "main")
+	if page == "load":
+		select_world(world)
 
 
 func select_world(world: String) -> bool:

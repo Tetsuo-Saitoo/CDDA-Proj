@@ -96,6 +96,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 func _job_catalogs(root: Node, data: Variant, tables: IdTables) -> void:
 	print("meshing job catalogs")
 	var w := WorldView.new()
+	w.mesh_on_worker = true   # also headless: only lookups on this thread while the worker meshes
 	w.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
 	root.add_child(w)
 	w.set_id_tables(tables)

@@ -1,7 +1,7 @@
 class_name HudView
 extends Control
 ## G1: the flat-screen view of HudData. Left edge, middle: the body (one bar per main body part, coloured by
-## level) and the needs CDDA has words for, then the player's effects (coloured by rating), the message feed under
+## level), the move mode (walking, running ...) and the needs CDDA has words for, then the player's effects (coloured by rating), the message feed under
 ## them (the look panel keeps the bottom left); top centre: warnings, worst first, pulsing while one is
 ## bad; top right: an orange marker while any testing cheat is on. It only draws what HudData decided (VR draws the same data on the wrist, vr/). All text is plain Label
 ## text or draw_string, never BBCode.
@@ -22,7 +22,7 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_on_changed(PackedStringArray(["body", "needs", "effects", "messages", "warnings", "cheats"]))
+		_on_changed(PackedStringArray(["body", "needs", "effects", "move", "messages", "warnings", "cheats"]))
 
 var feed: Label
 var warn: Label
@@ -105,6 +105,13 @@ func need_lines() -> PackedStringArray:
 	return out
 
 
+## [text, level] of the move mode line (walking, running, crouching, prone), [] when unknown.
+func move_line() -> Array:
+	if data == null or data.move.is_empty():
+		return []
+	return [data.move["text"], data.move["level"]]
+
+
 ## [text, level] per effect line shown (at most EFFECT_LINES; the last says how many more when cut).
 func effect_lines() -> Array:
 	var out: Array = []
@@ -150,7 +157,7 @@ func _on_changed(parts: PackedStringArray) -> void:
 		warn.add_theme_color_override("font_color", HudData.level_color(worst))
 	if "cheats" in parts:
 		cheat_mark.text = cheat_text(data.cheats)
-	if "body" in parts or "needs" in parts or "effects" in parts:
+	if "body" in parts or "needs" in parts or "effects" in parts or "move" in parts:
 		_body.queue_redraw()
 
 
@@ -169,6 +176,13 @@ func _draw_body() -> void:
 		y += ROW_H
 	var x := 215.0
 	var ny := 0.0
+	var mv := move_line()   # first in the needs column, coloured by its level
+	if not mv.is_empty():
+		_body.draw_string_outline(font, Vector2(x, ROW_H - 3), mv[0], HORIZONTAL_ALIGNMENT_LEFT, 105, FONT_SIZE - 2, 3,
+				Color.BLACK)
+		_body.draw_string(font, Vector2(x, ROW_H - 3), mv[0], HORIZONTAL_ALIGNMENT_LEFT, 105, FONT_SIZE - 2,
+				HudData.level_color(mv[1]))
+		ny += ROW_H
 	for line in need_lines():
 		_body.draw_string_outline(font, Vector2(x, ny + ROW_H - 3), line, HORIZONTAL_ALIGNMENT_LEFT, 105, FONT_SIZE - 2, 3,
 				Color.BLACK)

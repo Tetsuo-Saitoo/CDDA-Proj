@@ -24,6 +24,8 @@ extends Node3D
 const STEP_REPEAT_MS := 250
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
+## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
+const PANEL_UI_SCALE := 1.35
 ## Camera-relative move: octant 0 = east, counting clockwise as seen from above (CDDA's y points south).
 const OCT_ACTIONS := ["RIGHT", "RIGHTDOWN", "DOWN", "LEFTDOWN", "LEFT", "LEFTUP", "UP", "RIGHTUP"]
 const OCT_STEPS := [Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0),
@@ -56,6 +58,8 @@ var aim: AimController           # FPS aiming for target requests: crosshair, 3D
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
 var item_actions: ItemActions     # one-item take / put / drop for mouse and VR hands (E6 / L2 / L8)
 var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
+var world_collision: WorldCollision   # E2 item physics: floor / wall / furniture boxes near the player
+var item_bodies: ItemBodies           # E2 item physics: the items near the player as physics bodies
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
@@ -79,6 +83,7 @@ var _save_asked := false   # the player's save (F5, closing the window), not an 
 const SAVE_ON_QUIT_MS := 20000
 var snapshot_path := ""
 var status := ""
+var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var _args := {}
 var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
@@ -171,6 +176,20 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
+	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
+	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
+	# only the collision is built. Only with --item-physics until its main-thread cost in crowded places (stocked
+	# stores) is shown to be low enough.
+	if _args.has("item-physics"):
+		world_collision = WorldCollision.new(world)
+		world_collision.centre = _reach_square
+		add_child(world_collision)
+		item_bodies = ItemBodies.new(world, world_collision)
+		item_bodies.centre = _reach_square
+		item_bodies.held = item_actions.hidden   # items being taken stay static
+		add_child(item_bodies)
+		hands.bodies = item_bodies
 	pour.actions = item_actions
 	pour.held = _held_liquid
 	pour.target = _pour_target
@@ -260,6 +279,8 @@ func _reload() -> void:
 ## Mock mode: the hands take, put and drop items on the client's own copy of the snapshot (MockItems), so E6 can
 ## be tried without the bridge; every pile gets item handles first.
 func _use_mock_items(snap: Snapshot) -> void:
+	if inspect != null:
+		inspect.stop_batch()   # its items were the old backend's
 	item_actions.clear()
 	mock_items = MockItems.new(snap, world.tables)
 	mock_items.seed()
@@ -432,12 +453,16 @@ func _start_vr() -> void:
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
 	vr.cheats_backend = live   # K7: the VR menu's Cheats page (null in the mock; hidden until LiveSession has cheats())
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
+	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
+	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
+	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and live.queue_action(a)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
 	camera.set_process_unhandled_input(false)
 	fp.set_process_unhandled_input(false)
-	world.coords.origin_shifted.connect(func(d: Vector3) -> void: vr.position += d)
+	world.coords.origin_shifted.connect(vr.shift)   # the rig, its open pack and pulled copies' starts
 	get_tree().auto_accept_quit = false   # closing the window goes through _quit
 	if xr.has_signal("session_stopping"):
 		xr.connect("session_stopping", _save_and_quit)
@@ -457,7 +482,22 @@ func _start_vr() -> void:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
 		world.set_view_z_max(world.coords.z_max)
+	# L4: CDDA's prompts on the VR panel (laser clicks, the stick's ui_* actions; RequestUI.as_key), and with them
+	# the menus opened beside them later (the main menu: _show_main_menu adds it next to request_ui).
+	var panel := panel_root(vr)
+	if panel != null:
+		request_ui.reparent(panel, false)
+		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
+		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 	print("VR on: %s" % vr.settings)
+
+
+## The VR panel's root Control (VrPanel.root, a full-rect Control in its SubViewport), or null while `rig` has no
+## panel (read by name: older rigs have none).
+static func panel_root(rig: Object) -> Control:
+	var p: Variant = rig.get("panel") if is_instance_valid(rig) else null
+	var r: Variant = (p as Object).get("root") if p is Object and is_instance_valid(p) else null
+	return r as Control if r is Control and is_instance_valid(r) else null
 
 
 func _view() -> Node3D:
@@ -487,10 +527,16 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
 	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
 	live.range_done.connect(cheat_panel.on_range_done)
+	live.range_done.connect(func(id: int, err: String) -> void:
+		if _teleport_ops.erase(id):
+			status = "teleport: done" if err.is_empty() else "teleport: " + err)
+	cheat_panel.teleport = func() -> int:   # the F1 entry: the square at the screen's centre
+		return _teleport(get_viewport().get_visible_rect().size / 2.0)
 	live.id_tables_ready.connect(func(t: IdTables) -> void: cheat_panel.tables = t)
 	cheat_panel.player_square = func() -> Variant:
 		return world.snapshot.player_pos if world.snapshot != null else null
@@ -561,6 +607,9 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
 	request_ui.get_parent().add_child(center)
+	if LiveSession.delete_save_available():   # Load page: delete a character (and its world once empty)
+		main_menu.deleter = func(w: String, sv: String) -> String: return live.delete_save(user_dir, w, sv, true)
+	main_menu.relist = func() -> PackedStringArray: return LiveSession.list_worlds(user_dir)
 	main_menu.setup(LiveSession.list_worlds(user_dir),
 			func(w: String) -> PackedStringArray: return LiveSession.list_saves(user_dir, w))
 	main_menu.new_game.connect(func(w: String, fresh: bool, chargen: bool, setup: bool) -> void:
@@ -793,7 +842,8 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"level_up"):
 		act = "LEVEL_UP"
 	elif InputActions.pressed(event, &"use_held"):
-		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons)
+		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
+		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
@@ -818,21 +868,12 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## Left click: what is under the mouse (the screen centre while the mouse looks around), with a line from
-## the player to it, its distance and what the snapshot says is there.
+## Look at (L / middle click): what is under the mouse (the screen centre while the mouse looks around), with a
+## line from the player to it, its distance and what the snapshot says is there. The same key again closes it.
 func _look_at_screen(pos: Vector2) -> Dictionary:
 	if world.snapshot == null:
 		return {}
-	if look_ray == null:
-		look_ray = LookRay.new(world)
-	var cam := get_viewport().get_camera_3d()
-	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		pos = get_viewport().get_visible_rect().size / 2.0
-	var v := eyes_view()
-	var dir := cam.project_ray_normal(pos)
-	var o := cam.project_ray_origin(pos)
-	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
-	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
+	var r := _cast_screen(pos)
 	_clear_look()
 	if not r["hit"]:
 		look_panel.text = "look: nothing there"
@@ -852,6 +893,45 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
 	return r
+
+
+## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
+## ray's direction. {hit: false} without a snapshot or camera.
+func _cast_screen(pos: Vector2) -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	if world.snapshot == null or cam == null:
+		return {"hit": false}
+	if look_ray == null:
+		look_ray = LookRay.new(world)
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		pos = get_viewport().get_visible_rect().size / 2.0
+	var v := eyes_view()
+	var dir := cam.project_ray_normal(pos)
+	var o := cam.project_ray_origin(pos)
+	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
+	r["dir"] = dir
+	return r
+
+
+## Cheat: teleport to the square under the crosshair (or the mouse, `pos`), through walls and between floors
+## (TeleportAim picks the square, the bridge moves you). The op id (range_done says how it went), 0 when not sent.
+func _teleport(pos: Vector2) -> int:
+	if live == null or not live.can_teleport():
+		status = "teleport: needs a running game with cheats allowed (F1 > HUD > Debug: cheats page)"
+		return 0
+	var r := _cast_screen(pos)
+	var sq: Variant = TeleportAim.square(r, r.get("dir", Vector3.ZERO), world.coords.world_to_ms)
+	if not sq is Vector3i:
+		status = "teleport: point at a square in the loaded area"
+		return 0
+	var id := live.cheat_teleport(sq)
+	status = "teleport: asked for" if id > 0 else "teleport: not sent (too many waiting)"
+	if id > 0:
+		if _teleport_ops.size() >= 32:
+			_teleport_ops.clear()
+		_teleport_ops[id] = true
+	return id
 
 
 ## Where the look line starts: the chest (in first person a line from the eyes would run straight away from the view).
@@ -1274,8 +1354,8 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
-			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
+	var out := "%s look  %s look at (again: close)  %s take, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+			k.call(&"look"), k.call(&"look_at"), k.call(&"click"), k.call(&"use_held")]
 	if _fp_active():
 		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
@@ -1344,11 +1424,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		view_cam.zoom(-1 if wheel.button_index == MOUSE_BUTTON_WHEEL_UP else 1)   # top-down: the wheel zooms
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
-		var mb := event as InputEventMouseButton
-		var hit := _look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
-		if _fp_active() and hit.get("hit", false):   # clicking stairs in first person takes them
-			use_stair(StairUse.find(world, hit["square"], _stair_z()))
+		if _look_line != null or (look_panel != null and not look_panel.text.is_empty()):
+			_clear_look()   # the same key again closes it
+		else:
+			var mb := event as InputEventMouseButton
+			_look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
 		return
+	if vr == null and _fp_active() and InputActions.pressed(event, &"click"):
+		# (doors and items under the pointer went to grab above, a target prompt to aim)
+		var mb := event as InputEventMouseButton
+		var hit := _cast_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		var st: Dictionary = StairUse.find(world, hit["square"], _stair_z()) if hit.get("hit", false) else {}
+		if not st.is_empty():   # clicking stairs in first person takes them
+			use_stair(st)
+		return   # a click on nothing does nothing (E uses what you hold on what you face)
 	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()
 		return
@@ -1365,6 +1454,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 	if live != null and InputActions.pressed(event, &"save_game"):
 		_save_game()
+		return
+	if live != null and InputActions.pressed(event, &"cheat_teleport"):
+		_teleport(get_viewport().get_mouse_position())
 		return
 	if live != null and _live_action(event):
 		return

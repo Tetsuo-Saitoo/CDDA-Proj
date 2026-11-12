@@ -31,6 +31,8 @@ class CddaSim : public godot::RefCounted
                                   const godot::String &world, const godot::String &save );
         godot::PackedStringArray list_worlds( const godot::String &user_dir ) const;
         godot::PackedStringArray list_saves( const godot::String &user_dir, const godot::String &world ) const;
+        godot::String delete_save( const godot::String &user_dir, const godot::String &world,
+                                   const godot::String &save, bool delete_empty_world );
         void stop();
         godot::String get_state() const;
         godot::String get_error() const;
@@ -76,6 +78,8 @@ class CddaSim : public godot::RefCounted
         int64_t range_set_ai_frozen( bool on );
         int64_t range_heal();
         godot::Dictionary get_range_info() const;
+        // The teleport cheat, in any game while cheats are allowed (contracts/bridge_api.md "Cheats").
+        int64_t cheat_teleport( const godot::Vector3i &pos );
 
         int64_t match_recipes( const godot::Dictionary &container );
         godot::String take_query_result( int64_t id );
