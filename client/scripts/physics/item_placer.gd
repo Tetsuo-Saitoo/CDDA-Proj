@@ -10,10 +10,13 @@ extends Node
 ##   without a floor makes CDDA drop it a level, which the next snapshot shows.
 ## CDDA answers each op with an `item_result` event (the `tag` sent with it: done or refused with its reason,
 ## contracts/bridge_api.md). A refused or unanswered place puts the body back where CDDA has the item (snap back); a
-## refused spot only means the pose isn't kept.
+## refused spot only means the pose isn't kept. Only `amount` decides; the reason is for showing (`refused`).
+## CDDA runs item actions only while its clock runs: an op counts as unanswered only after RESULT_MS and
+## RESULT_TURNS game turns (Snapshot.turn), so a pause, or a turn-based game waiting for the player, never times one
+## out.
 ## Limits kept here so nothing is sent that the bridge would refuse: the item's square within FROM_SQUARES of the
-## player on its level; one op every GAP_MS, one place per item every PLACE_GAP_MS, MAX_FLIGHT in flight, MAX_WANT
-## waiting; MAX_TRIES per item, then it is put back. Nothing is sent while a body moves.
+## player on its level; one op every GAP_MS, one place per item per game turn (and PLACE_GAP_MS apart), MAX_FLIGHT
+## in flight, MAX_WANT waiting; MAX_TRIES per item, then it is put back. Nothing is sent while a body moves.
 ## `backend` (main.gd: the live session) is duck-typed: place_item(uid, type, pos, to, spot, yaw, side, tag) and
 ## spot_item(uid, type, pos, spot, yaw, side, tag), both -> bool (taken). Without them nothing is sent and the
 ## bodies behave as before. Events are checked (kinds, numbers, capped text): the bridge's data is not trusted.
@@ -27,10 +30,11 @@ const MAX_TOLD := 256         # poses remembered as told
 const MAX_EVENTS := 4096      # events looked at per batch (the bridge queue's cap)
 const MAX_REASON := 200       # characters kept of a refusal's reason
 const MAX_TAG := 2147483647
-const RESULT_MS := 5000       # an op without a result is given up after this
+const RESULT_MS := 5000       # an op without a result is given up after this ...
+const RESULT_TURNS := 2       # ... once the game's clock has also run this many turns since it went out
 const EXPECT_MS := 3000       # after a place was done, the snapshot shows the new square within this
 const GAP_MS := 250           # between two ops (a few per second is plenty)
-const PLACE_GAP_MS := 1100    # between two places of one item (one per turn; a turn is a second at 1x)
+const PLACE_GAP_MS := 1100    # between two places of one item (CDDA takes one per turn; a turn is a second at 1x)
 const MAX_TRIES := 3          # ops for one item that got no answer or weren't taken, then it is put back
 const RETRY_MS := 1000        # an op the backend didn't take (the game is busy) is tried again after this
 const SPOT_EPS := 0.03        # a spot this near the one told is the same
@@ -54,11 +58,12 @@ var places := 0           # place ops sent
 var refusals := 0         # ops CDDA refused
 var put_backs := 0        # bodies put back where CDDA has the item
 var _want := {}           # uid -> tries used: came to rest somewhere new, to be told
-var _flight := {}         # tag -> {uid, op, to, pose, ms}
+var _flight := {}         # tag -> {uid, op, to, pose, ms, turn}
 var _by_uid := {}         # uid -> its tag in flight
 var _expect := {}         # uid -> [square, ms]: a place was done, waiting for the snapshot to show it there
 var _told := {}           # uid -> [square, spot, yaw, side]: the pose CDDA last took
-var _placed_ms := {}      # uid -> when its last place went out
+var _placed_ms := {}      # uid -> when its last place went out ...
+var _placed_turn := {}    # ... and the game turn it went out on
 var _retry_ms := {}       # uid -> not before this (an op wasn't taken)
 var _tag := 0
 var _last_ms := -GAP_MS
@@ -130,6 +135,7 @@ func clear() -> void:
 	_expect.clear()
 	_told.clear()
 	_placed_ms.clear()
+	_placed_turn.clear()
 	_retry_ms.clear()
 
 
@@ -171,8 +177,8 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if to == cdda:   # lying on another level over or under its own square: not a move CDDA makes
 		_put_back(uid)
 		return false
-	if now - int(_placed_ms.get(uid, -PLACE_GAP_MS)) < PLACE_GAP_MS:
-		return false
+	if now - int(_placed_ms.get(uid, -PLACE_GAP_MS)) < PLACE_GAP_MS or _turn() <= int(_placed_turn.get(uid, -1)):
+		return false   # CDDA moves an item once a turn
 	if not bodies.transit(uid, true):
 		_put_back(uid)
 		return false
@@ -182,6 +188,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if not _send(uid, "place", args, to, rest if last else {}, now):
 		return false
 	_placed_ms[uid] = now
+	_placed_turn[uid] = _turn()
 	return true
 
 
@@ -197,7 +204,7 @@ func _send(uid: int, op: String, args: Array, to: Vector3i, pose: Dictionary, no
 		_retry_ms[uid] = now + RETRY_MS
 		_tried(uid)
 		return false
-	_flight[_tag] = {"uid": uid, "op": op, "to": to, "pose": pose, "ms": now}
+	_flight[_tag] = {"uid": uid, "op": op, "to": to, "pose": pose, "ms": now, "turn": _turn()}
 	_by_uid[uid] = _tag
 	if op == "spot":
 		spots += 1
@@ -210,6 +217,8 @@ func _send(uid: int, op: String, args: Array, to: Vector3i, pose: Dictionary, no
 func _done(f: Dictionary) -> void:
 	var uid: int = f["uid"]
 	var pose: Dictionary = f["pose"]
+	if not _want.has(uid):
+		return   # dropped while its op was in flight (its body went): nothing more to do for it
 	_want[uid] = 0
 	if not pose.is_empty():
 		if _told.size() >= MAX_TOLD and not _told.has(uid):
@@ -232,11 +241,12 @@ func _refused(f: Dictionary, reason: String) -> void:
 	refused.emit(uid, reason)
 
 
-## Ops in flight longer than RESULT_MS got no answer: a try used.
+## Ops in flight longer than RESULT_MS, with the game's clock RESULT_TURNS on, got no answer: a try used.
 func _expire(now: int) -> void:
+	var turn := _turn()
 	for tag: int in _flight.keys():
 		var f: Dictionary = _flight[tag]
-		if now - int(f["ms"]) >= RESULT_MS:
+		if now - int(f["ms"]) >= RESULT_MS and turn - int(f["turn"]) >= RESULT_TURNS:
 			_flight.erase(tag)
 			_by_uid.erase(f["uid"])
 			_tried(f["uid"])
@@ -271,6 +281,7 @@ func _drop(uid: int) -> void:
 	_want.erase(uid)
 	_expect.erase(uid)
 	_placed_ms.erase(uid)
+	_placed_turn.erase(uid)
 	_retry_ms.erase(uid)
 	if is_instance_valid(bodies):
 		bodies.transit(uid, false)
@@ -290,6 +301,12 @@ static func _int(v: Variant) -> int:
 	if v is float and is_finite(v) and absf(v) <= float(MAX_TAG):
 		return int(v)
 	return 0
+
+
+## The game turn the world's snapshot shows (0 without one).
+func _turn() -> int:
+	var snap := bodies.world.snapshot if is_instance_valid(bodies) and bodies.world != null else null
+	return snap.turn if snap != null else 0
 
 
 func _now() -> int:

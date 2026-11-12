@@ -695,8 +695,8 @@ func _rest_at(uid: int, sq: Vector3i, spot: Vector2, rot := Basis.IDENTITY) -> v
 	rb.sleeping_state_changed.emit()
 
 
-## The snapshot now has item `uid` on square `to` (in submap SM), as CDDA's place leaves it.
-func _cdda_moves(uid: int, to: Vector3i) -> void:
+## The snapshot now has item `uid` on square `to` (in submap SM), as CDDA's place leaves it, `turns` game turns on.
+func _cdda_moves(uid: int, to: Vector3i, turns := 1) -> void:
 	var sm: Snapshot.Submap = _world.snapshot.submaps[SM]
 	var hs := sm.handles
 	for k in range(0, hs.size() - ItemBodies.HS + 1, ItemBodies.HS):
@@ -704,6 +704,7 @@ func _cdda_moves(uid: int, to: Vector3i) -> void:
 			hs[k] = _tile(to)
 	sm.handles = hs
 	_world.snapshot.seq += 1
+	_world.snapshot.turn += turns
 	_bodies.update()
 
 
@@ -806,12 +807,14 @@ func _test_placer() -> void:
 	var step1: bool = op.get("op") == "place" and op.get("pos") == a and op.get("to") == PILE and op.get("spot") == Vector2(-1, -1) \
 			and _bodies._transit.has(x)
 	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
-	_cdda_moves(x, PILE)
+	_cdda_moves(x, PILE, 0)   # the snapshot shows it there, in the same game turn
 	var kept: bool = _bodies.body_of(x) == rx and _bodies.square_of(x) == PILE and _bodies.rest_of(x).get("square") == b
 	_ms += ItemPlacer.GAP_MS
 	placer.update()
-	var too_soon := fake.ops.size() == 4
-	_ms += ItemPlacer.PLACE_GAP_MS
+	_ms += ItemPlacer.PLACE_GAP_MS * 3
+	placer.update()
+	var too_soon := fake.ops.size() == 4   # CDDA moves an item once a turn: the turn hasn't passed (a pause, the player's turn)
+	_world.snapshot.turn += 1
 	placer.update()
 	op = fake.ops[-1]
 	var step2: bool = fake.ops.size() == 5 and op.get("pos") == PILE and op.get("to") == b \
@@ -822,7 +825,7 @@ func _test_placer() -> void:
 	placer.update()
 	_check.call(step1 and kept and too_soon and step2 and placer.waiting() == 0 and _bodies.square_of(x) == b
 			and _bodies.body_of(x) == rx and not _bodies._transit.has(x) and placer.places == 3,
-			"item placer: two squares away: one place a turn, square by square, the body lying still meanwhile (%s %s %s %s)"
+			"item placer: two squares away: one place per game turn, square by square, the body lying still meanwhile (%s %s %s %s)"
 			% [step1, kept, too_soon, step2])
 	# a refused place: the body goes back where CDDA has the item
 	var ry := _bodies.body_of(y)
@@ -838,17 +841,26 @@ func _test_placer() -> void:
 			and back != null and back != ry and _bodies.square_of(y) == E and _bodies.rest_of(y).get("square") == E
 			and placer.waiting() == 0 and refusals[-1] == [y, "There's no room."],
 			"item placer: a refused place: the body is back where CDDA has the item")
-	# no answer: tried MAX_TRIES times, then put back
+	# no answer: nothing is given up while the game's clock stands (a pause); then MAX_TRIES tries and it is put back
 	var sent := fake.ops.size()
 	_rest_at(y, a, Vector2(0.5, 0.5))
+	_ms += ItemPlacer.PLACE_GAP_MS
+	_world.snapshot.turn += 1
+	placer.update()
+	_ms += ItemPlacer.RESULT_MS * 3
+	placer.update()
+	_check.call(fake.ops.size() == sent + 1 and placer.waiting() == 1 and placer.put_backs == 1 and _bodies._transit.has(y),
+			"item placer: no answer while the game's clock stands: the op stays in flight, nothing is put back")
 	for k in ItemPlacer.MAX_TRIES + 2:
+		_world.snapshot.turn += ItemPlacer.RESULT_TURNS
 		_ms += ItemPlacer.RESULT_MS + ItemPlacer.PLACE_GAP_MS
 		placer.update()
 	_snap.seq += 1
 	_bodies.update()
 	_check.call(fake.ops.size() == sent + ItemPlacer.MAX_TRIES and placer.put_backs == 2 and placer.waiting() == 0
 			and _bodies.rest_of(y).get("square") == E,
-			"item placer: no answer %d times: the body is put back (%d sent)" % [ItemPlacer.MAX_TRIES, fake.ops.size() - sent])
+			"item placer: no answer %d times with the clock running: the body is put back (%d sent)"
+			% [ItemPlacer.MAX_TRIES, fake.ops.size() - sent])
 	# the game is busy (the op isn't taken): tried again later, then a spot is just forgotten
 	sent = fake.ops.size()
 	fake.take = false
@@ -911,9 +923,26 @@ func _test_placer() -> void:
 	_bodies.clock = Callable()
 	_check.call(pending and placer.waiting() == 0 and fake.ops.size() == sent,
 			"item placer: a body a hand let go: nothing sent before CDDA's drop lands; a refused drop: nothing at all")
-	_rest_at(x, b, Vector2(0.5, 0.5))
+	# a result for an item that was dropped meanwhile (a hand took it: its body went) doesn't bring it back
+	_rest_at(x, b, Vector2(0.4, 0.6))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	op = fake.ops[-1]
+	var asked: bool = op.get("op") == "spot" and op.get("uid") == x
+	_bodies.hold(x)
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var dropped := placer.waiting() == 0
+	placer.on_events([_result(x, int(op.get("tag", 0)), true)])
+	_check.call(asked and dropped and placer.waiting() == 0 and placer._flight.is_empty(),
+			"item placer: a result for an item no longer waiting (a hand took it) doesn't put it back on the list")
+	_bodies.unhold(x)
+	_snap.seq += 1
+	_bodies.update()
+	_rest_at(y, E, Vector2(0.2, 0.2))
+	var listed := placer.waiting() == 1
 	placer.clear()
-	_check.call(placer.waiting() == 0 and placer._flight.is_empty(), "item placer: clear forgets everything")
+	_check.call(listed and placer.waiting() == 0 and placer._flight.is_empty(), "item placer: clear forgets everything")
 	placer.bodies = null
 	placer.free()
 	_snap.seq += 1
