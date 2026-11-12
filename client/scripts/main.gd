@@ -67,6 +67,7 @@ var hud_view: HudView             # the screen view of hud_data
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
+var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
@@ -490,6 +491,9 @@ func _start_vr() -> void:
 		request_ui.reparent(panel, false)
 		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
 		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
+		text_dock.reparent(panel, false)   # ... and the other text fields get them from the dock
+		text_dock.auto = true
+		text_dock.ui_scale = PANEL_UI_SCALE
 	print("VR on: %s" % vr.settings)
 
 
@@ -1229,6 +1233,8 @@ func _setup_hud() -> void:
 		mood_cue.enabled = hud_settings.mood_cues)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
+	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
+	layer.add_child(text_dock)
 
 
 func _open_key_menu() -> void:
