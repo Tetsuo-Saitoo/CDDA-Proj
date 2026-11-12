@@ -841,8 +841,9 @@ func _live_action(event: InputEvent) -> bool:
 		act = "LEVEL_DOWN"
 	elif InputActions.pressed(event, &"level_up"):
 		act = "LEVEL_UP"
-	elif InputActions.pressed(event, &"use_held"):
-		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons)
+	elif InputActions.pressed(event, &"use_held") or InputActions.pressed(event, &"click"):
+		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); a left
+		# click on nothing grabbable does the same
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
@@ -867,8 +868,8 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## Left click: what is under the mouse (the screen centre while the mouse looks around), with a line from
-## the player to it, its distance and what the snapshot says is there.
+## Look at (L / middle click): what is under the mouse (the screen centre while the mouse looks around), with a
+## line from the player to it, its distance and what the snapshot says is there. The same key again closes it.
 func _look_at_screen(pos: Vector2) -> Dictionary:
 	if world.snapshot == null:
 		return {}
@@ -1353,8 +1354,8 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
-			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
+	var out := "%s look  %s look at (again: close)  %s take / use, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+			k.call(&"look"), k.call(&"look_at"), k.call(&"click"), k.call(&"use_held")]
 	if _fp_active():
 		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
@@ -1423,11 +1424,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		view_cam.zoom(-1 if wheel.button_index == MOUSE_BUTTON_WHEEL_UP else 1)   # top-down: the wheel zooms
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
-		var mb := event as InputEventMouseButton
-		var hit := _look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
-		if _fp_active() and hit.get("hit", false):   # clicking stairs in first person takes them
-			use_stair(StairUse.find(world, hit["square"], _stair_z()))
+		if _look_line != null or (look_panel != null and not look_panel.text.is_empty()):
+			_clear_look()   # the same key again closes it
+		else:
+			var mb := event as InputEventMouseButton
+			_look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
 		return
+	if vr == null and _fp_active() and InputActions.pressed(event, &"click"):
+		# (doors and items under the pointer went to grab above, a target prompt to aim)
+		var mb := event as InputEventMouseButton
+		var hit := _cast_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		var st: Dictionary = StairUse.find(world, hit["square"], _stair_z()) if hit.get("hit", false) else {}
+		if not st.is_empty():   # clicking stairs in first person takes them
+			use_stair(st)
+			return   # else like E: use / examine what you face (_live_action)
 	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()
 		return

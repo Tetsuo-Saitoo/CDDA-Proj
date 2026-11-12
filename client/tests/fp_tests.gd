@@ -291,6 +291,19 @@ func _test_rebinding(root: Node) -> void:
 	InputActions.reset_all()
 	_check.call(InputActions.load_bindings(path).is_empty() and InputActions.key_of(&"cdda_examine") == "Y"
 			and InputActions.key_of(&"move_forward") == "W", "keys: loaded back, others keep their defaults")
+	# Left click left look_at for click (key file version 2): an older file's left click on look_at is dropped.
+	var moved := []
+	for d: Dictionary in [{"version": 1, "actions": {"look_at": ["mouse:1", "K"]}}, {"actions": {"look_at": ["mouse:1"]}},
+			{"version": 2, "actions": {"look_at": ["mouse:1"]}}]:
+		var mf := FileAccess.open(path, FileAccess.WRITE)
+		mf.store_string(JSON.stringify(d))
+		mf.close()
+		InputActions.reset_all()
+		var why := InputActions.load_bindings(path)
+		moved.append([InputActions._texts(InputActions.slots(&"look_at")), InputActions._texts(InputActions.slots(&"click")),
+				why.is_empty()])
+	_check.call(moved == [[["K"], ["mouse:1"], true], [["L", "mouse:3"], ["mouse:1"], true], [["mouse:1"], ["mouse:1"], true]],
+			"keys: an old key file's left click on look at is dropped (look at keeps L / middle click), a new one's kept (%s)" % [moved])
 	# A hostile file: unknown actions, junk entries, a non-list; only good entries are used.
 	InputActions.reset_all()
 	var f := FileAccess.open(path, FileAccess.WRITE)

@@ -289,6 +289,26 @@ func _test_mouse(root: Node) -> void:
 	_hands.refused.emit("mouse", {}, "You can't do that.")
 	ctl.update(cam, mid, true, true)
 	_check.call(ctl.icon.text == "You can't do that." and ctl.icon.bad, "hands: a refusal flashes its reason in red")
+	# A quick click (let go within CLICK_MS, barely moved) takes the item as E does; a slow press and let go puts
+	# it back, nothing sent.
+	var ms := [10000]
+	ctl.clock = func() -> int: return ms[0]
+	cam.look_at_from_position(eye, _mid(bag))
+	ctl.update(cam, mid, true, true)
+	_seen.clear()
+	ctl.handle_event(lmb, cam, mid)
+	ms[0] += GrabController.CLICK_MS + 50
+	ctl.handle_event(up, cam, mid)
+	var slow_ok := not ctl.carrying() and not _carried(bag) and _seen.is_empty() and _handle(SE, _it["bag_canvas"]) == bag
+	ctl.update(cam, mid, true, true)
+	_seen.clear()   # (the hover outline)
+	ctl.handle_event(lmb, cam, mid)
+	ms[0] += 100
+	ctl.handle_event(up, cam, mid)
+	_check.call(slow_ok and _carried(bag) and not ctl.carrying() and _seen == [["confirmed", "mouse", bag, ""]]
+			and _world.hidden_items.is_empty(), "hands: a quick click on an item takes it as E does; a slow one puts it back (%s)" % [_seen])
+	_mock.drop_item(float(bag), float(_it["bag_canvas"]), SE)   # back where the later tests want it
+	_bump()
 	cam.free()
 	ctl.free()
 
