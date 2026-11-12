@@ -47,6 +47,7 @@ const MAX_SCAN := 8192         # handles looked at per sync at most
 const HS := Snapshot.HANDLE_STRIDE
 const MAX_SPEED := 20.0        # m/s: a body let go moves at most this fast (VrRig drops tracking jumps past 30)
 const PENDING_MS := 10000      # a body let go waits this long for CDDA's answer (ItemActions gives up after 5 s)
+const LANDED_MS := 1500        # ... and this long after CDDA's drop landed for the world to show it on its square
 const MAX_HOLDING := 16        # items hands hold at once (three hands; more means someone forgot to unhold)
 const SPOT_MAX := 0.999
 const REST_UP_M := 0.05        # where a body rests is looked up this far over its origin (floor line rounding)
@@ -66,6 +67,7 @@ class Body:
 	var pending := false          # let go by a hand: not yet seen lying on `square` after CDDA's drop landed
 	var landed := false           # CDDA's drop landed (landed()); pending until the world's snapshot shows it
 	var since_ms := 0             # when it was let go
+	var landed_ms := 0            # when CDDA's drop landed
 	var told := false             # `settled` was emitted for it
 
 
@@ -109,6 +111,7 @@ func _exit_tree() -> void:
 			b.node.queue_free()
 	var had := not _bodies.is_empty()
 	_bodies.clear()
+	_holding.clear()
 	if had and is_instance_valid(world) and world.is_inside_tree() and not world.is_queued_for_deletion():
 		_publish()
 
@@ -263,11 +266,15 @@ func let_go(uid: int, type: int, xform: Transform3D, velocity: Vector3, square: 
 
 ## CDDA's drop of a let-go item landed: its body stays. It stays pending (not pointable) until the world's snapshot
 ## shows the item on its square (WorldView may show a snapshot a few frames after ItemActions judged it), then it is
-## kept as any other body instead of being made again at the pile's pose. False when it has no body waiting.
+## kept as any other body instead of being made again at the pile's pose. An item that never shows there within
+## LANDED_MS (a charge stack merged into another: a new uid; or CDDA put it elsewhere) loses its body (_expire).
+## False when it has no body waiting.
 func landed(uid: int) -> bool:
 	var b: Body = _bodies.get(uid)
 	if b == null or not b.pending:
 		return false
+	if not b.landed:
+		b.landed_ms = _now()
 	b.landed = true
 	if _lies_on(uid, b.type, b.square):
 		b.pending = false   # the world shows it there already
@@ -344,9 +351,11 @@ func _resync() -> void:
 	_key = []
 
 
-## Frees every body and shows the static copies again.
+## Frees every body and shows the static copies again; nothing counts as held by a hand any more (the game stopped
+## or the snapshot went: a hand still holding hides its item itself, so no body is made for it).
 func clear() -> void:
 	_resync()
+	_holding.clear()
 	if _bodies.is_empty():
 		return
 	for u: int in _bodies.keys():
@@ -732,13 +741,19 @@ func _publish() -> void:
 		world.call(hide_method, OWNER, uids())
 
 
-## Frees the bodies let go whose drop CDDA didn't answer within PENDING_MS (or the world never showed landed).
+## Frees the bodies let go whose drop CDDA didn't answer within PENDING_MS, and those whose drop landed but that the
+## world doesn't show on their square within LANDED_MS (merged into a stack there, or lying elsewhere); a landed one
+## the world shows there now is kept as any other body.
 func _expire() -> void:
 	var now := _now()
 	var gone := false
 	for u: int in _bodies.keys():
 		var b: Body = _bodies[u]
-		if b.pending and now - b.since_ms >= PENDING_MS:
+		if not b.pending:
+			continue
+		if b.landed and _lies_on(u, b.type, b.square):
+			b.pending = false
+		elif now - b.since_ms >= PENDING_MS or (b.landed and now - b.landed_ms >= LANDED_MS):
 			_free(u)
 			gone = true
 	if gone:

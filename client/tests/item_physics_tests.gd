@@ -89,8 +89,12 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hands_api()
 	_test_sync_cost()
 	_bodies.clear()
-	_check.call(_world.hidden_items.is_empty() and not _world.item_slot(UID + 11).is_empty(),
-			"item physics: clear shows every static copy again")
+	var drawn := 0   # the pile's rocks drawn static again (one of the six was taken into the pack in _test_sync_cost)
+	for k in 6:
+		if not _world.item_slot(UID + 11 + k).is_empty():
+			drawn += 1
+	_check.call(_world.hidden_items.is_empty() and drawn == 5 and _bodies.count() == 0,
+			"item physics: clear shows every static copy again (%d of the pile's 5 left)" % drawn)
 	_bodies.free()
 	_col.free()
 	_world.free()
@@ -620,6 +624,32 @@ func _test_hands_api() -> void:
 	_bodies.update()
 	_check.call(waiting and _bodies.body_of(e) != r3 and _back_on_pile(e),
 			"item physics: no answer from CDDA in %d s: the body goes, the item is back in its pile" % (ItemBodies.PENDING_MS / 1000))
+	# A drop that landed but never shows on its square (a charge stack merged into another there: a new uid).
+	pile = _on(PILE)
+	var m: int = pile[0] if not pile.is_empty() else -1
+	_bodies.hold(m)
+	var r4 := _bodies.let_go(m, rock, Transform3D(Basis(), _corner(S) + Vector3(0.4, 0.5, 0.6)), Vector3.ZERO, S)
+	_ms += ItemBodies.PENDING_MS - ItemBodies.LANDED_MS - 100   # late in its wait: landing starts its own clock
+	var m_landed := r4 != null and _bodies.landed(m)
+	_ms += ItemBodies.LANDED_MS - 1
+	_bodies.landed(m)   # told twice: the clock doesn't start again
+	_bodies.update()
+	var m_waits := _bodies.body_of(m) == r4 and _bodies.is_pending(m)
+	_ms += 1
+	_bodies.update()
+	_check.call(m_landed and m_waits and _bodies.body_of(m) != r4 and not _bodies.is_pending(m),
+			"item physics: landed but never shown on its square (merged into a stack): its body goes after %.1f s"
+			% (ItemBodies.LANDED_MS / 1000.0))
+	# The game stops: nothing is held any more.
+	_bodies.hold(UID + 3)
+	var was_held := _bodies.is_held(UID + 3)
+	_bodies.clear()
+	var cleared := not _bodies.is_held(UID + 3) and _bodies.count() == 0
+	_bodies.hold(UID + 3)
+	_bodies.clear()   # no bodies left: still forgets the hold
+	_check.call(was_held and cleared and not _bodies.is_held(UID + 3), "item physics: clear() forgets what the hands held")
+	_snap.seq += 1
+	_bodies.update()
 	_bodies.clock = Callable()
 	var pose := Transform3D(Basis(), _corner(S) + Vector3(0.5, 0.5, 0.5))
 	var none := _bodies.let_go(UID + 41, rock, pose, Vector3.ZERO, S + Vector3i(0, 0, 1)) == null \
