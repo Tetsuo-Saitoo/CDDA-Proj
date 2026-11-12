@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-11 — Left click interacts (user): a quick click takes an item as E does, holding carries it or drags a door, clicking stairs takes them, a click on nothing does nothing (E still uses what you hold on what you face); while aiming it still picks and fires. Look at moved to L / middle click and toggles. Old key files lose left click from look at. Client tests pass.
+- 2026-11-11 — Boot time: a random start's "Starting the game" took 2.3-9.4 s on Windows (1-18 s in WSL): CDDA picks a start location first and then generates overmaps until one has it (seen: the 10th). Fork fp3d-world: `fp3d::nearest_random_start` picks one the nearest overmap with any has, and the search takes any of its terrains; 5 quick starts now 2.0-2.5 s. Start steps on the console/booting screen; sim test checks the start overmap.
 - 2026-11-11 — CDDA's prompts on the VR panel are drawn 1.35x (text ~22 px, readable in the headset); a row held while its prompt goes answers nothing (checked). Client tests pass.
 - 2026-11-11 — On-screen keyboard for CDDA's text prompts (letters, digits, Shift, Space, Back), worked by pointer: a Keyboard button on screen, open from the start on the VR panel. Client tests pass.
 - 2026-11-11 — CDDA's prompts answer to a pad (D-pad, A, B, shoulders) and to ui_* actions, and work inside a SubViewport by pointer clicks (first step of menus in VR). Client tests pass.
