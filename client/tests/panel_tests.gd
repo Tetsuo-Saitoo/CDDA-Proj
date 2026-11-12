@@ -31,6 +31,7 @@ func run(root: Node, check: Callable) -> void:
 	await _test_held_then_hidden()
 	await _test_scaled()
 	_test_keys_pad()
+	await _test_fit()
 	await _test_dock()
 	await _test_string_pad()
 	_vp.free()
@@ -204,6 +205,52 @@ func _test_keys_pad() -> void:
 			and k.cursor == at and le.text == "2", "keys pad: real keys, the mouse, releases, cancel and B are left alone")
 	k.free()
 	le.free()
+
+
+## PanelFit: a full-rect menu drawn larger still fills its parent, keeps the margins it had, and follows the
+## parent's size; main.menus_to_panel moves menus under the panel's root that way. Not full-rect: left alone.
+func _test_fit() -> void:
+	var Main := load("res://scripts/main.gd")
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_vp.add_child(root)
+	var old := Control.new()
+	_vp.add_child(old)
+	var full := Control.new()
+	full.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var inset := Control.new()   # like the F1 menu: margins of its own
+	inset.set_anchors_preset(Control.PRESET_FULL_RECT)
+	inset.offset_left = 60
+	inset.offset_top = 50
+	inset.offset_right = -60
+	inset.offset_bottom = -50
+	old.add_child(full)
+	old.add_child(inset)
+	Main.menus_to_panel(root, [full, null, inset, "junk"], 1.35)
+	await _frames()
+	var fr := full.get_global_rect()
+	var ir := inset.get_global_rect()
+	var area := Vector2(_vp.size)
+	_check.call(full.get_parent() == root and inset.get_parent() == root and inset.get_index() > full.get_index()
+			and fr.position.is_equal_approx(Vector2.ZERO) and fr.size.is_equal_approx(area)
+			and full.size.is_equal_approx(area / 1.35) and full.scale == Vector2(1.35, 1.35)
+			and ir.position.is_equal_approx(Vector2(60, 50)) and ir.end.is_equal_approx(area - Vector2(60, 50)),
+			"fit: menus moved to the panel fill it drawn 1.35x, margins kept (%s, %s)" % [fr, ir])
+	root.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	root.size = Vector2(640, 400)
+	await _frames()
+	_check.call(full.get_global_rect().size.is_equal_approx(Vector2(640, 400))
+			and inset.get_global_rect().end.is_equal_approx(Vector2(580, 350)), "fit: it follows the parent's size")
+	var corner := Control.new()
+	corner.size = Vector2(100, 40)
+	root.add_child(corner)
+	var again := PanelFit.apply(inset, NAN)
+	_check.call(not PanelFit.apply(corner, 1.35) and corner.scale == Vector2.ONE and not PanelFit.apply(null, 2.0)
+			and again and inset.scale == Vector2.ONE and inset.anchor_right == 1.0 and inset.offset_right == -60.0
+			and not inset.has_meta(PanelFit.META) and PanelFit.apply(full, 99.0) and full.scale == Vector2(3, 3),
+			"fit: not full-rect or freed: left alone; a bad scale is 1 and puts the anchors back; capped at 3")
+	root.free()
+	old.free()
 
 
 ## TextKeysDock: the keyboard for whichever text field has the focus. A pad's Y opens it; with `auto` (the VR panel)

@@ -657,3 +657,17 @@ func _test_toggle() -> void:
 	_check.call(not _view.handle_key(esc), "inspect: Esc does nothing while closed")
 	_view.handle_key(tab)
 	_check.call(_view.handle_key(esc) and not _view.visible and mode[0] == Input.MOUSE_MODE_CAPTURED, "inspect: Esc closes it")
+	# without keys (the VR panel): the Close button, and ui_cancel like Esc
+	var cancel := InputEventAction.new()
+	cancel.action = &"ui_cancel"
+	cancel.pressed = true
+	var other := InputEventAction.new()
+	other.action = &"ui_accept"
+	other.pressed = true
+	var closed_ignores := not _view.handle_key(cancel)
+	_view.handle_key(tab)
+	var by_action := not _view.handle_key(other) and _view.visible and _view.handle_key(cancel) and not _view.visible
+	_view.handle_key(tab)
+	_view.close_button.pressed.emit()
+	_check.call(closed_ignores and by_action and not _view.visible and _view.close_button.text == "Close",
+			"inspect: ui_cancel and the Close button close it without a keyboard")

@@ -65,6 +65,7 @@ var _bar: HBoxContainer   # what to do with the selection
 var _bar_drop: Button
 var _into_box: HBoxContainer
 var _bar_unload: Button
+var close_button: Button
 var _bar_stop: Button
 var _bar_clear: Button
 var _batch_op := "move"  # "move" (to _batch_target) or "unload"
@@ -118,8 +119,12 @@ func _init(h: Hands, a: ItemActions) -> void:
 	add_child(panel)
 	var v := VBoxContainer.new()
 	panel.add_child(v)
+	var top := HBoxContainer.new()
+	v.add_child(top)
 	_head = _label("", Color(1.0, 0.85, 0.3))
-	v.add_child(_head)
+	_head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(_head)
+	close_button = _bar_button("Close", close, "Close (Tab)", top)   # for a pointer alone (the VR panel)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED   # each column scrolls on its own
@@ -172,8 +177,8 @@ func close() -> void:
 	closed.emit()
 
 
-## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc clears the selection, or closes it
-## when there is none. True when used.
+## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc or a ui_cancel action clears the
+## selection, or closes it when there is none. True when used.
 func handle_key(event: InputEvent, allowed := true) -> bool:
 	if InputActions.pressed(event, &"inspect"):
 		if visible:
@@ -184,7 +189,9 @@ func handle_key(event: InputEvent, allowed := true) -> bool:
 			return true
 		return false
 	var k := event as InputEventKey
-	if visible and k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE:
+	var esc := k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE
+	var cancel := event is InputEventAction and event.is_pressed() and (event as InputEventAction).action == &"ui_cancel"
+	if visible and (esc or cancel):   # (ui_cancel: the VR panel's B / Y)
 		if selection.is_empty():
 			close()
 		else:

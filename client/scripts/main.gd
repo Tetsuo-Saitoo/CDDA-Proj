@@ -484,17 +484,46 @@ func _start_vr() -> void:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
 		world.set_view_z_max(world.coords.z_max)
-	# L4: CDDA's prompts on the VR panel (laser clicks, the stick's ui_* actions; RequestUI.as_key), and with them
-	# the menus opened beside them later (the main menu: _show_main_menu adds it next to request_ui).
+	# L4: the screen's menus on the VR panel (laser clicks, the stick's ui_* actions; RequestUI.as_key), in their
+	# drawing order: the Tab view, CDDA's prompts, the F1 menu, the main menu when it is up, the on-screen keys.
+	# Each is a direct child of the panel's root (the panel shows while one of them is visible), drawn larger.
 	var panel := panel_root(vr)
 	if panel != null:
+		menus_to_panel(panel, [inspect, key_menu, main_menu.get_parent() if main_menu != null else null], PANEL_UI_SCALE)
 		request_ui.reparent(panel, false)
+		panel.move_child(request_ui, inspect.get_index() + 1)
 		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
 		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 		text_dock.reparent(panel, false)   # ... and the other text fields get them from the dock
 		text_dock.auto = true
 		text_dock.ui_scale = PANEL_UI_SCALE
+	if vr.has_signal("ui_asked"):   # the VR menu's rows for the F1 menu and the Tab view
+		vr.connect("ui_asked", open_ui)
 	print("VR on: %s" % vr.settings)
+
+
+## Moves the screen menus in `menus` (Controls; others skipped) under the VR panel's root, in order, each drawn
+## `k` times larger (PanelFit).
+static func menus_to_panel(panel: Control, menus: Array, k: float) -> void:
+	for m: Variant in menus:
+		if m is Control and is_instance_valid(m):
+			(m as Control).reparent(panel, false)
+			PanelFit.apply(m, k)
+
+
+## Opens a menu by name for a view without keys (the VR menu's rows): "keys" the F1 menu, "inventory" the Tab
+## view (when it may open: in the main loop, nothing else up). True when it is open now.
+func open_ui(which: String) -> bool:
+	match which:
+		"keys":
+			if not key_menu.visible and not inspect.visible:
+				_open_key_menu()
+			return key_menu.visible
+		"inventory":
+			if not inspect.visible and _can_inspect():
+				inspect.open()
+			return inspect.visible
+	return false
 
 
 ## The VR panel's root Control (VrPanel.root, a full-rect Control in its SubViewport), or null while `rig` has no
@@ -612,6 +641,8 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	center.add_child(main_menu)
 	request_ui.get_parent().add_child(center)
+	if panel_root(vr) != null:   # on the VR panel: drawn larger, like the other menus there
+		PanelFit.apply(center, PANEL_UI_SCALE)
 	if LiveSession.delete_save_available():   # Load page: delete a character (and its world once empty)
 		main_menu.deleter = func(w: String, sv: String) -> String: return live.delete_save(user_dir, w, sv, true)
 	main_menu.relist = func() -> PackedStringArray: return LiveSession.list_worlds(user_dir)
@@ -1092,9 +1123,9 @@ func _use_tap() -> void:
 	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
 
 
-## Tab opens the inspect view: first person, in the main loop, no prompt, menu or held item in the way.
+## Tab opens the inspect view: first person or VR, in the main loop, no prompt, menu or held item in the way.
 func _can_inspect() -> bool:
-	return _fp_active() and world.snapshot != null and main_menu == null and not request_ui.visible \
+	return (_fp_active() or vr != null) and world.snapshot != null and main_menu == null and not request_ui.visible \
 			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
 			and (live == null or _in_main_loop())
 

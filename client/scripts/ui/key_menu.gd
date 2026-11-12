@@ -341,7 +341,7 @@ func reset_all() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if visible and (event is InputEventKey or InputActions.is_pad(event)
+	if visible and (event is InputEventKey or InputActions.is_pad(event) or event is InputEventAction
 			or (not _capture.is_empty() and event is InputEventMouseButton)):
 		if _typing(event):
 			return   # a text field on the cheats page gets its keys
@@ -363,6 +363,16 @@ func _typing(event: InputEvent) -> bool:
 ## One input event while the menu is open (separate from _input so tests can feed it). True if it was used.
 func take(event: InputEvent) -> bool:
 	var k := event as InputEventKey
+	if event is InputEventAction:   # the VR panel's B / Y: backs out of a capture, else closes; others pass
+		if not event.is_pressed() or (event as InputEventAction).action != &"ui_cancel":
+			return false
+		if _capture.is_empty():
+			close()
+		else:
+			_capture = []
+			refresh()
+			_status.text = "Cancelled."
+		return true
 	if _capture.is_empty():
 		if k != null and k.pressed and not k.echo and k.physical_keycode in [KEY_ESCAPE, InputActions.MENU_KEY]:
 			close()
