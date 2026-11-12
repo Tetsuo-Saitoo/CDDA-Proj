@@ -7,7 +7,8 @@ extends Control
 ## also a pointer click on the field, and a small "Keyboard" tab shows while a field has the focus and the keys
 ## are closed (a field that only took the focus by itself, like a list's filter, doesn't open them). Closing: B /
 ## ui_cancel, the Hide key, or the focus leaving the field. While open, the pad and the stick work the keys
-## (TextKeys.handle_input); Enter goes to the field as a real Enter key.
+## (TextKeys.handle_input; accept only once the cursor shows: after a direction, or when the pad opened them);
+## Enter goes to the field as a real Enter key.
 ## Fields that carry their own keys (StringRequestWidget: meta OWN_KEYS) are left to them. The dock is hidden
 ## whenever it shows nothing, so the VR panel (shown while a child of its root is visible) can hide too.
 
@@ -122,7 +123,10 @@ func handle_input(event: InputEvent) -> bool:
 	var pad := event as InputEventJoypadButton
 	if not _open:
 		if pad != null and pad.button_index == JOY_BUTTON_Y:
-			return open()
+			if not open():
+				return false
+			keys.show_cursor()   # opened by the pad: A types from here on
+			return true
 		return false
 	if keys.handle_input(event):
 		return true

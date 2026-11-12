@@ -4,7 +4,8 @@ extends RequestWidget
 ## Enter sends, Esc cancels. The text goes out without control characters, within `max_len` characters and the
 ## bridge's 1024 bytes. Answer: `text`. An on-screen keyboard (TextKeys) under the field, for the laser, a mouse,
 ## a pad or the VR stick: shown from the start when `show_keys` (RequestUI.keyboard: on the VR panel), else behind
-## the Keyboard button or a pad's Y. While it shows, the pad and the stick work its keys (its Enter sends).
+## the Keyboard button or a pad's Y. While it shows, the pad and the stick work its keys (its Enter sends); accept
+## keeps sending the prompt until a direction has put the cursor on the keys (or the pad opened them).
 
 var edit: LineEdit
 var max_len := MAX_ANSWER_TEXT_BYTES
@@ -58,6 +59,7 @@ func handle_raw(event: InputEvent) -> bool:
 		var pad := event as InputEventJoypadButton
 		if pad != null and pad.pressed and pad.button_index == JOY_BUTTON_Y:
 			toggle_keys()
+			keys.show_cursor()   # opened by the pad: A types from here on
 			return true
 		return false
 	return keys.handle_input(event)

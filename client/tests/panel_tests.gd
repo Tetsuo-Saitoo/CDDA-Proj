@@ -171,7 +171,9 @@ func _test_keys_pad() -> void:
 	k.target = le
 	var entered := [0]
 	k.enter.connect(func() -> void: entered[0] += 1)
-	var first := k.handle_input(_pad(JOY_BUTTON_DPAD_RIGHT)) and k.cursor_on and k.cursor == Vector2i.ZERO
+	var untouched := not k.handle_input(_pad(JOY_BUTTON_A)) and not k.handle_input(_act(&"ui_accept")) and le.text == "" \
+			and not k.cursor_on
+	var first := untouched and k.handle_input(_pad(JOY_BUTTON_DPAD_RIGHT)) and k.cursor_on and k.cursor == Vector2i.ZERO
 	k.handle_input(_act(&"ui_right"))
 	k.handle_input(_pad(JOY_BUTTON_A))
 	k.handle_input(_pad(JOY_BUTTON_DPAD_DOWN))
@@ -180,7 +182,7 @@ func _test_keys_pad() -> void:
 	var typed := le.text
 	k.handle_input(_pad(JOY_BUTTON_X))
 	_check.call(first and typed == "2W" and le.text == "2" and not k.shift and k.cursor == Vector2i(1, 1),
-			"keys pad: the first press shows the cursor; D-pad and ui_* move it, A types, Y shifts, X deletes (%s)" % typed)
+			"keys pad: accept is left alone until the cursor shows; the first direction shows it; then A types, Y shifts, X deletes (%s)" % typed)
 	k.handle_input(_pad(JOY_BUTTON_DPAD_LEFT))
 	k.handle_input(_pad(JOY_BUTTON_DPAD_LEFT))
 	var wrapped := k.cursor
@@ -343,6 +345,28 @@ func _test_string_pad() -> void:
 		w.keys.enter_button.pressed.emit()
 	_check.call(hidden and shown and text == "1q" and answers == [{"id": 7, "text": "1q"}],
 			"panel: a text prompt by pad: Y opens the keys, the D-pad and A type, Enter sends (%s, %s)" % [text, answers])
+	# on the VR panel the keys show from the start: accept still sends the prompt as it stands (it types nothing)
+	# until a direction has put the cursor on the keys
+	ui.keyboard = true
+	_show(_req("string", {"title": "How many?", "entries": [{"id": 0, "label": "5", "enabled": true, "description": ""}]}))
+	await _frames()
+	w = ui.widget as StringRequestWidget
+	var from_start := w != null and w.keys.visible and not w.keys.cursor_on
+	_vp.push_input(_act(&"ui_accept"), true)
+	var sent_as_is := answers == [{"id": 7, "text": "5"}]
+	_show(_req("string", {"title": "How many?", "entries": [{"id": 0, "label": "5", "enabled": true, "description": ""}]}))
+	await _frames()
+	w = ui.widget as StringRequestWidget
+	if w != null:
+		w.edit.deselect()
+		w.edit.caret_column = 1
+	_vp.push_input(_act(&"ui_down"), true)
+	_vp.push_input(_act(&"ui_accept"), true)
+	var typed := w.edit.text if w != null else ""
+	_check.call(from_start and sent_as_is and typed == "51" and answers.is_empty(),
+			"panel: keys shown from the start: accept sends the prompt as it stands; after a direction it types (%s)" % typed)
+	ui.keyboard = false
+	ui.clear()
 	_show(_req("string", {"entries": [{"id": 0, "label": "x", "enabled": true, "description": ""}]}))
 	await _frames()
 	_vp.push_input(_pad(JOY_BUTTON_Y), true)

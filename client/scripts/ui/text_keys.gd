@@ -6,6 +6,8 @@ extends VBoxContainer
 ## focus, so the field keeps the keyboard (a real Enter still sends).
 ## Pad and stick (handle_input): the D-pad or ui_up / down / left / right move a cursor over the keys, A or
 ## ui_accept presses the key under it, X is Back, Y is Shift. Real keys are never taken: they type as usual.
+## Until the cursor shows (a direction pressed, or show_cursor: the keys were opened by the pad), accept is left
+## alone too, so it still does what it did without the keys (sends a prompt).
 ## StringRequestWidget shows it under its field; TextKeysDock brings it to any other text field.
 
 ## The Enter key was pressed (the owner sends or submits).
@@ -102,6 +104,11 @@ func cursor_key() -> Button:
 	return row[clampi(cursor.x, 0, row.size() - 1)]
 
 
+## Shows the pad's cursor where it is (the keys were opened by the pad: its accept types from now on).
+func show_cursor() -> void:
+	move_cursor(Vector2i.ZERO)
+
+
 ## Moves the pad's cursor by `d` (one step along x or y), wrapping; between rows of different lengths it keeps
 ## its place across the keyboard.
 func move_cursor(d: Vector2i) -> void:
@@ -140,7 +147,7 @@ func handle_input(event: InputEvent) -> bool:
 			move_cursor(Vector2i(1, 0))
 		&"ui_accept":
 			if not cursor_on:
-				move_cursor(Vector2i.ZERO)
+				return false   # the keys haven't been used by pad or stick: accept stays the owner's
 			cursor_key().pressed.emit()
 		&"back":
 			if not (event is InputEventJoypadButton):
