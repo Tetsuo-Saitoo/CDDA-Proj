@@ -19,6 +19,7 @@ uniform int levels = 0;
 uniform vec3 outside_color = vec3(1.0);   // levels the atlas doesn't hold
 uniform vec3 sky_color = vec3(1.0);
 uniform float min_brightness = 0.0;
+uniform float flash = 0.0;   // lightning: nothing, the sky included, is darker than this
 
 const int SIZE = 132;
 const float LEVEL_M = 3.0;
@@ -66,5 +67,5 @@ void fragment() {
 		}
 		col = max(col, vec3(min_brightness));
 	}
-	ALBEDO = col;
+	ALBEDO = max(col, vec3(flash));
 }

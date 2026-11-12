@@ -796,6 +796,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	weather.on_events(events)   # lightning
 	aim.hits.on_events(events)   # CDDA's hit confirmations: the crosshair's hit marker
 	hud_data.on_events(events)
 	for e: Dictionary in events:
@@ -1158,6 +1159,7 @@ func _setup_environment() -> void:
 	weather = WeatherView.new()
 	add_child(weather)
 	weather.light_pass = world.lighting.enabled
+	weather.lighting = world.lighting
 	weather.setup(env, sun)
 	weather.aim_sun(45.0, 0.0)
 

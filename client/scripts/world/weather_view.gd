@@ -1,6 +1,7 @@
 class_name WeatherView
 extends Node
-## Blocks C6 / I2: shows the weather on the sky, the sun and the distance (clouds, darker days, fog).
+## Blocks C6 / I2: shows the weather on the sky, the sun and the distance (clouds, darker days, fog), and runs the
+## rest of it: rain and snow (PrecipView), sound (WeatherSound), the lightning flash and the wet ground.
 ##
 ## setup() takes the scene's Environment (a ProceduralSkyMaterial sky) and its sun; apply() shows a snapshot's
 ## weather (WeatherState). Only engine features: the procedural sky with a cloud cover texture, depth fog and the
@@ -16,6 +17,15 @@ const AMBIENT_ENERGY := 0.8
 const EYE_M := 1.6
 const INDOOR_CLEAR_M := 8.0   # under a roof the fog starts this far out: the room is clear, the windows show it
 const INDOOR_CLEAR_S := 1.5   # seconds it takes to clear or close in when the player goes under or leaves a roof
+const FLASH_S := 0.5          # a lightning flash: two quick pulses
+const FLASH_GAP_S := 0.3      # a second strike this soon is the same flash
+const FLASH_LIGHT := 2.5      # energy of the flash's light at its peak
+const FLASH_FOG := 3.0        # how much brighter the haze and the storm sky get
+const FLASH_FLOOR := 0.55     # the light pass shows the dark world at least this bright at the peak
+const FLASH_INDOORS := 0.5    # share of the flash that reaches under a roof
+const WET_IN_S := 120.0       # game seconds of heavy rain that soak the ground
+const DRY_IN_S := 1800.0      # game seconds a soaked ground takes to dry
+const WET_STEP := 0.02        # the ground's material changes only by steps this large
 const COVER_W := 512
 const COVER_H := 256
 const CLOUD_SCALE := 2.2      # cloud shapes per unit of the layer (its height above the eye is 1)
@@ -28,6 +38,14 @@ var focus := Vector3.ZERO          # the player's eyes: the fog starts there, al
 var light_pass := true             # WorldLighting darkens the scene by CDDA's light (else the fog darkens itself)
 var sky_updates := 0               # times the sky was changed (each one costs a re-filter of its light)
 var precip := PrecipView.new()     # rain and snow around the player
+var sound := WeatherSound.new()    # rain, wind and thunder
+var lighting: WorldLighting        # the light pass, for the lightning flash at night (may be null)
+var flashes := 0                   # lightning flashes shown
+var wet := 0.0                     # how wet the ground is, 0 dry .. 1 soaked
+var _wet_shown := -1.0
+var _wet_turn := -1                # the game turn `wet` is for, -1 none yet
+var _flash_t := -1.0               # seconds into the flash, -1 none
+var _flash_light := DirectionalLight3D.new()
 var _env: Environment
 var _sky: ProceduralSkyMaterial
 var _sun: DirectionalLight3D
@@ -43,10 +61,22 @@ static var _cover: Image
 
 func _init() -> void:
 	add_child(precip)
+	add_child(sound)
+	_flash_light.light_color = Color(0.85, 0.9, 1.0)
+	_flash_light.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_ONLY
+	_flash_light.rotation_degrees = Vector3(-70.0, 30.0, 0.0)
+	_flash_light.visible = false
+	add_child(_flash_light)
 
 
 func _ready() -> void:
 	_update_processing()   # a node with _process starts processing on its own
+
+
+func _exit_tree() -> void:
+	if _wet_shown > 0.0:   # the ground's material is shared: leave it dry
+		_wet_shown = -1.0
+		TerrainMesher.wet_ground(0.0)
 
 
 ## `env` and `sun` may be null (a test with only one of them).
@@ -88,6 +118,62 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	_place_fog(0.0)
 	_update_processing()
 	precip.apply(snap, coords, target)
+	sound.apply(target)
+	_soak(snap.turn)
+
+
+## The ground gets wet in rain and dries after it, in game time (waiting an hour dries it). A game that starts or
+## loads in rain starts wet. Snow doesn't wet.
+func _soak(turn: int) -> void:
+	var rain := 0.0 if target.snow else target.precip
+	if _wet_turn < 0 or turn < _wet_turn:
+		wet = 1.0 if rain > 0.0 else 0.0
+	elif rain > 0.0:
+		wet = minf(1.0, wet + (turn - _wet_turn) * rain / WET_IN_S)
+	else:
+		wet = maxf(0.0, wet - (turn - _wet_turn) / DRY_IN_S)
+	_wet_turn = turn
+	if absf(wet - _wet_shown) >= WET_STEP or (wet != _wet_shown and (wet == 0.0 or wet == 1.0)):
+		_wet_shown = wet
+		TerrainMesher.wet_ground(wet)
+
+
+## The game's events: a `lightning` event (the bridge sends one each time CDDA flashes) lights the scene for a
+## moment and brings thunder. Anything else, junk included, is ignored.
+func on_events(events: Array) -> void:
+	for e: Variant in events:
+		if e is Dictionary and (e as Dictionary).get("kind") is String and e["kind"] == "lightning":
+			strike()
+			return
+
+
+## A lightning flash now, thunder a moment later.
+func strike() -> void:
+	if _flash_t >= 0.0 and _flash_t < FLASH_GAP_S:
+		return
+	flashes += 1
+	_flash_t = 0.0
+	sound.strike()
+	_show_flash()
+	_update_processing()
+
+
+## How bright the flash is `t` seconds in (0..1): a pulse, a dip, a weaker second pulse, gone by FLASH_S.
+static func flash_curve(t: float) -> float:
+	if t < 0.0 or t >= FLASH_S:
+		return 0.0
+	var second := 0.75 * exp(-(t - 0.14) * 12.0) if t >= 0.14 else 0.0
+	return maxf(exp(-t * 16.0), second) * minf((FLASH_S - t) * 10.0, 1.0)
+
+
+func _show_flash() -> void:
+	var f := flash_curve(_flash_t) * (FLASH_INDOORS if target.sheltered else 1.0)
+	_flash_light.visible = f > 0.0
+	_flash_light.light_energy = FLASH_LIGHT * f
+	if _env != null:
+		_env.fog_light_energy = 1.0 + FLASH_FOG * f
+	if lighting != null:
+		lighting.flash = FLASH_FLOOR * f
 
 
 ## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with the light
@@ -110,6 +196,11 @@ func blending() -> bool:
 
 
 func _process(delta: float) -> void:
+	if _flash_t >= 0.0:
+		_flash_t += delta
+		if _flash_t >= FLASH_S:
+			_flash_t = -1.0
+		_show_flash()
 	if _blend_t < 1.0:
 		_blend_t = minf(1.0, _blend_t + delta / maxf(blend_s, 0.001))
 		_since_step += delta
@@ -122,7 +213,7 @@ func _process(delta: float) -> void:
 
 
 func _update_processing() -> void:
-	set_process(_blend_t < 1.0 or (_env != null and _env.fog_enabled))
+	set_process(_blend_t < 1.0 or _flash_t >= 0.0 or (_env != null and _env.fog_enabled))
 
 
 static func _close(a: WeatherState, b: WeatherState) -> bool:

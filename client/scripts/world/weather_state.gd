@@ -28,6 +28,7 @@ var snow := false       # the precipitation is snow
 var wind := Vector3.ZERO        # the region's wind, m/s, where it blows to (world space, level)
 var wind_here := Vector3.ZERO   # the same on the player's square (calm indoors); the region's when not sent
 var sheltered := false  # rain and snow don't reach the player
+var thunder := false    # a thunderstorm (CDDA's sound category for the weather): far rumbles now and then
 var daylight := 1.0     # 0 night .. 1 day: the weather only dims what the day lights
 
 
@@ -46,6 +47,7 @@ static func from_snapshot(snap: Snapshot) -> WeatherState:
 	s.wind = wind_vector(snap.wind_speed, snap.wind_dir_deg)
 	s.wind_here = s.wind if snap.wind_at_player < 0.0 else wind_vector(snap.wind_at_player, snap.wind_dir_deg)
 	s.sheltered = snap.weather_sheltered
+	s.thunder = snap.weather_sound == Snapshot.WEATHER_SOUND_THUNDER
 	s.daylight = smoothstep(20.0, 60.0, float(LightMap.natural_light(snap)))
 	return s
 
@@ -71,6 +73,7 @@ static func blend(a: WeatherState, b: WeatherState, t: float) -> WeatherState:
 	s.daylight = lerpf(a.daylight, b.daylight, t)
 	s.snow = b.snow
 	s.sheltered = b.sheltered
+	s.thunder = b.thunder
 	return s
 
 

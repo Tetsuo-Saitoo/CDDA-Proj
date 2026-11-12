@@ -27,6 +27,11 @@ var min_brightness := 0.0:
 	set(v):
 		min_brightness = clampf(v, 0.0, 1.0)
 		_mat.set_shader_parameter("min_brightness", min_brightness)
+## Lightning: for a moment nothing, the sky included, is darker than this (WeatherView).
+var flash := 0.0:
+	set(v):
+		flash = clampf(v, 0.0, 1.0)
+		_mat.set_shader_parameter("flash", flash)
 ## Natural light the shown LUT was built for (-1: none yet); WorldView rebuilds the LUT only when it changes.
 var lut_ambient := -1
 var ambient := -1          # natural light of the last applied map

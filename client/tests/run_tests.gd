@@ -70,6 +70,7 @@ func _initialize() -> void:
 	preload("res://tests/light_tests.gd").new().run(root, _check, data)
 	preload("res://tests/weather_tests.gd").new().run(root, _check, data)
 	preload("res://tests/precip_tests.gd").new().run(root, _check, data)
+	preload("res://tests/storm_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/qa_hostile_tests.gd").new().run(root, _check, data, tables)
 	TestDir.clean()
 	var errs := _errors.take()

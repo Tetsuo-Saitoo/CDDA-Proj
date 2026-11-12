@@ -17,6 +17,7 @@ const WEATHER_MAX := 10000.0              # the env's weather numbers (wind, sig
 const PRECIP_NONE := 0                    # env.precip_kind
 const PRECIP_RAIN := 1
 const PRECIP_SNOW := 2
+const WEATHER_SOUND_THUNDER := 4          # env.weather_sound: CDDA's category for thunder and lightning storms
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
 const MAX_TURN := 1 << 52                 # JSON numbers are doubles
@@ -151,6 +152,7 @@ var weather_sight := 1.0         # env.sight_penalty: 1 clear, 1.7 fog
 var weather_light := 0.0         # env.light_modifier: 0 clear, -45 a thunderstorm
 var weather_sun := 1.0           # env.sun_multiplier: 1 clear, 0.01 a storm
 var weather_sheltered := false   # env.sheltered: rain and snow don't reach the player
+var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEATHER_SOUND_THUNDER in a thunderstorm)
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
@@ -565,6 +567,8 @@ func _read_env(v: Variant) -> void:
 		weather_sun = _float(e["sun_multiplier"], 0.0, WEATHER_MAX, "env.sun_multiplier")
 	if e.has("sheltered"):
 		weather_sheltered = _flag(e["sheltered"], "env.sheltered")
+	if e.has("weather_sound"):
+		weather_sound = _int(e["weather_sound"], 0, 255, "env.weather_sound")
 
 
 func _read_ids(v: Variant) -> void:
