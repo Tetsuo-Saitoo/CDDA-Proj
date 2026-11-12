@@ -55,6 +55,8 @@ const MAX_EFFECTS := 64                   # the contract's cap
 const MAX_EFFECT_ID := 64
 const MAX_EFFECT_NAME := 40
 const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
+const MAX_MORALE := 32                    # morale entries kept
+const MAX_MORALE_NAME := 64
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
 const EFFECT_BAD := -1
@@ -132,6 +134,9 @@ var player_needs := {}                     # NEEDS key -> int, only the ones sen
 ## player.effects (what CDDA's @ screen lists): {id, name, body_part, intensity, rating, seconds_left}, at most
 ## MAX_EFFECTS. HUD-only data: a bad entry is skipped, not a failed snapshot. seconds_left -1 = permanent or unknown.
 var player_effects: Array[Dictionary] = []
+## player.morale_entries (CDDA's morale list, the reasons behind player_needs["morale"]): {name, value}, at most
+## MAX_MORALE. HUD-only data: a bad entry is skipped, not a failed snapshot.
+var player_morale: Array[Dictionary] = []
 ## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
 ## (HUD-only: never fails the snapshot).
 var player_move_mode := -1
@@ -309,6 +314,7 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	player_effects = effects_from((v as Dictionary).get("effects"))
+	player_morale = morale_from((v as Dictionary).get("morale_entries"))
 	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
 	player_move_mode = mm if mm is int else -1
 
@@ -332,6 +338,22 @@ static func effects_from(v: Variant) -> Array[Dictionary]:
 		var secs: Variant = _whole(d.get("seconds_left", -1), 0, MAX_EFFECT_SECONDS)
 		out.append({"id": id, "name": name if not name.is_empty() else id, "body_part": part, "intensity": level,
 				"rating": rating, "seconds_left": secs if secs != null else -1})
+	return out
+
+
+## player.morale_entries, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
+static func morale_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	for e: Variant in (v as Array).slice(0, MAX_MORALE):
+		if not e is Dictionary:
+			continue
+		var name := plain_text((e as Dictionary).get("name"), MAX_MORALE_NAME)
+		var value: Variant = _whole((e as Dictionary).get("value"), -32768, 32767)
+		if name.is_empty() or value == null:
+			continue
+		out.append({"name": name, "value": value})
 	return out
 
 
