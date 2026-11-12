@@ -104,6 +104,7 @@ var body: PlayerBody      # the player's body (main.gd): its arms reach for thes
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
+var panel: VrPanel        # L4: CDDA's 2D menus and prompts (main.gd puts them under panel.root); the laser works it
 var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
 var pointer_dot: MeshInstance3D   # ... and its dot on the panel
 var _held := {}                   # the last show_held, shown again when the main hand changes
@@ -275,6 +276,8 @@ func _build() -> void:
 	hud = VrHud.new()
 	add_child(hud)
 	hud.alerted.connect(func() -> void: _feel(off_ctrl()))   # a new bad warning: a buzz in the HUD's hand
+	panel = VrPanel.new()
+	add_child(panel)
 	pack = VrPack.new()
 	pack.head = camera
 	pack.ids.assign(HAND_IDS)
@@ -369,6 +372,7 @@ func _process(delta: float) -> void:
 	if current_layout() == "vive":
 		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
 				settings["turn"] == "smooth")
+	panel.update(delta, camera.transform)
 	step(delta, inp)
 	update_pointer()
 	track_hands(delta)
@@ -468,7 +472,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 			var t := {}
 			var pt := {}   # the open pack goes first, then what the hand touches, then what its pull ray meets
 			var pointing := false
-			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not menu_open() \
+			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not ui_open() \
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
 				if pt.is_empty():
@@ -560,7 +564,7 @@ func _show_pull_ray(i: int, t: Dictionary) -> void:
 ## its copy flies from where it lay into the hand (_fly). False when nothing is pointed (the caller buzzes); a refusal
 ## from CDDA comes through Hands.refused (a buzz and its reason, the hand empty again, no flight).
 func pull_with(c: XRController3D) -> bool:
-	if hands == null or world.snapshot == null or menu_open():
+	if hands == null or world.snapshot == null or ui_open():
 		return false
 	var i := 0 if c == left else 1
 	var id: String = HAND_IDS[i]
@@ -769,12 +773,43 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 
 func release(c: XRController3D, n: String) -> void:
 	if n != "grip_click":
+		panel_button(c, n, false)   # a release always reaches the panel (a no-op when nothing there is held)
 		return
 	_grip_down[0 if c == left else 1] = false
 	if gun.release(c):
 		return   # the end of a rack (VrGun)
 	if settings["grip"] != "toggle":   # toggle: the next press lets go
 		let_go(c)
+
+
+## A button for the CDDA panel (`down`: pressed, else released); true if the panel takes it. The main trigger is the
+## laser's left button (a press off the panel buzzes); the other trigger, A / X and a Vive pad click are ui_accept;
+## B / Y and the right Vive menu are ui_cancel. Grips and the left menu button stay as they are.
+func panel_button(c: XRController3D, n: String, down: bool) -> bool:
+	var a: StringName = &""
+	match n:
+		"trigger_click":
+			if c == main_ctrl():
+				if not down:
+					panel.release()
+				elif not panel.press():
+					_feel(c)
+				return true
+			a = &"ui_accept"
+		"ax_button":
+			a = &"ui_accept"
+		"by_button":
+			a = &"ui_cancel"
+		"primary_click":
+			if current_layout() == "vive":
+				a = &"ui_accept"
+		"menu_button":
+			if c == right:
+				a = &"ui_cancel"
+	if a == &"":
+		return false
+	panel.action(a, down)
+	return true
 
 
 ## Each hand's velocity (hand_vel) from its moves in the rig's space, smoothed over VEL_RATE, turned to world. A
@@ -1043,6 +1078,8 @@ func step(delta: float, inp: Dictionary) -> void:
 	if menu_open():
 		if menu.nav(inp.get("move", Vector2.ZERO)):
 			_settings_changed()
+	elif panel.shown:   # a CDDA menu or prompt: the sticks pick in it, no moving
+		panel.nav(inp.get("move", Vector2.ZERO), inp.get("turn", Vector2.ZERO), delta)
 	elif world.snapshot != null:
 		var mv := _dead(inp.get("move", Vector2.ZERO))
 		if settings["move"] == "smooth" and mv != Vector2.ZERO:
@@ -1224,6 +1261,11 @@ func menu_open() -> bool:
 	return menu != null and menu.visible
 
 
+## The settings menu or a CDDA menu / prompt (panel) is up: the triggers and sticks work it, not the world.
+func ui_open() -> bool:
+	return menu_open() or (panel != null and panel.shown)
+
+
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
 func toggle_menu() -> void:
 	if menu == null:
@@ -1327,18 +1369,26 @@ static func ray_on_plane(plane: Transform3D, from: Vector3, dir: Vector3, max_le
 ## draw it for a controller the runtime doesn't track (tests).
 func update_pointer(all_hands := false) -> void:
 	var c := main_ctrl()
-	var on := menu_open() and is_inside_tree() and (all_hands or c.get_is_active())
-	pointer.visible = on
+	var live := is_inside_tree() and (all_hands or c.get_is_active()) and c.global_transform.is_finite()
+	var on_menu := menu_open() and live
+	var on_panel := not menu_open() and panel.shown and live
+	pointer.visible = on_menu or on_panel
 	pointer_dot.visible = false
-	if not on:
-		if menu != null:
-			menu.hover(null)
+	if menu != null and not on_menu:
+		menu.hover(null)
+	if not on_panel:
+		panel.point(null)
+	if not pointer.visible:
 		return
-	var p: Variant = pointer_at(c)
-	var hit := menu.covers(p)
-	menu.hover(p if hit else null)
+	var plane := menu.global_transform if on_menu else panel.global_transform
+	var p: Variant = pointer_at(c) if on_menu 			else ray_on_plane(plane, c.global_position, -c.global_basis.z, POINTER_MAX)
+	var hit := menu.covers(p) if on_menu else VrPanel.covers(p)
+	if on_menu:
+		menu.hover(p if hit else null)
+	else:
+		panel.point(p)
 	var from := c.global_position
-	var to: Vector3 = menu.global_transform * (p as Vector3) if hit else from - c.global_basis.z.normalized() * POINTER_LEN
+	var to: Vector3 = plane * (p as Vector3) if hit else from - c.global_basis.z.normalized() * POINTER_LEN
 	pointer.global_transform = _segment(from, to, POINTER_R)
 	if hit:
 		pointer_dot.global_position = to
@@ -1372,6 +1422,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			var changed := menu.click_at(p) if menu.covers(p) else menu.click()
 			if changed:
 				_settings_changed()
+		return
+	if panel.shown and panel_button(c, n, true):
 		return
 	if world.snapshot == null:
 		return

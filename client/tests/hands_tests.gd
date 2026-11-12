@@ -37,6 +37,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_move()
 	_test_door_names()
 	_test_freed_leaf()
+	_test_clear()
 	_test_bodies(root)
 	_test_flick(root)   # last: throws the bag away
 	_hands.free()
@@ -415,6 +416,63 @@ func _test_door_names() -> void:
 	g.free()
 	_check.call(door_ok and part_ok and _hands.door_name(null) == "",
 			"hands: doors named by terrain, parts by kind and furniture (%s, %s)" % [ter, furn])
+
+
+## ItemActions.clear() (a new game or snapshot) with a take and a hand change in flight: the hands let go of what
+## they hold and forget those steps, nothing emitted; the item can be grabbed again afterwards.
+func _test_clear() -> void:
+	var rock := -1   # something lying in reach (the rock on S has been taken by now)
+	var at := P
+	for sq: Vector3i in [S, SE, E, P]:
+		for id: String in ["rock", "hammer", "bag_canvas"]:
+			if rock < 0 and _handle(sq, _it[id]) > 0:
+				rock = _handle(sq, _it[id])
+				at = sq
+	var given := _mock.give(_it["hammer"])   # in the pack (nothing is carried by now); taken away at the end
+	_bump()
+	var c := _hands.picker.by_uid(given)
+	var was: Object = _actions.backend
+	var silent := Silent.new()
+	_actions.backend = silent
+	_seen.clear()
+	var grabbed := _hands.grab("mouse", _hands.find_near(_mid(rock), 0.05))
+	var op := _hands.release("mouse", {"kind": "surface", "square": at}) if grabbed else ""
+	var handed := c != null and _hands.adopt("vr_r", c) and _hands.hand_over("vr_r", "vr_l", "off")
+	_check.call(rock > 0 and op == "take" and handed and _hands._then.has(rock) and _hands._handing.has(c.uid)
+			and _actions.pending_count() == 2 and _world.hidden_items.has(rock) and silent.calls == 2,
+			"hands clear: (a take and a hand change in flight: %s, %s)" % [op, handed])
+	_actions.clear()
+	_check.call(_hands.holding("vr_l").is_empty() and _hands.proxy("vr_l") == null and _hands.holding("vr_r").is_empty()
+			and _hands._then.is_empty() and _hands._owner.is_empty() and _hands._handing.is_empty()
+			and _world.hidden_items.is_empty() and _actions.pending_count() == 0 and _seen.is_empty(),
+			"hands clear: the hands let go and forget what was in flight, nothing emitted")
+	_actions.backend = was
+	var row := ItemActions.carried_row(_snap, given, _it["hammer"])
+	if row >= 0:
+		var cs := Snapshot.CARRIED_STRIDE
+		_snap.carried = _snap.carried.slice(0, row * cs) + _snap.carried.slice((row + 1) * cs)
+	_bump()
+	var again := _hands.grab("mouse", _hands.find_near(_mid(rock), 0.05))
+	_hands.cancel("mouse")
+	_check.call(again and _handle_row(at, rock).size() > 0 and _hands.picker.carried().is_empty() and _world.hidden_items.is_empty() and _actions.pending_count() == 0,
+			"hands clear: the item can be grabbed again")
+
+
+## A backend that accepts takes and hand changes and never answers (they stay in flight).
+class Silent:
+	extends RefCounted
+	var calls := 0
+
+	func take_item(_uid: float, _type: float, _sq: Vector3i, _where: String) -> bool:
+		calls += 1
+		return true
+
+	func hold_item(_uid: float, _type: float, _hand: String) -> bool:
+		calls += 1
+		return true
+
+	func queued_actions() -> int:
+		return 0
 
 
 ## E2 slice 5 (Hands.bodies): an item lying as a physics body is pointed at, outlined and grabbed where the body is

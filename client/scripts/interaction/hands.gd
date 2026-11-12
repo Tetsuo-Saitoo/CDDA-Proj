@@ -77,6 +77,7 @@ func _init(w: WorldView, a: ItemActions) -> void:
 	a.hidden_changed.connect(_on_pending_hidden)
 	a.finished.connect(_on_finished)
 	a.refused.connect(_on_refused)
+	a.cleared.connect(_on_cleared)
 
 
 func _exit_tree() -> void:
@@ -660,6 +661,24 @@ func _make_proxy(it: ItemRef) -> Node3D:
 		if n != null:
 			return n
 	return ItemVisual.make(it.type, world)
+
+
+## ItemActions forgot everything in flight (a new game or snapshot): the hands let go of the items they hold or point
+## at (nothing sent, nothing emitted) and forget their own steps in flight, so those items can be grabbed again.
+## A held door stays held.
+func _on_cleared() -> void:
+	for h: Hand in _hands.values():
+		if h.hover.get("kind") == "item":
+			_light(h, h.hover, false)
+			h.hover = {}
+		if h.held.get("kind") == "item":
+			_drop_hold(h)
+	_owner.clear()
+	_then.clear()
+	_handing.clear()
+	_held_hidden.clear()
+	_pending_hidden = {}
+	_sync_hidden()
 
 
 func _on_pending_hidden(uids: Dictionary) -> void:

@@ -24,6 +24,8 @@ extends Node3D
 const STEP_REPEAT_MS := 250
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
+## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
+const PANEL_UI_SCALE := 1.35
 ## Camera-relative move: octant 0 = east, counting clockwise as seen from above (CDDA's y points south).
 const OCT_ACTIONS := ["RIGHT", "RIGHTDOWN", "DOWN", "LEFTDOWN", "LEFT", "LEFTUP", "UP", "RIGHTUP"]
 const OCT_STEPS := [Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0),
@@ -480,7 +482,22 @@ func _start_vr() -> void:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
 		world.set_view_z_max(world.coords.z_max)
+	# L4: CDDA's prompts on the VR panel (laser clicks, the stick's ui_* actions; RequestUI.as_key), and with them
+	# the menus opened beside them later (the main menu: _show_main_menu adds it next to request_ui).
+	var panel := panel_root(vr)
+	if panel != null:
+		request_ui.reparent(panel, false)
+		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
+		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 	print("VR on: %s" % vr.settings)
+
+
+## The VR panel's root Control (VrPanel.root, a full-rect Control in its SubViewport), or null while `rig` has no
+## panel (read by name: older rigs have none).
+static func panel_root(rig: Object) -> Control:
+	var p: Variant = rig.get("panel") if is_instance_valid(rig) else null
+	var r: Variant = (p as Object).get("root") if p is Object and is_instance_valid(p) else null
+	return r as Control if r is Control and is_instance_valid(r) else null
 
 
 func _view() -> Node3D:
