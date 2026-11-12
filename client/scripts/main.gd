@@ -40,6 +40,7 @@ var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
 var sun: DirectionalLight3D
+var weather: WeatherView       # C6 / I2: sky, sun and fog by CDDA's weather
 var hud: Label
 var request_ui: RequestUI
 var main_menu: MainMenu
@@ -314,7 +315,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
-	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
+	weather.apply(snap, world.coords, world.lighting.enabled)
 	if vr != null:
 		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
@@ -1153,19 +1154,12 @@ func _setup_environment() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 200.0
 	add_child(sun)
-	_aim_sun(45.0, 0.0)
-
-
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
-## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
-func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
-	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
-	var az := deg_to_rad(az_deg)
-	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
-	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
-	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
+	# The sun's aim and strength, the sky and the fog follow each snapshot's time and weather (WeatherView).
+	weather = WeatherView.new()
+	add_child(weather)
+	weather.light_pass = world.lighting.enabled
+	weather.setup(env, sun)
+	weather.aim_sun(45.0, 0.0)
 
 
 func _setup_hud() -> void:
