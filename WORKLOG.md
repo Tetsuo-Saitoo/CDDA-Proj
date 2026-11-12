@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-12 — E2 item physics: `LiveSession.place_item` / `spot_item` (checked before anything reaches the sim) for the item placer, which now waits while a hand's take / drop on the item is under way; tested with a fake sim, not yet live (lead-bridge's ops still to land).
 - 2026-11-12 — E2 item physics slices 3-4, client side (lead-vr): `physics/item_placer.gd` tells CDDA where a body came to rest (ops spot / place with a tag, `item_result`, snap back on refusal), built to lead-bridge's agreed shapes and tested against a stand-in; sends nothing until the bridge ops and the LiveSession wrappers land. VrSwing now calls lead-combat's `strike_segment` directly.
 - 2026-11-12 — VR melee by hand (L3, lead-vr with lead-combat's contract): `vr/vr_swing.gd`, a fast hand whose striking line (to the ends of what it holds, else a fist) meets a creature next to the player queues CDDA's aimed strike for that hand; one strike per swing; `vr_swing_tests`.
 - 2026-11-12 — VR wrist HUD: move line, mood line (word + strongest reason) and the other effects (bad first); panel now 12 x 10 cm. VR panel text size: setting `panel_text` 80-160 % (fewer logical pixels on the same quad).
