@@ -166,13 +166,13 @@ func update(cam: Camera3D, captured: bool) -> void:
 	_place_marker(t.cursor)
 
 
-## A fire input (`aim_fire`, `cdda_fire`, or `look_at` = LMB) while a target request shows; true if used.
+## A fire input (`aim_fire`, `cdda_fire`, or `click` = LMB) while a target request shows; true if used.
 ## Keyboard and pad fire straight at the cursor; the mouse picks or fires as in on_fire.
 func handle_event(event: InputEvent, cam: Camera3D) -> bool:
 	if request_ui.target_widget() == null:
 		return false
 	var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
-	if InputActions.pressed(event, &"look_at"):
+	if InputActions.pressed(event, &"click"):
 		var mb := event as InputEventMouseButton
 		return on_fire(cam, mb.position if mb != null else cam.get_viewport().get_mouse_position(), captured)
 	if InputActions.pressed(event, &"aim_fire") or InputActions.pressed(event, &"cdda_fire"):

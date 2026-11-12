@@ -24,6 +24,8 @@ extends Node3D
 const STEP_REPEAT_MS := 250
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
+## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
+const PANEL_UI_SCALE := 1.35
 ## Camera-relative move: octant 0 = east, counting clockwise as seen from above (CDDA's y points south).
 const OCT_ACTIONS := ["RIGHT", "RIGHTDOWN", "DOWN", "LEFTDOWN", "LEFT", "LEFTUP", "UP", "RIGHTUP"]
 const OCT_STEPS := [Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1), Vector2i(-1, 1), Vector2i(-1, 0),
@@ -480,7 +482,22 @@ func _start_vr() -> void:
 		live.held_changed.connect(vr.show_held)   # the hands panel isn't in the headset
 	if world.snapshot != null:
 		world.set_view_z_max(world.coords.z_max)
+	# L4: CDDA's prompts on the VR panel (laser clicks, the stick's ui_* actions; RequestUI.as_key), and with them
+	# the menus opened beside them later (the main menu: _show_main_menu adds it next to request_ui).
+	var panel := panel_root(vr)
+	if panel != null:
+		request_ui.reparent(panel, false)
+		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
+		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 	print("VR on: %s" % vr.settings)
+
+
+## The VR panel's root Control (VrPanel.root, a full-rect Control in its SubViewport), or null while `rig` has no
+## panel (read by name: older rigs have none).
+static func panel_root(rig: Object) -> Control:
+	var p: Variant = rig.get("panel") if is_instance_valid(rig) else null
+	var r: Variant = (p as Object).get("root") if p is Object and is_instance_valid(p) else null
+	return r as Control if r is Control and is_instance_valid(r) else null
 
 
 func _view() -> Node3D:
@@ -825,7 +842,8 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"level_up"):
 		act = "LEVEL_UP"
 	elif InputActions.pressed(event, &"use_held"):
-		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons)
+		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
+		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
@@ -850,8 +868,8 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## Left click: what is under the mouse (the screen centre while the mouse looks around), with a line from
-## the player to it, its distance and what the snapshot says is there.
+## Look at (L / middle click): what is under the mouse (the screen centre while the mouse looks around), with a
+## line from the player to it, its distance and what the snapshot says is there. The same key again closes it.
 func _look_at_screen(pos: Vector2) -> Dictionary:
 	if world.snapshot == null:
 		return {}
@@ -1336,8 +1354,8 @@ func _help() -> String:
 	var steps := _keys([&"step_forward", &"step_left", &"step_back", &"step_right"])
 	var lv := "%s %s" % [k.call(&"level_down"), k.call(&"level_up")]
 	var cut := "%s/%s" % [k.call(&"cutaway_up"), k.call(&"cutaway_down")]
-	var out := "%s look  %s look at, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
-			k.call(&"look"), k.call(&"look_at"), k.call(&"use_held")]
+	var out := "%s look  %s look at (again: close)  %s take, hold on a door and drag to open, hold on an item to carry it (wheel: nearer / farther)  %s take it  " % [
+			k.call(&"look"), k.call(&"look_at"), k.call(&"click"), k.call(&"use_held")]
 	if _fp_active():
 		out += "%s inventory  " % k.call(&"inspect")
 	if live != null and _fp_active():
@@ -1406,11 +1424,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		view_cam.zoom(-1 if wheel.button_index == MOUSE_BUTTON_WHEEL_UP else 1)   # top-down: the wheel zooms
 		return
 	if vr == null and InputActions.pressed(event, &"look_at"):
-		var mb := event as InputEventMouseButton
-		var hit := _look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
-		if _fp_active() and hit.get("hit", false):   # clicking stairs in first person takes them
-			use_stair(StairUse.find(world, hit["square"], _stair_z()))
+		if _look_line != null or (look_panel != null and not look_panel.text.is_empty()):
+			_clear_look()   # the same key again closes it
+		else:
+			var mb := event as InputEventMouseButton
+			_look_at_screen(mb.position if mb != null else get_viewport().get_mouse_position())
 		return
+	if vr == null and _fp_active() and InputActions.pressed(event, &"click"):
+		# (doors and items under the pointer went to grab above, a target prompt to aim)
+		var mb := event as InputEventMouseButton
+		var hit := _cast_screen(mb.position if mb != null else get_viewport().get_mouse_position())
+		var st: Dictionary = StairUse.find(world, hit["square"], _stair_z()) if hit.get("hit", false) else {}
+		if not st.is_empty():   # clicking stairs in first person takes them
+			use_stair(st)
+		return   # a click on nothing does nothing (E uses what you hold on what you face)
 	if InputActions.pressed(event, &"view_toggle"):
 		_toggle_view()
 		return

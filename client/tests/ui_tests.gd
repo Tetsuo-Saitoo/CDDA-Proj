@@ -410,6 +410,54 @@ func _test_string() -> void:
 	w.submit()
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and (answers[0]["text"] as String).length() == 512,
 			"multi-byte text cut to 1024 bytes")
+	_test_text_keys()
+
+
+## The on-screen keyboard under a text prompt: hidden on screen until the Keyboard button, shown from the start
+## with RequestUI.keyboard (the VR panel); Shift gives one capital, Back deletes, typing replaces a selection,
+## max_len holds, and the answer is the text typed.
+func _test_text_keys() -> void:
+	var req := _req("string", {"title": "Name", "max_len": 6,
+			"entries": [{"id": 0, "label": "Bob", "enabled": true, "description": "default"}]})
+	_show(req)
+	var w := ui.widget as StringRequestWidget
+	_check.call(w.keys != null and not w.keys.visible and w.keys.keys.size() == 40, "keys: hidden on screen at first")
+	w.keys_button.pressed.emit()
+	var k := w.keys
+	_check.call(k.visible and k.target == w.edit, "keys: the Keyboard button shows them")
+	w.edit.select_all()
+	k.shift_button.pressed.emit()
+	_press(k, "A")
+	_press(k, "n")
+	_press(k, "x")
+	k.back_button.pressed.emit()
+	_press(k, "n")
+	k.space_button.pressed.emit()
+	for c in "123":
+		_press(k, c)
+	_check.call(w.edit.text == "Ann 12" and not k.shift and k.keys[10].text == "q",
+			"keys: Shift for one capital, Back deletes, the selection is replaced, max_len holds (%s)" % w.edit.text)
+	w.submit()
+	_expect({"id": 7, "text": "Ann 12"}, "keys: the typed text is sent")
+	ui.keyboard = true
+	_show(req)
+	w = ui.widget as StringRequestWidget
+	_check.call(w.keys.visible, "keys: shown from the start on the VR panel")
+	w.edit.caret_column = 0
+	w.keys.back_button.pressed.emit()
+	w.keys.target = null
+	_press(w.keys, "z")
+	_check.call(w.edit.text == "Bob", "keys: Back at the start and no target do nothing")
+	ui.keyboard = false
+	ui.clear()
+
+
+## Presses the key labelled `label` on `k`.
+func _press(k: TextKeys, label: String) -> void:
+	for b in k.keys:
+		if b.text == label:
+			b.pressed.emit()
+			return
 
 
 func _test_direction() -> void:

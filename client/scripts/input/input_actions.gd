@@ -11,6 +11,11 @@ const DEADZONE := 0.3
 const FILE := "user://keys.json"
 const MAX_FILE_BYTES := 65536
 const MAX_SLOTS := 4          # keys per action kept from the file
+## The key file's version; older files are read with MOVED applied.
+const FILE_VERSION := 2
+## Keys that left an action in an update: dropped from that action when an older key file is loaded, so a key
+## saved there before doesn't now do two things (version 2: left click went from look_at to click).
+const MOVED := {&"look_at": ["mouse:1"]}
 const MENU_KEY := KEY_F1      # opens the key menu; fixed so it can't be lost
 
 ## Every action: [name, group, label, default bindings]. A binding is the text form `event_text` reads:
@@ -41,7 +46,7 @@ const ACTIONS := [
 	[&"look_down", "View", "look down", ["axis:3+"]],
 	[&"look_left", "View", "look left", ["axis:2-"]],
 	[&"look_right", "View", "look right", ["axis:2+"]],
-	[&"look_at", "View", "look at what you point at; aiming: pick a target, again to fire", ["mouse:1"]],
+	[&"look_at", "View", "look at what you point at (again: close it)", ["L", "mouse:3"]],
 	[&"view_toggle", "View", "first person / outside", ["V"]],
 	[&"fly_up", "View", "fly up (outside)", ["Space"]],   # not E / Q: take / use and CDDA's wield
 	[&"fly_down", "View", "fly down (outside)", ["Ctrl"]],
@@ -54,6 +59,7 @@ const ACTIONS := [
 	[&"hand_off", "Act", "strike, left (off) hand", ["1"]],
 	[&"hand_main", "Act", "strike, right (main) hand", ["2"]],
 	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold", ["E"]],
+	[&"click", "Act", "take the item you point at, like E; hold on a door or an item and drag; click stairs to take them; aiming: pick a target, again to fire", ["mouse:1"]],
 	[&"carry_farther", "Act", "carrying an item: hold it farther away", ["mouse:4"]],
 	[&"carry_closer", "Act", "carrying an item: hold it closer", ["mouse:5"]],
 	[&"carry_turn_left", "Act", "carrying an item: turn it left", ["mouse:Shift+4"]],
@@ -374,7 +380,7 @@ static func save_bindings(path := FILE) -> String:
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return "can't write %s (%s)" % [path, error_string(FileAccess.get_open_error())]
-	f.store_string(JSON.stringify({"version": 1, "actions": changed}, "\t"))
+	f.store_string(JSON.stringify({"version": FILE_VERSION, "actions": changed}, "\t"))
 	return ""
 
 
@@ -396,6 +402,8 @@ static func load_bindings(path := FILE) -> PackedStringArray:
 		bad.append("%s isn't a key file, ignored" % path)
 		return bad
 	var acts: Dictionary = d["actions"]
+	var v: Variant = (d as Dictionary).get("version", 1)
+	var old: bool = not (v is float or v is int) or v < FILE_VERSION
 	for key: Variant in acts:
 		var a := StringName(str(key))
 		if not key is String or info(a).is_empty():
@@ -405,12 +413,17 @@ static func load_bindings(path := FILE) -> PackedStringArray:
 			bad.append("%s: not a list" % a)
 			continue
 		var events: Array[InputEvent] = []
+		var moved := 0
 		for t: Variant in acts[key]:
 			var e := parse_event(t) if t is String else null
 			if e == null:
 				bad.append("%s: bad key %s" % [a, str(t).left(40)])
+			elif old and (MOVED.get(a, []) as Array).has(event_text(e)):
+				moved += 1   # that key does something else now
 			elif events.size() < MAX_SLOTS * 2 and not _texts(events).has(event_text(e)):
 				events.append(e)
+		if events.is_empty() and moved > 0:
+			continue   # only moved keys were saved for it: it keeps its defaults
 		InputMap.action_erase_events(a)
 		for e in events:
 			InputMap.action_add_event(a, e)

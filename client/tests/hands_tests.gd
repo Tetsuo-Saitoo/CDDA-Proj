@@ -37,6 +37,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_move()
 	_test_door_names()
 	_test_freed_leaf()
+	_test_clear()
 	_test_bodies(root)
 	_test_flick(root)   # last: throws the bag away
 	_hands.free()
@@ -288,6 +289,26 @@ func _test_mouse(root: Node) -> void:
 	_hands.refused.emit("mouse", {}, "You can't do that.")
 	ctl.update(cam, mid, true, true)
 	_check.call(ctl.icon.text == "You can't do that." and ctl.icon.bad, "hands: a refusal flashes its reason in red")
+	# A quick click (let go within CLICK_MS, barely moved) takes the item as E does; a slow press and let go puts
+	# it back, nothing sent.
+	var ms := [10000]
+	ctl.clock = func() -> int: return ms[0]
+	cam.look_at_from_position(eye, _mid(bag))
+	ctl.update(cam, mid, true, true)
+	_seen.clear()
+	ctl.handle_event(lmb, cam, mid)
+	ms[0] += GrabController.CLICK_MS + 50
+	ctl.handle_event(up, cam, mid)
+	var slow_ok := not ctl.carrying() and not _carried(bag) and _seen.is_empty() and _handle(SE, _it["bag_canvas"]) == bag
+	ctl.update(cam, mid, true, true)
+	_seen.clear()   # (the hover outline)
+	ctl.handle_event(lmb, cam, mid)
+	ms[0] += 100
+	ctl.handle_event(up, cam, mid)
+	_check.call(slow_ok and _carried(bag) and not ctl.carrying() and _seen == [["confirmed", "mouse", bag, ""]]
+			and _world.hidden_items.is_empty(), "hands: a quick click on an item takes it as E does; a slow one puts it back (%s)" % [_seen])
+	_mock.drop_item(float(bag), float(_it["bag_canvas"]), SE)   # back where the later tests want it
+	_bump()
 	cam.free()
 	ctl.free()
 
@@ -343,8 +364,10 @@ func _test_flick(root: Node) -> void:
 	var up := InputEventMouseButton.new()
 	up.button_index = MOUSE_BUTTON_LEFT
 	up.pressed = false
+	var ms := [50000]   # a fixed clock: the flick is judged the same however slow the run
+	ctl.clock = func() -> int: return ms[0]
 	ctl.handle_event(lmb, cam, mid)
-	var now := Time.get_ticks_msec()
+	var now: int = ms[0]
 	ctl._motion = [[now - 1000, 5000.0]]
 	_check.call(ctl.carrying() and ctl.flick_speed(now) == 0.0, "hands: old mouse motion is no flick")
 	cam.look_at_from_position(eye, eye + Vector3(0.002, -1.0, 0.0))
@@ -357,7 +380,7 @@ func _test_flick(root: Node) -> void:
 	var used := false
 	for i in 3:
 		used = used or ctl.handle_event(flick, cam, mid)
-	_check.call(not used and ctl.flick_speed(Time.get_ticks_msec()) >= GrabController.FLICK_PX_S,
+	_check.call(not used and ctl.flick_speed(ms[0]) >= GrabController.FLICK_PX_S,
 			"hands: carrying, mouse motion still turns the view and is counted for a flick")
 	_seen.clear()
 	_check.call(sq is Vector3i and sq != P and (sq as Vector3i).z == P.z and ctl.handle_event(up, cam, mid)
@@ -415,6 +438,63 @@ func _test_door_names() -> void:
 	g.free()
 	_check.call(door_ok and part_ok and _hands.door_name(null) == "",
 			"hands: doors named by terrain, parts by kind and furniture (%s, %s)" % [ter, furn])
+
+
+## ItemActions.clear() (a new game or snapshot) with a take and a hand change in flight: the hands let go of what
+## they hold and forget those steps, nothing emitted; the item can be grabbed again afterwards.
+func _test_clear() -> void:
+	var rock := -1   # something lying in reach (the rock on S has been taken by now)
+	var at := P
+	for sq: Vector3i in [S, SE, E, P]:
+		for id: String in ["rock", "hammer", "bag_canvas"]:
+			if rock < 0 and _handle(sq, _it[id]) > 0:
+				rock = _handle(sq, _it[id])
+				at = sq
+	var given := _mock.give(_it["hammer"])   # in the pack (nothing is carried by now); taken away at the end
+	_bump()
+	var c := _hands.picker.by_uid(given)
+	var was: Object = _actions.backend
+	var silent := Silent.new()
+	_actions.backend = silent
+	_seen.clear()
+	var grabbed := _hands.grab("mouse", _hands.find_near(_mid(rock), 0.05))
+	var op := _hands.release("mouse", {"kind": "surface", "square": at}) if grabbed else ""
+	var handed := c != null and _hands.adopt("vr_r", c) and _hands.hand_over("vr_r", "vr_l", "off")
+	_check.call(rock > 0 and op == "take" and handed and _hands._then.has(rock) and _hands._handing.has(c.uid)
+			and _actions.pending_count() == 2 and _world.hidden_items.has(rock) and silent.calls == 2,
+			"hands clear: (a take and a hand change in flight: %s, %s)" % [op, handed])
+	_actions.clear()
+	_check.call(_hands.holding("vr_l").is_empty() and _hands.proxy("vr_l") == null and _hands.holding("vr_r").is_empty()
+			and _hands._then.is_empty() and _hands._owner.is_empty() and _hands._handing.is_empty()
+			and _world.hidden_items.is_empty() and _actions.pending_count() == 0 and _seen.is_empty(),
+			"hands clear: the hands let go and forget what was in flight, nothing emitted")
+	_actions.backend = was
+	var row := ItemActions.carried_row(_snap, given, _it["hammer"])
+	if row >= 0:
+		var cs := Snapshot.CARRIED_STRIDE
+		_snap.carried = _snap.carried.slice(0, row * cs) + _snap.carried.slice((row + 1) * cs)
+	_bump()
+	var again := _hands.grab("mouse", _hands.find_near(_mid(rock), 0.05))
+	_hands.cancel("mouse")
+	_check.call(again and _handle_row(at, rock).size() > 0 and _hands.picker.carried().is_empty() and _world.hidden_items.is_empty() and _actions.pending_count() == 0,
+			"hands clear: the item can be grabbed again")
+
+
+## A backend that accepts takes and hand changes and never answers (they stay in flight).
+class Silent:
+	extends RefCounted
+	var calls := 0
+
+	func take_item(_uid: float, _type: float, _sq: Vector3i, _where: String) -> bool:
+		calls += 1
+		return true
+
+	func hold_item(_uid: float, _type: float, _hand: String) -> bool:
+		calls += 1
+		return true
+
+	func queued_actions() -> int:
+		return 0
 
 
 ## E2 slice 5 (Hands.bodies): an item lying as a physics body is pointed at, outlined and grabbed where the body is
