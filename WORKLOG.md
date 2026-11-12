@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-12 — Review follow-ups (lead-qa, lead-bridge, lead-vr, coordinator): the mood reads the bridge's `player.mood` object (level, band, face, total, entries with their share); a text prompt's on-screen keys leave accept alone until the cursor is used, so it still sends on the VR panel; a hand change whose item left the carried list times out; a test path that is absolute on Linux too. Client tests pass.
 - 2026-11-12 — Tab view multi-select leftovers: Ctrl+A, a right-click menu with the selection's actions, and a box select dragged from empty space. Client tests pass; not looked at on screen.
 - 2026-11-12 — The main menu, the F1 menu and the Tab view move onto the VR panel with CDDA's prompts, drawn 1.35x; the Tab view gets a Close button and both close on the panel's cancel button. Client tests pass; not tried in a headset.
 - 2026-11-12 — On-screen keyboard for every text field (menu world name, character names, list filters), worked by pad or the VR stick as well as the pointer: Y opens it on a pad, a click on the field in VR; D-pad moves, A types, X deletes, Enter key added. Client tests pass; not tried with a real pad or in a headset.

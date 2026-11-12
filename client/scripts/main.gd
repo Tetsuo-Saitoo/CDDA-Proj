@@ -491,7 +491,8 @@ func _start_vr() -> void:
 	if panel != null:
 		menus_to_panel(panel, [inspect, key_menu, main_menu.get_parent() if main_menu != null else null], PANEL_UI_SCALE)
 		request_ui.reparent(panel, false)
-		panel.move_child(request_ui, inspect.get_index() + 1)
+		if inspect.get_parent() == panel:   # prompts draw over the Tab view, under the F1 menu
+			panel.move_child(request_ui, inspect.get_index() + 1)
 		request_ui.set_ui_scale(PANEL_UI_SCALE)   # 16 px text -> ~22 px: readable at the panel's distance
 		request_ui.keyboard = true   # no keyboard in the headset: text prompts open with TextKeys
 		text_dock.reparent(panel, false)   # ... and the other text fields get them from the dock
