@@ -7,7 +7,8 @@ extends RefCounted
 ## Everything that comes in is game data: numbers are clamped, text is cleaned (no colour tags, no control
 ## characters, capped), lists are capped.
 
-## Which groups changed: any of "body", "needs", "effects", "move", "held", "messages", "warnings", "cheats".
+## Which groups changed: any of "body", "needs", "effects", "move", "mood", "held", "messages", "warnings",
+## "cheats".
 signal changed(parts: PackedStringArray)
 
 enum { UNKNOWN = -1, OK = 0, HURT = 1, BAD = 2, BROKEN = 3 }
@@ -19,6 +20,13 @@ const MAX_NAME := 64
 const MAX_WARNINGS := 8
 const MAX_EVENTS := 4096
 const MAX_EFFECTS := 32
+const MAX_MOOD_REASONS := 16
+## Reasons named on the mood line; the rest are counted ("+2 more").
+const MOOD_REASONS_SHOWN := 3
+## Morale within this of 0 is neither good nor bad: the word is "Fine", no cue.
+const MOOD_CALM := 10
+## Morale this far from 0 gives the full cue (MoodCue's tint).
+const MOOD_FULL := 100
 ## Effects the HUD shows elsewhere: the body bars carry these (per part), the hunger need the hunger_* ones.
 const EFFECTS_SHOWN_ELSEWHERE := ["bleed", "bandaged", "disinfected", "bite", "infected"]
 ## CDDA's hunger effects (effects.json; display.cpp shows them as the hunger word) -> level.
@@ -46,6 +54,12 @@ var effects: Array[Dictionary] = []
 ## How the player moves (Snapshot.player_move_mode): {mode: CDDA's id ("walk", "run", "crouch", "prone"), text
 ## ("Running", "Running (stamina 23%)"), level}; {} when the snapshot or the id tables don't say.
 var move := {}
+## The player's mood (CDDA's morale; Snapshot.player_needs["morale"] and player_morale): {value: morale points,
+## word ("Happy", "Unhappy" ...), level (OK, HURT below -MOOD_CALM, BAD below -50), reasons: [{name, value}] the
+## morale entries, strongest first, at most MAX_MOOD_REASONS, text: the HUD line ("Mood: Unhappy (Wet -12, Cold
+## -8, +2 more)"), cue: -1..1 for the views' mood cues (0 while calm, -1 / 1 from MOOD_FULL points)}; {} when the
+## snapshot doesn't carry morale.
+var mood := {}
 ## {main, off: ItemRef (carried) or null; main_liquid, off_liquid: String; main_fill, off_fill: 0..1 or -1;
 ## liquid, fill_frac: the first hand's (main, then off) that holds a liquid}.
 var held := {}
@@ -86,6 +100,12 @@ func update(snap: Snapshot, tables: IdTables) -> void:
 	if mv != move:
 		move = mv
 		parts.append("move")
+	var have: Variant = snap.get("player_needs") if "player_needs" in snap else null
+	var md := mood_from((have as Dictionary).get("morale") if have is Dictionary else null,
+			snap.get("player_morale") if "player_morale" in snap else [])
+	if md != mood:
+		mood = md
+		parts.append("mood")
 	var h := _held_from(snap, _bridge_held)
 	if not _same_held(h, held):
 		held = h
@@ -219,6 +239,65 @@ static func word(kind: String, value: int) -> String:
 			if scale > 0:
 				return "Minimal pain"
 	return ""
+
+
+## The HUD's word for a morale level. CDDA shows a face, not a word; the bands are its mood faces' (10, 50, 100,
+## 200 either way).
+static func mood_word(value: int) -> String:
+	if value >= 200:
+		return "Elated"
+	if value >= 100:
+		return "Joyful"
+	if value >= 50:
+		return "Happy"
+	if value >= MOOD_CALM:
+		return "Content"
+	if value < -200:
+		return "Despairing"
+	if value < -100:
+		return "Depressed"
+	if value < -50:
+		return "Miserable"
+	if value < -MOOD_CALM:
+		return "Unhappy"
+	return "Fine"
+
+
+## The mood (see `mood`) from the morale level and CDDA's morale entries ([{name, value}], Snapshot.player_morale);
+## {} when the level isn't a number. Entries are game text: cleaned and capped again here, zero ones left out.
+static func mood_from(value: Variant, entries: Variant) -> Dictionary:
+	if not (value is int or (value is float and is_finite(value))):
+		return {}
+	var v := _int(value, -32768, 32767)
+	var reasons: Array[Dictionary] = []
+	if entries is Array:
+		for e: Variant in (entries as Array).slice(0, Snapshot.MAX_MORALE):
+			if not e is Dictionary:
+				continue
+			var name := clean((e as Dictionary).get("name"), MAX_NAME)
+			var pts: Variant = (e as Dictionary).get("value")
+			if name.is_empty() or not (pts is int or (pts is float and is_finite(pts))):
+				continue
+			var n := _int(pts, -32768, 32767)
+			if n != 0:
+				reasons.append({"name": name, "value": n, "_i": reasons.size()})
+	reasons.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:   # strongest first, CDDA's order among equals
+		return absi(a["value"]) > absi(b["value"]) or (absi(a["value"]) == absi(b["value"]) and a["_i"] < b["_i"]))
+	reasons = reasons.slice(0, MAX_MOOD_REASONS)
+	for r in reasons:
+		r.erase("_i")
+	var word := mood_word(v)
+	var text := "Mood: " + word
+	if not reasons.is_empty():
+		var bits := PackedStringArray()
+		for r: Dictionary in reasons.slice(0, MOOD_REASONS_SHOWN):
+			bits.append("%s %+d" % [r["name"], r["value"]])
+		if reasons.size() > MOOD_REASONS_SHOWN:
+			bits.append("+%d more" % (reasons.size() - MOOD_REASONS_SHOWN))
+		text += " (%s)" % ", ".join(bits)
+	var over := maxi(absi(v) - MOOD_CALM, 0)
+	var cue := signf(v) * clampf(float(over) / (MOOD_FULL - MOOD_CALM), 0.0, 1.0)
+	return {"value": v, "word": word, "level": need_level("morale", v), "reasons": reasons, "text": text, "cue": cue}
 
 
 ## The move line for move_mode `index` (see `move`); {} when unknown. Running says how much stamina is left once
@@ -402,7 +481,7 @@ func _warnings() -> Array[Dictionary]:
 		var n: Dictionary = needs[k]
 		if n["level"] == BAD:
 			var t: String = n["word"] if not (n["word"] as String).is_empty() else \
-					{"stamina": "Out of breath", "morale": "Miserable"}.get(k, k.capitalize())
+					{"stamina": "Out of breath", "morale": mood_word(n["value"])}.get(k, k.capitalize())
 			out.append({"id": k, "text": t, "level": BAD})
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["level"] > b["level"])
 	return out.slice(0, MAX_WARNINGS)

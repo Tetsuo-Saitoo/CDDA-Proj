@@ -22,9 +22,10 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_on_changed(PackedStringArray(["body", "needs", "effects", "move", "messages", "warnings", "cheats"]))
+		_on_changed(PackedStringArray(["body", "needs", "effects", "move", "mood", "messages", "warnings", "cheats"]))
 
 var feed: Label
+var mood: Label
 var warn: Label
 var cheat_mark: Label
 var _body: Control
@@ -40,6 +41,15 @@ func _init() -> void:
 	feed.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	feed.position = Vector2(12, 40)
 	feed.size = Vector2(560, FEED_LINES * 18)
+	mood = _label("Mood", HORIZONTAL_ALIGNMENT_LEFT)   # between the body bars and the feed
+	mood.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+	mood.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	mood.position = Vector2(12, 0)
+	mood.size = Vector2(310, 38)
+	mood.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	mood.max_lines_visible = 2
+	mood.clip_text = true
+	mood.add_theme_font_size_override("font_size", FONT_SIZE - 2)
 	warn = _label("Warnings", HORIZONTAL_ALIGNMENT_CENTER)
 	warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	warn.position = Vector2(-300, 40)
@@ -112,6 +122,21 @@ func move_line() -> Array:
 	return [data.move["text"], data.move["level"]]
 
 
+## [text, level] of the mood line ("Mood: Unhappy (Wet -12, Cold -8)"), [] when the snapshot has no morale.
+func mood_line() -> Array:
+	if data == null or data.mood.is_empty():
+		return []
+	return [data.mood["text"], data.mood["level"]]
+
+
+## The mood line's colour: by level when low, green when good (Content and up), plain while calm.
+static func mood_color(m: Dictionary) -> Color:
+	var level: int = m.get("level", HudData.UNKNOWN)
+	if level == HudData.HURT or level == HudData.BAD:
+		return HudData.level_color(level)
+	return HudData.level_color(HudData.OK) if float(m.get("cue", 0.0)) > 0.0 else Color(1, 1, 0.9)
+
+
 ## [text, level] per effect line shown (at most EFFECT_LINES; the last says how many more when cut).
 func effect_lines() -> Array:
 	var out: Array = []
@@ -139,6 +164,7 @@ static func cheat_text(names: PackedStringArray) -> String:
 func _on_changed(parts: PackedStringArray) -> void:
 	if data == null:
 		feed.text = ""
+		mood.text = ""
 		warn.text = ""
 		cheat_mark.text = ""
 		_body.queue_redraw()
@@ -157,6 +183,10 @@ func _on_changed(parts: PackedStringArray) -> void:
 		warn.add_theme_color_override("font_color", HudData.level_color(worst))
 	if "cheats" in parts:
 		cheat_mark.text = cheat_text(data.cheats)
+	if "mood" in parts:
+		var ml := mood_line()
+		mood.text = ml[0] if not ml.is_empty() else ""
+		mood.add_theme_color_override("font_color", mood_color(data.mood))
 	if "body" in parts or "needs" in parts or "effects" in parts or "move" in parts:
 		_body.queue_redraw()
 

@@ -15,6 +15,79 @@ func run(check: Callable, tables: IdTables) -> void:
 	_test_messages()
 	_test_view(tables)
 	_test_move(tables)
+	_test_mood()
+
+
+## The player's mood: Snapshot.morale_from cleans and caps CDDA's morale entries; HudData.mood has a word for the
+## level, the reasons strongest first, a HUD line naming the top three, and a cue strength; HudView shows the line.
+func _test_mood() -> void:
+	var raw: Array = [
+		{"name": "<color_red>Wet" + String.chr(0x202E) + "</color>\n", "value": -12.0},
+		{"name": "Enjoyed delicious food", "value": 20}, {"name": "Cold", "value": -8},
+		{"name": "", "value": 3}, {"name": "No value"}, {"name": "Fraction", "value": 1.5}, {"name": "NaN", "value": NAN},
+		{"name": "Huge", "value": 1e30}, {"name": 5, "value": 1}, "junk", 7, null,
+		{"name": "Zero", "value": 0}, {"name": "Killed innocent", "value": -20}, {"name": "X".repeat(500), "value": 1},
+	]
+	var m := Snapshot.morale_from(raw)
+	var short: Array = m.map(func(x: Dictionary) -> String: return (x["name"] as String).left(12))
+	_check.call(m.size() == 6 and m[0] == {"name": "Wet", "value": -12} and m[1]["value"] == 20 and m[3]["name"] == "Zero"
+			and (m[5]["name"] as String).length() == Snapshot.MAX_MORALE_NAME,
+			"mood: morale entries read and cleaned, bad ones skipped, names capped (%s)" % [short])
+	var many: Array = []
+	for i in 500:
+		many.append({"name": "r%d" % i, "value": i + 1})
+	_check.call(Snapshot.morale_from(many).size() == Snapshot.MAX_MORALE and Snapshot.morale_from({}).is_empty()
+			and Snapshot.morale_from("x").is_empty() and Snapshot.morale_from(null).is_empty(),
+			"mood: entries capped at %d; not a list: none" % Snapshot.MAX_MORALE)
+	var words := [HudData.mood_word(250), HudData.mood_word(100), HudData.mood_word(50), HudData.mood_word(10),
+			HudData.mood_word(9), HudData.mood_word(-10), HudData.mood_word(-11), HudData.mood_word(-51),
+			HudData.mood_word(-101), HudData.mood_word(-201)]
+	_check.call(words == ["Elated", "Joyful", "Happy", "Content", "Fine", "Fine", "Unhappy", "Miserable", "Depressed",
+			"Despairing"], "mood: a word per band (%s)" % [words])
+	var h := HudData.new()
+	var seen: Array = []
+	h.changed.connect(func(p: PackedStringArray) -> void: seen.append(p))
+	var s := Snapshot.new()
+	h.update(s, null)
+	_check.call(h.mood.is_empty() and not seen.any(func(p: PackedStringArray) -> bool: return "mood" in p),
+			"mood: unknown while the snapshot carries no morale")
+	seen.clear()
+	s.player_needs = {"morale": -20}
+	s.player_morale = m
+	h.update(s, null)
+	var names: Array = h.mood["reasons"].map(func(r: Dictionary) -> String: return (r["name"] as String).left(8))
+	_check.call(h.mood["value"] == -20 and h.mood["word"] == "Unhappy" and h.mood["level"] == HudData.HURT
+			and names == ["Enjoyed ", "Killed i", "Wet", "Cold", "XXXXXXXX"]
+			and h.mood["text"] == "Mood: Unhappy (Enjoyed delicious food +20, Killed innocent -20, Wet -12, +2 more)"
+			and is_equal_approx(h.mood["cue"], -10.0 / 90.0) and seen.size() == 1 and "mood" in seen[0],
+			"mood: the level's word, reasons strongest first, the top three named (%s)" % h.mood["text"])
+	seen.clear()
+	h.update(s, null)
+	_check.call(seen.is_empty(), "mood: the same mood again changes nothing")
+	var cues := []
+	for v: int in [0, 10, -10, 55, 100, 5000, -100, -32768]:
+		cues.append(snappedf(HudData.mood_from(v, [])["cue"], 0.01))
+	_check.call(cues == [0.0, 0.0, 0.0, 0.5, 1.0, 1.0, -1.0, -1.0] and HudData.mood_from(NAN, []).is_empty()
+			and HudData.mood_from("5", []).is_empty() and HudData.mood_from(null, m).is_empty()
+			and HudData.mood_from(30, "junk")["text"] == "Mood: Content"
+			and HudData.mood_from(1e30, [{"name": "a", "value": INF}, {"name": "b", "value": "9"}, 3])["reasons"].is_empty(),
+			"mood: the cue is 0 while calm and full from 100 points; hostile values and entries are ignored (%s)" % [cues])
+	s.player_needs = {"morale": -150}
+	h.update(s, null)
+	_check.call(h.warnings.any(func(w: Dictionary) -> bool: return w["text"] == "Depressed" and w["level"] == HudData.BAD),
+			"mood: very low morale warns with its word")
+	var view := HudView.new()
+	view.data = h
+	_check.call(view.mood_line() == [h.mood["text"], HudData.BAD] and view.mood.text == h.mood["text"]
+			and HudView.mood_color(h.mood) == HudData.level_color(HudData.BAD)
+			and HudView.mood_color(HudData.mood_from(60, [])) == HudData.level_color(HudData.OK)
+			and HudView.mood_color(HudData.mood_from(0, [])) == Color(1, 1, 0.9),
+			"mood: the screen HUD shows the line, red when low, green when good")
+	s.player_needs = {}
+	h.update(s, null)
+	_check.call(h.mood.is_empty() and view.mood.text == "" and view.mood_line().is_empty(),
+			"mood: gone when the snapshot stops sending it")
+	view.free()
 
 
 ## player.move_mode: the id tables name it, HudData words it, running says how much stamina is left once it runs
