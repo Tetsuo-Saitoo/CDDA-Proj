@@ -42,6 +42,8 @@ const WALKABLE := [K.FLOOR, K.ROOF, K.DOOR, K.SHRUB, K.TREE, K.LADDER_UP]
 
 ## The material of terrain under the open sky and of roofs: like "solid", but the weather changes it (wet_ground).
 const GROUND := "ground"
+const CEILING := Color(0.82, 0.81, 0.78)
+const CEILING_SHARE := 0.75
 const WET_ROUGHNESS := 0.35
 const WET_SPECULAR := 0.8
 const WET_TINT := Color(0.72, 0.74, 0.78)
@@ -95,13 +97,14 @@ class Buf:
 			colors.push_back(col)
 
 	## Horizontal 1 x 1 tile surface at height y, seen from above and (darker) from below.
+	## A floor or roof square at height y: `col` on top; from below it is the ceiling of the room under it.
 	func slab(o: Vector3, y: float, col: Color) -> void:
 		var a := o + Vector3(0, y, 0)
 		var b := o + Vector3(1, y, 0)
 		var c := o + Vector3(1, y, 1)
 		var d := o + Vector3(0, y, 1)
 		quad(a, b, c, d, Vector3.UP, col)
-		quad(a, b, c, d, Vector3.DOWN, col * 0.75)
+		quad(a, b, c, d, Vector3.DOWN, TerrainMesher.ceiling_color(col))
 
 	func commit(mesh: ArrayMesh, material: Material) -> void:
 		if verts.is_empty():
@@ -748,6 +751,12 @@ func _mesh(bufs: Array, mats: Array) -> ArrayMesh:
 	for i in bufs.size():
 		(bufs[i] as Buf).commit(mesh, material(mats[i]))
 	return mesh if mesh.get_surface_count() > 0 else null
+
+
+## The colour of a floor or roof seen from below: mostly pale plaster, with a little of what is above it. (Its own
+## colour, darkened, was black in a lit room: an underside gets no sun and only the light that comes from below.)
+static func ceiling_color(above: Color) -> Color:
+	return above.lerp(CEILING, CEILING_SHARE)
 
 
 ## How wet the ground and roofs look, 0 dry .. 1 soaked: darker and shinier. Main thread.

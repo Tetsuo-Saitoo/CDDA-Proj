@@ -222,6 +222,8 @@ func _test_view(root: Node) -> void:
 	var coords := CddaCoords.new()
 	_check.call(sky.sky_cover != null and sky.sky_cover_modulate == Color.BLACK and not env.fog_enabled
 			and not view.is_processing(), "weather: set up clear: a cover that adds nothing, no fog, no work")
+	_check.call(sky.ground_bottom_color.is_equal_approx(WeatherView.GROUND_BOUNCE) and sky.ground_bottom_color.get_luminance() > 0.35,
+			"weather: light comes back up from the ground (ceilings and other undersides aren't black)")
 	view.apply(_snap(_env(CLEAR)), coords, true)
 	_check.call(not env.fog_enabled and sun.light_energy == 1.0 and sun.shadow_enabled and sun.shadow_opacity == 1.0
 			and sun.sky_mode == DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY and is_equal_approx(env.ambient_light_energy, 0.8)

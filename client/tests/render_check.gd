@@ -4,8 +4,9 @@ extends SceneTree
 ## this, so it is not part of run_tests.gd: it opens a small window, takes its pictures and closes itself (~40 s).
 ## From the repo root:
 ##   godot --path client --resolution 960x540 --quit-after 6000 --script res://tests/render_check.gd -- --out=<folder>
-## (--quit-after is only a safety net; --out defaults to user://render_check). Exit code 0 = every picture saved
-## and no error logged (shader errors included); then look at the pictures. Add a state to SHOTS to check more.
+## (--quit-after is only a safety net; --out defaults to user://render_check; --only=<text> takes just the views
+## whose name has that text). Exit code 0 = every picture saved and no error logged (shader errors included);
+## then look at the pictures. Add a view to SHOTS to check more.
 
 const Main := preload("res://scripts/main.gd")
 const ErrorCatch := preload("res://tests/error_catch.gd")
@@ -23,7 +24,8 @@ const STORM := {"precip": 3, "precip_kind": 1, "sight_penalty": 1.25, "light_mod
 
 ## name, env, and optionally: view (first / shoulder / top / outside), yaw and pitch in degrees (first person:
 ## 0 looks north, 90 west), night, move (squares from the mock's player), roof (the player counts as sheltered),
-## settle (seconds before the picture), flash (a lightning event, pictured at once and again after it).
+## settle (seconds before the picture), flash (a lightning event, pictured at once and again after it), lamp (a
+## light source on the player's square: CDDA's light falls off around it).
 const SHOTS := [
 	{"name": "clear", "env": CLEAR, "yaw": 45.0},
 	{"name": "cloudy", "env": CLOUDY, "yaw": 45.0},
@@ -40,6 +42,14 @@ const SHOTS := [
 	{"name": "rain_top", "env": RAIN, "view": "top"},
 	{"name": "fog_top", "env": FOG, "view": "top"},
 	{"name": "clear_again", "env": CLEAR, "yaw": 45.0},
+	# Inside the building: the ceiling and the walls must read as a room, by day and by lamp light.
+	{"name": "room_day_window", "env": CLEAR, "yaw": -90.0, "pitch": 35.0, "move": Vector3i(-8, -6, 0), "roof": true},
+	{"name": "room_day_inward", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true},
+	{"name": "room_day_up", "env": CLEAR, "yaw": 90.0, "pitch": 80.0, "move": Vector3i(-8, -6, 0), "roof": true},
+	{"name": "room_night_lamp", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true,
+			"night": true, "lamp": true},
+	{"name": "room_night_dark", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true,
+			"night": true},
 ]
 
 var _main: Main
@@ -47,6 +57,7 @@ var _data: Dictionary
 var _out := "user://render_check"
 var _saved := 0
 var _failed := 0
+var _only := ""
 
 
 func _initialize() -> void:
@@ -57,6 +68,8 @@ func _run() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--out="):
 			_out = a.trim_prefix("--out=")
+		if a.begins_with("--only="):
+			_only = a.trim_prefix("--only=")
 	if DisplayServer.get_name() == "headless":
 		print("render check: needs a window and a GPU (run it without --headless)")
 		quit(2)
@@ -75,7 +88,8 @@ func _run() -> void:
 		return
 	_data = parsed
 	for i in SHOTS.size():
-		await _shot(i, SHOTS[i])
+		if _only.is_empty() or String(SHOTS[i]["name"]).contains(_only):
+			await _shot(i, SHOTS[i])
 	var errors := catch.take()
 	OS.remove_logger(catch)
 	for e in errors:
@@ -108,11 +122,15 @@ func _shot(index: int, shot: Dictionary) -> void:
 			copy["light"] = dark
 			submaps.append(copy)
 		d["submaps"] = submaps
+	else:
+		d["submaps"] = (_data["submaps"] as Array).duplicate(false)
 	d["env"] = env
 	var player: Dictionary = (_data["player"] as Dictionary).duplicate(true)
 	var move: Vector3i = shot.get("move", Vector3i.ZERO)
 	player["pos"] = [int(player["pos"][0]) + move.x, int(player["pos"][1]) + move.y, int(player["pos"][2]) + move.z]
 	d["player"] = player
+	if shot.get("lamp", false):
+		_lamp(d, Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]))
 	var snap := Snapshot.from_data(d)
 	if not snap.is_valid():
 		print("render check: %s: snapshot rejected: %s" % [shot["name"], snap.error])
@@ -132,6 +150,23 @@ func _shot(index: int, shot: Dictionary) -> void:
 		await _save(index, shot["name"] + "_after")
 	else:
 		await _save(index, shot["name"])
+
+
+## A light source on square `at`: 60 there, 8 less per square away (CDDA light levels), on that level.
+func _lamp(d: Dictionary, at: Vector3i) -> void:
+	var submaps: Array = d["submaps"]
+	for i in submaps.size():
+		var s: Dictionary = submaps[i]
+		var o := Vector3i(int(s["pos"][0]) * 12, int(s["pos"][1]) * 12, int(s["pos"][2]))
+		if o.z != at.z or absi(o.x + 6 - at.x) > 14 or absi(o.y + 6 - at.y) > 14:
+			continue
+		var copy := s.duplicate(false)
+		var light: Array = (s["light"] as Array).duplicate()
+		for t in 144:
+			var dist := Vector2(o.x + t % 12 - at.x, o.y + t / 12 - at.y).length()
+			light[t] = maxi(int(light[t]), roundi(60.0 - 8.0 * dist))
+		copy["light"] = light
+		submaps[i] = copy
 
 
 func _save(index: int, name: String) -> void:
