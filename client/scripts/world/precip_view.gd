@@ -25,8 +25,7 @@ const POINTS_PER_SQUARE := 4
 const POINTS_W := 64           # width of the start point texture
 const RAIN_COLOR := Color(0.8, 0.85, 0.95, 0.3)
 const SNOW_COLOR := Color(1.0, 1.0, 1.0, 0.9)
-## The whole bubble on every level: the particles are never culled as a group.
-const BOUNDS := AABB(Vector3(-20, -60, -20), Vector3(172, 160, 172))
+const BOUNDS_UP := 12.0        # the drops' box reaches this far above their start and below the player's level
 
 var rain := GPUParticles3D.new()
 var snow := GPUParticles3D.new()
@@ -35,7 +34,8 @@ var points := 0                # start points in use
 var rebuilds := 0              # times the start points were worked out
 var _key := []                 # what the start points were made for
 var _tex: ImageTexture
-var _starts := PackedVector3Array()   # the start points, as placed
+var _starts := PackedVector3Array()   # the start points, as placed (world space)
+var _bounds := AABB()                 # the box around all drops, in this node's space
 
 
 func _init() -> void:
@@ -64,15 +64,15 @@ func _setup(p: GPUParticles3D, amount: int, size: Vector2, color: Color, align: 
 	p.draw_pass_1 = quad
 	p.amount = amount
 	p.transform_align = align
-	p.local_coords = false
+	p.local_coords = true   # the drops move with this node when the bubble shifts (shift)
 	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	p.visibility_aabb = BOUNDS
 	p.emitting = false
 
 
 ## Shows `state`'s precipitation around `snap`'s player.
 func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
-	var on := state.precip > 0.0 and snap != null and coords != null and snap.is_valid()
+	var on := (state.precip > 0.0 and snap != null and coords != null and snap.is_valid()
+			and snap.player_pos.z >= 0)   # nothing underground
 	var p := snow if state.snow else rain
 	(rain if state.snow else snow).emitting = false
 	if not on:
@@ -84,6 +84,9 @@ func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
 	if key != _key:
 		_key = key
 		_place(snap, coords, lean)
+	if points == 0:
+		p.emitting = false
+		return
 	var process := p.process_material as ParticleProcessMaterial
 	var velocity := Vector3(lean.x, -1.0, lean.y) * speed
 	process.direction = velocity.normalized()
@@ -94,7 +97,14 @@ func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
 	process.emission_point_count = points
 	p.lifetime = drop_m(snap) / speed
 	p.amount_ratio = amount_ratio(state.precip, squares)
-	p.emitting = points > 0
+	p.visibility_aabb = _bounds
+	p.emitting = true
+
+
+## The bubble moved: the falling drops and their start points move with the world (CddaCoords.origin_shifted).
+## The start points are stored relative to this node, so they stay right until they are placed again.
+func shift(d: Vector3) -> void:
+	position += d
 
 
 ## Sideways metres per metre fallen (x east, y south), for a wind in world space.
@@ -201,18 +211,18 @@ static func start_point(coords: CddaCoords, snap: Snapshot, p: Vector3i, lean: V
 	return coords.ms_to_world(p) + Vector3(-lean.x * drop, drop, -lean.y * drop)
 
 
-## The revisions of the submaps the drops can land on: a changed map (a roof gone) gives new start points.
+## The revisions of the submaps the drops can land on, as one number: a changed map (a roof gone) gives new
+## start points.
 static func _revisions(snap: Snapshot) -> int:
-	var sum := 0
+	var revs := PackedInt64Array()
 	var c := CddaCoords.ms_to_sm(snap.player_pos)
 	var reach := RADIUS / CddaCoords.SEEX + 1
 	for z in range(_lowest(snap), snap.player_pos.z + 3):
 		for y in range(c.y - reach, c.y + reach + 1):
 			for x in range(c.x - reach, c.x + reach + 1):
 				var sm: Snapshot.Submap = snap.submaps.get(Vector3i(x, y, z))
-				if sm != null:
-					sum += sm.revision
-	return sum
+				revs.append(sm.revision if sm != null else -1)
+	return hash(revs)
 
 
 func _place(snap: Snapshot, coords: CddaCoords, lean: Vector2) -> void:
@@ -237,10 +247,14 @@ func _place(snap: Snapshot, coords: CddaCoords, lean: Vector2) -> void:
 			var at := Vector3(corner.x + rng.randf() * CddaCoords.TILE_M, corner.y, corner.z + rng.randf() * CddaCoords.TILE_M)
 			_starts[n] = at
 			n += 1
-			data[i] = at.x
-			data[i + 1] = at.y
-			data[i + 2] = at.z
+			data[i] = at.x - position.x
+			data[i + 1] = at.y - position.y
+			data[i + 2] = at.z - position.z
 			i += 3
+	var mid := coords.ms_to_world(centre(snap)) - position
+	var reach := RADIUS + 1.0 + BOUNDS_UP   # the circle, and how far a leaning drop starts outside it
+	_bounds = AABB(mid - Vector3(reach, BOUNDS_UP + drop_m(snap), reach),
+			Vector3(2.0 * reach, 2.0 * BOUNDS_UP + drop_m(snap) + TOP_M, 2.0 * reach))
 	var img := Image.create_from_data(POINTS_W, rows, false, Image.FORMAT_RGBF, data.to_byte_array())
 	if _tex != null and _tex.get_height() == rows:
 		_tex.update(img)

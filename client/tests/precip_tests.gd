@@ -136,7 +136,7 @@ func _test_emitters(root: Node) -> void:
 	root.add_child(view)
 	var coords := CddaCoords.new()
 	_check.call(not view.rain.emitting and not view.snow.emitting and view.rain.amount == PrecipView.MAX_RAIN
-			and view.snow.amount == PrecipView.MAX_SNOW and not view.rain.local_coords
+			and view.snow.amount == PrecipView.MAX_SNOW and view.rain.local_coords and view.snow.local_coords
 			and view.rain.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
 			"rain: two emitters, off, with a fixed number of particles (%d rain, %d snow)" %
 			[view.rain.amount, view.snow.amount])
@@ -207,10 +207,47 @@ func _test_emitters(root: Node) -> void:
 			and snow.direction.is_equal_approx(Vector3(PrecipView.SNOW_LEAN_MAX, -1, 0).normalized())
 			and snow.emission_point_count == view.points and view.snow.amount_ratio > 0.5,
 			"snow: its own emitter, %.1f s to the ground, leaning with the wind" % view.snow.lifetime)
-	# Under a roof with no open square in reach, underground, clear weather: nothing runs.
-	var cellar := Snapshot.from_data(_near(RAIN, 0.0, 0.0, snap.player_pos + Vector3i(0, 0, -1)))
-	view.apply(cellar, coords, WeatherState.from_snapshot(cellar))
-	_check.call(not view.rain.emitting and not view.snow.emitting and view.points == 0, "rain: none underground")
+	# The bubble shifts (the player crossed into the next submap): the drops and their start points move with the
+	# world at once, and the next snapshot places them in the new coordinates.
+	var d := Vector3(-12, 0, 0)
+	view.apply(snap, coords, WeatherState.from_snapshot(snap))
+	var before := view.start_points().duplicate()
+	var rebuilds := view.rebuilds
+	view.shift(d)
+	_check.call(view.position.is_equal_approx(d) and view.rebuilds == rebuilds, "rain: a bubble shift moves the drops, placing nothing")
+	var origin2 := snap.bubble_origin + Vector3i(1, 0, 0)
+	var shifted := _near(RAIN)
+	shifted["bubble_origin"] = [origin2.x, origin2.y, origin2.z]
+	var next := Snapshot.from_data(shifted)
+	var moved_coords := CddaCoords.new()
+	moved_coords.set_bubble_origin(next.bubble_origin)
+	view.apply(next, moved_coords, WeatherState.from_snapshot(next))
+	var after := view.start_points()
+	var off := 0
+	var outside := 0
+	var box: AABB = view.rain.visibility_aabb
+	for i in after.size():
+		off += int(not Vector2(after[i].x - before[i].x, after[i].z - before[i].z).length() < 13.5)
+		outside += int(not box.has_point(after[i] - view.position))
+	_check.call(next.is_valid() and view.rebuilds == rebuilds + 1 and after.size() == before.size() and off == 0
+			and outside == 0, "rain: then they are placed in the new coordinates, inside the drops' box")
+	view.position = Vector3.ZERO
+	# Underground (any depth), clear weather: nothing runs, and the emitters are left alone.
+	var life := view.rain.lifetime
+	var deep := 0
+	for z: int in [-1, -2, -3, -9]:
+		var cellar := Snapshot.from_data(_near(RAIN, 0.0, 0.0, Vector3i(snap.player_pos.x, snap.player_pos.y, z)))
+		view.apply(cellar, coords, WeatherState.from_snapshot(cellar))
+		deep += int(cellar.is_valid() and not view.rain.emitting and not view.snow.emitting and view.rain.lifetime == life)
+	_check.call(deep == 4 and life > 0.0, "rain: none underground, at any depth (lead-qa)")
+	# The same total of revisions on two submaps is still a change.
+	var swapped := _near(RAIN)
+	(swapped["submaps"][0] as Dictionary)["revision"] = int(swapped["submaps"][0]["revision"]) + 1
+	(swapped["submaps"][1] as Dictionary)["revision"] = int(swapped["submaps"][1]["revision"]) - 1
+	var sw := Snapshot.from_data(swapped)
+	_check.call(sw.is_valid() and PrecipView._revisions(sw) != PrecipView._revisions(snap)
+			and PrecipView._revisions(Snapshot.from_data(_near(RAIN))) == PrecipView._revisions(snap),
+			"rain: any change of the map nearby places the drops anew")
 	view.apply(snap, coords, WeatherState.from_snapshot(snap))
 	var clear := Snapshot.from_data(_near(CLEAR))
 	view.apply(clear, coords, WeatherState.from_snapshot(clear))

@@ -35,9 +35,10 @@ func _env(w: Array, ambient := 100, sun_alt := 45.0) -> Dictionary:
 			"sun_multiplier": w[4]}
 
 
-## The smallest snapshot with this env.
-func _snap(env: Variant) -> Snapshot:
-	var d := {"contract_version": 0, "turn": 1, "seq": 1, "bubble_origin": [0, 0, 0], "submaps": []}
+## The smallest snapshot with this env; the player on level `z`.
+func _snap(env: Variant, z := 0) -> Snapshot:
+	var d := {"contract_version": 0, "turn": 1, "seq": 1, "bubble_origin": [0, 0, 0], "submaps": [],
+			"player": {"pos": [66, 66, z]}}
 	if env != null:
 		d["env"] = env
 	return Snapshot.from_data(d)
@@ -77,6 +78,15 @@ func _test_parse() -> void:
 	var wild := WeatherState.from_snapshot(_snap(_env([3, 1, 50.0, 300, 7.5])))
 	_check.call(wild.cloud == 0.0 and wild.gloom == 0.0 and wild.fog == 1.0 and wild.sight_m > 1.0,
 			"weather: a mod's larger numbers are read and clamped")
+	# The thickest fog still leaves a few metres in sight (lead-qa): the player's square and the next ones.
+	var blind := 0
+	for penalty: float in [100.0, Snapshot.WEATHER_MAX]:
+		var thick := WeatherState.from_snapshot(_snap(_env([0, 0, penalty, 0, 1.0])))
+		blind += int(thick.fog != 1.0 or thick.sight_m != WeatherState.SIGHT_MIN_M
+				or thick.fog_end_m() < WeatherState.SIGHT_MIN_M)
+	_check.call(blind == 0 and wild.sight_m == WeatherState.SIGHT_MIN_M,
+			"weather: a sight penalty of 100 or %d still leaves %.0f m in sight" %
+			[Snapshot.WEATHER_MAX, WeatherState.SIGHT_MIN_M])
 	var dark := WeatherState.from_snapshot(_snap(_env([0, 0, 0.2, -900, 0.0])))
 	_check.call(dark.cloud == 1.0 and dark.gloom == 1.0 and dark.fog == 0.0
 			and dark.sight_m == WeatherState.SIGHT_CLEAR_M, "weather: sight never beyond clear air, gloom at most full")
@@ -109,6 +119,9 @@ func _test_state() -> void:
 	_check.call(clear.fog == 0.0 and drizzle.fog < 0.1 and rain.fog > 0.3 and rain.fog < 0.5 and fog.fog == 1.0
 			and is_equal_approx(fog.sight_m, 60.0 / 1.7) and is_equal_approx(fog.fog_end_m(), 72.0 / 1.7),
 			"weather: the distance fades by CDDA's sight penalty (fog ends at %.1f m)" % fog.fog_end_m())
+	var cellar := WeatherState.from_snapshot(_snap(_env(FOG), -1))
+	_check.call(cellar.depth == 1 and cellar.fog == 0.0 and fog.depth == 0
+			and WeatherState.from_snapshot(_snap(_env(FOG), -4)).depth == 4, "weather: no fog underground")
 	_check.call(fog.fog_color().get_luminance() > rain.fog_color().get_luminance() * 0.9
 			and fog.fog_color().get_luminance() < 0.8, "weather: fog is pale, not white")
 	_check.call(is_equal_approx(drizzle.precip, 1.0 / 3.0) and rain.precip == 1.0 and not rain.snow
@@ -272,9 +285,22 @@ func _test_view(root: Node) -> void:
 	view.apply(_snap(_env(LIGHTNING, 2, -30.0)), coords, true)
 	_check.call(is_equal_approx(sun.light_energy, 0.8) and sun.sky_mode == DirectionalLight3D.SKY_MODE_LIGHT_ONLY
 			and sky.energy_multiplier == 1.0, "weather: a stormy night is darkened by the light pass only")
+	view.apply(_snap(_env(FOG, 2, -30.0)), coords, true)
+	_check.call(env.fog_light_color.get_luminance() < day_fog.get_luminance() * 0.2,
+			"weather: night fog is dark (flames and markers drawn after the light pass don't get day-bright fog)")
 	view.apply(_snap(_env(FOG, 2, -30.0)), coords, false)
 	_check.call(is_equal_approx(sun.light_energy, 0.15) and env.fog_light_color.get_luminance()
 			< day_fog.get_luminance() * 0.2, "weather: without the light pass the night's sun and fog are dark")
+	view.apply(_snap(_env(RAIN)), coords, true)
+	var dim_updates := view.sky_updates
+	view.apply(_snap(_env(RAIN)), coords, true)
+	view.apply(_snap(_env(RAIN)), coords, true)
+	_check.call(view.sky_updates == dim_updates, "weather: the same dim weather again leaves the sky alone too")
+	var before := view.focus
+	view.shift(Vector3(12, 0, -24))
+	_check.call(view.focus.is_equal_approx(before + Vector3(12, 0, -24))
+			and view.precip.position.is_equal_approx(Vector3(12, 0, -24)), "weather: a bubble shift moves the fog's start and the drops")
+	view.precip.position = Vector3.ZERO
 	view.apply(_snap(_env(CLEAR)), coords, true)
 	_check.call(not env.fog_enabled and sun.light_energy == 1.0 and sun.shadow_enabled
 			and sky.sky_cover_modulate == Color.BLACK and not view.is_processing(), "weather: and clear again")
@@ -316,6 +342,31 @@ func _test_blend(root: Node) -> void:
 	_check.call(not view.blending() and is_equal_approx(sun.light_energy, view.target.sun_scale())
 			and view.state.same_look(view.target) and not view.is_processing(),
 			"weather: there after %.0f s, then no more work" % WeatherView.BLEND_S)
+	# Snapshots keep coming while it blends (walking: one every 0.2 s, the light and wind a little different each
+	# time): the blend goes on and ends on time, and going under a roof isn't held back.
+	view.apply(_snap(_env(CLEAR)), coords, true)
+	for i in 80:
+		view._process(0.05)
+	view.apply(_snap(_env(LIGHTNING)), coords, true)
+	var last := 1.0
+	var falling := true
+	for i in 15:
+		var e := _env(LIGHTNING, 100 - i)
+		e["wind_speed"] = 3.0 + 0.1 * i
+		e["sheltered"] = i >= 5
+		view.apply(_snap(e), coords, true)
+		for k in 4:
+			view._process(0.05)
+		falling = falling and sun.light_energy <= last + 0.0001
+		last = sun.light_energy
+	_check.call(falling and not view.blending() and is_equal_approx(sun.light_energy, view.target.sun_scale())
+			and view.state.same_look(view.target),
+			"weather: snapshots every 0.2 s don't hold a blend back (there after %.0f s)" % WeatherView.BLEND_S)
+	_check.call(view.target.sheltered and is_equal_approx(env.fog_depth_begin, WeatherView.INDOOR_CLEAR_M),
+			"weather: nor going under a roof meanwhile")
+	view.apply(_snap(_env(CLEAR)), coords, true)
+	for i in 80:
+		view._process(0.05)
 	# A new weather halfway starts from what is shown.
 	view.apply(_snap(_env(LIGHTNING)), coords, true)
 	for i in 20:

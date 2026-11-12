@@ -7,6 +7,7 @@ extends RefCounted
 ## fields reads as clear weather. WeatherView shows a state; tests check the numbers here.
 
 const SIGHT_CLEAR_M := 60.0    # CDDA's sight distance in open air by day (LIGHT_TRANSPARENCY_OPEN_AIR)
+const SIGHT_MIN_M := 6.0       # never less, whatever a mod's weather or a bad snapshot says: the view stays a view
 const GLOOM_FULL := 45.0       # CDDA's darkest weather (lightning) takes 45 off the natural light
 const FOG_FULL := 0.25         # sight penalty above 1 at which the distance fades fully (snow 0.3, fog 0.7)
 const WIND_MAX := 40.0         # m/s shown at most (CDDA's storms stay far below)
@@ -28,6 +29,7 @@ var snow := false       # the precipitation is snow
 var wind := Vector3.ZERO        # the region's wind, m/s, where it blows to (world space, level)
 var wind_here := Vector3.ZERO   # the same on the player's square (calm indoors); the region's when not sent
 var sheltered := false  # rain and snow don't reach the player
+var depth := 0          # levels the player is below the ground: no fog, rain or flash down there
 var thunder := false    # a thunderstorm (CDDA's sound category for the weather): far rumbles now and then
 var daylight := 1.0     # 0 night .. 1 day: the weather only dims what the day lights
 
@@ -39,8 +41,10 @@ static func from_snapshot(snap: Snapshot) -> WeatherState:
 	s.cloud = clampf(1.0 - snap.weather_sun, 0.0, 1.0)
 	s.gloom = clampf(-snap.weather_light / GLOOM_FULL, 0.0, 1.0)
 	var penalty := maxf(snap.weather_sight, 1.0)
-	s.sight_m = SIGHT_CLEAR_M / penalty
-	s.fog = clampf((penalty - 1.0) / FOG_FULL, 0.0, 1.0)
+	s.sight_m = maxf(SIGHT_CLEAR_M / penalty, SIGHT_MIN_M)
+	s.depth = maxi(0, -snap.player_pos.z)
+	# CDDA's weather thins the air of outside squares only: none underground.
+	s.fog = clampf((penalty - 1.0) / FOG_FULL, 0.0, 1.0) if s.depth == 0 else 0.0
 	if snap.weather_kind != Snapshot.PRECIP_NONE:
 		s.precip = clampi(snap.weather_precip, 0, 3) / 3.0
 	s.snow = s.precip > 0.0 and snap.weather_kind == Snapshot.PRECIP_SNOW
@@ -73,6 +77,7 @@ static func blend(a: WeatherState, b: WeatherState, t: float) -> WeatherState:
 	s.daylight = lerpf(a.daylight, b.daylight, t)
 	s.snow = b.snow
 	s.sheltered = b.sheltered
+	s.depth = b.depth
 	s.thunder = b.thunder
 	return s
 

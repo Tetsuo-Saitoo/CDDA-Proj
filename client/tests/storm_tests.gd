@@ -25,14 +25,14 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_soak(root)
 
 
-func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1) -> Snapshot:
+func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0) -> Snapshot:
 	var env := {"sun_alt_deg": 45.0, "sun_az_deg": 0.0, "ambient_light": 100, "precip": w[0], "precip_kind": w[1],
 			"sight_penalty": w[2], "light_modifier": w[3], "sun_multiplier": w[4], "weather_sound": w[5],
 			"sheltered": sheltered, "wind_speed": wind, "wind_dir_deg": 0.0}
 	if wind_here >= 0.0:
 		env["wind_at_player"] = wind_here
 	return Snapshot.from_data({"contract_version": 0, "turn": turn, "seq": 1, "bubble_origin": [0, 0, 0],
-			"submaps": [], "env": env})
+			"submaps": [], "env": env, "player": {"pos": [66, 66, z]}})
 
 
 func _state(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0) -> WeatherState:
@@ -92,6 +92,13 @@ func _test_flash(root: Node) -> void:
 	_check.call(is_equal_approx(light.light_energy, WeatherView.FLASH_LIGHT * WeatherView.FLASH_INDOORS)
 			and is_equal_approx(lighting.flash, WeatherView.FLASH_FLOOR * WeatherView.FLASH_INDOORS),
 			"storm: half the flash reaches under a roof")
+	# Underground there is no flash.
+	for i in 12:
+		view._process(0.05)
+	view.apply(_snap(STORM, true, 0.0, -1.0, 1, -1), null, true)
+	view.strike()
+	_check.call(not light.visible and lighting.flash == 0.0 and is_equal_approx(env.fog_light_energy, 1.0),
+			"storm: no flash underground")
 	# Without a light pass or an environment it still works.
 	var bare := WeatherView.new()
 	root.add_child(bare)
@@ -213,6 +220,22 @@ func _test_sound(root: Node) -> void:
 			and s.get("_rumble_in") > 0.0, "sound: it comes, lower and quieter, and the next is due")
 	s.apply(_state(CLEAR))
 	_check.call(s.get("_rumble_in") < 0.0, "sound: no rumbles once the storm is over")
+	# Underground: one level down a little of the patter and the thunder is left, deeper nothing.
+	var cellar := WeatherState.from_snapshot(_snap(STORM, true, 8.0, 0.0, 1, -1))
+	s.apply(cellar)
+	s.strike()
+	_check.call(s.targets[s.rain] == 0.0 and s.targets[s.wind] == 0.0
+			and is_equal_approx(s.targets[s.roof], WeatherSound.ROOF_GAIN * WeatherSound.CELLAR)
+			and is_equal_approx(s.get("_thunder_gain"), WeatherSound.THUNDER_GAIN * WeatherSound.CELLAR)
+			and s.get("_rumble_in") > 0.0, "sound: a cellar hears a little of the rain and the thunder")
+	var deep := WeatherState.from_snapshot(_snap(STORM, true, 8.0, 0.0, 1, -3))
+	s.apply(deep)
+	s.strike()
+	_check.call(s.targets[s.rain] == 0.0 and s.targets[s.roof] == 0.0 and s.targets[s.wind] == 0.0
+			and s.get("_thunder_in") < 0.0 and s.get("_rumble_in") < 0.0, "sound: deeper down the weather is silent")
+	s.apply(_state(CLEAR))
+	for i in 12:
+		s.tick(0.1)
 	root.remove_child(s)
 	s.free()
 	# WeatherView runs it.

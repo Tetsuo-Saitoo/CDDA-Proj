@@ -1161,6 +1161,7 @@ func _setup_environment() -> void:
 	weather.light_pass = world.lighting.enabled
 	weather.lighting = world.lighting
 	weather.setup(env, sun)
+	world.coords.origin_shifted.connect(weather.shift)
 	weather.aim_sun(45.0, 0.0)
 
 

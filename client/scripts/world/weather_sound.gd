@@ -20,6 +20,7 @@ const ROOF_GAIN := 0.45        # loudness of heavy rain on the roof
 const WIND_GAIN := 0.6         # loudness of a gale
 const WIND_FULL := 15.0        # m/s that counts as a gale
 const INDOOR_WIND := 0.25      # share of the region's wind heard where the air is still
+const CELLAR := 0.3            # share of the roof patter and the thunder heard one level underground (none deeper)
 const THUNDER_GAIN := 0.9
 const FAR_GAIN := 0.3          # a far rumble
 const THUNDER_DELAY := Vector2(0.4, 2.5)    # seconds from flash to thunder
@@ -35,6 +36,7 @@ var _gains := {}                         # player -> loudness now
 var _thunder_in := -1.0                  # seconds until the next thunder, -1 none
 var _thunder_gain := 0.0
 var _rumble_in := -1.0                   # seconds until the next far rumble, -1 not a thunderstorm
+var _below := 1.0                        # share of the thunder heard where the player is (less underground)
 var _rng := RandomNumberGenerator.new()
 static var _task := -1                   # WorkerThreadPool task making the clips
 static var _clips := {}                  # name -> PackedByteArray, filled by the task
@@ -143,11 +145,12 @@ static func clip(name: String) -> PackedByteArray:
 ## Sets what should be heard for `state` (thunderstorm: CDDA's sound category for the weather is thunder).
 func apply(state: WeatherState) -> void:
 	var strength := state.precip * state.precip if not state.snow else 0.0   # snow falls silently
-	targets[rain] = strength * RAIN_GAIN * (INDOOR_RAIN if state.sheltered else 1.0)
-	targets[roof] = strength * ROOF_GAIN if state.sheltered else 0.0
+	_below = 1.0 if state.depth == 0 else (CELLAR if state.depth == 1 else 0.0)
+	targets[rain] = strength * RAIN_GAIN * (INDOOR_RAIN if state.sheltered else 1.0) if state.depth == 0 else 0.0
+	targets[roof] = strength * ROOF_GAIN * _below if state.sheltered or state.depth > 0 else 0.0
 	var air := maxf(state.wind_here.length(), state.wind.length() * INDOOR_WIND)
-	targets[wind] = clampf(air / WIND_FULL, 0.0, 1.0) * WIND_GAIN
-	if not state.thunder:
+	targets[wind] = clampf(air / WIND_FULL, 0.0, 1.0) * WIND_GAIN if state.depth == 0 else 0.0
+	if not state.thunder or _below == 0.0:
 		_rumble_in = -1.0
 	elif _rumble_in < 0.0:
 		_rumble_in = _rng.randf_range(RUMBLE_EVERY.x, RUMBLE_EVERY.y)
@@ -157,7 +160,9 @@ func apply(state: WeatherState) -> void:
 ## Lightning struck: thunder follows after a moment (`near` 0..1: how close; 1 is overhead).
 func strike(near := 1.0) -> void:
 	_thunder_in = lerpf(THUNDER_DELAY.y, THUNDER_DELAY.x, clampf(near, 0.0, 1.0)) * _rng.randf_range(0.8, 1.2)
-	_thunder_gain = THUNDER_GAIN * lerpf(0.5, 1.0, clampf(near, 0.0, 1.0))
+	_thunder_gain = THUNDER_GAIN * lerpf(0.5, 1.0, clampf(near, 0.0, 1.0)) * _below
+	if _thunder_gain <= 0.0:
+		_thunder_in = -1.0   # too deep to hear
 	_update_processing()
 
 
@@ -189,7 +194,7 @@ func tick(delta: float) -> void:
 		if _rumble_in < 0.0:
 			_rumble_in = _rng.randf_range(RUMBLE_EVERY.x, RUMBLE_EVERY.y)
 			if have:
-				_boom(FAR_GAIN, 0.7)
+				_boom(FAR_GAIN * _below, 0.7)
 	_update_processing()
 
 

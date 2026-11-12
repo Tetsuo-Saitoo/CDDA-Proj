@@ -23,6 +23,7 @@ const FLASH_LIGHT := 2.5      # energy of the flash's light at its peak
 const FLASH_FOG := 3.0        # how much brighter the haze and the storm sky get
 const FLASH_FLOOR := 0.55     # the light pass shows the dark world at least this bright at the peak
 const FLASH_INDOORS := 0.5    # share of the flash that reaches under a roof
+const NIGHT_FOG := 0.05       # share of the fog's colour left at night
 const WET_IN_S := 120.0       # game seconds of heavy rain that soak the ground
 const DRY_IN_S := 1800.0      # game seconds a soaked ground takes to dry
 const WET_STEP := 0.02        # the ground's material changes only by steps this large
@@ -35,7 +36,7 @@ var state := WeatherState.new()    # shown now
 var target := WeatherState.new()   # the last snapshot's
 var blend_s := BLEND_S             # 0: every change shows at once
 var focus := Vector3.ZERO          # the player's eyes: the fog starts there, also for a camera further away
-var light_pass := true             # WorldLighting darkens the scene by CDDA's light (else the fog darkens itself)
+var light_pass := true             # WorldLighting darkens the scene by CDDA's light (the night's sun differs)
 var sky_updates := 0               # times the sky was changed (each one costs a re-filter of its light)
 var precip := PrecipView.new()     # rain and snow around the player
 var sound := WeatherSound.new()    # rain, wind and thunder
@@ -103,13 +104,16 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	if coords != null:
 		focus = coords.ms_center_to_world(snap.player_pos) + Vector3(0.0, EYE_M, 0.0)
 	aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
-	target = WeatherState.from_snapshot(snap)
+	var next := WeatherState.from_snapshot(snap)
+	# The same weather as the last snapshot's (light and wind drift a little each turn): a blend toward it goes on.
+	var same_goal := _shown and _close(target, next)
+	target = next
 	if not _shown or blend_s <= 0.0:
 		_clear_m = INDOOR_CLEAR_M if target.sheltered else 0.0
-	if not _shown or blend_s <= 0.0 or _close(state, target):
+	if not _shown or blend_s <= 0.0 or (_blend_t >= 1.0 and _close(state, target)):
 		_blend_t = 1.0
 		state = target
-	else:
+	elif _blend_t >= 1.0 or not same_goal:
 		_from = state
 		_blend_t = 0.0
 		_since_step = 0.0
@@ -168,12 +172,20 @@ static func flash_curve(t: float) -> float:
 
 func _show_flash() -> void:
 	var f := flash_curve(_flash_t) * (FLASH_INDOORS if target.sheltered else 1.0)
+	if target.depth > 0:
+		f = 0.0   # underground
 	_flash_light.visible = f > 0.0
 	_flash_light.light_energy = FLASH_LIGHT * f
 	if _env != null:
 		_env.fog_light_energy = 1.0 + FLASH_FOG * f
 	if lighting != null:
 		lighting.flash = FLASH_FLOOR * f
+
+
+## The bubble moved: every world position moves by `d` (CddaCoords.origin_shifted).
+func shift(d: Vector3) -> void:
+	focus += d
+	precip.shift(d)
 
 
 ## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with the light
@@ -240,18 +252,20 @@ func _show() -> void:
 		_env.ambient_light_energy = AMBIENT_ENERGY * state.ambient_scale()
 		_env.fog_enabled = state.fog > 0.01
 		if _env.fog_enabled:
+			# Dark at night, with the light pass too: what is drawn after the pass (flames, sparks, markers) takes
+			# the fog's own colour, and what is drawn before it is night-dark anyway.
 			var c := state.fog_color()
-			if not light_pass:
-				var night := lerpf(0.05, 1.0, state.daylight)
-				c = Color(c.r * night, c.g * night, c.b * night)
-			_env.fog_light_color = c
+			var night := lerpf(NIGHT_FOG, 1.0, state.daylight)
+			_env.fog_light_color = Color(c.r * night, c.g * night, c.b * night)
 			_env.fog_density = state.fog   # depth mode: the most the distance fades
 			_env.fog_sky_affect = state.fog
 
 
 ## Only real changes reach the sky material: every one makes the engine filter the sky's light again.
 func _set_sky(property: StringName, value: Variant) -> void:
-	if _sky.get(property) != value:
+	var now: Variant = _sky.get(property)   # the engine keeps 32-bit floats: compare loosely
+	var same: bool = is_equal_approx(now, value) if value is float else (now as Color).is_equal_approx(value)
+	if not same:
 		_sky.set(property, value)
 		sky_updates += 1
 
@@ -261,7 +275,7 @@ func _set_sky(property: StringName, value: Variant) -> void:
 func _place_fog(delta: float) -> void:
 	if _env == null or not _env.fog_enabled:
 		return
-	_clear_m = move_toward(_clear_m, INDOOR_CLEAR_M if state.sheltered else 0.0,
+	_clear_m = move_toward(_clear_m, INDOOR_CLEAR_M if target.sheltered else 0.0,
 			delta * INDOOR_CLEAR_M / INDOOR_CLEAR_S)
 	var away := _clear_m
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
