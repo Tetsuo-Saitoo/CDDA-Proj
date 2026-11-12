@@ -307,8 +307,8 @@ func row_input(r: Dictionary, event: InputEvent) -> void:
 	var mb := event as InputEventMouseButton
 	if mb == null:
 		return
-	if mb.pressed:
-		_row_press = true
+	if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+		_row_press = true   # (only the left button: a wheel turn here never reaches the view to clear it)
 	var uid: int = r.get("uid", -1)
 	if not _row_col.has(uid):
 		return

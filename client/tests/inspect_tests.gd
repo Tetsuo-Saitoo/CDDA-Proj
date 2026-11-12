@@ -513,6 +513,22 @@ func _test_select_more() -> void:
 	_view._gui_input(release)
 	_check.call(on_row and began and not _view._marquee and _selected().is_empty(),
 			"select: a press on a row starts no box; a click on empty space selects none")
+	_click(ROCK)
+	_view._gui_input(_button(true))   # (the click's press and release reach the view too)
+	_view._gui_input(_button(false))
+	var wheel := _button(true)   # a wheel turn or a right press over a row: the column's list takes the wheel,
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN   # so the view never sees it
+	_view.row_slot(ROCK)._gui_input(wheel)
+	var right_press := _button(true)
+	right_press.button_index = MOUSE_BUTTON_RIGHT
+	_view.row_slot(ROCK)._gui_input(right_press)
+	_view._menu.hide()
+	var still_one := _selected() == [ROCK]
+	_view._gui_input(press)
+	var box_starts := _view._marquee
+	_view._gui_input(release)
+	_check.call(still_one and box_starts and _selected().is_empty(),
+			"select: a wheel turn or a right press over a row doesn't swallow the next click on empty space")
 	_view.rebuild()
 
 
