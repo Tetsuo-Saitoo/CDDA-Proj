@@ -107,7 +107,25 @@ struct player_view {
     std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
     optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
     std::vector<effect_view> effects;        // what CDDA's @ screen lists (effects with no display name left out); cap 64
+    mood_view mood;                          // CDDA's morale screen (2026-11-12)
 };
+struct mood_view {
+    int16 level;                             // CDDA's morale level, the same number as `morale`
+    int8  band;                              // -3 .. 3 from `level`, by the steps of CDDA's default mood face:
+                                             // >= 100: 3, >= 50: 2, >= 10: 1, >= -10: 0, >= -50: -1, >= -100: -2, lower: -3
+    string face;                             // CDDA's mood face for this character and level, e.g. ":)", "D:"; up to 16 bytes
+    uint16 total;                            // how many entries CDDA's morale screen lists (entries may hold fewer)
+    std::vector<mood_entry> entries;         // the strongest first (largest |value|, then by name); cap 12
+};
+struct mood_entry { string name /* the morale screen's line, e.g. "Music", "Enjoyed honey"; color tags removed; up to 60 columns */;
+                    int16 value /* its morale points now, decay and temper applied; signed, never 0 */;
+                    uint8 percent /* its share of its side (good or bad), cut to a whole number as the morale screen shows it; 0..100 */; };
+// The level is not the sum of the values: CDDA takes sqrt(sum of good values squared) - sqrt(sum of bad values squared),
+// cut to a whole number, and scales it further while the character is on Prozac (a bad level times 0.25). Don't
+// work the level out from the entries. An entry whose morale type the game data doesn't know (a save from other
+// mods) has no name: it is counted in `total` and left out of `entries`.
+// JSON: "mood":{"level":-20,"band":-1,"face":"):","total":2,"entries":[{"name":"Craving caffeine","value":-30,"percent":100},
+//   {"name":"Music","value":10,"percent":100}]}
 struct effect_view { string id /* effect_type id, e.g. drunk, bleed; up to 64 bytes */;
                      string name /* CDDA's display name for this intensity, color tags removed; up to 40 columns */;
                      uint32 body_part /* body_part index, 0 = whole body */; uint8 intensity;
@@ -123,9 +141,34 @@ struct carried_view { uint64 uid; uint32 type; uint64 parent; int16 pocket; uint
 struct environment_view {
     int64 turn_of_day_s; uint8 season; float sun_alt_deg, sun_az_deg; uint8 moon_phase;
     uint32 weather;               // weather index
-    float temperature_c, wind_speed /* m/s */, wind_dir_deg;
+    float temperature_c;          // air temperature on the player's square
+    float wind_speed /* m/s, the region's wind */, wind_dir_deg /* compass degrees the wind comes from: 0 north, 90 east */;
     uint8 ambient_light;          // natural light level at the player's z
+    // CDDA's weather in full (2026-11-12). What the current weather type does, so no table lookup is needed:
+    string weather_id;            // weather_type id, e.g. "clear", "drizzle", "thunder", "snowstorm"; up to 64 bytes
+    string weather_name;          // CDDA's name for it, e.g. "Thunder Storm"; up to 40 columns
+    uint8 precip;                 // strength: 0 none, 1 very light, 2 light, 3 heavy (CDDA's precip_class)
+    uint8 precip_kind;            // 0 none, 1 rain, 2 snow (what CDDA draws and sounds as snow: its snowflake
+                                  // animation or a flurries / snow / snowstorm sound; anything else that falls is rain)
+    uint8 weather_sound;          // CDDA's sound category: 0 silent, 1 drizzle, 2 rainy, 3 rainstorm, 4 thunder,
+                                  // 5 flurries, 6 snowstorm, 7 snow, 8 portal storm, 9 clear, 10 sunny, 11 cloudy
+    float sight_penalty;          // CDDA's sight cost factor per square in this weather: 1 none, rain 1.1, fog 1.7; 0..100
+    int16 light_modifier;         // what this weather adds to natural light (clouds: negative); -1000..1000
+    float sun_multiplier;         // how much of the sun gets through: 1 clear sky, cloudy 0.3, rain 0.03; 0..10
+    int16 sound_attn;             // how much this weather drowns sounds (CDDA's sound_attn); 0..1000
+    bool  dangerous;              // CDDA counts this weather as dangerous (it interrupts activities)
+    // At the player:
+    float wind_at_player;         // m/s on the player's square, as CDDA works it out: 0 when sheltered, less in a
+                                  // forest or behind something that blocks wind, more higher up
+    uint8 humidity;               // percent, 0..100, on the player's square (100 out in light or heavy rain)
+    bool  sheltered;              // CDDA's is_sheltered: under a roof, underground or in a roofed vehicle; rain and
+                                  // snow don't reach the player
 };
+// JSON adds to "env": "weather_id":"thunder","weather_name":"Thunder Storm","precip":3,"precip_kind":1,
+//   "weather_sound":4,"sight_penalty":1.2,"light_modifier":-40,"sun_multiplier":0.01,"sound_attn":8,"dangerous":false,
+//   "wind_at_player":3.1,"humidity":100,"sheltered":false
+// Lightning is an event (events.md `lightning`), not a snapshot field: CDDA clears its flag before the turn ends.
+// Older bridges send none of these keys: clients read a missing one as clear weather / no mood.
 ```
 
 ## Ids
