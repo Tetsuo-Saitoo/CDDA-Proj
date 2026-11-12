@@ -915,6 +915,43 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	hf.on_events([dmg.call(z + 5, 9, 99999), {"kind": "damage", "uid": z + 5, "amount": 2}, shot_by.call(me, z + 5)])
 	_check.call(junk_ok and got == [[z + 5, "", 9, false], [z + 5, "", 2, false]],
 			"hits: junk events are skipped, an unknown or missing body part is \"\" (%s)" % [got])
+	# melee: the player's hit attack, then damage from the player on that creature (messages may come between)
+	got.clear()
+	var strike := func(attacker: Variant, target: Variant, hit: Variant) -> Dictionary:
+		return {"kind": "attack", "uid": attacker, "other": target, "detail": hit, "pos": Vector3i.ZERO}
+	var hurt_by := func(uid: Variant, amount: Variant, part: Variant, source: Variant) -> Dictionary:
+		var d: Dictionary = dmg.call(uid, amount, part)
+		d["other"] = source
+		return d
+	var said := {"kind": "message", "text": "You hit the zombie."}
+	hf.on_events([strike.call(me, z + 6, 1), said, hurt_by.call(z + 6, 9, torso, me)])
+	var one := got == [[z + 6, "torso", 9, false]]
+	hf.on_events([strike.call(me, z + 6, 1), hurt_by.call(z + 6, 11, head, me), {"kind": "sound", "amount": 5},
+			death.call(z + 6), shot_by.call(me, z + 6)])
+	_check.call(one and got.size() == 3 and got[1] == [z + 6, "head", 11, false] and got[2] == [z + 6, "head", 11, true],
+			"hits: melee: the player's hit, then its damage and death confirm, never again for a shot (%s)" % [got])
+	got.clear()
+	hf.on_events([strike.call(me, z + 7, 0), hurt_by.call(z + 7, 5, torso, me)])
+	var miss := got.is_empty()
+	hf.on_events([strike.call(z + 4, z + 7, 1), hurt_by.call(z + 7, 5, torso, z + 4)])
+	var ally_hit := got.is_empty()
+	hf.on_events([strike.call(me, z + 7, 1), hurt_by.call(z + 7, 5, torso, 0), hurt_by.call(z + 7, 5, torso, me)])
+	var bleed := got.is_empty()
+	hf.on_events([strike.call(me, z + 7, 1), dmg.call(z + 7, 5, torso)])
+	var no_source := got.is_empty()
+	hf.on_events([strike.call(me, z + 7, 1), hurt_by.call(z + 8, 5, torso, me), hurt_by.call(z + 7, 5, torso, me)])
+	var elsewhere := got.is_empty()
+	hf.on_events([strike.call(me, z + 7, 1), {"kind": "turn_end"}, hurt_by.call(z + 7, 5, torso, me)])
+	var next_turn := got.is_empty()
+	hf.on_events([strike.call(me, z + 7, 1), death.call(z + 7)])
+	var no_damage := got.is_empty()
+	hf.on_events([strike.call(me, me, 1), hurt_by.call(me, 5, torso, me), strike.call(me, z + 7, "1"),
+			hurt_by.call(z + 7, 5, torso, me), strike.call(me, z + 7, 2), hurt_by.call(z + 7, 5, torso, me),
+			strike.call(NAN, z + 7, 1), hurt_by.call(z + 7, 5, torso, me), {"kind": "attack"}, hurt_by.call(z + 7, 5, torso, me)])
+	var junk := got.is_empty()
+	_check.call(miss and ally_hit and bleed and no_source and elsewhere and next_turn and no_damage and junk,
+			"hits: melee: a miss, an ally's hit, other or no source, another creature, a later turn, junk: nothing (%s)"
+			% [[miss, ally_hit, bleed, no_source, elsewhere, next_turn, no_damage, junk]])
 	var snd := HitFeedback.tick_stream()
 	_check.call(snd.data.size() == int(HitFeedback.TICK_RATE * HitFeedback.TICK_S) * 2 and HitFeedback.tick_stream() == snd
 			and hf.ticks >= 5, "hits: a short tick, made once, plays per confirmation (%d)" % hf.ticks)

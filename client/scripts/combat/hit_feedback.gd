@@ -8,6 +8,11 @@ extends Node
 ## in the same on_events() batch, after the batch start or the previous projectile event (anyone's: damage before
 ## an ally's projectile event is the ally's). Damage in another batch, after the projectile event, on another
 ## creature, or before someone else's projectile event (an ally's shot, bleeding, fire) is never credited.
+## Melee: CDDA sends a strike's `attack` event (`detail` 1: a hit) before its damage. Right after the player's hit
+## on a creature, that creature's `damage` events whose source (`other`) is the player confirm it, and its `death`
+## then is a kill; only `message` and `sound` events may come between. Anything else ends the strike: damage with
+## another or no source (bleeding, fire), on another creature, any other event. A strike's damage is never also
+## a shot's.
 ## Emits hit_confirmed (AimController's hit marker, VR, other UI) and plays a quiet generated tick (`sound`).
 ## Event fields are checked: bad uids, amounts or body parts skip the event.
 
@@ -44,6 +49,8 @@ func _init(w: WorldView = null) -> void:
 func on_events(events: Array) -> void:
 	var me := player_uid()
 	var pending: Array[Dictionary] = []   # damage / deaths since the batch start or the last projectile event
+	var struck := 0                       # the creature the player's melee hit is on (0: no strike going on)
+	var last: Dictionary = {}             # that strike's last confirmed damage
 	for i in mini(events.size(), MAX_EVENTS):
 		var e: Variant = events[i]
 		if not e is Dictionary:
@@ -52,13 +59,32 @@ func on_events(events: Array) -> void:
 		if not kind is String:
 			continue
 		match kind:
-			"projectile":
-				_on_projectile(e, me, pending)
-				pending.clear()
+			"attack":
+				struck = _struck(e, me)
+				last = {}
 			"damage", "death":
 				var h := _hurt(kind, e, me)
+				if struck > 0 and not h.is_empty() and h["uid"] == struck and (kind == "death" or
+						_uint(e.get("other"), MAX_UID) == me):
+					if kind == "death":
+						if not last.is_empty():
+							_confirm(struck, last["part"], last["amount"], true)
+						struck = 0
+					else:
+						last = h
+						_confirm(struck, h["part"], h["amount"], false)
+					continue   # the strike's, not a shot's
+				struck = 0
 				if not h.is_empty():
 					pending.append(h)
+			"message", "sound":
+				pass   # a strike's own messages come between its attack and its damage
+			"projectile":
+				struck = 0
+				_on_projectile(e, me, pending)
+				pending.clear()
+			_:
+				struck = 0
 
 
 ## The player's uid: the snapshot's player creature, else the contract's 1.
@@ -88,6 +114,15 @@ func _on_projectile(e: Dictionary, me: int, pending: Array[Dictionary]) -> void:
 		part = h["part"]
 		amount = h["amount"]
 		_confirm(hit, part, amount, false)
+
+
+## An attack event: the creature the player's melee hit struck (`other`, `detail` 1), else 0.
+func _struck(e: Dictionary, me: int) -> int:
+	var attacker := _uint(e.get("uid"), MAX_UID)
+	var target := _uint(e.get("other"), MAX_UID)
+	if attacker <= 0 or attacker != me or target <= 0 or target == me or _uint(e.get("detail"), 1) != 1:
+		return 0
+	return target
 
 
 ## A damage or death event as {kind, uid, part, amount}, or {} when it is malformed or on the player.
