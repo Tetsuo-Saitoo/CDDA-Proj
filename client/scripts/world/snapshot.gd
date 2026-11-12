@@ -13,6 +13,11 @@ const CONTRACT_VERSION := 0
 const TILES := 144
 const MAX_FILE_BYTES := 16 << 20          # a full 21-level bubble is ~6 MB of JSON
 const MAX_ID := 1 << 20                   # CDDA has ~1.1k terrain ids; anything larger is garbage
+const WEATHER_MAX := 10000.0              # the env's weather numbers (wind, sight, light, sun): finite and no larger
+const PRECIP_NONE := 0                    # env.precip_kind
+const PRECIP_RAIN := 1
+const PRECIP_SNOW := 2
+const WEATHER_SOUND_THUNDER := 4          # env.weather_sound: CDDA's category for thunder and lightning storms
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
 const MAX_TURN := 1 << 52                 # JSON numbers are doubles
@@ -140,6 +145,19 @@ var _creature_at := {}                     # Vector3i -> Creature, built on firs
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
 var ambient_light := -1  # env.ambient_light: CDDA's natural light at the player's z, 0..255; -1 when not sent
+## The weather (WeatherState reads these; all optional, clear weather when not sent). CDDA's own numbers for the
+## current weather type, so a mod's weather works too: only wildly wrong values fail the snapshot.
+var weather := 0                 # env.weather: index into the id tables' weather list, 0 = none
+var wind_speed := 0.0            # env.wind_speed: the region's wind, m/s
+var wind_dir_deg := 0.0          # env.wind_dir_deg: where the wind comes from, 0 north, 90 east
+var wind_at_player := -1.0       # env.wind_at_player: m/s on the player's square (0 indoors); -1 when not sent
+var weather_precip := 0          # env.precip: 0 none, 1 very light, 2 light, 3 heavy
+var weather_kind := 0            # env.precip_kind: PRECIP_NONE, PRECIP_RAIN or PRECIP_SNOW
+var weather_sight := 1.0         # env.sight_penalty: 1 clear, 1.7 fog
+var weather_light := 0.0         # env.light_modifier: 0 clear, -45 a thunderstorm
+var weather_sun := 1.0           # env.sun_multiplier: 1 clear, 0.01 a storm
+var weather_sheltered := false   # env.sheltered: rain and snow don't reach the player
+var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEATHER_SOUND_THUNDER in a thunderstorm)
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
@@ -551,6 +569,28 @@ func _read_env(v: Variant) -> void:
 		sun_az_deg = _float(e["sun_az_deg"], -360.0, 360.0, "env.sun_az_deg")
 	if e.has("ambient_light"):
 		ambient_light = _int(e["ambient_light"], 0, 255, "env.ambient_light")
+	if e.has("weather"):
+		weather = _int(e["weather"], 0, MAX_ID, "env.weather")
+	if e.has("wind_speed"):
+		wind_speed = _float(e["wind_speed"], 0.0, WEATHER_MAX, "env.wind_speed")
+	if e.has("wind_dir_deg"):
+		wind_dir_deg = _float(e["wind_dir_deg"], -360.0, 360.0, "env.wind_dir_deg")
+	if e.has("wind_at_player"):
+		wind_at_player = _float(e["wind_at_player"], 0.0, WEATHER_MAX, "env.wind_at_player")
+	if e.has("precip"):
+		weather_precip = _int(e["precip"], 0, 3, "env.precip")
+	if e.has("precip_kind"):
+		weather_kind = _int(e["precip_kind"], PRECIP_NONE, PRECIP_SNOW, "env.precip_kind")
+	if e.has("sight_penalty"):
+		weather_sight = _float(e["sight_penalty"], 0.0, WEATHER_MAX, "env.sight_penalty")
+	if e.has("light_modifier"):
+		weather_light = _float(e["light_modifier"], -WEATHER_MAX, WEATHER_MAX, "env.light_modifier")
+	if e.has("sun_multiplier"):
+		weather_sun = _float(e["sun_multiplier"], 0.0, WEATHER_MAX, "env.sun_multiplier")
+	if e.has("sheltered"):
+		weather_sheltered = _flag(e["sheltered"], "env.sheltered")
+	if e.has("weather_sound"):
+		weather_sound = _int(e["weather_sound"], 0, 255, "env.weather_sound")
 
 
 func _read_ids(v: Variant) -> void:
@@ -632,6 +672,13 @@ func _int(v: Variant, lo: int, hi: int, what: String) -> int:
 		return int(f)
 	_fail("%s: expected an integer" % what)
 	return 0
+
+
+## A true/false field: a bool, or 0 / 1.
+func _flag(v: Variant, what: String) -> bool:
+	if v is bool:
+		return v
+	return _int(v, 0, 1, what) == 1
 
 
 func _float(v: Variant, lo: float, hi: float, what: String) -> float:

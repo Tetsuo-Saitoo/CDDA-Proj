@@ -40,6 +40,11 @@ const UP := Vector3i(0, 0, 1)
 ## Kinds one can step onto from stairs (and onto the level above from their top).
 const WALKABLE := [K.FLOOR, K.ROOF, K.DOOR, K.SHRUB, K.TREE, K.LADDER_UP]
 
+## The material of terrain under the open sky and of roofs: like "solid", but the weather changes it (wet_ground).
+const GROUND := "ground"
+const WET_ROUGHNESS := 0.35
+const WET_SPECULAR := 0.8
+const WET_TINT := Color(0.72, 0.74, 0.78)
 static var _materials := {}
 static var _materials_lock := Mutex.new()
 
@@ -125,7 +130,9 @@ class Result:
 
 var _snap: Snapshot
 var _cat: TerrainCatalog
-var _solid: Buf
+var _solid: Buf      # where the square being built puts its solid faces: _indoor or _outdoor
+var _indoor: Buf     # squares under a roof (material "solid")
+var _outdoor: Buf    # squares under the open sky (material "ground": the weather wets it)
 var _glass: Buf
 var _roof: Buf
 var _caps: Buf
@@ -146,7 +153,9 @@ func _init(snap: Snapshot, catalog: TerrainCatalog) -> void:
 
 
 func build(sm_pos: Vector3i) -> Result:
-	_solid = Buf.new()
+	_indoor = Buf.new()
+	_outdoor = Buf.new()
+	_solid = _indoor
 	_glass = Buf.new()
 	_roof = Buf.new()
 	_caps = Buf.new()
@@ -163,13 +172,15 @@ func build(sm_pos: Vector3i) -> Result:
 			var st := _cat.style_for(sm.ter[i])
 			var o := Vector3(lx, 0, ly)
 			var flags := sm.flags[i]
+			_solid = _indoor if flags & Snapshot.FLAG_ROOF else _outdoor
 			_tile(base + Vector3i(lx, ly, 0), o, st, (flags & Snapshot.FLAG_NO_FLOOR) == 0)
 			if (flags & Snapshot.FLAG_ROOF) and not above_loaded and st.kind != K.ROOF:
 				_roof.slab(o, H, Color(0.32, 0.3, 0.3))
 	var r := Result.new()
-	r.vertices = _solid.verts.size() + _glass.verts.size() + _roof.verts.size() + _caps.verts.size()
-	r.terrain = _mesh([_solid, _glass], ["solid", "glass"])
-	r.roof = _mesh([_roof], ["solid"])
+	r.vertices = (_indoor.verts.size() + _outdoor.verts.size() + _glass.verts.size() + _roof.verts.size()
+			+ _caps.verts.size())
+	r.terrain = _mesh([_outdoor, _indoor, _glass], [GROUND, "solid", "glass"])
+	r.roof = _mesh([_roof], [GROUND])
 	r.caps = _mesh([_caps], ["solid"])
 	r.doors = _doors
 	r.models = _models
@@ -739,7 +750,16 @@ func _mesh(bufs: Array, mats: Array) -> ArrayMesh:
 	return mesh if mesh.get_surface_count() > 0 else null
 
 
-## The shared material `name` ("solid" or "glass"), made on first use by whichever thread asks first: the meshing
+## How wet the ground and roofs look, 0 dry .. 1 soaked: darker and shinier. Main thread.
+static func wet_ground(wet: float) -> void:
+	var m := material(GROUND)
+	var w := clampf(wet, 0.0, 1.0)
+	m.roughness = lerpf(0.9, WET_ROUGHNESS, w)
+	m.metallic_specular = lerpf(0.5, WET_SPECULAR, w)
+	m.albedo_color = Color.WHITE.lerp(WET_TINT, w)
+
+
+## The shared material `name` ("solid", "ground" or "glass"), made on first use by whichever thread asks first: the meshing
 ## worker and the main thread (props rebuilt for hidden items) both do, hence the lock.
 static func material(name: String) -> StandardMaterial3D:
 	_materials_lock.lock()

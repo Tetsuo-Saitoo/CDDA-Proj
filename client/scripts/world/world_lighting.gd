@@ -27,6 +27,22 @@ var min_brightness := 0.0:
 	set(v):
 		min_brightness = clampf(v, 0.0, 1.0)
 		_mat.set_shader_parameter("min_brightness", min_brightness)
+var fog := Vector3(0.0, 1.0, 0.0)   # begin (m), end (m), amount: see set_fog
+## Lightning: for a moment nothing, the sky included, is darker than this (WeatherView).
+var flash := 0.0:
+	set(v):
+		flash = clampf(v, 0.0, 1.0)
+		_mat.set_shader_parameter("flash", flash)
+## The scene's depth fog, so fogged distance takes the sky's light instead of its tiles' (WeatherView).
+## `amount` 0: no fog.
+func set_fog(begin_m: float, end_m: float, amount: float) -> void:
+	var begin := maxf(begin_m, 0.0)
+	fog = Vector3(begin, maxf(end_m, begin + 0.01), clampf(amount, 0.0, 1.0))
+	_mat.set_shader_parameter("fog_begin", fog.x)
+	_mat.set_shader_parameter("fog_end", fog.y)
+	_mat.set_shader_parameter("fog_amount", fog.z)
+
+
 ## Natural light the shown LUT was built for (-1: none yet); WorldView rebuilds the LUT only when it changes.
 var lut_ambient := -1
 var ambient := -1          # natural light of the last applied map
