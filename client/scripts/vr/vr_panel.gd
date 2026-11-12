@@ -12,7 +12,8 @@ extends Node3D
 ##   `release` (the left mouse button; a press only on the panel, its release always, even off the panel);
 ## - the sticks: `nav` (ui_up / ui_down / ui_left / ui_right, pressed and released, repeating while held; the main
 ##   stick's up / down scrolls the wheel where the laser points instead);
-## - buttons: `action` (ui_accept / ui_cancel, press and release as the button goes).
+## - buttons: `action` (ui_accept / ui_cancel, press and release as the button goes);
+## - the window's keys and pad (a desk keyboard, a gamepad) while it shows: `forward`, pushed in and marked handled.
 ## Hiding lets go of everything still held (the mouse button, any ui_* action).
 ## Text: 1 logical px is SIZE_M.x / PX.x = 1.1 mm at DIST 1.2 m, so body text wants 20 px or more (about 1 degree).
 
@@ -87,6 +88,20 @@ func _init() -> void:
 
 func _ready() -> void:
 	_mat.albedo_texture = viewport.get_texture()
+
+
+func _input(e: InputEvent) -> void:
+	if forward(e):
+		get_viewport().set_input_as_handled()
+
+
+## While shown, a key or pad event from the window goes into the panel (RequestUI reads ui_* in its _input, which
+## only sees what is pushed here). True if taken (the caller marks it handled in the window).
+func forward(e: InputEvent) -> bool:
+	if not shown or not (e is InputEventKey or e is InputEventJoypadButton or e is InputEventJoypadMotion):
+		return false
+	_push(e)
+	return true
 
 
 ## Something under root is visible (a Control or an embedded Window).

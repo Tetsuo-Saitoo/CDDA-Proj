@@ -35,6 +35,7 @@ func run(root: Node, check: Callable, _data: Variant, _tables: IdTables) -> void
 	_test_laser()
 	_test_release_off_panel()
 	_test_buttons()
+	_test_keys_and_pad(root)
 	_test_sticks()
 	_test_follow()
 	_test_menu_over_panel()
@@ -150,6 +151,56 @@ func _test_buttons() -> void:
 	var sent := _p.events
 	_rig.release(_rig.left, "by_button")
 	_check.call(_p.events == sent, "vr panel: a release with nothing held sends nothing")
+
+
+## A desk keyboard and a pad answer the panel while it shows (pushed in, handled in the window), not while hidden.
+func _test_keys_and_pad(root: Node) -> void:
+	var win := root.get_viewport()
+	_b.grab_focus()
+	_got.clear()
+	var k := InputEventKey.new()
+	k.keycode = KEY_ENTER
+	k.physical_keycode = KEY_ENTER
+	k.pressed = true
+	win.push_input(k)
+	var key_handled := win.is_input_handled()
+	var j := InputEventJoypadButton.new()
+	j.button_index = JOY_BUTTON_A
+	j.pressed = true
+	win.push_input(j)
+	var pad_handled := win.is_input_handled()
+	var m := InputEventJoypadMotion.new()
+	m.axis = JOY_AXIS_LEFT_Y
+	m.axis_value = 1.0
+	win.push_input(m)
+	var got_k := false
+	var got_j := false
+	var got_m := false
+	for e in _got:
+		got_k = got_k or (e is InputEventKey and (e as InputEventKey).keycode == KEY_ENTER)
+		got_j = got_j or (e is InputEventJoypadButton and (e as InputEventJoypadButton).button_index == JOY_BUTTON_A)
+		got_m = got_m or e is InputEventJoypadMotion
+	_check.call(got_k and got_j and got_m and key_handled and pad_handled,
+			"vr panel: the window's keys and pad reach the focused control and are handled in the window %s"
+			% [[got_k, got_j, got_m, key_handled, pad_handled]])
+	for e: InputEvent in [k, j, m]:   # let go again
+		var r: InputEvent = e.duplicate()
+		if r is InputEventJoypadMotion:
+			(r as InputEventJoypadMotion).axis_value = 0.0
+		else:
+			r.set("pressed", false)
+		win.push_input(r)
+	_dialog.visible = false
+	_frame()
+	_got.clear()
+	var sent := _p.events
+	win.push_input(k)
+	_check.call(_p.events == sent and _got.is_empty() and not win.is_input_handled(),
+			"vr panel: hidden, it leaves the window's keys alone")
+	k.pressed = false
+	win.push_input(k)
+	_dialog.visible = true
+	_frame()
 
 
 func _test_sticks() -> void:
