@@ -60,6 +60,7 @@ var item_actions: ItemActions     # one-item take / put / drop for mouse and VR 
 var hands: Hands                  # the hands (mouse, VR controllers): targets, holding, letting go
 var world_collision: WorldCollision   # E2 item physics: floor / wall / furniture boxes near the player
 var item_bodies: ItemBodies           # E2 item physics: the items near the player as physics bodies
+var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
@@ -191,6 +192,12 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
+		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
+		item_placer = ItemPlacer.new()
+		item_placer.bodies = item_bodies
+		item_placer.centre = func() -> Variant: return world.snapshot.player_pos if world.snapshot != null else null
+		add_child(item_placer)
 	pour.actions = item_actions
 	pour.held = _held_liquid
 	pour.target = _pour_target
@@ -283,6 +290,8 @@ func _use_mock_items(snap: Snapshot) -> void:
 	if inspect != null:
 		inspect.stop_batch()   # its items were the old backend's
 	item_actions.clear()
+	if item_placer != null:
+		item_placer.clear()
 	mock_items = MockItems.new(snap, world.tables)
 	mock_items.seed()
 	item_actions.backend = mock_items
@@ -550,6 +559,9 @@ func _start_live() -> void:
 	_sync_cheats_allowed()
 	item_actions.backend = live
 	live.events_arrived.connect(item_actions.on_events)
+	if item_placer != null:
+		item_placer.backend = live
+		live.events_arrived.connect(item_placer.on_events)   # item_result: the answer to a place / spot op
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
