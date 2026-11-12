@@ -13,10 +13,12 @@ extends Node
 ## then is a kill; only `message` and `sound` events may come between. Anything else ends the strike: damage with
 ## another or no source (bleeding, fire), on another creature, any other event. A strike's damage is never also
 ## a shot's.
-## Emits hit_confirmed (AimController's hit marker, VR, other UI) and plays a quiet generated tick (`sound`).
+## Emits hit_confirmed, and strike_confirmed too for a melee hit (AimController's hit marker, VR, other UI) and plays a quiet generated tick (`sound`).
 ## Event fields are checked: bad uids, amounts or body parts skip the event.
 
 signal hit_confirmed(uid: int, part: String, amount: int, killed: bool)
+## Also sent, after hit_confirmed, when the hit was the player's melee strike (a stronger buzz in VR, say).
+signal strike_confirmed(uid: int, part: String, amount: int, killed: bool)
 
 const MAX_EVENTS := 4096       # the bridge queue's cap; more in one batch are ignored
 const MAX_UID := 1 << 53       # JSON numbers are doubles
@@ -68,11 +70,11 @@ func on_events(events: Array) -> void:
 						_uint(e.get("other"), MAX_UID) == me):
 					if kind == "death":
 						if not last.is_empty():
-							_confirm(struck, last["part"], last["amount"], true)
+							_confirm(struck, last["part"], last["amount"], true, true)
 						struck = 0
 					else:
 						last = h
-						_confirm(struck, h["part"], h["amount"], false)
+						_confirm(struck, h["part"], h["amount"], false, true)
 					continue   # the strike's, not a shot's
 				struck = 0
 				if not h.is_empty():
@@ -141,8 +143,10 @@ func _hurt(kind: String, e: Dictionary, me: int) -> Dictionary:
 	return {"kind": kind, "uid": uid, "part": part, "amount": amount}
 
 
-func _confirm(uid: int, part: String, amount: int, killed: bool) -> void:
+func _confirm(uid: int, part: String, amount: int, killed: bool, strike := false) -> void:
 	hit_confirmed.emit(uid, part, amount, killed)
+	if strike:
+		strike_confirmed.emit(uid, part, amount, killed)
 	_play_tick()
 
 
