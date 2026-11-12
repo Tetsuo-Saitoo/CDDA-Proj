@@ -37,6 +37,8 @@ var world_state := Callable()
 var held := Callable()
 ## Text prompts open with the on-screen keyboard showing (TextKeys): set while hosted on the VR panel (main.gd).
 var keyboard := false
+## How much larger everything is drawn (set_ui_scale); 1 = as on the screen.
+var ui_scale := 1.0
 var widget: RequestWidget
 var request_id := 0
 var _panel: PanelContainer
@@ -70,6 +72,29 @@ func _init() -> void:
 	_bottom = Control.new()
 	_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_bottom)
+
+
+## Draws everything `k` times larger (0.5..3; bad values: 1) while still filling the parent Control: the VR panel,
+## where CDDA's 16 px text wants to be 20 px or more to read in the headset. Follows the parent's size.
+func set_ui_scale(k: float) -> void:
+	ui_scale = clampf(k, 0.5, 3.0) if is_finite(k) else 1.0
+	var p := get_parent() as Control
+	if p != null and not p.resized.is_connected(_fit):
+		p.resized.connect(_fit)
+	_fit()
+
+
+func _fit() -> void:
+	if is_equal_approx(ui_scale, 1.0):
+		scale = Vector2.ONE
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		return
+	var p := get_parent() as Control
+	var area := p.size if p != null else get_parent_area_size()
+	set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	scale = Vector2(ui_scale, ui_scale)
+	position = Vector2.ZERO
+	size = area / ui_scale
 
 
 ## Shows `req` (a request Dictionary from the bridge); false if it has no usable id or kind. Replaces any

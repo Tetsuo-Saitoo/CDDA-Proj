@@ -28,6 +28,8 @@ func run(root: Node, check: Callable) -> void:
 	await _test_direction()
 	_test_pad()
 	_test_panel_root()
+	await _test_held_then_hidden()
+	await _test_scaled()
 	_vp.free()
 	ui = null
 
@@ -109,6 +111,51 @@ func _test_pad() -> void:
 			and RequestUI.as_key(stick) == stick, "panel: as_key: a pad button as its key, keys and the stick as they are")
 
 
+## The laser holds a row down while the request goes (answered elsewhere, or replaced): Godot's release on hiding
+## clicks that row, which must answer nothing, nor touch the request shown next.
+func _test_held_then_hidden() -> void:
+	_show(_req("menu", {"entries": _entries(["5 minutes", "30 minutes", "Sleep"], 10)}))
+	await _frames()
+	var w := ui.widget as ListRequestWidget
+	var at := w.rows[1].get_global_rect().get_center() if w != null and w.rows.size() > 1 else Vector2.ZERO
+	_mouse(at, true)
+	ui.clear()
+	await _frames()
+	var gone := answers.is_empty()
+	_show(_req("menu", {"entries": _entries(["Yes", "No"], 20)}, 8))
+	await _frames()
+	_mouse(at, true)
+	ui.show_request(_req("menu", {"entries": _entries(["Later"], 30)}, 9))
+	await _frames()
+	_mouse(at, false)
+	await _frames()
+	_check.call(gone and answers.is_empty() and ui.is_showing() and ui.request_id == 9,
+			"panel: a row held while its request goes answers nothing (%s)" % [answers])
+	ui.clear()
+
+
+## RequestUI.set_ui_scale (the VR panel): drawn larger, still within the viewport, and a click still lands on the
+## row under it.
+func _test_scaled() -> void:
+	var host := Control.new()
+	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_vp.add_child(host)
+	ui.reparent(host, false)
+	ui.set_ui_scale(1.35)
+	_show(_req("menu", {"entries": _entries(["5 minutes", "30 minutes", "Sleep"], 10)}))
+	await _frames()
+	var w := ui.widget as ListRequestWidget
+	var panel := ui._panel.get_global_rect()
+	var row := w.rows[2].get_global_rect() if w != null and w.rows.size() > 2 else Rect2()
+	var fits := Rect2(Vector2.ZERO, Vector2(_vp.size)).encloses(panel) and absf(panel.get_center().x - _vp.size.x / 2.0) < 2.0
+	_check.call(fits and is_equal_approx(row.size.y, w.rows[2].size.y * 1.35) and ui.get_global_rect().size.is_equal_approx(Vector2(_vp.size)),
+			"panel: scaled 1.35, it still fills the viewport and the prompt fits (%s)" % [panel])
+	_click(row.get_center())
+	_check.call(answers == [{"id": 7, "entry": 12}], "panel: a click on a scaled row picks it (%s)" % [answers])
+	ui.set_ui_scale(NAN)
+	_check.call(ui.ui_scale == 1.0 and ui.scale == Vector2.ONE, "panel: a bad scale is 1")
+
+
 ## main.gd finds the VR panel's root by name (VrPanel.root) and only when it is a Control.
 func _test_panel_root() -> void:
 	var Main := load("res://scripts/main.gd")
@@ -163,6 +210,22 @@ func _click(at: Vector2) -> void:
 		b.position = at
 		b.global_position = at
 		_vp.push_input(b, true)
+
+
+## A left button press or release at `at` (with the motion there first).
+func _mouse(at: Vector2, down: bool) -> void:
+	var m := InputEventMouseMotion.new()
+	m.position = at
+	m.global_position = at
+	m.button_mask = MOUSE_BUTTON_MASK_LEFT if down else 0
+	_vp.push_input(m, true)
+	var b := InputEventMouseButton.new()
+	b.button_index = MOUSE_BUTTON_LEFT
+	b.pressed = down
+	b.button_mask = MOUSE_BUTTON_MASK_LEFT if down else 0
+	b.position = at
+	b.global_position = at
+	_vp.push_input(b, true)
 
 
 func _action(a: StringName, pressed := true) -> void:

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-11 — CDDA's prompts on the VR panel are drawn 1.35x (text ~22 px, readable in the headset); a row held while its prompt goes answers nothing (checked). Client tests pass.
 - 2026-11-11 — On-screen keyboard for CDDA's text prompts (letters, digits, Shift, Space, Back), worked by pointer: a Keyboard button on screen, open from the start on the VR panel. Client tests pass.
 - 2026-11-11 — CDDA's prompts answer to a pad (D-pad, A, B, shoulders) and to ui_* actions, and work inside a SubViewport by pointer clicks (first step of menus in VR). Client tests pass.
 - 2026-11-11 — Hands: when ItemActions forgets everything in flight (a new game or snapshot), the hands let go and forget their own steps too, so those items can be grabbed again. Client tests pass.
