@@ -19,6 +19,8 @@ signal hidden_changed(uids: Dictionary)
 signal changed()
 signal finished(item: ItemRef, op: String)
 signal refused(item: ItemRef, op: String, reason: String)
+## clear() forgot everything in flight (no finished / refused for any of it).
+signal cleared()
 
 const TIMEOUT_MS := 5000
 const MAX_PENDING := 32
@@ -188,6 +190,7 @@ func clear() -> void:
 	_pending.clear()
 	_seq = 0
 	_snap = null
+	cleared.emit()
 	hidden_changed.emit({})
 	changed.emit()
 
