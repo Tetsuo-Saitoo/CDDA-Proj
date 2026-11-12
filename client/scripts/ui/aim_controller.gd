@@ -282,11 +282,48 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 ## nothing solid in between: {square, uid, part, quality, time} or {}. Kept as melee_aim for the swing request.
 func melee_from(origin: Vector3, sight: Vector3) -> Dictionary:
 	melee_aim = {}
-	if creature_view == null or world == null or world.snapshot == null:
-		return {}
 	if not origin.is_finite() or not sight.is_finite() or sight.length_squared() < 1e-12:
 		return {}
-	var h := BulletPhysics.reach_figure(origin, sight.normalized() * MELEE_REACH_M, creature_view.figures(), look_ray)
+	return _melee_pick(origin, sight.normalized() * MELEE_REACH_M)
+
+
+## Melee by hand (VR): the creature figure the segment a -> b (a held weapon from the hand to its tip, say) meets
+## first, nothing solid before it: sets and returns melee_aim, or {} (melee_aim cleared). Points that aren't
+## finite, a segment of no length or one longer than MELEE_REACH_M give {}.
+func melee_segment(a: Vector3, b: Vector3) -> Dictionary:
+	melee_aim = {}
+	if not a.is_finite() or not b.is_finite():
+		return {}
+	var seg := b - a
+	var len2 := seg.length_squared()
+	if len2 < 1e-12 or len2 > MELEE_REACH_M * MELEE_REACH_M:
+		return {}
+	return _melee_pick(a, seg)
+
+
+## The aimed hand action ("fp3d_attack_<hand>_aim_<DIR>") for a strike by hand along a -> b (melee_segment) from
+## the player's square `me`; "" when `hand` isn't "main" or "off" or the segment meets no creature at most
+## MELEE_SQUARES off along one of the 8 ways on this level (melee_aim cleared): a hand that touches nothing
+## strikes nothing.
+func strike_segment(hand: String, a: Vector3, b: Vector3, me: Vector3i) -> String:
+	melee_aim = {}
+	if hand != "main" and hand != "off":
+		return ""
+	var aim := melee_segment(a, b)
+	if aim.is_empty():
+		return ""
+	var dir := strike_dir(me, aim["square"])
+	if dir == "":
+		melee_aim = {}
+		return ""
+	return "fp3d_attack_%s_aim_%s" % [hand, dir]
+
+
+## The creature figure the segment from `origin` along `seg` meets first, as melee_aim (set), or {}.
+func _melee_pick(origin: Vector3, seg: Vector3) -> Dictionary:
+	if creature_view == null or world == null or world.snapshot == null:
+		return {}
+	var h := BulletPhysics.reach_figure(origin, seg, creature_view.figures(), look_ray)
 	if h.is_empty():
 		return {}
 	for c: Snapshot.Creature in world.snapshot.creatures:
