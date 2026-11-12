@@ -943,6 +943,16 @@ func _test_placer() -> void:
 	var listed := placer.waiting() == 1
 	placer.clear()
 	_check.call(listed and placer.waiting() == 0 and placer._flight.is_empty(), "item placer: clear forgets everything")
+	# the game's clock goes back (another save loaded): what was in flight is forgotten, not left stuck
+	_rest_at(y, E, Vector2(0.7, 0.3))
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var flying := placer._flight.size() == 1 and placer.waiting() == 1
+	_world.snapshot.turn -= 50
+	placer.update()
+	_world.snapshot.turn += 50
+	_check.call(flying and placer.waiting() == 0 and placer._flight.is_empty() and placer._by_uid.is_empty(),
+			"item placer: the game's clock went back: everything waiting or in flight is forgotten")
 	placer.bodies = null
 	placer.free()
 	_snap.seq += 1

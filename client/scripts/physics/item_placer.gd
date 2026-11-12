@@ -13,7 +13,7 @@ extends Node
 ## refused spot only means the pose isn't kept. Only `amount` decides; the reason is for showing (`refused`).
 ## CDDA runs item actions only while its clock runs: an op counts as unanswered only after RESULT_MS and
 ## RESULT_TURNS game turns (Snapshot.turn), so a pause, or a turn-based game waiting for the player, never times one
-## out.
+## out. A clock that goes back (another save was loaded) forgets everything waiting or in flight.
 ## Limits kept here so nothing is sent that the bridge would refuse: the item's square within FROM_SQUARES of the
 ## player on its level; one op every GAP_MS, one place per item per game turn (and PLACE_GAP_MS apart), MAX_FLIGHT
 ## in flight, MAX_WANT waiting; MAX_TRIES per item, then it is put back. Nothing is sent while a body moves.
@@ -67,6 +67,7 @@ var _placed_turn := {}    # ... and the game turn it went out on
 var _retry_ms := {}       # uid -> not before this (an op wasn't taken)
 var _tag := 0
 var _last_ms := -GAP_MS
+var _seen_turn := 0       # the game turn at the last update
 
 
 func _process(_delta: float) -> void:
@@ -90,6 +91,10 @@ func waiting() -> int:
 func update() -> void:
 	if not is_instance_valid(bodies):
 		return
+	var turn := _turn()
+	if turn < _seen_turn:
+		clear()   # the game's clock went back (another save loaded): nothing from before applies
+	_seen_turn = turn
 	var now := _now()
 	_expire(now)
 	if _want.is_empty() or now - _last_ms < GAP_MS or _flight.size() >= MAX_FLIGHT:
