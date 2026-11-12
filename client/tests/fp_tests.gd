@@ -304,6 +304,15 @@ func _test_rebinding(root: Node) -> void:
 				why.is_empty()])
 	_check.call(moved == [[["K"], ["mouse:1"], true], [["L", "mouse:3"], ["mouse:1"], true], [["mouse:1"], ["mouse:1"], true]],
 			"keys: an old key file's left click on look at is dropped (look at keeps L / middle click), a new one's kept (%s)" % [moved])
+	InputActions.reset_all()
+	var lmb := InputEventMouseButton.new()
+	lmb.button_index = MOUSE_BUTTON_LEFT
+	lmb.pressed = true
+	var mmb := lmb.duplicate() as InputEventMouseButton
+	mmb.button_index = MOUSE_BUTTON_MIDDLE
+	_check.call(InputActions.pressed(lmb, &"click") and not InputActions.pressed(lmb, &"look_at")
+			and InputActions.pressed(mmb, &"look_at") and not InputActions.pressed(mmb, &"click"),
+			"keys: left click is click (interact, aim), middle click looks at")
 	# A hostile file: unknown actions, junk entries, a non-list; only good entries are used.
 	InputActions.reset_all()
 	var f := FileAccess.open(path, FileAccess.WRITE)
