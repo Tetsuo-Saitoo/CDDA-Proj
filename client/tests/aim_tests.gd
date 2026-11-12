@@ -4,6 +4,8 @@ extends RefCounted
 ## click, keys fire straight away, and the weapon viewmodel picks a shape from the id tables.
 ## Combat too: client-flown bullets (hordes, weapon_wielded, VR fire_from / live_aim), CDDA's shot requests,
 ## hit feedback from events, the gun model's named parts and grime, player.wielded_gun in snapshots.
+## Melee: aimed strikes and their swing answers, called techniques and the crosshair's note, strikes that hit
+## several creatures.
 
 var _check: Callable
 var answers: Array = []
@@ -679,6 +681,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_horde(root, aim, cv, eye, head)
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
 	_test_melee(aim, eye, head, me, zp)
+	_test_techniques(aim, ui, cam, eye, head, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -733,12 +736,270 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 	_check.call(act == "fp3d_attack_off_aim_LEFT" and kept.get("uid") == ZUID
 			and by_hand.get("shot", {}).get("hit_uid") == ZUID and by_hand.get("shot", {}).get("part") == "head",
 			"melee: a strike by hand is the aimed action and answers the swing request (%s, %s)" % [act, by_hand])
+	_check.call(seg.get("want") == "stun" and kept.get("want") == "stun" and by_hand.get("action") == "stun",
+			"melee: a strike by hand keeps the family its zone calls and sends it (%s, %s)" % [kept, by_hand])
 	var off_way := aim.strike_segment("main", near, tip, zp + Vector3i(2, 1, 0)) == "" and aim.melee_aim.is_empty()
 	var bad_hand := aim.strike_segment("left", near, tip, beside) == "" and aim.strike_segment("", near, tip, beside) == "" \
 			and aim.melee_aim.is_empty()
 	var miss := aim.strike_segment("main", near, near + dir * 0.3, beside) == "" and aim.melee_aim.is_empty()
 	_check.call(off_way and bad_hand and miss, "melee: by hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
 			% [[off_way, bad_hand, miss]])
+	# techniques: the zone a strike lands on calls a family, sent as the swing answer's `action`
+	var calls := {"head": "stun", "eye": "stun", "leg_l": "down", "leg_r": "down", "leg": "down", "arm_l": "disarm",
+			"arm_r": "disarm", "torso": "", "wing": ""}
+	var junk_zones := ["", "HEAD", "Head", "head ", "eyes", "legs", "arm", "stun", "x".repeat(500)]
+	var call_ok := calls.keys().all(func(zn: String) -> bool: return S.technique_call(zn) == calls[zn]) \
+			and junk_zones.all(func(zn: String) -> bool: return S.technique_call(zn) == "")
+	var fig: CreatureFigure = aim.creature_view.figures()[ZUID]
+	var leg := Vector3.ZERO
+	var zones_known := BulletPhysics.CHARACTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn)) \
+			and BulletPhysics.MONSTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn))
+	for zz: Array in fig.hit_zones():
+		zones_known = zones_known and calls.has(zz[1])
+		if zz[1] == "leg_l":
+			leg = (zz[0] as MeshInstance3D).global_position
+	_check.call(call_ok and zones_known,
+			"melee: technique_call: head and eye stun, legs down, arms disarm; torso, wing and junk nothing (%s)"
+			% [[call_ok, zones_known]])
+	var hm := aim.melee_from(near, dir)
+	var ha := aim.on_request({"kind": "swing", "id": 45, "cursor": zp, "origin": me, "range": 1, "mode": "main"})
+	var hs: Dictionary = ha.get("shot", {})
+	_check.call(hm.get("want") == "stun" and ha.size() == 3 and ha.get("id") == 45 and typeof(ha.get("action")) == TYPE_STRING
+			and ha.get("action") == "stun" and hs.get("part") == "head" and hs.get("hit_uid") == ZUID and _bridge_typed(hs)
+			and aim._last_call.get("uid") == ZUID and aim._last_call.get("family") == 3,
+			"melee: a strike at the head calls a stun: the answer names the head and says action stun (%s)" % [ha])
+	var to_leg := eye.direction_to(leg)
+	var lm := aim.melee_from(leg - to_leg * 1.5, to_leg)
+	var la := aim.on_request({"kind": "swing", "id": 46, "cursor": zp})
+	_check.call(lm.get("want") == "down" and lm.get("part") == "" and la.get("action") == "down"
+			and la.get("shot", {}).get("part") == "" and _bridge_typed(la.get("shot")),
+			"melee: a strike at a leg with no weak point there still answers, calling a takedown (%s, %s)" % [lm, la])
+	var by := func(part: String, want: Array) -> Dictionary:   # a melee aim set by hand; want [] = no `want` key
+		aim.melee_aim = {"square": zp, "uid": ZUID, "part": part, "quality": 0.5, "time": Time.get_ticks_msec()}
+		if not want.is_empty():
+			aim.melee_aim["want"] = want[0]
+		return aim.on_request({"kind": "swing", "id": 47, "cursor": zp})
+	var down: Dictionary = by.call("", ["down"])
+	var down_ok: bool = down.size() == 3 and down.get("action") == "down" and _bridge_typed(down.get("shot")) \
+			and down["shot"]["part"] == "" and down["shot"]["hit_uid"] == ZUID and aim._last_call.get("family") == 2
+	var no_want: Dictionary = by.call("", [])
+	var empty_want: Dictionary = by.call("", [""])
+	var none_ok := no_want == {"id": 47, "cancel": true} and empty_want == no_want and aim._last_call.is_empty()
+	var long_part: Dictionary = by.call("p".repeat(S.MAX_PART_BYTES + 1), ["stun"])
+	_check.call(down_ok and none_ok and long_part == no_want,
+			"melee: no part but a call answers a shot plus the action; no part and no call, or a part over the cap, cancels (%s)"
+			% [[down, no_want, empty_want, long_part]])
+	var families := []
+	for w: String in S.CALL_FAMILY:
+		var r: Dictionary = by.call("head", [w])
+		families.append(r.get("action") == w and aim._last_call.get("uid") == ZUID
+				and aim._last_call.get("family") == S.CALL_FAMILY[w])
+	var junk_wants := []
+	for w: Variant in ["sweep", 7, null, "push", "strike", "STUN", "stun ", ["stun"], 3.0, "x".repeat(500)]:
+		var r: Dictionary = by.call("head", [w])
+		var r2: Dictionary = by.call("", [w])
+		junk_wants.append(r.size() == 2 and not r.has("action") and r.get("shot", {}).get("part") == "head"
+				and r2 == no_want and aim._last_call.is_empty())
+	_check.call(families == [true, true, true] and not junk_wants.has(false),
+			"melee: down, stun and disarm are sent and remembered; a junk want sends no action (%s, %s)" % [families, junk_wants])
+	aim.melee_aim = {}
+	aim._last_call = {}
+
+
+## Melee techniques: the player's hit names the technique CDDA used (HitFeedback.technique_used, one clean line);
+## the crosshair shows it as a note, gold when the swing answer called its family on that creature, and hides
+## again when the note is over. A call ends with its own swing (HitFeedback.swing_resolved). Attack events only:
+## nothing here confirms a hit.
+func _test_techniques(aim: AimController, ui: RequestUI, cam: Camera3D, eye: Vector3, head: Vector3, zp: Vector3i) -> void:
+	var hf := aim.hits
+	var me := hf.player_uid()
+	var z := ZUID
+	var used := []
+	var on_used := func(uid: int, technique: String, family: int) -> void: used.append([uid, technique, family])
+	hf.technique_used.connect(on_used)
+	var resolved := []   # swing_resolved: [uid, hit, techniques told before it]
+	var on_resolved := func(uid: int, struck: bool) -> void: resolved.append([uid, struck, used.size()])
+	hf.swing_resolved.connect(on_resolved)
+	var hit := func(attacker: Variant, target: Variant, detail: Variant, more: Dictionary) -> Dictionary:
+		var e := {"kind": "attack", "uid": attacker, "other": target, "detail": detail, "pos": Vector3i.ZERO}
+		e.merge(more)
+		return e
+	hf.on_events([hit.call(me, z, 1, {"text": "Leg Sweep", "amount": 2}),
+			hit.call(float(me), float(z), 1.0, {"text": " <color_yellow>Feint</color> ", "amount": 1.0})])
+	_check.call(used == [[z, "Leg Sweep", 2], [z, "Feint", 1]],
+			"techniques: the player's hit with a technique tells the creature, the name and the family (%s)" % [used])
+	var after_technique := resolved == [[z, true, 1], [z, true, 2]]
+	used.clear()
+	resolved.clear()
+	hf.on_events([hit.call(me, z, 0, {"text": "Leg Sweep", "amount": 2}), hit.call(z + 4, z, 1, {"text": "Bite", "amount": 1}),
+			hit.call(me, me, 1, {"text": "Trip", "amount": 2}), hit.call(me, z, 2, {"text": "Trip", "amount": 2}),
+			hit.call(me, -1, 1, {"text": "Trip"}), hit.call(NAN, z, 1, {"text": "Trip"}), hit.call(me, z, "1", {"text": "Trip"}),
+			hit.call(me, z, 1, {}), hit.call(me, z, 1, {"text": "", "amount": 2}),
+			hit.call(me, z, 1, {"text": "  \t ", "amount": 2}), hit.call(me, z, 1, {"text": 7}), hit.call(me, z, 1, {"text": null}),
+			hit.call(me, z, 1, {"text": ["Trip"]}), hit.call(me, z, 1, {"text": {"name": "Trip"}}),
+			hit.call(me, z, 1, {"text": "<color_red></color>\n\u202e", "amount": 2})])
+	_check.call(used.is_empty(),
+			"techniques: a miss, another attacker, a malformed attack, no text, an empty or non-String text: nothing (%s)"
+			% [used])
+	var ends := [[z, false, 0]]   # the miss, then the eight hits with no name; no one else's, no malformed attack
+	for i in 8:
+		ends.append([z, true, 0])
+	_check.call(after_technique and resolved == ends,
+			"techniques: swing_resolved follows each strike of the player at a creature, hit (after its technique) or miss; "
+			+ "not anyone else's or a malformed attack (%s, %s)" % [after_technique, resolved])
+	hf.swing_resolved.disconnect(on_resolved)
+	var junk_amounts: Array = [NAN, -1, 99, "2", 2.5, INF, null, [3], 6, true]
+	for a: Variant in junk_amounts:
+		hf.on_events([hit.call(me, z, 1, {"text": "Jab", "amount": a})])
+	hf.on_events([hit.call(me, z, 1, {"text": "Jab"})])
+	var zeros := used.size() == junk_amounts.size() + 1 and used.all(func(u: Array) -> bool: return u == [z, "Jab", 0])
+	used.clear()
+	for f in HitFeedback.MAX_FAMILY + 1:
+		hf.on_events([hit.call(me, z, 1, {"text": "Jab", "amount": f})])
+	_check.call(zeros and used.map(func(u: Array) -> int: return u[2]) == [0, 1, 2, 3, 4, 5],
+			"techniques: the family is 0..5, a junk amount (NaN, -1, 99, \"2\", none) gives 0 (%s)" % [used])
+	used.clear()
+	var nasty := "<color_red>Brutal\u202e Strike</color>\n\t\u0007\u200b" + "x".repeat(5000)
+	hf.on_events([hit.call(me, z, 1, {"text": nasty, "amount": 5}), hit.call(me, z, 1, {"text": "A".repeat(5000), "amount": 5})])
+	var clean: bool = used.size() == 2 and used[0] == [z, "Brutal Strike" + "x".repeat(27), 5] \
+			and used[1] == [z, "A".repeat(40), 5]
+	for u: Array in used:
+		var t: String = u[1]
+		clean = clean and t.length() <= HitFeedback.MAX_TECHNIQUE_LEN and not t.contains("<")
+		for i in t.length():
+			clean = clean and t.unicode_at(i) >= 0x20 and not CddaText.is_hidden(t.unicode_at(i))
+	_check.call(clean, "techniques: a hostile name (colour tags, control and direction characters, 5000 long) arrives clean, "
+			+ "at most 40 characters (%s)" % [used.map(func(u: Array) -> int: return (u[1] as String).length())])
+	used.clear()
+
+	# the note over the crosshair
+	var cross := aim.crosshair
+	var was_first_person := aim.first_person
+	aim.first_person = true
+	ui.clear()
+	var dir := eye.direction_to(head)
+	var near := head - dir * 1.5
+	var swing := func() -> String:   # an aimed strike at the zombie's head, its swing request answered
+		aim.melee_from(near, dir)
+		return str(aim.on_request({"kind": "swing", "id": 60, "cursor": zp}).get("action", ""))
+	var blow := func(uid: int, family: int) -> void:   # CDDA's hit event for it
+		hf.on_events([hit.call(me, uid, 1, {"text": "Stunning Blow", "amount": family})])
+	cross.tick_note(5.0)   # the notes of the events above are over
+	var sent: String = swing.call()
+	aim.update(cam, false)
+	var hidden_before := not cross.visible and not cross.noting() and not cross.marking()
+	blow.call(z, 3)
+	aim.update(cam, false)
+	_check.call(sent == "stun" and hidden_before and cross.noting() and cross.note_called and cross.note == "Stunning Blow"
+			and cross.visible and not cross.show_cross and not cross.marking() and aim._last_call.is_empty(),
+			"techniques: a called stun that CDDA used shows as a called note, without aiming or a hit marker (%s, %s)"
+			% [sent, cross.note])
+	var plain := []   # notes that show but aren't called
+	swing.call()
+	blow.call(z, 2)   # another family than the one called
+	plain.append(cross.noting() and not cross.note_called)
+	swing.call()
+	blow.call(z + 1, 3)   # another creature
+	plain.append(cross.noting() and not cross.note_called)
+	swing.call()
+	blow.call(z, 3)
+	var first := cross.note_called
+	blow.call(z, 3)   # one call, one note: the second isn't called
+	plain.append(first and cross.noting() and not cross.note_called)
+	swing.call()
+	aim._last_call["time"] = Time.get_ticks_msec() - AimController.CALL_KEEP_MS - 1
+	blow.call(z, 3)   # the call is too old
+	plain.append(cross.noting() and not cross.note_called)
+	aim.melee_aim = {}
+	var cancelled := aim.on_request({"kind": "swing", "id": 61, "cursor": zp})
+	blow.call(z, 3)   # nothing was called
+	plain.append(cancelled.get("cancel") == true and cross.noting() and not cross.note_called)
+	swing.call()
+	aim._last_call["time"] = Time.get_ticks_msec() - AimController.CALL_KEEP_MS + 2000
+	blow.call(z, 3)   # an older call still inside CALL_KEEP_MS
+	_check.call(plain == [true, true, true, true, true] and cross.note_called,
+			"techniques: another family, another creature, a used-up, old or missing call: the note shows, not called (%s)"
+			% [plain])
+	# a call ends with its own swing: a later strike that called nothing (plain, a bump) never shows as called
+	var ended := []
+	swing.call()
+	hf.on_events([hit.call(me, z, 0, {})])   # the called strike misses
+	ended.append(aim._last_call.is_empty())
+	blow.call(z, 3)   # no swing request since: CDDA's own pick of the family that was called
+	ended.append(cross.noting() and not cross.note_called)
+	swing.call()
+	hf.on_events([hit.call(me, z, 1, {})])   # the called strike hits with no technique
+	ended.append(aim._last_call.is_empty())
+	blow.call(z, 3)
+	ended.append(cross.noting() and not cross.note_called)
+	swing.call()
+	hf.on_events([hit.call(me, z + 1, 0, {})])   # the swing's attack event names another creature: still its end
+	ended.append(aim._last_call.is_empty())
+	swing.call()
+	hf.on_events([hit.call(z + 4, z, 1, {"text": "Bite", "amount": 3}), hit.call(me, me, 1, {}), hit.call(me, z, 2, {}),
+			{"kind": "message", "text": "x"}, {"kind": "sound"}])
+	var kept: bool = aim._last_call.get("uid") == z   # someone else's or a malformed attack isn't the swing's
+	blow.call(z, 3)
+	_check.call(ended == [true, true, true, true, true] and kept and cross.note_called,
+			"techniques: a call ends with its own swing, a miss or a hit with no technique too: the next technique isn't "
+			+ "called; other attacks and messages leave it (%s, %s)" % [ended, kept])
+	# the note ends on its own: no hit marker is showing
+	cross.tick_note(1.0)
+	aim.update(cam, false)
+	var still := cross.noting() and cross.visible and cross.note == "Stunning Blow" and not cross.marking()
+	cross.tick_note(0.51)
+	var over := not cross.noting() and cross.note == "" and not cross.marking()
+	aim.update(cam, false)
+	_check.call(still and over and not cross.visible,
+			"techniques: with no hit marker showing the note ends after 1.5 s and the crosshair hides again (%s)"
+			% [[still, over, cross.visible]])
+	cross.show_note("Jab", false)
+	cross._process(1.0)
+	var mid := cross.noting() and not cross.marking()
+	cross._process(0.51)
+	aim.update(cam, false)
+	_check.call(mid and not cross.noting() and not cross.visible,
+			"techniques: the crosshair's own frames count the note down with no hit marker showing (%s)"
+			% [[mid, cross.note_left]])
+	# the marker and the note keep their own time
+	var C := AimController.Crosshair
+	cross.show_hit(false, false)
+	cross.show_note("Jab", true)
+	cross._process(0.2)
+	var both: bool = cross.marking() and is_equal_approx(cross.hit_left, C.HIT_FADE_S - 0.2) \
+			and is_equal_approx(cross.note_left, C.NOTE_S - 0.2)
+	cross._process(0.11)
+	var marker_first := not cross.marking() and cross.noting()
+	cross.tick_hit(5.0)
+	var note_kept: bool = is_equal_approx(cross.note_left, C.NOTE_S - 0.31) and cross.note == "Jab" and cross.note_called
+	cross.show_hit(true, true)
+	cross.tick_note(5.0)
+	var marker_kept: bool = cross.marking() and cross.hit_left == C.HIT_FADE_S and not cross.noting()
+	cross.tick_hit(0.31)
+	_check.call(both and marker_first and note_kept and marker_kept and not cross.marking(),
+			"techniques: the marker still fades in 0.3 s beside a note, each counts down on its own (%s)"
+			% [[both, marker_first, note_kept, marker_kept]])
+	# where the note is drawn: the hand pointer's hint lines (GrabController) are under the centre
+	var centre := Vector2(400, 300)
+	var at: Vector2 = C.note_at(centre, 80.0)
+	var bottom: float = at.y + ThemeDB.fallback_font.get_descent(C.NOTE_SIZE)
+	_check.call(is_equal_approx(at.x, centre.x - 40.0) and bottom <= centre.y - 15.0 * C.HEAD_SCALE,
+			"techniques: the note is drawn centred over the centre, above the biggest hit marker, not under it (%s, %s)"
+			% [at, bottom])
+	cross.show_note("", true)
+	var empty := not cross.noting()
+	cross.show_note("y".repeat(500), false)
+	for d: float in [NAN, -1.0, INF]:
+		cross.tick_note(d)
+	_check.call(empty and cross.note.length() == C.MAX_NOTE_LEN and cross.note_left == C.NOTE_S and not cross.note_called,
+			"techniques: an empty note shows nothing, a long one is cut, junk time steps change nothing (%d)"
+			% cross.note.length())
+	cross.tick_note(5.0)
+	aim.update(cam, false)
+	aim.first_person = was_first_person
+	aim.melee_aim = {}
+	aim._last_call = {}
+	hf.technique_used.disconnect(on_used)
 
 
 ## Hordes: a flight tests only the figures near its line (at most 64, the nearest along it) and still hits one on it.
@@ -984,10 +1245,118 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	_check.call(miss and ally_hit and bleed and no_source and elsewhere and next_turn and no_damage and junk,
 			"hits: melee: a miss, an ally's hit, other or no source, another creature, a later turn, junk: nothing (%s)"
 			% [[miss, ally_hit, bleed, no_source, elsewhere, next_turn, no_damage, junk]])
+	_test_strike_runs(aim, me, head, torso)
 	var snd := HitFeedback.tick_stream()
 	_check.call(snd.data.size() == int(HitFeedback.TICK_RATE * HitFeedback.TICK_S) * 2 and HitFeedback.tick_stream() == snd
 			and hf.ticks >= 5, "hits: a short tick, made once, plays per confirmation (%d)" % hf.ticks)
 	aim.first_person = false
+
+
+## Several creatures struck by one swing (a technique that strikes around hits the others before the main hit's
+## damage comes): each creature the player hit waits for its own damage, anyone else's attack ends the run, and a
+## run holds at most HitFeedback.MAX_RUN creatures. `head`, `torso`: body part indices.
+func _test_strike_runs(aim: AimController, me: int, head: int, torso: int) -> void:
+	var hf := aim.hits
+	var got := []
+	var strikes := []
+	var used := []
+	var on_hit := func(uid: int, part: String, amount: int, killed: bool) -> void: got.append([uid, part, amount, killed])
+	var on_strike := func(uid: int, part: String, amount: int, killed: bool) -> void: strikes.append([uid, part, amount, killed])
+	var on_used := func(uid: int, technique: String, family: int) -> void: used.append([uid, technique, family])
+	hf.hit_confirmed.connect(on_hit)
+	hf.strike_confirmed.connect(on_strike)
+	hf.technique_used.connect(on_used)
+	var a := ZUID + 20
+	var b := ZUID + 21
+	var c := ZUID + 22
+	var strike := func(attacker: Variant, target: Variant, hit: Variant) -> Dictionary:
+		return {"kind": "attack", "uid": attacker, "other": target, "detail": hit, "pos": Vector3i.ZERO}
+	var hurt := func(uid: Variant, amount: Variant, part: Variant, source: Variant) -> Dictionary:
+		return {"kind": "damage", "uid": uid, "amount": amount, "detail": part, "other": source, "pos": Vector3i.ZERO}
+	var death := func(uid: Variant) -> Dictionary:
+		return {"kind": "death", "uid": uid, "pos": Vector3i.ZERO}
+	var shot_by := func(shooter: Variant, hit: Variant) -> Dictionary:
+		return {"kind": "projectile", "uid": shooter, "other": hit, "pos": Vector3i.ZERO, "path": []}
+	var wide: Dictionary = strike.call(me, a, 1)
+	wide["text"] = "Wide Strike"
+	wide["amount"] = 1
+	hf.on_events([wide, strike.call(me, b, 1), hurt.call(b, 4, torso, me), strike.call(me, c, 0), hurt.call(a, 9, head, me)])
+	_check.call(got == [[b, "torso", 4, false], [a, "head", 9, false]] and strikes == got and used == [[a, "Wide Strike", 1]],
+			"hits: melee: two creatures hit by one swing, a miss on a third between: both confirm, each on its own damage (%s)"
+			% [got])
+	got.clear()
+	strikes.clear()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), hurt.call(b, 4, torso, me), death.call(b),
+			{"kind": "message", "text": "The zombie falls."}, hurt.call(a, 9, head, me), death.call(a), death.call(a)])
+	_check.call(got == [[b, "torso", 4, false], [b, "torso", 4, true], [a, "head", 9, false], [a, "head", 9, true]]
+			and strikes == got,
+			"hits: melee: one of the creatures dies in the middle: its kill, the other still confirms (%s)" % [got])
+	got.clear()
+	strikes.clear()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), hurt.call(b, 4, torso, me), strike.call(ZUID + 4, a, 1),
+			hurt.call(a, 9, head, me)])
+	var ally := got == [[b, "torso", 4, false]] and strikes == got
+	got.clear()
+	strikes.clear()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), strike.call(me, c, 2), hurt.call(a, 9, head, me),
+			hurt.call(b, 4, torso, me)])
+	var malformed := got.is_empty()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), hurt.call(c, 3, torso, me), hurt.call(a, 9, head, me),
+			hurt.call(b, 4, torso, me)])
+	var elsewhere := got.is_empty()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), death.call(b), hurt.call(a, 9, head, me)])
+	var early_death := got.is_empty()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), hurt.call(b, 4, torso, 0), hurt.call(a, 9, head, me)])
+	var bleed := got.is_empty()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), {"kind": "turn_end"}, hurt.call(a, 9, head, me)])
+	var next_turn := got.is_empty()
+	_check.call(ally and malformed and elsewhere and early_death and bleed and next_turn and strikes.is_empty(),
+			"hits: melee: someone else's or a malformed attack, damage elsewhere or from no one, a death with no damage, "
+			+ "a later turn end the whole run (%s)" % [[ally, malformed, elsewhere, early_death, bleed, next_turn]])
+	hf.on_events([strike.call(me, a, 1), strike.call(me, a, 0), hurt.call(a, 5, torso, me), strike.call(me, a, 1), death.call(a)])
+	var again := got == [[a, "torso", 5, false]]
+	got.clear()
+	strikes.clear()
+	hf.on_events([strike.call(me, a, 1), strike.call(me, b, 1), hurt.call(b, 4, torso, me), hurt.call(a, 9, head, me),
+			shot_by.call(me, a), shot_by.call(me, b)])
+	_check.call(again and got.size() == 2 and strikes == got,
+			"hits: melee: the player's miss leaves the run alone, a new hit starts that creature again, a run's damage is "
+			+ "never a shot's (%s)" % [got])
+	# bounds
+	var first := ZUID + 100
+	var crowd := func(n: int) -> Array:   # the player hits n different creatures
+		var ev := []
+		for i in n:
+			ev.append(strike.call(me, first + i, 1))
+		return ev
+	got.clear()
+	var full: Array = crowd.call(HitFeedback.MAX_RUN)
+	full.append(hurt.call(first, 3, torso, me))
+	hf.on_events(full)
+	var at_bound := got == [[first, "torso", 3, false]]
+	got.clear()
+	var many: Array = crowd.call(70)
+	many.append_array([hurt.call(first + 69, 3, torso, me), hurt.call(first, 3, torso, me), hurt.call(first + 68, 3, torso, me)])
+	hf.on_events(many)
+	_check.call(at_bound and got == [[first + 69, "torso", 3, false]],
+			"hits: melee: a run holds 64 creatures; the 65th hit ends it and starts a new one: of 70 struck the first one's "
+			+ "damage isn't confirmed, the last one's is (%s, %s)" % [at_bound, got])
+	got.clear()
+	var filler: Array = []
+	filler.resize(HitFeedback.MAX_EVENTS - 2)
+	filler.fill({"kind": "message", "text": "x"})
+	var inside: Array = filler + [strike.call(me, a, 1), hurt.call(a, 2, torso, me)]
+	var outside: Array = filler + [{"kind": "sound"}, strike.call(me, a, 1), hurt.call(a, 2, torso, me)]
+	hf.on_events(inside)
+	var in_cap := got == [[a, "torso", 2, false]]
+	got.clear()
+	hf.on_events(outside)
+	_check.call(in_cap and got.is_empty(), "hits: events past the 4096th of a batch are ignored (%s)" % [got])
+	aim.crosshair.tick_note(5.0)   # the note of this test's technique
+	aim.crosshair.tick_hit(5.0)
+	hf.hit_confirmed.disconnect(on_hit)
+	hf.strike_confirmed.disconnect(on_strike)
+	hf.technique_used.disconnect(on_used)
 
 
 ## A gun model's named parts (later models carry the same names as markers).

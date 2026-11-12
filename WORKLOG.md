@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-12 — Melee techniques (combat lead, fork fp3d-combat + client): the player's hit names its technique and family in the `attack` event, and aiming at the head, a leg or an arm calls a stun, trip or disarm that CDDA still has to allow. Windows events and sim tests pass.
 - 2026-11-12 — VR swing, aim side (combat lead; contract agreed with lead-vr, the fork is unchanged): `AimController.melee_segment` / `strike_segment` turn a hand-to-tip segment into the melee aim and the aimed strike action; `HitFeedback.strike_confirmed` for melee hits only. Client tests pass.
 - 2026-11-12 — Range weather fix merged (fork ea33efe, QA lead): every Windows suite passes. A three-lens review of the fork diff with a second reader per finding found nothing that blocks; two small leftovers go back to the QA lead (TASKS K7).
 - 2026-11-11 — Sim flake "a shot never fires" (combat lead, fork fp3d-combat 26e6fd0): CDDA's random gun malfunction (about 1 in 300 shots), not timing; the sim's shooting scenes give their guns NEVER_JAMS, the head-shot check wants all 20 shots again. Windows sim x2 + a 300-shot run, Linux (WSL) sim x2 pass.

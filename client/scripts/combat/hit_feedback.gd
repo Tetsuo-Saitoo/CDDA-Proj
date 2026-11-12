@@ -13,18 +13,34 @@ extends Node
 ## then is a kill; only `message` and `sound` events may come between. Anything else ends the strike: damage with
 ## another or no source (bleeding, fire), on another creature, any other event. A strike's damage is never also
 ## a shot's.
-## Emits hit_confirmed, and strike_confirmed too for a melee hit (AimController's hit marker, VR, other UI) and plays a quiet generated tick (`sound`).
+## Several creatures: a technique that strikes around hits the others before the main hit's damage comes, so
+## every creature the player hits in one run of strike events waits for its own damage (at most MAX_RUN of them);
+## the player's miss in between changes nothing, anyone else's attack ends the run.
+## Techniques: the player's hit may name the technique CDDA used (`text`) and its family (`amount`, 0..MAX_FAMILY);
+## technique_used passes the name on as one clean line of at most MAX_TECHNIQUE_LEN characters.
+## swing_resolved follows every strike of the player at a creature, hit or miss, after its technique: whatever a
+## listener kept for that swing (AimController's called technique) ends there.
+## Emits hit_confirmed, and strike_confirmed too for a melee hit (AimController's hit marker, VR, other UI), and
+## plays a quiet generated tick (`sound`).
 ## Event fields are checked: bad uids, amounts or body parts skip the event.
 
 signal hit_confirmed(uid: int, part: String, amount: int, killed: bool)
 ## Also sent, after hit_confirmed, when the hit was the player's melee strike (a stronger buzz in VR, say).
 signal strike_confirmed(uid: int, part: String, amount: int, killed: bool)
+## The player's melee hit on creature `uid` used a technique: its display name (plain, never empty) and its
+## family (0 none, 1 strike, 2 down, 3 stun, 4 disarm, 5 push). Sent at the hit, before its damage confirms.
+signal technique_used(uid: int, technique: String, family: int)
+## The player's strike at creature `uid` is over: a hit (after its technique_used, when it has one) or a miss.
+signal swing_resolved(uid: int, hit: bool)
 
 const MAX_EVENTS := 4096       # the bridge queue's cap; more in one batch are ignored
 const MAX_UID := 1 << 53       # JSON numbers are doubles
 const MAX_DETAIL := 1 << 20
 const MAX_AMOUNT := 1 << 31    # int32 in the contract
 const MAX_PART_LEN := 32
+const MAX_TECHNIQUE_LEN := 40  # characters of a technique's name
+const MAX_FAMILY := 5          # the contract's technique families are 0..5
+const MAX_RUN := 64            # creatures one run of strikes may hold; one more starts a new run
 const PLAYER_UID := 1          # the contract's player uid, when the snapshot doesn't list the player
 const HEAD_PARTS: Array[String] = ["head", "eyes"]
 const TICK_RATE := 22050
@@ -51,8 +67,9 @@ func _init(w: WorldView = null) -> void:
 func on_events(events: Array) -> void:
 	var me := player_uid()
 	var pending: Array[Dictionary] = []   # damage / deaths since the batch start or the last projectile event
-	var struck := 0                       # the creature the player's melee hit is on (0: no strike going on)
-	var last: Dictionary = {}             # that strike's last confirmed damage
+	# the run of strike events going on: each creature the player's melee hit is on -> its last confirmed damage
+	# ({} when none yet); empty: no strike going on
+	var run := {}
 	for i in mini(events.size(), MAX_EVENTS):
 		var e: Variant = events[i]
 		if not e is Dictionary:
@@ -62,31 +79,22 @@ func on_events(events: Array) -> void:
 			continue
 		match kind:
 			"attack":
-				struck = _struck(e, me)
-				last = {}
+				_on_attack(e, me, run)
 			"damage", "death":
 				var h := _hurt(kind, e, me)
-				if struck > 0 and not h.is_empty() and h["uid"] == struck and (kind == "death" or
-						_uint(e.get("other"), MAX_UID) == me):
-					if kind == "death":
-						if not last.is_empty():
-							_confirm(struck, last["part"], last["amount"], true, true)
-						struck = 0
-					else:
-						last = h
-						_confirm(struck, h["part"], h["amount"], false, true)
+				if not h.is_empty() and _strike_hurt(e, h, me, run):
 					continue   # the strike's, not a shot's
-				struck = 0
+				run.clear()
 				if not h.is_empty():
 					pending.append(h)
 			"message", "sound":
 				pass   # a strike's own messages come between its attack and its damage
 			"projectile":
-				struck = 0
+				run.clear()
 				_on_projectile(e, me, pending)
 				pending.clear()
 			_:
-				struck = 0
+				run.clear()
 
 
 ## The player's uid: the snapshot's player creature, else the contract's 1.
@@ -118,11 +126,63 @@ func _on_projectile(e: Dictionary, me: int, pending: Array[Dictionary]) -> void:
 		_confirm(hit, part, amount, false)
 
 
-## An attack event: the creature the player's melee hit struck (`other`, `detail` 1), else 0.
+## An attack event and the run of strikes (`run`, see on_events): the player's hit on a creature adds it to the
+## run, or starts it again there, and tells its technique; the player's miss on a creature leaves the run as it
+## is; anyone else's attack or a malformed one ends the run. A creature over MAX_RUN ends the run and starts a
+## new one. Either way the player's strike at a creature ends with swing_resolved.
+func _on_attack(e: Dictionary, me: int, run: Dictionary) -> void:
+	var target := _struck(e, me)
+	if target <= 0:
+		run.clear()
+		return
+	if _uint(e.get("detail"), 1) != 1:
+		swing_resolved.emit(target, false)
+		return   # a miss
+	if not run.has(target) and run.size() >= MAX_RUN:
+		run.clear()
+	run[target] = {}
+	_technique(e, target)
+	swing_resolved.emit(target, true)
+
+
+## A hit's technique: emits technique_used when the event's `text` gives a name (one plain line, no colour tags,
+## control or hidden direction characters, at most MAX_TECHNIQUE_LEN characters). The family is `amount` when it
+## is a whole number 0..MAX_FAMILY, else 0.
+func _technique(e: Dictionary, uid: int) -> void:
+	var technique := Snapshot.plain_text(e.get("text"), MAX_TECHNIQUE_LEN)
+	if technique.is_empty():
+		return
+	technique_used.emit(uid, technique, maxi(_uint(e.get("amount"), MAX_FAMILY), 0))
+
+
+## A damage or death event `h` (_hurt) on a creature of the run: damage whose source (`other`) is the player
+## confirms the strike and is kept as that creature's last; a death after confirmed damage is the kill and takes
+## the creature out of the run. False when the event isn't the run's (another creature, another or no source, a
+## death with no confirmed damage).
+func _strike_hurt(e: Dictionary, h: Dictionary, me: int, run: Dictionary) -> bool:
+	var uid: int = h["uid"]
+	if not run.has(uid):
+		return false
+	if h["kind"] == "death":
+		var last: Dictionary = run[uid]
+		if last.is_empty():
+			return false
+		run.erase(uid)
+		_confirm(uid, last["part"], last["amount"], true, true)
+		return true
+	if _uint(e.get("other"), MAX_UID) != me:
+		return false
+	run[uid] = h
+	_confirm(uid, h["part"], h["amount"], false, true)
+	return true
+
+
+## An attack event: the creature the player struck at (`other`), hit or missed (`detail` 1 or 0); 0 for anyone
+## else's attack, bad uids, the player as the target or another `detail`.
 func _struck(e: Dictionary, me: int) -> int:
 	var attacker := _uint(e.get("uid"), MAX_UID)
 	var target := _uint(e.get("other"), MAX_UID)
-	if attacker <= 0 or attacker != me or target <= 0 or target == me or _uint(e.get("detail"), 1) != 1:
+	if attacker <= 0 or attacker != me or target <= 0 or target == me or _uint(e.get("detail"), 1) < 0:
 		return 0
 	return target
 
