@@ -13,7 +13,8 @@ extends Node3D
 ## - the sticks: `nav` (ui_up / ui_down / ui_left / ui_right, pressed and released, repeating while held; the main
 ##   stick's up / down scrolls the wheel where the laser points instead);
 ## - buttons: `action` (ui_accept / ui_cancel, press and release as the button goes);
-## - the window's keys and pad (a desk keyboard, a gamepad) while it shows: `forward`, pushed in and marked handled.
+## - the window's keys and pad (a desk keyboard, a gamepad) while it shows: `forward`, pushed in, and handled in the
+##   window only when something in the panel handled it (F1 and the like still reach the game).
 ## Hiding lets go of everything still held (the mouse button, any ui_* action).
 ## Text: 1 logical px is SIZE_M.x / PX.x = 1.1 mm at DIST 1.2 m, so body text wants 20 px or more (about 1 degree).
 
@@ -96,12 +97,13 @@ func _input(e: InputEvent) -> void:
 
 
 ## While shown, a key or pad event from the window goes into the panel (RequestUI reads ui_* in its _input, which
-## only sees what is pushed here). True if taken (the caller marks it handled in the window).
+## only sees what is pushed here). True if something in the panel handled it (the caller marks it handled in the
+## window); else the window's own nodes still get it.
 func forward(e: InputEvent) -> bool:
-	if not shown or not (e is InputEventKey or e is InputEventJoypadButton or e is InputEventJoypadMotion):
+	if not shown or not viewport.is_inside_tree() 			or not (e is InputEventKey or e is InputEventJoypadButton or e is InputEventJoypadMotion):
 		return false
 	_push(e)
-	return true
+	return viewport.is_input_handled()
 
 
 ## Something under root is visible (a Control or an embedded Window).

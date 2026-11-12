@@ -156,33 +156,42 @@ func _test_buttons() -> void:
 ## A desk keyboard and a pad answer the panel while it shows (pushed in, handled in the window), not while hidden.
 func _test_keys_and_pad(root: Node) -> void:
 	var win := root.get_viewport()
-	_b.grab_focus()
+	_a.grab_focus()
 	_got.clear()
-	var k := InputEventKey.new()
-	k.keycode = KEY_ENTER
-	k.physical_keycode = KEY_ENTER
+	var k := InputEventKey.new()   # the arrow down: the panel's focus moves A -> B and handles it
+	k.keycode = KEY_DOWN
+	k.physical_keycode = KEY_DOWN
 	k.pressed = true
 	win.push_input(k)
 	var key_handled := win.is_input_handled()
+	var got_k := _b.has_focus()
+	var f1 := InputEventKey.new()
+	f1.keycode = KEY_F1
+	f1.physical_keycode = KEY_F1
+	f1.pressed = true
+	win.push_input(f1)
+	var f1_free := not win.is_input_handled()
+	var got_f1 := _got.any(func(e: InputEvent) -> bool: return e is InputEventKey and (e as InputEventKey).keycode == KEY_F1)
+	f1.pressed = false
+	win.push_input(f1)
 	var j := InputEventJoypadButton.new()
 	j.button_index = JOY_BUTTON_A
 	j.pressed = true
 	win.push_input(j)
-	var pad_handled := win.is_input_handled()
 	var m := InputEventJoypadMotion.new()
 	m.axis = JOY_AXIS_LEFT_Y
 	m.axis_value = 1.0
 	win.push_input(m)
-	var got_k := false
 	var got_j := false
 	var got_m := false
 	for e in _got:
-		got_k = got_k or (e is InputEventKey and (e as InputEventKey).keycode == KEY_ENTER)
 		got_j = got_j or (e is InputEventJoypadButton and (e as InputEventJoypadButton).button_index == JOY_BUTTON_A)
 		got_m = got_m or e is InputEventJoypadMotion
-	_check.call(got_k and got_j and got_m and key_handled and pad_handled,
-			"vr panel: the window's keys and pad reach the focused control and are handled in the window %s"
-			% [[got_k, got_j, got_m, key_handled, pad_handled]])
+	_check.call(got_k and got_j and got_m and key_handled,
+			"vr panel: the window's keys and pad reach the panel (an arrow moves its focus, handled in the window) %s"
+			% [[got_k, got_j, got_m, key_handled]])
+	_check.call(got_f1 and f1_free, "vr panel: a key nothing in the panel uses (F1) still reaches the window %s"
+			% [[got_f1, f1_free]])
 	for e: InputEvent in [k, j, m]:   # let go again
 		var r: InputEvent = e.duplicate()
 		if r is InputEventJoypadMotion:
