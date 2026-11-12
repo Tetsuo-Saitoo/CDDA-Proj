@@ -27,6 +27,7 @@ var blend_s := BLEND_S             # 0: every change shows at once
 var focus := Vector3.ZERO          # the player's eyes: the fog starts there, also for a camera further away
 var light_pass := true             # WorldLighting darkens the scene by CDDA's light (else the fog darkens itself)
 var sky_updates := 0               # times the sky was changed (each one costs a re-filter of its light)
+var precip := PrecipView.new()     # rain and snow around the player
 var _env: Environment
 var _sky: ProceduralSkyMaterial
 var _sun: DirectionalLight3D
@@ -38,6 +39,10 @@ var _since_step := 0.0
 var _shown := false
 var _clear_m := 0.0                # how far out the fog starts now (INDOOR_CLEAR_M under a roof)
 static var _cover: Image
+
+
+func _init() -> void:
+	add_child(precip)
 
 
 func _ready() -> void:
@@ -82,6 +87,7 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	_show()
 	_place_fog(0.0)
 	_update_processing()
+	precip.apply(snap, coords, target)
 
 
 ## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with the light
