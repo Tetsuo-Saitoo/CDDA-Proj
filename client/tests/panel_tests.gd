@@ -27,6 +27,7 @@ func run(root: Node, check: Callable) -> void:
 	await _test_actions()
 	await _test_direction()
 	_test_pad()
+	_test_panel_root()
 	_vp.free()
 	ui = null
 
@@ -106,6 +107,37 @@ func _test_pad() -> void:
 	key.pressed = true
 	_check.call(k != null and k.keycode == KEY_DOWN and k.pressed and RequestUI.as_key(key) == key
 			and RequestUI.as_key(stick) == stick, "panel: as_key: a pad button as its key, keys and the stick as they are")
+
+
+## main.gd finds the VR panel's root by name (VrPanel.root) and only when it is a Control.
+func _test_panel_root() -> void:
+	var Main := load("res://scripts/main.gd")
+	var rig := FakeRig.new()
+	var none: Variant = Main.panel_root(rig)
+	rig.panel = FakeRig.new()   # an object without `root`
+	var no_root: Variant = Main.panel_root(rig)
+	var r := Control.new()
+	rig.panel = FakePanel.new(r)
+	var found: Variant = Main.panel_root(rig)
+	rig.panel = FakePanel.new(Node.new())
+	var not_control: Variant = Main.panel_root(rig)
+	(rig.panel as FakePanel).root.free()
+	_check.call(none == null and no_root == null and found == r and not_control == null and Main.panel_root(null) == null,
+			"panel: main finds VrPanel.root by name, only a Control")
+	r.free()
+
+
+class FakeRig:
+	extends RefCounted
+	var panel: Variant
+
+
+class FakePanel:
+	extends RefCounted
+	var root: Variant
+
+	func _init(r: Variant) -> void:
+		root = r
 
 
 func _show(req: Dictionary) -> void:
