@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-11 — CDDA's prompts answer to a pad (D-pad, A, B, shoulders) and to ui_* actions, and work inside a SubViewport by pointer clicks (first step of menus in VR). Client tests pass.
 - 2026-11-11 — Hands: when ItemActions forgets everything in flight (a new game or snapshot), the hands let go and forget their own steps too, so those items can be grabbed again. Client tests pass.
 - 2026-11-11 — CI's Linux build was red since the melee merge (sim_test's request switch lacked `swing`; GCC -Werror=switch, MSVC doesn't warn): fixed in fork 40b0aa4; lead-world's headless meshing race fix (4698ee9) merged; GitHub CI green on main 83b91ad.
 - 2026-11-10 — Client tests flake in item_pick_tests "hidden while a snapshot meshes" (renderer RID errors): props meshes rebuilt on the main thread for hidden items while the meshing worker made others, and the headless renderer's mesh storage isn't thread-safe. Headless runs now mesh in `submit` (`WorldView.mesh_on_worker`, on outside headless); the worker tests (world_tests job catalogs, QA's job stress, snapshot bench) turn it on. The shared material cache (`TerrainMesher.material`), filled from both threads, is now locked. Client tests pass 3 times.

@@ -6,6 +6,9 @@ extends Control
 ## target) and emits `answered` once with an answer Dictionary for LiveSession.answer(). Mouse and keyboard:
 ## keys reach the widget in _input, before the game's own keys (main.gd's _unhandled_input); keys a widget
 ## doesn't use fall through (WASD still flies the camera). Native UIs (block G) can later take over kinds.
+## A pad's D-pad / A / B / shoulders and ui_* InputEventActions (what the VR panel pushes, L4) count as the arrow keys, Enter
+## and Esc (as_key). It lays out to its parent viewport, so it also works inside the VR panel's SubViewport,
+## answered by pointer clicks pushed into that viewport.
 
 signal answered(answer: Dictionary)
 ## Main-loop actions to queue once the answer has gone (e.g. quick reload: reload_weapon, then fire again).
@@ -14,6 +17,17 @@ signal queue_after(actions: PackedStringArray)
 const PANEL_WIDTH := 580.0
 ## Kinds shown low on the screen, so the world they point into stays visible.
 const LOW_KINDS := ["direction", "target"]
+## ui_* actions -> the key each stands for in the widgets (as_key).
+const ACTION_KEYS := {
+	&"ui_up": KEY_UP, &"ui_down": KEY_DOWN, &"ui_left": KEY_LEFT, &"ui_right": KEY_RIGHT,
+	&"ui_page_up": KEY_PAGEUP, &"ui_page_down": KEY_PAGEDOWN, &"ui_accept": KEY_ENTER, &"ui_cancel": KEY_ESCAPE,
+}
+## A pad's buttons -> keys (as_key): the D-pad, A accepts, B cancels, the shoulders page (as in the F1 menu).
+const PAD_KEYS := {
+	JOY_BUTTON_DPAD_UP: KEY_UP, JOY_BUTTON_DPAD_DOWN: KEY_DOWN, JOY_BUTTON_DPAD_LEFT: KEY_LEFT,
+	JOY_BUTTON_DPAD_RIGHT: KEY_RIGHT, JOY_BUTTON_LEFT_SHOULDER: KEY_PAGEUP, JOY_BUTTON_RIGHT_SHOULDER: KEY_PAGEDOWN,
+	JOY_BUTTON_A: KEY_ENTER, JOY_BUTTON_B: KEY_ESCAPE,
+}
 
 ## (right, forward) on screen -> CDDA step (x east, y south); main.gd makes it camera-relative.
 var direction_mapper := Callable()
@@ -114,9 +128,28 @@ func is_showing() -> bool:
 	return widget != null and not widget.done
 
 
-## A key or mouse event for the widget; true if used. _input calls it; tests call it directly.
+## A key or mouse event for the widget (a pad button or ui_* action as its key, as_key); true if used. _input
+## calls it; tests call it directly.
 func handle_input(event: InputEvent) -> bool:
-	return is_showing() and widget.handle_input(event)
+	return is_showing() and event != null and widget.handle_input(as_key(event))
+
+
+## `event` as the widgets read it: a pressed ui_* InputEventAction (ACTION_KEYS) or pad button (PAD_KEYS)
+## becomes that key (no echo, no modifiers); keys, the mouse, stick motion (it repeats while held), other
+## actions and buttons, and releases stay as they are.
+static func as_key(event: InputEvent) -> InputEvent:
+	var code: int = KEY_NONE
+	if event is InputEventAction and event.is_pressed():
+		code = ACTION_KEYS.get((event as InputEventAction).action, KEY_NONE)
+	elif event is InputEventJoypadButton and event.is_pressed():
+		code = PAD_KEYS.get((event as InputEventJoypadButton).button_index, KEY_NONE)
+	if code == KEY_NONE:
+		return event
+	var k := InputEventKey.new()
+	k.keycode = code as Key
+	k.physical_keycode = code as Key
+	k.pressed = true
+	return k
 
 
 ## True while a text field has the keyboard (main.gd then stops the fly camera's WASD).

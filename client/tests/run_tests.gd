@@ -61,6 +61,8 @@ func _initialize() -> void:
 	preload("res://tests/recipe_tests.gd").new().run(_check)
 	preload("res://tests/range_tests.gd").new().run(root, _check, tables)
 	preload("res://tests/key_menu_tests.gd").new().run(root, _check)
+	var panel := preload("res://tests/panel_tests.gd").new()
+	await panel.run(root, _check)   # needs frames: layout and GUI input in a SubViewport
 	preload("res://tests/view_tests.gd").new().run(_check)
 	preload("res://tests/world_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/level_tests.gd").new().run(root, _check, data, tables)
