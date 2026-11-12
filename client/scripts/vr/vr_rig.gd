@@ -40,6 +40,8 @@ extends XROrigin3D
 ## Guns (L2, VrGun `gun`): while CDDA wields a gun its model is in the main hand and takes the main trigger right after
 ## the pack (fires from its muzzle); the off grip takes its magazine out at the well or racks its slide / bolt, a held
 ## magazine brought to the well goes in; the main grip on nothing just holds it.
+## Melee (L3, VrSwing `swing`): a hand moving fast whose striking line (to the tip of what it holds, else a fist's
+## reach) meets a creature next to the player sends CDDA's aimed strike for that hand; CDDA rolls the hit.
 ## Backpack (block L8, VrPack `pack`): grip with an empty hand over the shoulder while wearing a container takes
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
@@ -171,6 +173,7 @@ var hands: Hands:
 			pack.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
+var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
@@ -292,6 +295,8 @@ func _build() -> void:
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
+	swing = VrSwing.new()
+	swing.rig = self
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
 	_fade_node = _make_fade()
@@ -381,6 +386,7 @@ func _process(delta: float) -> void:
 	track_hands(delta)
 	update_hands(delta)
 	gun.update(delta)
+	swing.update(delta)   # L3: a fast hand whose striking line meets a creature strikes it (CDDA's aimed strike)
 	pose_hands()
 	drive_body()
 	place_compass()
