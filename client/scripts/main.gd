@@ -40,6 +40,7 @@ var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
 var sun: DirectionalLight3D
+var weather: WeatherView       # C6 / I2: sky, sun and fog by CDDA's weather
 var hud: Label
 var request_ui: RequestUI
 var main_menu: MainMenu
@@ -316,7 +317,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
-	_aim_sun(snap.sun_alt_deg, snap.sun_az_deg)
+	weather.apply(snap, world.coords, world.lighting.enabled)
 	if vr != null:
 		world.set_view_z_max(world.coords.z_max)   # first person: every level, ceilings included
 
@@ -448,6 +449,7 @@ func _start_vr() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.compass.opacity = hud_settings.compass_opacity
@@ -832,6 +834,7 @@ func _on_request_answered(a: Dictionary) -> void:
 func _on_live_events(events: Array) -> void:
 	creature_view.on_events(events)
 	explosions.on_events(events)
+	weather.on_events(events)   # lightning
 	aim.hits.on_events(events)   # CDDA's hit confirmations: the crosshair's hit marker
 	hud_data.on_events(events)
 	for e: Dictionary in events:
@@ -1190,19 +1193,14 @@ func _setup_environment() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 200.0
 	add_child(sun)
-	_aim_sun(45.0, 0.0)
-
-
-## CDDA's azimuth is measured from the south, positive toward the west (calendar.cpp). At night with
-## WorldLighting on, a high moon-like light keeps the scene lit and the light pass darkens it (no double darkening).
-func _aim_sun(alt_deg: float, az_deg: float) -> void:
-	var night_lit := alt_deg <= 0.0 and world.lighting.enabled
-	var alt := deg_to_rad(45.0 if night_lit else maxf(alt_deg, 8.0))
-	var az := deg_to_rad(az_deg)
-	var to_sun := Vector3(-sin(az) * cos(alt), sin(alt), cos(az) * cos(alt))
-	sun.basis = Basis.looking_at(-to_sun, Vector3.FORWARD if absf(to_sun.y) > 0.99 else Vector3.UP)
-	sun.light_energy = 1.0 if alt_deg > 0.0 else (0.8 if night_lit else 0.15)
-	sun.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY if alt_deg > 0.0 else DirectionalLight3D.SKY_MODE_LIGHT_ONLY
+	# The sun's aim and strength, the sky and the fog follow each snapshot's time and weather (WeatherView).
+	weather = WeatherView.new()
+	add_child(weather)
+	weather.light_pass = world.lighting.enabled
+	weather.lighting = world.lighting
+	weather.setup(env, sun)
+	world.coords.origin_shifted.connect(weather.shift)
+	weather.aim_sun(45.0, 0.0)
 
 
 func _setup_hud() -> void:
@@ -1229,6 +1227,7 @@ func _setup_hud() -> void:
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
+	weather.flash_enabled = hud_settings.weather_flash
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1262,7 +1261,8 @@ func _setup_hud() -> void:
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void:
 		compass.opacity = hud_settings.compass_opacity
-		mood_cue.enabled = hud_settings.mood_cues)
+		mood_cue.enabled = hud_settings.mood_cues
+		weather.flash_enabled = hud_settings.weather_flash)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows

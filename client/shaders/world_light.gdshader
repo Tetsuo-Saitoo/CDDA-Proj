@@ -19,6 +19,12 @@ uniform int levels = 0;
 uniform vec3 outside_color = vec3(1.0);   // levels the atlas doesn't hold
 uniform vec3 sky_color = vec3(1.0);
 uniform float min_brightness = 0.0;
+uniform float flash = 0.0;   // lightning: nothing, the sky included, is darker than this
+// The scene's depth fog (WeatherView): where it covers the world, the pixel shows fog, which takes the sky's light,
+// not the darkness of the tile behind it (an unseen square far off would be a black strip in the mist).
+uniform float fog_begin = 0.0;
+uniform float fog_end = 1.0;
+uniform float fog_amount = 0.0;
 
 const int SIZE = 132;
 const float LEVEL_M = 3.0;
@@ -65,6 +71,7 @@ void fragment() {
 			col = mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 		}
 		col = max(col, vec3(min_brightness));
+		col = mix(col, sky_color, fog_amount * smoothstep(fog_begin, fog_end, length(view.xyz)));
 	}
-	ALBEDO = col;
+	ALBEDO = max(col, vec3(flash));
 }
