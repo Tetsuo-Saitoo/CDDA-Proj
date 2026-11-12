@@ -52,6 +52,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_caps(data)
 	_test_rows()
 	_test_select()
+	_test_select_more()
 	_test_drops()
 	_test_many()
 	_test_bar()
@@ -415,6 +416,104 @@ func _test_select() -> void:
 	_view.close()
 	_view.open()
 	_check.call(_selected().is_empty(), "select: opening the view starts with none")
+
+
+## The rest of selecting several: Ctrl+A (the clicked row's column, then everything), the right-click menu (the
+## bar's actions; an unselected row is selected alone first), and the box select from empty space.
+func _test_select_more() -> void:
+	_view.close()
+	_view.open()
+	var hammer := _handle(E, _it["hammer"])
+	var ctrl_a := InputEventKey.new()
+	ctrl_a.keycode = KEY_A
+	ctrl_a.physical_keycode = KEY_A
+	ctrl_a.ctrl_pressed = true
+	ctrl_a.pressed = true
+	var plain_a := ctrl_a.duplicate() as InputEventKey
+	plain_a.ctrl_pressed = false
+	_click(ROCK)
+	var col: Array = _view._col_uids[_view._row_col[ROCK]]
+	var total := 0
+	for id: String in _view._col_uids:
+		total += (_view._col_uids[id] as Array).size()
+	var plain := _view.handle_key(plain_a)
+	var used := _view.handle_key(ctrl_a)
+	var first := _view.selection.keys()
+	first.sort()
+	var want := col.duplicate()
+	want.sort()
+	_view.handle_key(ctrl_a)
+	_check.call(not plain and used and first == want and col.size() >= 3 and total > col.size() and _view.selection.size() == total,
+			"select: Ctrl+A selects the clicked row's column, again everything (%d, then %d)" % [first.size(), total])
+	_view.clear_selection()
+	var right := _button(true)
+	right.button_index = MOUSE_BUTTON_RIGHT
+	_view.row_slot(BOTTLE)._gui_input(right)
+	var texts: Array = _view.menu_buttons().map(func(b: Button) -> String: return b.text)
+	var alone := _selected() == [BOTTLE] and _view._menu.item_count == texts.size()
+	_view._menu.hide()
+	_click(ROCK, false, true)
+	_view.row_slot(ROCK)._gui_input(right)
+	var both := _selected() == [ROCK, BOTTLE]
+	_view.menu_pick(99)
+	_view.menu_pick(-1)
+	var kept := _selected() == [ROCK, BOTTLE]
+	_view.menu_pick(texts.find("Clear"))
+	_view._menu.hide()
+	_check.call(alone and both and kept and _selected().is_empty() and texts.size() >= 3 and texts[0] == "Drop here"
+			and texts[-1] == "Clear" and "Unload" in texts and _view.menu_buttons().is_empty(),
+			"select: right-click selects an unselected row alone and lists the bar's actions; picking one runs it (%s)" % [texts])
+	var at := {}   # rows laid out by hand, as above
+	var y := 0.0
+	for sc: Control in _view._col_scroll.values():
+		sc.global_position = Vector2.ZERO
+		sc.size = Vector2(200, 400)
+	for u: int in [ROCK, BOTTLE, WATER, STONE, hammer]:
+		_view.row_slot(u).global_position = Vector2(0, y)
+		_view.row_slot(u).size = Vector2(200, 28)
+		at[u] = y + 10
+		y += 60
+	for u: int in _view._row_slots:   # the rest: out of the way
+		if not at.has(u):
+			_view.row_slot(u).global_position = Vector2(0, 5000)
+			_view.row_slot(u).size = Vector2(200, 28)
+	_view.marquee_begin(Vector2(300, 5))
+	_view.marquee_to(Vector2(302, 6))
+	var small := _selected().is_empty() and not _view._marquee_box.visible
+	_view.marquee_to(Vector2(5, at[BOTTLE]))
+	var two := _selected() == [ROCK, BOTTLE] and _view._marquee_box.visible
+	_view.marquee_to(Vector2(5, at[WATER]))
+	var three := _selected() == [ROCK, BOTTLE, WATER]
+	_view.marquee_to(Vector2(5, at[ROCK]))
+	_view.marquee_to(Vector2(NAN, 0))
+	_view.marquee_end()
+	_view.marquee_to(Vector2(5, at[WATER]))   # the button is up
+	_check.call(small and two and three and _selected() == [ROCK] and not _view._marquee_box.visible,
+			"select: a box dragged from empty space selects the rows it touches, and follows as it shrinks (%s)" % [_selected()])
+	_view.marquee_begin(Vector2(300, at[hammer] - 5), true)
+	_view.marquee_to(Vector2(5, at[hammer]))
+	_view.marquee_end()
+	var added := _selected() == [ROCK, hammer]
+	(_view._col_scroll[_view._row_col[hammer]] as Control).size = Vector2(200, 100)   # hammer's row is out of sight now
+	_view.marquee_begin(Vector2(300, at[hammer] - 5))
+	_view.marquee_to(Vector2(5, at[hammer]))
+	_view.marquee_end()
+	_check.call(added and _selected().is_empty(), "select: with Ctrl the box adds; rows out of sight aren't touched")
+	_click(ROCK)
+	_view.row_slot(ROCK)._gui_input(_button(true))   # a press on a row, passed on to the view: no box
+	_view._gui_input(_button(true))
+	var on_row := not _view._marquee
+	_view._gui_input(_button(false))
+	var press := _button(true)
+	press.position = Vector2(700, 300)
+	_view._gui_input(press)
+	var began := _view._marquee
+	var release := _button(false)
+	release.position = Vector2(700, 300)
+	_view._gui_input(release)
+	_check.call(on_row and began and not _view._marquee and _selected().is_empty(),
+			"select: a press on a row starts no box; a click on empty space selects none")
+	_view.rebuild()
 
 
 ## Drops through the slots' own _drop_data, MockItems answering inside each call.
