@@ -22,6 +22,7 @@ and mods) gives the same indices every session, so a client or tool can cache by
 | `itype` | session index (0 = none, empty) | id, name, symbol, color, looks_like, category, volume_ml, weight_g, gun (guns only: the skill it uses, e.g. pistol, rifle, shotgun, smg, archery, launcher), gun_ammo (guns only: first ammo type, e.g. 9mm, 223, shot), pockets (only when it has container pockets: the type's own ones in the order item actions number them, `pocket`; an item can gain more at run time, after these; cap 32; each {name (often left out), volume_ml, max_weight_g, max_item_ml (left out = only the volume), flags: 1 rigid, 2 watertight, 4 airtight, 8 holster, 16 open container, 32 sealable, 64 some ammo only, 128 some items/flags/materials only, 256 the player can't use it}) |
 | `mtype` | session index | id, name, symbol, color, looks_like, size (CDDA's creature_size: 1 tiny, 2 small, 3 medium, 4 large, 5 huge), hp, speed (100 = human), volume_ml, weight_g, species, bodytype (CDDA's body type: human, dog, insect, snake, bird, fish, blob, ...; may be empty), weakpoints (weak point ids: head, eye, arm, leg, ...; cap 32) |
 | `vpart` | session index | id, name, color, looks_like, location, flags |
+| `weathers` (JSON `weather_types`) | none: a list sorted by id, at most 128, without "null" | id, name (at most 40 columns, no colour tags): the weather cheat's choices (`bridge_api.md` `get_weather_types`, 2026-11-13) |
 
 Symbols are UTF-8; CDDA's line-drawing pseudo symbols (walls) come out as "". Colours are CDDA colour names
 (`c_light_gray`). Names are translated text from the game data (or mods): show them as plain text, never markup.
@@ -29,7 +30,8 @@ Symbols are UTF-8; CDDA's line-drawing pseudo symbols (walls) come out as "". Co
 ## JSON
 
 `fp3d-headless <snapshot.json> [z_below] [z_above] <ids.json>` writes the tables as one object: `generation`,
-`ter`, `furn`, `trap`, `field`, `itype`, `mtype`, `vpart` (arrays of objects with the fields above, by index), and
+`ter`, `furn`, `trap`, `field`, `itype`, `mtype`, `vpart` (arrays of objects with the fields above, by index),
+`weather_types` (newer bridges only), and
 `tables` (every session table's names, by index). Mock: `mock/id_tables.json` (~2.7 MB, same generation as
 `mock/snapshot_town.json`).
 

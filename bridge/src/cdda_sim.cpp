@@ -22,6 +22,7 @@
 #include "fp3d/cheats.h"
 #include "fp3d/events.h"
 #include "fp3d/held.h"
+#include "fp3d/id_tables.h"
 #include "fp3d/test_range.h"
 #include "sim_session.h"
 
@@ -39,6 +40,9 @@ namespace
 constexpr size_t max_action_bytes = 64;
 // Absolute squares stay far inside this (the overmap grid is much smaller).
 constexpr int max_abs_coord = 1 << 26;
+// The weather cheat's wind: CDDA counts it in mph, the client in m/s, up to about CDDA's max_cheat_wind.
+constexpr double mps_per_mph = 0.44704;
+constexpr double max_cheat_wind_mps = 45.0;
 
 std::atomic<uint64_t> events_dropped{ 0 };
 
@@ -221,6 +225,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "range_heal" ), &CddaSim::range_heal );
     ClassDB::bind_method( D_METHOD( "get_range_info" ), &CddaSim::get_range_info );
     ClassDB::bind_method( D_METHOD( "cheat_teleport", "pos" ), &CddaSim::cheat_teleport );
+    ClassDB::bind_method( D_METHOD( "cheat_set_weather", "id", "wind" ), &CddaSim::cheat_set_weather );
+    ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
@@ -826,7 +832,24 @@ Dictionary CddaSim::get_cheats() const
     d["kits_given"] = static_cast<int64_t>( std::min<uint64_t>( v.kits_given, INT64_MAX ) );
     d["cheats"] = on;
     d["allowed"] = fp3d::cheats_allowed();
+    // The weather the sky is held at ("" = the game decides) and the wind in m/s (-1 = the game decides).
+    d["weather"] = to_godot( v.weather );
+    d["wind"] = v.wind < 0 ? -1.0 : v.wind * mps_per_mph;
     return d;
+}
+
+Array CddaSim::get_weather_types() const
+{
+    Array out;
+    if( const std::shared_ptr<const fp3d::id_tables> t = fp3d::latest_id_tables() ) {
+        for( const fp3d::weather_def &w : t->weathers ) {
+            Dictionary d;
+            d["id"] = to_godot( w.id );
+            d["name"] = to_godot( w.name );
+            out.push_back( d );
+        }
+    }
+    return out;
 }
 
 bool CddaSim::give_test_kit()
@@ -898,6 +921,29 @@ int64_t CddaSim::cheat_teleport( const Vector3i &pos )
     fp3d::range_op op;
     op.kind = fp3d::range_op_kind::point_teleport;
     op.square = range_square( pos );
+    return queue_range( op );
+}
+
+int64_t CddaSim::cheat_set_weather( const String &id, double wind )
+{
+    // Hostile input: a short id of the characters weather ids are made of (the game looks it up among the loaded
+    // types), a finite wind. Below 0 the game decides the wind; above max_cheat_wind_mps it is held at that.
+    if( id.length() > static_cast<int64_t>( fp3d::max_weather_id ) || !std::isfinite( wind ) ) {
+        return 0;
+    }
+    const std::string s = to_std( id );
+    for( const char c : s ) {
+        const bool ok = ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || c == '_' ||
+                        c == '-';
+        if( !ok ) {
+            return 0;
+        }
+    }
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::weather;
+    op.weather = s;
+    op.wind = wind < 0.0 ? -1 : std::min( fp3d::max_cheat_wind, static_cast<int>( std::lround( std::min( wind,
+                                          max_cheat_wind_mps ) / mps_per_mph ) ) );
     return queue_range( op );
 }
 
