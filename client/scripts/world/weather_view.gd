@@ -21,7 +21,7 @@ const INDOOR_CLEAR_S := 1.5   # seconds it takes to clear or close in when the p
 ## The lightning flash brightens the whole view, so it is kept safe for photosensitive players whatever arrives:
 ## one pulse per flash, never two flashes within FLASH_EVERY_S (far under three a second), none while game time
 ## runs fast (waiting, sleeping: CDDA's flashes arrive packed together) or the character sleeps, weaker in VR,
-## and off altogether with flash_enabled (the F1 menu's "Lightning flash").
+## and off altogether with flash_enabled (the F1 menu's "Bright flashes").
 const FLASH_S := 0.5          # one pulse, fading out
 const FLASH_EVERY_S := 3.0    # the least time from one strike (flash and thunder) to the next
 const FLASH_LIGHT := 1.5      # energy of the flash's light at its peak
