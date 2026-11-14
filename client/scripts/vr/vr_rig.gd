@@ -1310,10 +1310,30 @@ func toggle_menu() -> void:
 func _menu_action(key: String) -> void:
 	if key == "calibrate":
 		calibrate_height()
+	elif key == "report":
+		report_bug()
 	elif VrSettings.UI_ROWS.has(key):
 		if menu_open():
 			toggle_menu()
 		ui_asked.emit(VrSettings.UI_ROWS[key])
+
+
+## Menu row "Report a bug" (VrReport): the menu goes, the state is written down, and two frames later (the menu
+## gone from the view) a picture of the view is saved with it. The main hand says where it went.
+func report_bug() -> void:
+	if menu_open():
+		toggle_menu()
+	var body := VrReport.text(self)
+	for k in 2:
+		await get_tree().process_frame
+	if not is_inside_tree():
+		return
+	var tex := get_viewport().get_texture()
+	var path := VrReport.save(body, tex.get_image() if tex != null else null)
+	var i := 0 if settings["main_hand"] == "left" else 1
+	say(i, "Bug report saved: send the bug_reports folder" if not path.is_empty() else "The bug report couldn't be saved")
+	feel(main_ctrl())
+	print("VR bug report: " + (ProjectSettings.globalize_path(path) if not path.is_empty() else "not saved"))
 
 
 ## The menu sent a range op: a teleport remembers where the player stands now.

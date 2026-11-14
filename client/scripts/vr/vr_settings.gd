@@ -31,7 +31,8 @@ const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", 
 		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height", "vr-hud": "wrist_hud",
 		"vr-panel-text": "panel_text"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
-const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open"}
+const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open",
+		"report": "press to save one"}
 ## Action rows that open one of the game's own menus on the panel (VrRig.ui_asked): row key -> what is asked for.
 const UI_ROWS := {"keys": "keys", "inventory": "inventory"}
 ## Menu rows: key (a setting or an action), label.
@@ -40,7 +41,8 @@ const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move sp
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
 		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
 		["wrist_hud", "Wrist HUD"], ["panel_text", "Menu text size"], ["height", "Height"],
-		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["keys", "Keys and HUD settings"]]
+		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["keys", "Keys and HUD settings"],
+		["report", "Report a bug"]]
 
 
 ## `value` checked against SPEC: the cleaned value, or null when it isn't allowed. Strings from the command
@@ -65,6 +67,17 @@ static func clean(key: String, value: Variant) -> Variant:
 	if not is_finite(f):
 		return null
 	return clampf(f, spec[0], spec[1])
+
+
+## The settings that differ from the defaults as "key=value, ..." ("defaults" when none), for vr_perf.log and bug
+## reports.
+static func changed_text(s: Dictionary) -> String:
+	var out := PackedStringArray()
+	for k: String in DEFAULTS:
+		var v: Variant = s.get(k, DEFAULTS[k])
+		if typeof(v) != typeof(DEFAULTS[k]) or v != DEFAULTS[k]:
+			out.append("%s=%s" % [k, Snapshot.plain_text(str(v), 24)])
+	return ", ".join(out) if not out.is_empty() else "defaults"
 
 
 ## Settings from the command line on top of `base` (the file's or the defaults). Bad values keep the base.

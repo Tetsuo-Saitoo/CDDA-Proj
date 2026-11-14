@@ -43,6 +43,7 @@ func run(root: Node, check: Callable, _data: Variant, _tables: IdTables) -> void
 	_test_bad_poses()
 	_test_text_scale()
 	_test_ui_rows()
+	_test_report()
 	_rig.free()
 	_world.free()
 
@@ -359,6 +360,38 @@ func _test_ui_rows() -> void:
 			"vr panel: the menu rows are never saved as settings")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://vr_rows_test.json"))
 	_rig.ui_asked.disconnect(on_ask)
+
+
+## The bug report: its text names the runtime, the controllers, the changed settings, both hands and the log's end;
+## saved as text plus a picture; only the newest MAX_KEPT stay. The startup lines' settings text.
+func _test_report() -> void:
+	_check.call(VrSettings.changed_text(VrSettings.DEFAULTS) == "defaults" and VrSettings.ACTIONS.has("report")
+			and VrSettings.ROWS.any(func(r: Array) -> bool: return r[0] == "report"),
+			"vr report: the menu has a 'Report a bug' row; default settings read 'defaults'")
+	_rig.settings["snap_deg"] = 30.0
+	_rig.settings["main_hand"] = "left"
+	var t := VrReport.text(_rig)
+	_rig.settings["snap_deg"] = VrSettings.DEFAULTS["snap_deg"]
+	_rig.settings["main_hand"] = "right"
+	var parts := ["runtime: ", "controllers: left_hand ", "settings: snap_deg=30", "main_hand=left", "left hand: ",
+			"right hand: ", "game: ", "--- the end of vr_perf.log"]
+	_check.call(parts.all(func(w: String) -> bool: return t.contains(w)) and not t.contains("nan"),
+			"vr report: the text has the runtime, controllers, changed settings, hands and the log's end
+%s" % t)
+	var dir := "user://vr_report_test"
+	var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
+	var path := VrReport.save(t, img, dir)
+	var saved := not path.is_empty() and FileAccess.get_file_as_string(path) == t 			and FileAccess.file_exists(path.get_basename() + ".png")
+	for k in VrReport.MAX_KEPT + 2:
+		VrReport.save("x", null, dir)
+	var files := DirAccess.get_files_at(dir)
+	var txt := Array(files).filter(func(n: String) -> bool: return n.ends_with(".txt")).size()
+	_check.call(saved and txt == VrReport.MAX_KEPT and not FileAccess.file_exists(path)
+			and not FileAccess.file_exists(path.get_basename() + ".png"),
+			"vr report: saved as text and picture; only the newest %d stay (%d)" % [VrReport.MAX_KEPT, txt])
+	for n in DirAccess.get_files_at(dir):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(dir + "/" + n))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(dir))
 
 
 func _test_bad_poses() -> void:
