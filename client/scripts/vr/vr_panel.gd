@@ -17,10 +17,16 @@ extends Node3D
 ##   window only when something in the panel handled it (F1 and the like still reach the game).
 ## Hiding lets go of everything still held (the mouse button, any ui_* action).
 ## Text: 1 logical px is SIZE_M.x / PX.x = 1.1 mm at DIST 1.2 m, so body text wants 20 px or more (about 1 degree).
+## `text_scale` (VrSettings `panel_text`, set by the rig) makes everything bigger or smaller: root lays out to
+## PX / text_scale logical pixels (`logical`), drawn on the same quad, so a layout that follows root's size needs no
+## change; `text_scale_changed` for anything that doesn't.
 
 signal shown_changed(on: bool)
+signal text_scale_changed(scale: float)
 
-const PX := Vector2i(1280, 800)        # logical pixels: what root lays out to
+const PX := Vector2i(1280, 800)        # logical pixels at text_scale 1: what root lays out to
+const MIN_SCALE := 0.5                 # text_scale's limits (VrSettings offers 0.8 .. 1.6)
+const MAX_SCALE := 2.5
 const SUPERSAMPLE := 1.5               # the texture is PX * this
 const SIZE_M := Vector2(1.4, 0.875)    # the quad, PX's aspect: about 60 degrees wide at DIST
 const DIST := 1.2                      # metres in front of the head
@@ -37,6 +43,19 @@ const MAX_PX := 100000.0               # a laser point farther off than this is 
 var viewport: SubViewport
 var root: Control
 var shown := false
+## Everything on the panel this much bigger (root has PX / text_scale logical pixels). Bad values are ignored.
+var text_scale := 1.0:
+	set(v):
+		if not is_finite(v):
+			return
+		var s := clampf(v, MIN_SCALE, MAX_SCALE)
+		if is_equal_approx(s, text_scale):
+			return
+		text_scale = s
+		let_go()   # what was held was at the old pixels
+		_at = Vector2(-1.0, -1.0)
+		viewport.size_2d_override = Vector2i((Vector2(PX) / s).round())
+		text_scale_changed.emit(s)
 ## The logical pixel the laser is on, or null (off the panel or not pointing at it).
 var hover: Variant = null
 ## Events pushed into the viewport (tests).
@@ -171,13 +190,18 @@ func in_view(head: Transform3D) -> bool:
 	return rad_to_deg(fwd.angle_to(to)) <= AWAY_DEG
 
 
-## A point on the panel's plane (panel space, z = 0) in logical pixels, or null; off the panel gives pixels outside
-## PX (a drag goes on there).
-static func to_px(p: Variant) -> Variant:
+## The logical pixels root lays out to now (PX / text_scale).
+func logical() -> Vector2:
+	return Vector2(viewport.size_2d_override)
+
+
+## A point on the panel's plane (panel space, z = 0) in logical pixels (of `size`), or null; off the panel gives
+## pixels outside it (a drag goes on there).
+static func to_px(p: Variant, size := Vector2(PX)) -> Variant:
 	if not p is Vector3 or not (p as Vector3).is_finite():
 		return null
 	var v: Vector3 = p
-	var px := Vector2((v.x / SIZE_M.x + 0.5) * PX.x, (0.5 - v.y / SIZE_M.y) * PX.y)
+	var px := Vector2((v.x / SIZE_M.x + 0.5) * size.x, (0.5 - v.y / SIZE_M.y) * size.y)
 	return px if absf(px.x) < MAX_PX and absf(px.y) < MAX_PX else null
 
 
@@ -195,7 +219,7 @@ static func covers(p: Variant) -> bool:
 func point(p: Variant) -> void:
 	if not shown:
 		return
-	var px: Variant = to_px(p)
+	var px: Variant = to_px(p, logical())
 	hover = px if covers(p) else null
 	_set_mouse_in(hover != null or _held)
 	if px == null:

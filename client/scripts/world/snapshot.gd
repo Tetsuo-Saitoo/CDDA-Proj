@@ -13,6 +13,11 @@ const CONTRACT_VERSION := 0
 const TILES := 144
 const MAX_FILE_BYTES := 16 << 20          # a full 21-level bubble is ~6 MB of JSON
 const MAX_ID := 1 << 20                   # CDDA has ~1.1k terrain ids; anything larger is garbage
+const WEATHER_MAX := 10000.0              # the env's weather numbers (wind, sight, light, sun): finite and no larger
+const PRECIP_NONE := 0                    # env.precip_kind
+const PRECIP_RAIN := 1
+const PRECIP_SNOW := 2
+const WEATHER_SOUND_THUNDER := 4          # env.weather_sound: CDDA's category for thunder and lightning storms
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
 const MAX_TURN := 1 << 52                 # JSON numbers are doubles
@@ -50,6 +55,9 @@ const MAX_EFFECTS := 64                   # the contract's cap
 const MAX_EFFECT_ID := 64
 const MAX_EFFECT_NAME := 40
 const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
+const MAX_MORALE := 32                    # morale entries kept (the contract sends at most 12)
+const MAX_MORALE_NAME := 64
+const MAX_MOOD_FACE := 16
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
 const EFFECT_BAD := -1
@@ -127,6 +135,14 @@ var player_needs := {}                     # NEEDS key -> int, only the ones sen
 ## player.effects (what CDDA's @ screen lists): {id, name, body_part, intensity, rating, seconds_left}, at most
 ## MAX_EFFECTS. HUD-only data: a bad entry is skipped, not a failed snapshot. seconds_left -1 = permanent or unknown.
 var player_effects: Array[Dictionary] = []
+## player.mood.entries (CDDA's morale list, strongest first: the reasons behind the morale level): {name, value
+## (what it adds now, signed), percent (its share of its side, good or bad, 0..100; -1 not sent)}, at most
+## MAX_MORALE. HUD-only data: a bad entry is skipped, not a failed snapshot.
+var player_morale: Array[Dictionary] = []
+## player.mood without its entries: {level (CDDA's morale level), band (-3..3, CDDA's mood face bands), face (its
+## mood face text, ":)"), total (entries CDDA's morale screen lists)}, each only when sent and well-formed; {}
+## when the snapshot has no mood object. HUD-only.
+var player_mood := {}
 ## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
 ## (HUD-only: never fails the snapshot).
 var player_move_mode := -1
@@ -135,6 +151,19 @@ var _creature_at := {}                     # Vector3i -> Creature, built on firs
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
 var ambient_light := -1  # env.ambient_light: CDDA's natural light at the player's z, 0..255; -1 when not sent
+## The weather (WeatherState reads these; all optional, clear weather when not sent). CDDA's own numbers for the
+## current weather type, so a mod's weather works too: only wildly wrong values fail the snapshot.
+var weather := 0                 # env.weather: index into the id tables' weather list, 0 = none
+var wind_speed := 0.0            # env.wind_speed: the region's wind, m/s
+var wind_dir_deg := 0.0          # env.wind_dir_deg: where the wind comes from, 0 north, 90 east
+var wind_at_player := -1.0       # env.wind_at_player: m/s on the player's square (0 indoors); -1 when not sent
+var weather_precip := 0          # env.precip: 0 none, 1 very light, 2 light, 3 heavy
+var weather_kind := 0            # env.precip_kind: PRECIP_NONE, PRECIP_RAIN or PRECIP_SNOW
+var weather_sight := 1.0         # env.sight_penalty: 1 clear, 1.7 fog
+var weather_light := 0.0         # env.light_modifier: 0 clear, -45 a thunderstorm
+var weather_sun := 1.0           # env.sun_multiplier: 1 clear, 0.01 a storm
+var weather_sheltered := false   # env.sheltered: rain and snow don't reach the player
+var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEATHER_SOUND_THUNDER in a thunderstorm)
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var ter_names := {}     # int -> String
@@ -291,6 +320,9 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	player_effects = effects_from((v as Dictionary).get("effects"))
+	var md: Variant = (v as Dictionary).get("mood")
+	player_mood = mood_from(md)
+	player_morale = morale_from((md as Dictionary).get("entries") if md is Dictionary else null)
 	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
 	player_move_mode = mm if mm is int else -1
 
@@ -314,6 +346,45 @@ static func effects_from(v: Variant) -> Array[Dictionary]:
 		var secs: Variant = _whole(d.get("seconds_left", -1), 0, MAX_EFFECT_SECONDS)
 		out.append({"id": id, "name": name if not name.is_empty() else id, "body_part": part, "intensity": level,
 				"rating": rating, "seconds_left": secs if secs != null else -1})
+	return out
+
+
+## player.mood's own fields, cleaned: the ones malformed or not sent are left out (HUD-only data never fails a
+## snapshot); {} when it isn't an object.
+static func mood_from(v: Variant) -> Dictionary:
+	var out := {}
+	if not v is Dictionary:
+		return out
+	var d: Dictionary = v
+	var level: Variant = _whole(d.get("level"), -32768, 32767)
+	if level != null:
+		out["level"] = level
+	var band: Variant = _whole(d.get("band"), -3, 3)
+	if band != null:
+		out["band"] = band
+	var face := plain_text(d.get("face"), MAX_MOOD_FACE)
+	if not face.is_empty():
+		out["face"] = face
+	var total: Variant = _whole(d.get("total"), 0, 1 << 20)
+	if total != null:
+		out["total"] = total
+	return out
+
+
+## player.mood.entries, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
+static func morale_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	for e: Variant in (v as Array).slice(0, MAX_MORALE):
+		if not e is Dictionary:
+			continue
+		var name := plain_text((e as Dictionary).get("name"), MAX_MORALE_NAME)
+		var value: Variant = _whole((e as Dictionary).get("value"), -32768, 32767)
+		if name.is_empty() or value == null:
+			continue
+		var pct: Variant = _whole((e as Dictionary).get("percent", -1), 0, 100)
+		out.append({"name": name, "value": value, "percent": pct if pct != null else -1})
 	return out
 
 
@@ -529,6 +600,28 @@ func _read_env(v: Variant) -> void:
 		sun_az_deg = _float(e["sun_az_deg"], -360.0, 360.0, "env.sun_az_deg")
 	if e.has("ambient_light"):
 		ambient_light = _int(e["ambient_light"], 0, 255, "env.ambient_light")
+	if e.has("weather"):
+		weather = _int(e["weather"], 0, MAX_ID, "env.weather")
+	if e.has("wind_speed"):
+		wind_speed = _float(e["wind_speed"], 0.0, WEATHER_MAX, "env.wind_speed")
+	if e.has("wind_dir_deg"):
+		wind_dir_deg = _float(e["wind_dir_deg"], -360.0, 360.0, "env.wind_dir_deg")
+	if e.has("wind_at_player"):
+		wind_at_player = _float(e["wind_at_player"], 0.0, WEATHER_MAX, "env.wind_at_player")
+	if e.has("precip"):
+		weather_precip = _int(e["precip"], 0, 3, "env.precip")
+	if e.has("precip_kind"):
+		weather_kind = _int(e["precip_kind"], PRECIP_NONE, PRECIP_SNOW, "env.precip_kind")
+	if e.has("sight_penalty"):
+		weather_sight = _float(e["sight_penalty"], 0.0, WEATHER_MAX, "env.sight_penalty")
+	if e.has("light_modifier"):
+		weather_light = _float(e["light_modifier"], -WEATHER_MAX, WEATHER_MAX, "env.light_modifier")
+	if e.has("sun_multiplier"):
+		weather_sun = _float(e["sun_multiplier"], 0.0, WEATHER_MAX, "env.sun_multiplier")
+	if e.has("sheltered"):
+		weather_sheltered = _flag(e["sheltered"], "env.sheltered")
+	if e.has("weather_sound"):
+		weather_sound = _int(e["weather_sound"], 0, 255, "env.weather_sound")
 
 
 func _read_ids(v: Variant) -> void:
@@ -610,6 +703,13 @@ func _int(v: Variant, lo: int, hi: int, what: String) -> int:
 		return int(f)
 	_fail("%s: expected an integer" % what)
 	return 0
+
+
+## A true/false field: a bool, or 0 / 1.
+func _flag(v: Variant, what: String) -> bool:
+	if v is bool:
+		return v
+	return _int(v, 0, 1, what) == 1
 
 
 func _float(v: Variant, lo: float, hi: float, what: String) -> float:

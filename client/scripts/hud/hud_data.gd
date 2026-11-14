@@ -7,7 +7,8 @@ extends RefCounted
 ## Everything that comes in is game data: numbers are clamped, text is cleaned (no colour tags, no control
 ## characters, capped), lists are capped.
 
-## Which groups changed: any of "body", "needs", "effects", "move", "held", "messages", "warnings", "cheats".
+## Which groups changed: any of "body", "needs", "effects", "move", "mood", "held", "messages", "warnings",
+## "cheats".
 signal changed(parts: PackedStringArray)
 
 enum { UNKNOWN = -1, OK = 0, HURT = 1, BAD = 2, BROKEN = 3 }
@@ -19,6 +20,15 @@ const MAX_NAME := 64
 const MAX_WARNINGS := 8
 const MAX_EVENTS := 4096
 const MAX_EFFECTS := 32
+const MAX_MOOD_REASONS := 16
+## Reasons named on the mood line; the rest are counted ("+2 more").
+const MOOD_REASONS_SHOWN := 3
+## Morale within this of 0 is neither good nor bad: the word is "Fine", no cue.
+const MOOD_CALM := 10
+## Morale this far from 0 gives the full cue (MoodCue's tint).
+const MOOD_FULL := 100
+## The HUD's word per mood band, -3..3 (CDDA shows a face, not a word).
+const MOOD_WORDS := ["Depressed", "Miserable", "Unhappy", "Fine", "Content", "Happy", "Joyful"]
 ## Effects the HUD shows elsewhere: the body bars carry these (per part), the hunger need the hunger_* ones.
 const EFFECTS_SHOWN_ELSEWHERE := ["bleed", "bandaged", "disinfected", "bite", "infected"]
 ## CDDA's hunger effects (effects.json; display.cpp shows them as the hunger word) -> level.
@@ -46,6 +56,14 @@ var effects: Array[Dictionary] = []
 ## How the player moves (Snapshot.player_move_mode): {mode: CDDA's id ("walk", "run", "crouch", "prone"), text
 ## ("Running", "Running (stamina 23%)"), level}; {} when the snapshot or the id tables don't say.
 var move := {}
+## The player's mood (CDDA's morale; Snapshot.player_mood / player_morale, or player_needs["morale"] alone):
+## {value: CDDA's morale level, band: -3..3 (CDDA's mood face bands), word (MOOD_WORDS: "Happy", "Unhappy" ...),
+## face: CDDA's mood face (":)", "" when not sent), level (OK, HURT below -MOOD_CALM, BAD below -50), reasons:
+## [{name, value, percent}] the morale entries, strongest first, at most MAX_MOOD_REASONS (value: what the entry
+## adds, signed; they don't sum to the level: CDDA combines each side by squares), more: entries CDDA lists beyond
+## the ones named on the line, text: the HUD line ("Mood: Unhappy (Wet -12, Cold -8, +2 more)"), cue: -1..1 for
+## the views' mood cues (0 while calm, -1 / 1 from MOOD_FULL points)}; {} when the snapshot doesn't carry morale.
+var mood := {}
 ## {main, off: ItemRef (carried) or null; main_liquid, off_liquid: String; main_fill, off_fill: 0..1 or -1;
 ## liquid, fill_frac: the first hand's (main, then off) that holds a liquid}.
 var held := {}
@@ -86,6 +104,13 @@ func update(snap: Snapshot, tables: IdTables) -> void:
 	if mv != move:
 		move = mv
 		parts.append("move")
+	var have: Variant = snap.get("player_needs") if "player_needs" in snap else null
+	var md := mood_from((have as Dictionary).get("morale") if have is Dictionary else null,
+			snap.get("player_morale") if "player_morale" in snap else [],
+			snap.get("player_mood") if "player_mood" in snap else {})
+	if md != mood:
+		mood = md
+		parts.append("mood")
 	var h := _held_from(snap, _bridge_held)
 	if not _same_held(h, held):
 		held = h
@@ -219,6 +244,77 @@ static func word(kind: String, value: int) -> String:
 			if scale > 0:
 				return "Minimal pain"
 	return ""
+
+
+## The mood band of a morale level, -3..3: CDDA's default mood face bands, as the bridge's player.mood.band
+## (100, 50 and 10 up; below -10, -50 and -100 down).
+static func mood_band(value: int) -> int:
+	if value >= 100:
+		return 3
+	if value >= 50:
+		return 2
+	if value >= MOOD_CALM:
+		return 1
+	if value >= -MOOD_CALM:
+		return 0
+	if value >= -50:
+		return -1
+	return -2 if value >= -100 else -3
+
+
+## The HUD's word for a morale level (MOOD_WORDS by its band).
+static func mood_word(value: int) -> String:
+	return MOOD_WORDS[mood_band(value) + 3]
+
+
+## The mood (see `mood`) from the morale level, CDDA's morale entries ([{name, value, percent}],
+## Snapshot.player_morale) and the bridge's mood fields ({level, band, face, total}, Snapshot.player_mood; its
+## level and band win when sent); {} when there is no level. Entries are game text: cleaned and capped again
+## here, zero ones left out.
+static func mood_from(value: Variant, entries: Variant, info: Variant = null) -> Dictionary:
+	var m: Dictionary = info if info is Dictionary else {}
+	if m.get("level") is int:
+		value = m["level"]
+	if not (value is int or (value is float and is_finite(value))):
+		return {}
+	var v := _int(value, -32768, 32767)
+	var reasons: Array[Dictionary] = []
+	if entries is Array:
+		for e: Variant in (entries as Array).slice(0, Snapshot.MAX_MORALE):
+			if not e is Dictionary:
+				continue
+			var name := clean((e as Dictionary).get("name"), MAX_NAME)
+			var pts: Variant = (e as Dictionary).get("value")
+			if name.is_empty() or not (pts is int or (pts is float and is_finite(pts))):
+				continue
+			var n := _int(pts, -32768, 32767)
+			var pc: Variant = (e as Dictionary).get("percent")
+			if n != 0:
+				reasons.append({"name": name, "value": n, "percent": _int(pc, 0, 100) if pc is int and pc >= 0 else -1,
+						"_i": reasons.size()})
+	reasons.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:   # strongest first, CDDA's order among equals
+		return absi(a["value"]) > absi(b["value"]) or (absi(a["value"]) == absi(b["value"]) and a["_i"] < b["_i"]))
+	reasons = reasons.slice(0, MAX_MOOD_REASONS)
+	for r in reasons:
+		r.erase("_i")
+	var b: Variant = m.get("band")
+	var band: int = clampi(b, -3, 3) if b is int else mood_band(v)
+	var word: String = MOOD_WORDS[band + 3]
+	var shown := mini(reasons.size(), MOOD_REASONS_SHOWN)
+	var t: Variant = m.get("total")
+	var more := maxi(_int(t, 0, 1 << 20) if t is int else 0, reasons.size()) - shown   # CDDA may list more than sent
+	var text := "Mood: " + word
+	if not reasons.is_empty():
+		var bits := PackedStringArray()
+		for r: Dictionary in reasons.slice(0, shown):
+			bits.append("%s %+d" % [r["name"], r["value"]])
+		if more > 0:
+			bits.append("+%d more" % more)
+		text += " (%s)" % ", ".join(bits)
+	var over := maxi(absi(v) - MOOD_CALM, 0)
+	var cue := signf(v) * clampf(float(over) / (MOOD_FULL - MOOD_CALM), 0.0, 1.0)
+	return {"value": v, "band": band, "word": word, "face": clean(m.get("face"), Snapshot.MAX_MOOD_FACE),
+			"level": need_level("morale", v), "reasons": reasons, "more": more, "text": text, "cue": cue}
 
 
 ## The move line for move_mode `index` (see `move`); {} when unknown. Running says how much stamina is left once
@@ -402,7 +498,7 @@ func _warnings() -> Array[Dictionary]:
 		var n: Dictionary = needs[k]
 		if n["level"] == BAD:
 			var t: String = n["word"] if not (n["word"] as String).is_empty() else \
-					{"stamina": "Out of breath", "morale": "Miserable"}.get(k, k.capitalize())
+					{"stamina": "Out of breath", "morale": mood_word(n["value"])}.get(k, k.capitalize())
 			out.append({"id": k, "text": t, "level": BAD})
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["level"] > b["level"])
 	return out.slice(0, MAX_WARNINGS)

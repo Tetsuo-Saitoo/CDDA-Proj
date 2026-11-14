@@ -25,10 +25,15 @@ extends Node3D
 ## that grabs one calls hold(): the body goes and none is made while the hand holds it (unhold() when it lets go).
 ## A hand letting go calls let_go(): a body at the hand's pose with the hand's velocity, waiting for CDDA's answer to
 ## the drop (landed(): kept, not made again at the pile's pose; forget(): gone, the item stays carried or shows static
-## where it was). When such a body first comes to rest, `settled` says where (slices 3-4 will send that to CDDA).
+## where it was).
+## Slices 3-4 (ItemPlacer tells CDDA): when a body comes to rest somewhere new (one a hand let go: its first rest;
+## any body: MOVED_M from where it last rested or was made), `settled` says where; rest_of() adds its yaw and whether
+## it lies on its side. While CDDA is told square by square (transit()), or when the body already lies in the square
+## CDDA now has it on, a snapshot only changes the body's CDDA square and the body keeps its pose. put_back() snaps a
+## body back to where CDDA has the item. Nothing is sent to CDDA from here.
 
-## A body a hand let go came to rest for the first time: the square under it and where across it (spot, each
-## 0..SPOT_MAX, x east, y south). Nothing is sent from here: the hook for slices 3-4 (drop where it settled).
+## A body came to rest somewhere new: the square under it and where across it (spot, each 0..SPOT_MAX, x east,
+## y south); rest_of(uid) has its yaw and side too. ItemPlacer listens.
 signal settled(uid: int, square: Vector3i, spot: Vector2)
 
 const OWNER := &"physics"
@@ -47,6 +52,10 @@ const MAX_SCAN := 8192         # handles looked at per sync at most
 const HS := Snapshot.HANDLE_STRIDE
 const MAX_SPEED := 20.0        # m/s: a body let go moves at most this fast (VrRig drops tracking jumps past 30)
 const PENDING_MS := 10000      # a body let go waits this long for CDDA's answer (ItemActions gives up after 5 s)
+const LANDED_MS := 1500        # ... and this long after CDDA's drop landed for the world to show it on its square
+const MOVED_M := 0.02          # a body that comes to rest this near where it last rested hasn't moved (no `settled`)
+const SIDE_DOT := 0.5          # a body whose up axis is this level or flatter lies on its side
+const MAX_TRANSIT := 16        # bodies the placer walks to another square at once (transit)
 const MAX_HOLDING := 16        # items hands hold at once (three hands; more means someone forgot to unhold)
 const SPOT_MAX := 0.999
 const REST_UP_M := 0.05        # where a body rests is looked up this far over its origin (floor line rounding)
@@ -66,7 +75,8 @@ class Body:
 	var pending := false          # let go by a hand: not yet seen lying on `square` after CDDA's drop landed
 	var landed := false           # CDDA's drop landed (landed()); pending until the world's snapshot shows it
 	var since_ms := 0             # when it was let go
-	var told := false             # `settled` was emitted for it
+	var landed_ms := 0            # when CDDA's drop landed
+	var at: Variant = null        # where it last rested (`settled` said so, or where it was made); null: let go, not yet at rest
 
 
 var world: WorldView
@@ -86,6 +96,7 @@ var syncs := 0                 # full passes over the snapshot (tests)
 var skipped := 0               # new snapshots whose nearby handles were the same: no pass (tests)
 var _bodies := {}              # uid -> Body
 var _holding := {}             # uid -> true: a hand holds it (hold / unhold)
+var _transit := {}             # uid -> true: CDDA is being told square by square where it lies (transit): never moved
 var _key := []
 var _sig := 0                  # _near_sig of the last pass (0: none; a pass is due)
 var _told_off := false
@@ -109,6 +120,7 @@ func _exit_tree() -> void:
 			b.node.queue_free()
 	var had := not _bodies.is_empty()
 	_bodies.clear()
+	_holding.clear()
 	if had and is_instance_valid(world) and world.is_inside_tree() and not world.is_queued_for_deletion():
 		_publish()
 
@@ -254,20 +266,24 @@ func let_go(uid: int, type: int, xform: Transform3D, velocity: Vector3, square: 
 	var b: Body = _bodies[uid]
 	b.pending = true
 	b.since_ms = _now()
+	b.at = null   # its first rest is always told
 	rb.sleeping = false
 	rb.linear_velocity = velocity.limit_length(MAX_SPEED) if velocity.is_finite() else Vector3.ZERO
-	rb.sleeping_state_changed.connect(_on_sleep.bind(uid))
 	_publish()
 	return rb
 
 
 ## CDDA's drop of a let-go item landed: its body stays. It stays pending (not pointable) until the world's snapshot
 ## shows the item on its square (WorldView may show a snapshot a few frames after ItemActions judged it), then it is
-## kept as any other body instead of being made again at the pile's pose. False when it has no body waiting.
+## kept as any other body instead of being made again at the pile's pose. An item that never shows there within
+## LANDED_MS (a charge stack merged into another: a new uid; or CDDA put it elsewhere) loses its body (_expire).
+## False when it has no body waiting.
 func landed(uid: int) -> bool:
 	var b: Body = _bodies.get(uid)
 	if b == null or not b.pending:
 		return false
+	if not b.landed:
+		b.landed_ms = _now()
 	b.landed = true
 	if _lies_on(uid, b.type, b.square):
 		b.pending = false   # the world shows it there already
@@ -294,17 +310,61 @@ func forget(uid: int) -> bool:
 	return true
 
 
-## Where item `uid`'s body lies now: {square, spot (each 0..SPOT_MAX, x east, y south)}, {} without a body.
+## Where item `uid`'s body lies now: {square, spot (each 0..SPOT_MAX, x east, y south), yaw (whole degrees 0..359),
+## side (it lies on its side)}, {} without a body. The pose a static copy needs to look the same is
+## Basis(UP, yaw) * (side: a quarter turn about X): yaw is the heading (atan2(x, z)) of the item's own +Z when it
+## stands, of its own +Y (its top) when it lies on its side.
 func rest_of(uid: int) -> Dictionary:
 	var b: Body = _bodies.get(uid)
 	if b == null or not is_instance_valid(b.node) or not b.node.is_inside_tree():
 		return {}
 	var p := b.node.global_position
-	if not p.is_finite():
+	var rot := b.node.global_basis.orthonormalized()
+	if not p.is_finite() or not rot.is_finite():
 		return {}
 	var sq := world.coords.world_to_ms(p + Vector3(0.0, REST_UP_M, 0.0))
 	var f := (p - world.coords.ms_to_world(sq)) / CddaCoords.TILE_M
-	return {"square": sq, "spot": Vector2(clampf(f.x, 0.0, SPOT_MAX), clampf(f.z, 0.0, SPOT_MAX))}
+	var side := absf(rot.y.y) < SIDE_DOT
+	var v := rot.y if side else rot.z
+	var yaw := wrapi(roundi(rad_to_deg(atan2(v.x, v.z))), 0, 360) if Vector2(v.x, v.z).length() > 0.01 else 0
+	return {"square": sq, "spot": Vector2(clampf(f.x, 0.0, SPOT_MAX), clampf(f.z, 0.0, SPOT_MAX)), "yaw": yaw, "side": side}
+
+
+## The itype of item `uid`'s body, 0 without one.
+func type_of(uid: int) -> int:
+	var b: Body = _bodies.get(uid)
+	return b.type if b != null else 0
+
+
+## The body of `uid` lies asleep (at rest); false without one.
+func at_rest(uid: int) -> bool:
+	var b: Body = _bodies.get(uid)
+	return b != null and is_instance_valid(b.node) and b.node.sleeping
+
+
+## While `on`, CDDA is being told square by square where item `uid` lies (ItemPlacer): a snapshot that shows it on
+## another square only changes the body's CDDA square, the body stays where it is. MAX_TRANSIT at most (false past
+## that, or without a body).
+func transit(uid: int, on: bool) -> bool:
+	if not on:
+		_transit.erase(uid)
+		return true
+	if not _bodies.has(uid) or (not _transit.has(uid) and _transit.size() >= MAX_TRANSIT):
+		return false
+	_transit[uid] = true
+	return true
+
+
+## Puts item `uid` back where CDDA has it (its body lies somewhere CDDA wouldn't take): the body goes and a pass
+## makes it again from the pile. False without a settled body.
+func put_back(uid: int) -> bool:
+	var b: Body = _bodies.get(uid)
+	if b == null or b.pending:
+		return false
+	_free(uid)
+	_resync()
+	_publish()
+	return true
 
 
 ## A full pass when the nearby handles, the centre, the hidden items or the caps changed; else only the distance
@@ -344,9 +404,11 @@ func _resync() -> void:
 	_key = []
 
 
-## Frees every body and shows the static copies again.
+## Frees every body and shows the static copies again; nothing counts as held by a hand any more (the game stopped
+## or the snapshot went: a hand still holding hides its item itself, so no body is made for it).
 func clear() -> void:
 	_resync()
+	_holding.clear()
 	if _bodies.is_empty():
 		return
 	for u: int in _bodies.keys():
@@ -386,7 +448,7 @@ func sync(snap: Snapshot, c: Vector3i, skip: Dictionary) -> void:
 		elif n.is_empty() or skip.has(u):
 			_free(u)
 			changed = true
-		elif (n[0] != b.square or n[1] != b.type) and not _follow(b, n, c, parts, tops):
+		elif (n[0] != b.square or n[1] != b.type) and not _stays(b, n, parts) and not _follow(b, n, c, parts, tops):
 			_free(u)   # CDDA moved it where it can't lie as a body: static there
 			changed = true
 	if _bodies.size() > max_bodies:
@@ -428,6 +490,16 @@ func sync(snap: Snapshot, c: Vector3i, skip: Dictionary) -> void:
 		_publish()
 
 
+## CDDA has item b on another square now (n: its handle) and the body already lies in that square, or it is being
+## walked there (transit): only its CDDA square changes, the body keeps its pose.
+func _stays(b: Body, n: Array, parts: Dictionary) -> bool:
+	var sq: Vector3i = n[0]
+	if n[1] != b.type or parts.has(sq) or (not _transit.has(b.uid) and rest_of(b.uid).get("square") != sq):
+		return false
+	b.square = sq
+	return true
+
+
 ## CDDA moved item b to another square or changed it into another itype (n: its handle now). A new square on the
 ## centre's level within ACTIVE_R without opening parts or a furniture box: the body lies on its floor at the handle's
 ## spot (the middle without one), resting as it lay, asleep. Another itype: made again where it is. The uid stays
@@ -461,6 +533,7 @@ func _follow(b: Body, n: Array, c: Vector3i, parts: Dictionary, tops: Dictionary
 	b.node.angular_velocity = Vector3.ZERO
 	b.node.sleeping = true
 	b.square = sq
+	b.at = xf.origin   # CDDA put it here: not a rest to report
 	return true
 
 
@@ -678,7 +751,9 @@ func _make(uid: int, type: int, sq: Vector3i, xf: Transform3D, size_m: float) ->
 	b.box = box
 	b.mid = box.get_center()
 	b.size_m = clampf(size_m, MIN_BOX_M, MAX_BOX_M) if is_finite(size_m) and size_m > 0.0 else box.get_longest_axis_size()
+	b.at = xf.origin
 	_bodies[uid] = b
+	rb.sleeping_state_changed.connect(_on_sleep.bind(uid))
 	return rb
 
 
@@ -718,6 +793,7 @@ func mass_of(type: int) -> float:
 
 
 func _free(uid: int) -> void:
+	_transit.erase(uid)
 	var b: Body = _bodies.get(uid)
 	_bodies.erase(uid)
 	if b != null and is_instance_valid(b.node):
@@ -732,13 +808,19 @@ func _publish() -> void:
 		world.call(hide_method, OWNER, uids())
 
 
-## Frees the bodies let go whose drop CDDA didn't answer within PENDING_MS (or the world never showed landed).
+## Frees the bodies let go whose drop CDDA didn't answer within PENDING_MS, and those whose drop landed but that the
+## world doesn't show on their square within LANDED_MS (merged into a stack there, or lying elsewhere); a landed one
+## the world shows there now is kept as any other body.
 func _expire() -> void:
 	var now := _now()
 	var gone := false
 	for u: int in _bodies.keys():
 		var b: Body = _bodies[u]
-		if b.pending and now - b.since_ms >= PENDING_MS:
+		if not b.pending:
+			continue
+		if b.landed and _lies_on(u, b.type, b.square):
+			b.pending = false
+		elif now - b.since_ms >= PENDING_MS or (b.landed and now - b.landed_ms >= LANDED_MS):
 			_free(u)
 			gone = true
 	if gone:
@@ -746,15 +828,19 @@ func _expire() -> void:
 		_publish()
 
 
-## A body a hand let go fell asleep: the first time, `settled` says where it lies.
+## A body fell asleep: `settled` says where it lies when that is somewhere new (a body a hand let go: its first
+## rest; any body: MOVED_M or more from where it last rested or was made). rest_of(uid) has its yaw and side.
 func _on_sleep(uid: int) -> void:
 	var b: Body = _bodies.get(uid)
-	if b == null or b.told or not is_instance_valid(b.node) or not b.node.sleeping:
+	if b == null or not is_instance_valid(b.node) or not b.node.sleeping:
 		return
 	var r := rest_of(uid)
 	if r.is_empty():
 		return
-	b.told = true
+	var p := b.node.global_position
+	if b.at is Vector3 and p.distance_to(b.at) < MOVED_M:
+		return
+	b.at = p
 	settled.emit(uid, r["square"], r["spot"])
 
 

@@ -41,6 +41,8 @@ func run(root: Node, check: Callable, _data: Variant, _tables: IdTables) -> void
 	_test_menu_over_panel()
 	_test_hide_lets_go()
 	_test_bad_poses()
+	_test_text_scale()
+	_test_ui_rows()
 	_rig.free()
 	_world.free()
 
@@ -67,7 +69,7 @@ func _button(t: String, at: Vector2) -> Button:
 
 
 func _frame(move := Vector2.ZERO, turn := Vector2.ZERO) -> void:
-	_rig.panel.update(DT, _rig.camera.transform)
+	_rig.update_panel(DT)
 	_rig.step(DT, {"move": move, "turn": turn})
 	_rig.update_pointer(true)
 
@@ -289,6 +291,74 @@ func _test_hide_lets_go() -> void:
 	_rig.release(_rig.main_ctrl(), "trigger_click")
 	_rig.release(_rig.right, "ax_button")
 	_check.call(_p.events == sent, "vr panel: the late releases send nothing more")
+
+
+## VrSettings `panel_text`: root gets fewer logical pixels on the same quad (everything bigger), the laser still
+## lands on the control it points at; bad values are ignored, the setting is clamped.
+func _test_text_scale() -> void:
+	_dialog.visible = true
+	_frame()
+	var got: Array[float] = []
+	var on_scale := func(s: float) -> void: got.append(s)
+	_p.text_scale_changed.connect(on_scale)
+	_rig.settings["panel_text"] = 1.6
+	_frame()
+	var want := (Vector2(VrPanel.PX) / 1.6).round()
+	_check.call(got.size() == 1 and is_equal_approx(got[0], 1.6) and _p.logical() == want and _p.viewport.get_visible_rect().size == want
+			and _p.root.size == want and _p.viewport.size == Vector2i(Vector2(VrPanel.PX) * VrPanel.SUPERSAMPLE),
+			"vr panel: text size 160 %%: root lays out to %s logical pixels on the same texture (%s)" % [want, _p.root.size])
+	# the button keeps its own pixels, so it now covers more of the quad: aim at where it is drawn
+	var mid := _mid(_b) / want * Vector2(VrPanel.PX)
+	_aim_px(mid)
+	_frame()
+	var was: int = _pressed["b"]
+	_rig.press(_rig.main_ctrl(), "trigger_click")
+	_rig.release(_rig.main_ctrl(), "trigger_click")
+	_check.call(_b.is_hovered() and _pressed["b"] == was + 1, "vr panel: scaled, the laser still clicks what it points at")
+	_p.text_scale = NAN
+	var kept := is_equal_approx(_p.text_scale, 1.6)
+	_p.text_scale = 99.0
+	var capped := is_equal_approx(_p.text_scale, VrPanel.MAX_SCALE)
+	_p.text_scale = 0.0
+	_check.call(kept and capped and is_equal_approx(_p.text_scale, VrPanel.MIN_SCALE),
+			"vr panel: bad text sizes are ignored or clamped")
+	_p.text_scale_changed.disconnect(on_scale)
+	_rig.settings["panel_text"] = 1.2
+	_rig.update_panel(0.0)
+	var applied := is_equal_approx(_p.text_scale, 1.2)
+	_rig.settings["panel_text"] = "huge"
+	_rig.update_panel(0.0)
+	_check.call(applied and is_equal_approx(_p.text_scale, 1.2), "vr panel: a bad `panel_text` setting is ignored by the rig")
+	_check.call(VrSettings.clean("panel_text", 5.0) == 1.6 and VrSettings.clean("panel_text", "0.1") == 0.8
+			and VrSettings.clean("panel_text", "big") == null and VrSettings.label("panel_text", 1.2) == "120 %"
+			and is_equal_approx(VrSettings.step({"panel_text": 1.0}, "panel_text", 1), 1.1)
+			and VrSettings.from_args({"vr-panel-text": "1.4"})["panel_text"] == 1.4,
+			"vr panel: the setting is clamped to 80 .. 160 %, steps by 10 %, --vr-panel-text sets it")
+	_rig.settings["panel_text"] = 1.0
+	_p.text_scale = 1.0
+	_dialog.visible = false
+	_frame()
+
+
+## The VR menu's "Inventory" and "Keys and HUD settings" rows ask main.gd for that menu (VrRig.ui_asked) and close
+## the settings menu, so the laser is free for the panel.
+func _test_ui_rows() -> void:
+	var asked: Array[String] = []
+	var on_ask := func(which: String) -> void: asked.append(which)
+	_rig.ui_asked.connect(on_ask)
+	for want: String in ["inventory", "keys"]:
+		_rig.press(_rig.left, "menu_button")
+		var open := _rig.menu_open()
+		var row := _rig.menu.row_of(want)
+		_rig.menu.row = row
+		_rig.press(_rig.off_ctrl(), "trigger_click")   # the trigger off the panel uses the picked row
+		_check.call(open and row >= 0 and asked.back() == want and not _rig.menu_open(),
+				"vr panel: the VR menu row `%s` asks for that menu and closes the settings menu (%s)" % [want, asked])
+	_check.call(asked.size() == 2 and VrSettings.save_file(_rig.settings, "user://vr_rows_test.json")
+			and not FileAccess.get_file_as_string("user://vr_rows_test.json").contains("inventory"),
+			"vr panel: the menu rows are never saved as settings")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://vr_rows_test.json"))
+	_rig.ui_asked.disconnect(on_ask)
 
 
 func _test_bad_poses() -> void:

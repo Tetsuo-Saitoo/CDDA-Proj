@@ -921,7 +921,8 @@ func _test_menu_delete() -> void:
 	var s := LiveSession.new()
 	s.state = "running"
 	_check.call(LiveSession.delete_reply("") == "" and LiveSession.delete_reply(null) != "" and LiveSession.delete_reply("\n") != ""
-			and s.delete_save("C:/nowhere", "World", "Ann", true) != "" and s.delete_save("rel", "World", "Ann", true) != "",
+			and s.delete_save(preload("res://tests/test_dir.gd").global("nowhere"), "World", "Ann", true) != ""
+			and s.delete_save("rel", "World", "Ann", true) != "",
 			"live session: delete refused without a bridge or a name it lists")
 	s.free()
 	m.free()
