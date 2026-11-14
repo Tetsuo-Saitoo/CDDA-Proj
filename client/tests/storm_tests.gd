@@ -375,6 +375,28 @@ func _test_wet_mesh(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call(mats.size() >= 2 and mats[0] == ground and mats[1] == solid,
 			"wet: a submap with a building has ground outside and plain solid under the roof (%d surfaces)" % mats.size())
 	_check.call(mixed.roof != null and _materials(mixed.roof) == [ground], "wet: roofs are ground material too")
+	# Seen on screen: from inside a room the ceiling was black. A roof's underside is pale, whatever the roof is.
+	var arrays := mixed.roof.surface_get_arrays(0)
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	var under := 0
+	var dull := 0
+	var top_lum := 0.0
+	var tops := 0
+	for i in normals.size():
+		if normals[i].y < -0.5:
+			under += 1
+			dull += int(colors[i].get_luminance() < 0.6)
+		elif normals[i].y > 0.5:
+			tops += 1
+			top_lum += colors[i].get_luminance()
+	_check.call(under > 0 and under == tops and dull == 0 and top_lum / tops < 0.5,
+			"ceiling: a roof's underside is pale (%d vertices), its top keeps the roof's colour (%.2f)" %
+			[under, top_lum / maxi(tops, 1)])
+	var dark_roof := Color(0.32, 0.3, 0.3)
+	_check.call(TerrainMesher.ceiling_color(dark_roof).get_luminance() > 0.65
+			and TerrainMesher.ceiling_color(Color(0.5, 0.35, 0.2)).r > TerrainMesher.ceiling_color(Color(0.5, 0.35, 0.2)).b,
+			"ceiling: mostly plaster, with a little of the colour of what is above")
 	TerrainMesher.wet_ground(1.0)
 	_check.call(is_equal_approx(ground.roughness, TerrainMesher.WET_ROUGHNESS) and ground.albedo_color == TerrainMesher.WET_TINT
 			and is_equal_approx(solid.roughness, 0.9) and solid.albedo_color == Color.WHITE,

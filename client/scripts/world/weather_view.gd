@@ -14,6 +14,7 @@ const BLEND_STEP_S := 0.25
 ## Changes smaller than this (dusk getting darker turn by turn) show at once.
 const BLEND_MIN := 0.08
 const AMBIENT_ENERGY := 0.8
+const GROUND_BOUNCE := Color(0.42, 0.42, 0.4)   # the lower half of the sky: daylight coming back up off the ground
 const EYE_M := 1.6
 const INDOOR_CLEAR_M := 8.0   # under a roof the fog starts this far out: the room is clear, the windows show it
 const INDOOR_CLEAR_S := 1.5   # seconds it takes to clear or close in when the player goes under or leaves a roof
@@ -108,6 +109,10 @@ func setup(env: Environment, sun: DirectionalLight3D) -> void:
 	if _sky != null and _sky.sky_cover == null:
 		_sky.sky_cover = ImageTexture.create_from_image(cover_image())
 		_sky.sky_cover_modulate = Color.BLACK
+	if _sky != null:
+		# The light that comes from below: the sky's lower half stands for the ground the daylight bounces off.
+		# The engine's dark default left every underside (ceilings, table tops from below) black.
+		_sky.ground_bottom_color = GROUND_BOUNCE
 	if _env != null:
 		_env.fog_mode = Environment.FOG_MODE_DEPTH
 		_env.fog_depth_curve = 1.0
