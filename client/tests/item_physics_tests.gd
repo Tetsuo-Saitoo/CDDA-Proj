@@ -1022,6 +1022,23 @@ func _test_placer() -> void:
 	_check.call(waited and op.get("op") == "spot" and op.get("uid") == y,
 			"item placer: an item a hand's action is under way on waits, then is told (%s %s)" % [waited, op])
 	placer.busy = Callable()
+	placer.on_events([_result(y, int(op.get("tag", 0)), true)])
+	# a body that fell a level (a hole next to E): CDDA refuses free falls, so it goes back and nothing is sent
+	sent = fake.ops.size()
+	var backs := placer.put_backs
+	var low := _bodies.body_of(y)
+	if low != null:
+		low.global_position.y -= CddaCoords.LEVEL_M
+	_rest_at(y, a, Vector2(0.5, 0.5))
+	var fell: bool = low != null and _bodies.rest_of(y).get("square") == a + Vector3i(0, 0, -1) and placer.waiting() == 1
+	_ms += ItemPlacer.PLACE_GAP_MS
+	_world.snapshot.turn += 1
+	placer.update()
+	_snap.seq += 1
+	_bodies.update()
+	_check.call(fell and fake.ops.size() == sent and placer.put_backs == backs + 1 and placer.waiting() == 0
+			and _bodies.rest_of(y).get("square") == E,
+			"item placer: a body that fell to another level goes back where CDDA has it, nothing sent")
 	placer.bodies = null
 	placer.free()
 	_snap.seq += 1
