@@ -95,6 +95,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_viewmodel(root, tables)
 	_test_grime(root, tables)
 	_test_gun_parts()
+	_test_muzzle_flash(root, tables)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -1159,6 +1160,22 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	aim.update(cam, false)
 	_check.call(not cross.marking() and not cross.visible, "hits: the marker fades in 0.3 s")
 
+	# a monster's weak point (the damage event's text) is the part: an eye is a head marker; anything that is no
+	# plain id falls back to the body part
+	got.clear()
+	var wp_dmg := func(text: Variant) -> Dictionary:
+		var d0: Dictionary = dmg.call(z, 5, torso)
+		d0["text"] = text
+		return d0
+	hf.on_events([wp_dmg.call("eye"), shot_by.call(me, z)])
+	var eye_big := cross.hit_scale == AimController.Crosshair.HEAD_SCALE
+	for t: Variant in ["leg_joint", "<b>x", "a".repeat(HitFeedback.MAX_PART_LEN + 1), "", 7, "héad", "head\n", null]:
+		hf.on_events([wp_dmg.call(t), shot_by.call(me, z)])
+	var parts: Array = got.map(func(g: Array) -> Variant: return g[1])
+	_check.call(eye_big and parts == ["eye", "leg_joint", "torso", "torso", "torso", "torso", "torso", "torso", "torso"],
+			"hits: a monster's weak point names the part, an eye is a head hit, junk text is the body part (%s)" % [parts])
+	cross.tick_hit(0.31)
+
 	# a burst: each projectile event claims only the damage since the one before
 	got.clear()
 	hf.on_events([dmg.call(z + 1, 3, torso), shot_by.call(me, z + 1), dmg.call(z + 1, 4, head), shot_by.call(me, z + 1),
@@ -1389,6 +1406,53 @@ func _test_gun_parts() -> void:
 		_check.call(m.get_node_or_null("Muzzle") == null and m.get_children().all(func(n: Node) -> bool: return n is MeshInstance3D),
 				"gun parts: a %s has none" % s)
 		m.free()
+
+
+## Muzzle flash: a gun's kick shows a star at its muzzle for FLASH_S and lights it, the light at most once every
+## LIGHT_GAP_S (a long burst never strobes over 3 a second), none for a knife; `flash_light` off keeps the star.
+func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
+	var VM := WeaponViewmodel
+	var rifle := tables.index_of("itype", "remington_870")
+	var pistol := tables.index_of("itype", "glock_19")
+	var knife := tables.index_of("itype", "knife_combat")
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	vm.set_item(rifle, tables)
+	var under_muzzle := vm._root.get_node_or_null("Muzzle/Flash") != null and not vm.flashing() and not vm.lit()
+	vm.kick()
+	var on := vm.flashing() and vm.lit()
+	vm._process(VM.FLASH_S * 0.5)
+	var fading := vm.flashing() and vm._flash.scale.x < 1.0 and vm._flash.scale.x > 0.5
+	vm._process(VM.FLASH_S)
+	var off := not vm.flashing() and not vm.lit()
+	_check.call(rifle > 0 and under_muzzle and on and fading and off,
+			"muzzle flash: a shot shows the star and the light at the muzzle, gone after %.2f s" % VM.FLASH_S)
+	# a burst: a shot every 50 ms for 1.5 s, the star every shot, the light at most once every LIGHT_GAP_S
+	vm._process(1.0)
+	var stars := 0
+	var lights := 0
+	for i in 30:
+		vm.kick()
+		stars += 1 if vm.flashing() else 0
+		lights += 1 if vm.lit() and vm._light_t == VM.FLASH_S else 0
+		vm._process(0.05)
+	_check.call(stars == 30 and lights >= 4 and lights <= 5,
+			"muzzle flash: a 30-shot burst shows 30 stars and %d lights (under 3 a second)" % lights)
+	vm._process(1.0)
+	vm.flash_light = false
+	vm.kick()
+	var dark := vm.flashing() and not vm.lit()
+	vm.flash_light = true
+	vm._process(1.0)
+	vm.set_item(pistol, tables)
+	var rebuilt := vm._root.get_node_or_null("Muzzle/Flash") != null and not vm.flashing()
+	vm.kick()
+	var pistol_on := vm.flashing() and vm.lit()
+	vm.set_item(knife, tables)
+	vm.kick()
+	_check.call(dark and rebuilt and pistol_on and not vm.flashing() and vm._flash == null,
+			"muzzle flash: light off keeps the star, a new gun gets its own, a knife has none")
+	vm.free()
 
 
 ## player.wielded_gun in snapshots: parsed into player_gun, junk fails the snapshot.

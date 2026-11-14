@@ -24,6 +24,8 @@ extends Node
 ## plays a quiet generated tick (`sound`).
 ## Event fields are checked: bad uids, amounts or body parts skip the event.
 
+## `part`: the monster's weak point id when the damage event names one (`text`, e.g. "head", "eye", "leg"), else
+## the body part id from `detail`; "" unknown.
 signal hit_confirmed(uid: int, part: String, amount: int, killed: bool)
 ## Also sent, after hit_confirmed, when the hit was the player's melee strike (a stronger buzz in VR, say).
 signal strike_confirmed(uid: int, part: String, amount: int, killed: bool)
@@ -42,7 +44,7 @@ const MAX_TECHNIQUE_LEN := 40  # characters of a technique's name
 const MAX_FAMILY := 5          # the contract's technique families are 0..5
 const MAX_RUN := 64            # creatures one run of strikes may hold; one more starts a new run
 const PLAYER_UID := 1          # the contract's player uid, when the snapshot doesn't list the player
-const HEAD_PARTS: Array[String] = ["head", "eyes"]
+const HEAD_PARTS: Array[String] = ["head", "eyes", "eye"]   # body parts and monsters' weak points
 const TICK_RATE := 22050
 const TICK_S := 0.05
 const TICK_DB := -16.0         # quiet
@@ -199,7 +201,9 @@ func _hurt(kind: String, e: Dictionary, me: int) -> Dictionary:
 		var detail := _uint(e["detail"], MAX_DETAIL) if e.has("detail") else 0
 		if amount < 0 or detail < 0:
 			return {}
-		part = _part_name(detail) if e.has("detail") else ""
+		part = weak_point(e.get("text"))
+		if part.is_empty():
+			part = _part_name(detail) if e.has("detail") else ""
 	return {"kind": kind, "uid": uid, "part": part, "amount": amount}
 
 
@@ -208,6 +212,15 @@ func _confirm(uid: int, part: String, amount: int, killed: bool, strike := false
 	if strike:
 		strike_confirmed.emit(uid, part, amount, killed)
 	_play_tick()
+
+
+## A damage event's `text`: the monster's weak point id CDDA's hit landed on, when it is one (an ASCII identifier
+## of at most MAX_PART_LEN characters); "" for none or anything else.
+static func weak_point(v: Variant) -> String:
+	if not v is String:
+		return ""
+	var s: String = v
+	return s if s.length() <= MAX_PART_LEN and s.is_valid_ascii_identifier() else ""
 
 
 ## A body part index (the damage event's `detail`) as its id, "" if unknown; at most MAX_PART_LEN characters.
