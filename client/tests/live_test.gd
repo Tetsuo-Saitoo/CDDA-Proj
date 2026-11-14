@@ -80,6 +80,20 @@ func _run() -> void:
 			take.merged({"op": "put", "container": 6, "container_type": 3, "pocket": 256}, true),
 			take.merged({"op": "drop", "spot": Vector2(1.5, 0)}, true),
 			take.merged({"op": "drop", "spot": Vector2(NAN, 0)}, true)]
+	# place, spot and hold (item physics): `to` only and always with place, a pose only with a spot, a hand for hold.
+	var place := {"op": "place", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "to": Vector3i(2, 2, 0)}
+	var spot := {"op": "spot", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "spot": Vector2(0.5, 0.5)}
+	var hold := {"op": "hold", "item": 5, "type": 3, "hand": "main"}
+	bad_items.append_array([{"op": "place", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)},
+			place.merged({"to": Vector3i(1 << 27, 0, 0)}, true), place.merged({"to": Vector3(2, 2, 0)}, true),
+			{"op": "place", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)}, take.merged({"to": Vector3i(2, 2, 0)}, true),
+			place.merged({"yaw": 90}, true), place.merged({"side": true}, true),
+			{"op": "spot", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0)},
+			spot.merged({"yaw": 360}, true), spot.merged({"yaw": -1}, true), spot.merged({"yaw": 1.5}, true),
+			spot.merged({"side": 1}, true), take.merged({"spot": Vector2(0.5, 0.5), "yaw": 90}, true),
+			{"op": "hold", "item": 5, "type": 3}, hold.merged({"hand": "pack"}, true),
+			hold.merged({"hand": "tail"}, true), hold.merged({"tag": 0}, true), hold.merged({"tag": 1 << 31}, true),
+			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true)])
 	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
 			"rejects malformed item actions")
 	_check_listing()
@@ -121,11 +135,14 @@ func _run() -> void:
 
 	# CDDA's safe mode would refuse to wait with a hostile in view (random starts can have one); FP3D games start
 	# with it off, so waiting just works.
-	var queued: bool = _sim.queue_action("pause") and _sim.queue_action("pause")
+	# A well-formed item action with a tag is taken; nobody carries item 5, so its answer is a refusal.
+	var queued: bool = (_sim.queue_item_action(hold.merged({"tag": 7}, true)) and _sim.queue_action("pause")
+			and _sim.queue_action("pause"))
 	_check(queued, "queues actions")
 	req = await _main_loop_request(turn0, TURN_TIMEOUT_MS)
 	_check(not req.is_empty() and int(req["turn"]) > turn0, "a turn passes (turn %s)" % req.get("turn", "?"))
 	_check(_events.get("turn_end", 0) > 0, "turn_end events (%s)" % _events)
+	_check(_events.get("item_result", 0) == 1, "one item_result event for the tagged item action (%s)" % _events)
 	_check(_sim.get_events_dropped() == 0, "no events dropped")
 	if req.is_empty():
 		_finish()
