@@ -530,7 +530,7 @@ func pour_into(uid: float, type: float, container: float, container_type: float,
 ## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
 ## square without a floor makes CDDA drop it). `spot` (each 0..1 across the square, clamped) with `yaw` (whole
 ## degrees 0..359, counter-clockwise from above, 0 = south) and `side` (lying on its side) is the pose it takes there;
-## `spot` (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
+## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
 ## whose detail is `tag` (1..MAX_ITEM_TAG). False when refused here (nothing sent): no game, a bad handle, square,
 ## spot, yaw or tag.
 func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool,
@@ -539,7 +539,9 @@ func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vect
 			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite():
 		return false
 	var a := {"op": "place", "item": int(uid), "type": int(type), "pos": pos, "to": to, "tag": tag}
-	if spot.x >= 0.0 and spot.y >= 0.0:
+	if spot != Vector2(-1, -1):
+		if spot.x < 0.0 or spot.y < 0.0:
+			return false   # half a spot: neither a pose nor none
 		a["spot"] = _clamp_spot(spot)
 		a["yaw"] = yaw
 		a["side"] = side
