@@ -101,6 +101,15 @@ func _run() -> void:
 	_check(snap.is_valid(), "live snapshot passes the client's checks (%s)" % snap.error)
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
+	# The weather the client shows (WeatherState) comes from the env's weather fields: the bridge sends them
+	# (wind_at_player is -1 when it doesn't), and they give a weather that can be shown.
+	var ws := WeatherState.from_snapshot(snap)
+	_check(snap.wind_at_player >= 0.0 and snap.weather > 0 and snap.weather_sight >= 1.0 and snap.weather_sun >= 0.0
+			and ws.sight_m >= WeatherState.SIGHT_MIN_M and ws.cloud >= 0.0 and ws.cloud <= 1.0,
+			"the env's weather fields arrive (weather %d, precip %d kind %d, sight %.2f, light %d, sun %.2f, sound %d, wind %.1f m/s at the player %.1f, sheltered %s; cloud %.2f, fog %.2f)"
+			% [snap.weather, snap.weather_precip, snap.weather_kind, snap.weather_sight, snap.weather_light,
+			snap.weather_sun, snap.weather_sound, snap.wind_speed, snap.wind_at_player, snap.weather_sheltered, ws.cloud,
+			ws.fog])
 	# A random character can start with nothing in container pockets, so the test kit (a worn giant backpack with
 	# items in it, given at the next main-loop request, no turn passes) makes sure something is carried. Builds
 	# with the cheat opt-in (fp3d-bridge f8326cc) refuse kits until the client allows cheats; the first kit also
