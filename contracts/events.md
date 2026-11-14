@@ -12,7 +12,8 @@ Positions are absolute squares (`ui_point`, like the snapshot). Creature uids ar
 
 ```cpp
 struct event {
-    event_kind kind;   // sound, message, attack, damage, projectile, explosion, death, anim, turn_end, lightning
+    event_kind kind;   // sound, message, attack, damage, projectile, explosion, death, anim, turn_end, lightning,
+                       // item_result
     int64 turn; uint64 seq;
     uint64 uid;        // actor (0 none)
     uint64 other;      // second creature (0 none)
@@ -35,6 +36,7 @@ struct event {
 | `death` | the dead | | where | | | `mtype` (monsters) | | | the player sees it | `monster::die`, `Character::die` |
 | `anim` | busy character | | where | | | `activity` (e.g. ACT_WAIT) | | | the player sees them | `Character::assign_activity` |
 | `turn_end` | | | | | | | | | every turn | `do_turn` |
+| `item_result` | the item's handle (not a creature) | | | 1 done, 0 refused | | | the action's `tag` | why it was refused ("" when done, or when CDDA gave its reason itself as a message) | an item action that carried a `tag` has run (`queue_item_action`). Done: it took its time (an activity it started counts) or, for place and spot, it went through. Refused: the text is the refusal's message; place and spot refusals come only here, not as a `message` | `fp3d::run_item_action` |
 | `lightning` | | | the player's square | | | | | | CDDA flashes lightning (a lightning storm, above ground; about once in 10 minutes of storm), whether or not the player is outside | the `lightning` effect in `npctalk.cpp` (`f_lightning`) |
 
 A melee hit's `attack` event comes before its `damage`, once per hit; a hit may have no `damage` event (no HP
