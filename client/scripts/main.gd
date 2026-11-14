@@ -199,6 +199,7 @@ func _ready() -> void:
 		item_placer = ItemPlacer.new()
 		item_placer.bodies = item_bodies
 		item_placer.centre = func() -> Variant: return world.snapshot.player_pos if world.snapshot != null else null
+		item_placer.busy = item_actions.pending   # nothing is told about an item a hand's take / drop is under way on
 		item_placer.refused.connect(func(_uid: int, why: String) -> void:   # CDDA wouldn't move it: its reason
 			if why.is_empty():
 				return

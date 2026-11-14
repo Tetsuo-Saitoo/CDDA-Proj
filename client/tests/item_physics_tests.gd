@@ -91,6 +91,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hands_api()
 	_test_sync_cost()
 	_test_placer()
+	_test_live_ops()
 	_bodies.clear()
 	var drawn := 0   # the pile's rocks drawn static again (one of the six was taken into the pack in _test_sync_cost)
 	for k in 6:
@@ -667,7 +668,6 @@ func _test_hands_api() -> void:
 			"item physics: no body let go onto another level, past ACTIVE_R, over the cap or from a bad pose")
 
 
-## Item u lies in its pile again, not waiting: as a body there or drawn static; the pile has its PILE_BODIES bodies.
 ## Stands in for the live session's place / spot ops (lead-bridge's shapes): keeps what was sent.
 class FakeBridge extends RefCounted:
 	var ops: Array[Dictionary] = []
@@ -682,6 +682,60 @@ class FakeBridge extends RefCounted:
 		ops.append({"op": "spot", "uid": int(uid), "type": int(type), "pos": pos, "spot": spot, "yaw": yaw, "side": side,
 				"tag": tag})
 		return take
+
+
+## Stands in for CddaSim's queue_item_action: keeps what reached it.
+class FakeSim extends RefCounted:
+	var sent: Array[Dictionary] = []
+
+	func queue_item_action(a: Dictionary) -> bool:
+		sent.append(a)
+		return true
+
+
+## LiveSession.place_item / spot_item: the bridge's shapes, the spot clamped, no pose without a spot; refused here
+## (nothing reaches the sim) without a game or with a bad handle, square, spot, yaw or tag.
+func _test_live_ops() -> void:
+	var ls := LiveSession.new()
+	var p := Vector3i(10, 20, 0)
+	var e := p + Vector3i(1, 0, 0)
+	var half := Vector2(0.5, 0.5)
+	var no_game := not ls.place_item(5.0, 3.0, p, e, half, 90, false, 1) and not ls.spot_item(5.0, 3.0, p, half, 90, false, 1)
+	var sim := FakeSim.new()
+	ls._sim = sim
+	var ok := ls.place_item(5.0, 3.0, p, e, Vector2(0.25, 1.5), 90, true, 7)
+	ok = ls.place_item(5.0, 3.0, p, p + Vector3i(-1, 1, 0), Vector2(-1, -1), 0, false, 8) and ok
+	ok = ls.spot_item(6.0, 4.0, p, Vector2(-0.0, 0.75), 359, false, LiveSession.MAX_ITEM_TAG) and ok
+	var want: Array[Dictionary] = [
+		{"op": "place", "item": 5, "type": 3, "pos": p, "to": e, "spot": Vector2(0.25, ItemActions.SPOT_MAX), "yaw": 90,
+				"side": true, "tag": 7},
+		{"op": "place", "item": 5, "type": 3, "pos": p, "to": p + Vector3i(-1, 1, 0), "tag": 8},
+		{"op": "spot", "item": 6, "type": 4, "pos": p, "spot": Vector2(0.0, 0.75), "yaw": 359, "side": false,
+				"tag": LiveSession.MAX_ITEM_TAG},
+	]
+	_check.call(no_game and ok and sim.sent == want,
+			"live item ops: place and spot reach the sim in the bridge's shapes, the spot clamped (%s)" % [sim.sent])
+	var far := Vector3i(1 << 30, 0, 0)
+	var bad: Array[bool] = [
+		ls.place_item(0.0, 3.0, p, e, half, 0, false, 1), ls.place_item(5.5, 3.0, p, e, half, 0, false, 1),
+		ls.place_item(NAN, 3.0, p, e, half, 0, false, 1), ls.place_item(float(Snapshot.MAX_UID), 3.0, p, e, half, 0, false, 1),
+		ls.place_item(5.0, 0.0, p, e, half, 0, false, 1), ls.place_item(5.0, INF, p, e, half, 0, false, 1),
+		ls.place_item(5.0, float(Snapshot.MAX_ID + 1), p, e, half, 0, false, 1),
+		ls.place_item(5.0, 3.0, far, far + Vector3i(1, 0, 0), half, 0, false, 1),
+		ls.place_item(5.0, 3.0, p, p, half, 0, false, 1), ls.place_item(5.0, 3.0, p, p + Vector3i(2, 0, 0), half, 0, false, 1),
+		ls.place_item(5.0, 3.0, p, e + Vector3i(0, 0, 1), half, 0, false, 1),
+		ls.place_item(5.0, 3.0, p, e, Vector2(NAN, 0.5), 0, false, 1), ls.place_item(5.0, 3.0, p, e, Vector2(0.5, -1), 0, false, 1),
+		ls.place_item(5.0, 3.0, p, e, Vector2(-2, -2), 0, false, 1), ls.place_item(5.0, 3.0, p, e, half, -1, false, 1),
+		ls.place_item(5.0, 3.0, p, e, half, 360, false, 1), ls.place_item(5.0, 3.0, p, e, half, 0, false, 0),
+		ls.place_item(5.0, 3.0, p, e, half, 0, false, LiveSession.MAX_ITEM_TAG + 1),
+		ls.spot_item(5.0, 3.0, p, Vector2(-1, -1), 0, false, 1), ls.spot_item(5.0, 3.0, p, Vector2(0.5, INF), 0, false, 1),
+		ls.spot_item(5.0, 3.0, far, half, 0, false, 1), ls.spot_item(5.0, 3.0, p, half, 400, false, 1),
+		ls.spot_item(-5.0, 3.0, p, half, 0, false, 1), ls.spot_item(5.0, 3.0, p, half, 0, false, -3),
+	]
+	_check.call(not bad.has(true) and sim.sent.size() == want.size(),
+			"live item ops: a bad handle, square, next square, spot, yaw or tag is refused, nothing sent (%s)" % [bad])
+	ls._sim = null
+	ls.free()
 
 
 ## The body of `uid` now lies at `spot` across square sq, turned `rot`, and comes to rest there.
@@ -953,12 +1007,28 @@ func _test_placer() -> void:
 	_world.snapshot.turn += 50
 	_check.call(flying and placer.waiting() == 0 and placer._flight.is_empty() and placer._by_uid.is_empty(),
 			"item placer: the game's clock went back: everything waiting or in flight is forgotten")
+	# a hand's action on the item is in flight (ItemActions.pending): nothing is told until it has landed
+	var busy := ["take"]
+	placer.busy = func(u: int) -> String: return busy[0] if u == y else ""
+	_rest_at(y, E, Vector2(0.3, 0.7))
+	sent = fake.ops.size()
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	var waited := fake.ops.size() == sent and placer.waiting() == 1
+	busy[0] = ""
+	_ms += ItemPlacer.GAP_MS
+	placer.update()
+	op = fake.ops[-1] if fake.ops.size() > sent else {}
+	_check.call(waited and op.get("op") == "spot" and op.get("uid") == y,
+			"item placer: an item a hand's action is under way on waits, then is told (%s %s)" % [waited, op])
+	placer.busy = Callable()
 	placer.bodies = null
 	placer.free()
 	_snap.seq += 1
 	_bodies.update()
 
 
+## Item u lies in its pile again, not waiting: as a body there or drawn static; the pile has its PILE_BODIES bodies.
 func _back_on_pile(u: int) -> bool:
 	var as_body: bool = _bodies.body_of(u) != null and _bodies.square_of(u) == PILE
 	var drawn: bool = _bodies.body_of(u) == null and not _world.hidden_items.has(u) and not _world.item_slot(u).is_empty()
