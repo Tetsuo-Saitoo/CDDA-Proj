@@ -493,6 +493,7 @@ func _start_vr() -> void:
 	if xr.has_signal("pose_recentered"):
 		xr.connect("pose_recentered", func() -> void: XRServer.center_on_hmd(XRServer.RESET_BUT_KEEP_TILT, true))
 	vr_perf = VrPerf.new(xr)
+	vr_perf.settings_of = func() -> Dictionary: return vr.settings
 	add_child(vr_perf)
 	vr.live_stairs = live != null
 	vr.stair_used.connect(func(st: Dictionary) -> void:
