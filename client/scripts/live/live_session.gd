@@ -57,6 +57,7 @@ var _cheats := {}
 var _queries := {}
 var _recipe_results := {}
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
+const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
 const MAX_KEPT_RESULTS := 32
 const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
 ## Test range: the last info (no results), its seq, ops sent and waiting for a result (id -> msec sent).
@@ -66,6 +67,12 @@ var _range_ops := {}
 var _range_poll_s := 0.0
 ## Waiting range ops at most: the bridge keeps 32 waiting but only the last 16 results, so more could lose theirs.
 const MAX_RANGE_OPS := RangeInfo.MAX_RESULTS
+## The weather cheat: at most this many types are looked at, each name cut to this length; wind in m/s.
+const MAX_WEATHER_TYPES := 128
+const MAX_WEATHER_NAME := 48
+const MAX_WIND := 45.0
+## cheat_set_weather's wind for "as the game decides".
+const WIND_GAME := -1.0
 const NO_ANSWER := "no answer yet (it may still run later)"
 const RANGE_POLL_S := 1.0           # outside a range game, how often to look again
 ## The running game was started new (not loaded): --test gives its test kit only then.
@@ -378,6 +385,59 @@ func can_teleport() -> bool:
 	return cheats_allowed and _can("cheat_teleport")
 
 
+## CDDA's weather types for the weather cheat (CddaSim.get_weather_types, lead-bridge), cleaned: [{id, name}] in
+## the bridge's order; [] without a game, before its data is loaded, or with a bridge that hasn't got it.
+func weather_types() -> Array:
+	if not _can("get_weather_types"):
+		return []
+	return clean_weather_types(_sim.get_weather_types())
+
+
+## get_weather_types' reply as hostile input: only the first MAX_WEATHER_TYPES entries are looked at; each must be
+## a Dictionary whose id is a CDDA id (1..64 of letters, digits, _ and -, like a monster id) not seen before; its
+## name becomes one plain line (no tags or control characters) of at most MAX_WEATHER_NAME, the id when empty.
+static func clean_weather_types(v: Variant) -> Array:
+	var out: Array = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_WEATHER_TYPES):
+		if not e is Dictionary:
+			continue
+		var id: Variant = (e as Dictionary).get("id")
+		if not id is String or not RangeInfo.monster_id_ok(id) or seen.has(id):
+			continue
+		seen[id] = true
+		var n := Snapshot.plain_text((e as Dictionary).get("name"), MAX_WEATHER_NAME)
+		out.append({"id": id, "name": n if not n.is_empty() else str(id)})
+	return out
+
+
+## The weather the cheat holds (get_cheats' "weather"): "" when the game decides, without a game, or for junk.
+func cheat_weather() -> String:
+	if not _can("get_cheats"):
+		return ""
+	var d: Variant = _sim.get_cheats()
+	var w: Variant = (d as Dictionary).get("weather", "") if d is Dictionary else ""
+	return str(w) if w is String and RangeInfo.monster_id_ok(w) else ""
+
+
+## Cheat: holds the weather at type `id` ("" hands it back to the game) with the wind at `wind` m/s (0..MAX_WIND;
+## WIND_GAME leaves the wind to the game). CddaSim.cheat_set_weather (lead-bridge): any game, cheats allowed. Same
+## op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, a bad id or wind).
+func cheat_set_weather(id: String, wind: float) -> int:
+	if not can_set_weather() or not (id.is_empty() or RangeInfo.monster_id_ok(id)):
+		return 0
+	if wind != WIND_GAME and not (wind >= 0.0 and wind <= MAX_WIND):   # NaN fails both
+		return 0
+	return _range_op("cheat_set_weather", [id, wind])
+
+
+## The weather cheat can be asked for now (the F1 row is greyed out otherwise).
+func can_set_weather() -> bool:
+	return cheats_allowed and _can("cheat_set_weather")
+
+
 func _range_op(method: String, args: Array) -> int:
 	if not _can(method) or _range_ops.size() >= MAX_RANGE_OPS:
 		return 0
@@ -524,6 +584,48 @@ func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
 func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
 			"container": int(container), "container_type": int(container_type), "pocket": pocket})
+
+
+## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
+## square without a floor makes CDDA drop it). `spot` (each 0..1 across the square, clamped) with `yaw` (whole
+## degrees 0..359, counter-clockwise from above, 0 = south) and `side` (lying on its side) is the pose it takes there;
+## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
+## whose detail is `tag` (1..MAX_ITEM_TAG). False when refused here (nothing sent): no game, a bad handle, square,
+## spot, yaw or tag.
+func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool,
+		tag: int) -> bool:
+	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not ItemActions.ok_square(to) or to.z != pos.z \
+			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite():
+		return false
+	var a := {"op": "place", "item": int(uid), "type": int(type), "pos": pos, "to": to, "tag": tag}
+	if spot != Vector2(-1, -1):
+		if spot.x < 0.0 or spot.y < 0.0:
+			return false   # half a spot: neither a pose nor none
+		a["spot"] = _clamp_spot(spot)
+		a["yaw"] = yaw
+		a["side"] = side
+	return _sim.queue_item_action(a)
+
+
+## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's). False when refused
+## here (nothing sent), as place_item, or without a spot.
+func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not spot.is_finite() or spot.x < 0.0 \
+			or spot.y < 0.0:
+		return false
+	return _sim.queue_item_action({"op": "spot", "item": int(uid), "type": int(type), "pos": pos,
+			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
+
+
+## A whole uid and itype in the snapshot's ranges, a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
+static func _item_op_ok(uid: float, type: float, pos: Vector3i, yaw: int, tag: int) -> bool:
+	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
+			and uid < float(Snapshot.MAX_UID) and type >= 1.0 and type <= float(Snapshot.MAX_ID) \
+			and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 and tag <= MAX_ITEM_TAG
+
+
+static func _clamp_spot(spot: Vector2) -> Vector2:
+	return spot.clamp(Vector2.ZERO, Vector2(ItemActions.SPOT_MAX, ItemActions.SPOT_MAX))
 
 
 ## Actions waiting in the bridge's queue (0 without a game).

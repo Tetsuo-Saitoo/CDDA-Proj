@@ -20,6 +20,7 @@ extends Node
 ## `backend` (main.gd: the live session) is duck-typed: place_item(uid, type, pos, to, spot, yaw, side, tag) and
 ## spot_item(uid, type, pos, spot, yaw, side, tag), both -> bool (taken). Without them nothing is sent and the
 ## bodies behave as before. Events are checked (kinds, numbers, capped text): the bridge's data is not trusted.
+## Nothing is sent for an item a hand's one-item action (take, put, drop...) is under way on (`busy`).
 
 ## CDDA refused to move or pose item `uid` (its reason, cleaned and capped).
 signal refused(uid: int, reason: String)
@@ -53,6 +54,8 @@ var backend: Object
 var centre := Callable()
 ## Milliseconds (tests); invalid: the engine's clock.
 var clock := Callable()
+## uid -> the one-item action in flight on it, "" none (main.gd: ItemActions.pending).
+var busy := Callable()
 var spots := 0            # spot ops sent (tests)
 var places := 0           # place ops sent
 var refusals := 0         # ops CDDA refused
@@ -149,8 +152,8 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if bodies.body_of(uid) == null:
 		_drop(uid)
 		return false
-	if _by_uid.has(uid) or bodies.is_pending(uid) or now < int(_retry_ms.get(uid, 0)):
-		return false   # its op is in flight, CDDA's own drop hasn't landed yet, or the game was busy just now
+	if _by_uid.has(uid) or bodies.is_pending(uid) or now < int(_retry_ms.get(uid, 0)) or _busy(uid):
+		return false   # its op is in flight, CDDA's own drop or a hand's action on it hasn't landed, or the game was busy
 	if not bodies.at_rest(uid):
 		_drop(uid)   # moving again: it reports when it rests
 		return false
@@ -306,6 +309,12 @@ static func _int(v: Variant) -> int:
 	if v is float and is_finite(v) and absf(v) <= float(MAX_TAG):
 		return int(v)
 	return 0
+
+
+## A hand's one-item action on `uid` is in flight.
+func _busy(uid: int) -> bool:
+	var p: Variant = busy.call(uid) if busy.is_valid() else ""
+	return p is String and not (p as String).is_empty()
 
 
 ## The game turn the world's snapshot shows (0 without one).

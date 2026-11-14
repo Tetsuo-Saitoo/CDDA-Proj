@@ -30,6 +30,10 @@ func run(root: Node, check: Callable) -> void:
 	_test_panel_root()
 	await _test_held_then_hidden()
 	await _test_scaled()
+	_test_keys_pad()
+	await _test_fit()
+	await _test_dock()
+	await _test_string_pad()
 	_vp.free()
 	ui = null
 
@@ -154,6 +158,234 @@ func _test_scaled() -> void:
 	_check.call(answers == [{"id": 7, "entry": 12}], "panel: a click on a scaled row picks it (%s)" % [answers])
 	ui.set_ui_scale(NAN)
 	_check.call(ui.ui_scale == 1.0 and ui.scale == Vector2.ONE, "panel: a bad scale is 1")
+
+
+## TextKeys by pad and stick: the D-pad / ui_* actions move a cursor over the keys (wrapping, keeping its place
+## between rows of different lengths), A / ui_accept presses, X is Back, Y is Shift; real keys, the mouse and
+## releases are left alone.
+func _test_keys_pad() -> void:
+	var le := LineEdit.new()
+	_vp.add_child(le)
+	var k := TextKeys.new()
+	_vp.add_child(k)
+	k.target = le
+	var entered := [0]
+	k.enter.connect(func() -> void: entered[0] += 1)
+	var untouched := not k.handle_input(_pad(JOY_BUTTON_A)) and not k.handle_input(_act(&"ui_accept")) and le.text == "" \
+			and not k.cursor_on
+	var first := untouched and k.handle_input(_pad(JOY_BUTTON_DPAD_RIGHT)) and k.cursor_on and k.cursor == Vector2i.ZERO
+	k.handle_input(_act(&"ui_right"))
+	k.handle_input(_pad(JOY_BUTTON_A))
+	k.handle_input(_pad(JOY_BUTTON_DPAD_DOWN))
+	k.handle_input(_pad(JOY_BUTTON_Y))
+	k.handle_input(_act(&"ui_accept"))
+	var typed := le.text
+	k.handle_input(_pad(JOY_BUTTON_X))
+	_check.call(first and typed == "2W" and le.text == "2" and not k.shift and k.cursor == Vector2i(1, 1),
+			"keys pad: accept is left alone until the cursor shows; the first direction shows it; then A types, Y shifts, X deletes (%s)" % typed)
+	k.handle_input(_pad(JOY_BUTTON_DPAD_LEFT))
+	k.handle_input(_pad(JOY_BUTTON_DPAD_LEFT))
+	var wrapped := k.cursor
+	for i in 3:
+		k.handle_input(_act(&"ui_down"))
+	var bottom := k.cursor_key()
+	k.handle_input(_pad(JOY_BUTTON_A))
+	k.handle_input(_act(&"ui_up"))
+	var up := k.cursor_key().text
+	k.handle_input(_act(&"ui_down"))
+	k.handle_input(_act(&"ui_down"))
+	_check.call(wrapped == Vector2i(9, 1) and bottom == k.enter_button and entered[0] == 1 and up == "." and k.cursor.y == 0
+			and le.text == "2", "keys pad: it wraps, keeps its place across rows, and Enter is a key (%s, %s)" % [wrapped, up])
+	var key := InputEventKey.new()
+	key.keycode = KEY_DOWN
+	key.pressed = true
+	var released := _pad(JOY_BUTTON_A)
+	released.pressed = false
+	var at := k.cursor
+	_check.call(not k.handle_input(key) and not k.handle_input(released) and not k.handle_input(InputEventMouseMotion.new())
+			and not k.handle_input(_act(&"ui_cancel")) and not k.handle_input(_pad(JOY_BUTTON_B)) and not k.handle_input(null)
+			and k.cursor == at and le.text == "2", "keys pad: real keys, the mouse, releases, cancel and B are left alone")
+	k.free()
+	le.free()
+
+
+## PanelFit: a full-rect menu drawn larger still fills its parent, keeps the margins it had, and follows the
+## parent's size; main.menus_to_panel moves menus under the panel's root that way. Not full-rect: left alone.
+func _test_fit() -> void:
+	var Main := load("res://scripts/main.gd")
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_vp.add_child(root)
+	var old := Control.new()
+	_vp.add_child(old)
+	var full := Control.new()
+	full.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var inset := Control.new()   # like the F1 menu: margins of its own
+	inset.set_anchors_preset(Control.PRESET_FULL_RECT)
+	inset.offset_left = 60
+	inset.offset_top = 50
+	inset.offset_right = -60
+	inset.offset_bottom = -50
+	old.add_child(full)
+	old.add_child(inset)
+	Main.menus_to_panel(root, [full, null, inset, "junk"], 1.35)
+	await _frames()
+	var fr := full.get_global_rect()
+	var ir := inset.get_global_rect()
+	var area := Vector2(_vp.size)
+	_check.call(full.get_parent() == root and inset.get_parent() == root and inset.get_index() > full.get_index()
+			and fr.position.is_equal_approx(Vector2.ZERO) and fr.size.is_equal_approx(area)
+			and full.size.is_equal_approx(area / 1.35) and full.scale == Vector2(1.35, 1.35)
+			and ir.position.is_equal_approx(Vector2(60, 50)) and ir.end.is_equal_approx(area - Vector2(60, 50)),
+			"fit: menus moved to the panel fill it drawn 1.35x, margins kept (%s, %s)" % [fr, ir])
+	root.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	root.size = Vector2(640, 400)
+	await _frames()
+	_check.call(full.get_global_rect().size.is_equal_approx(Vector2(640, 400))
+			and inset.get_global_rect().end.is_equal_approx(Vector2(580, 350)), "fit: it follows the parent's size")
+	var corner := Control.new()
+	corner.size = Vector2(100, 40)
+	root.add_child(corner)
+	var again := PanelFit.apply(inset, NAN)
+	_check.call(not PanelFit.apply(corner, 1.35) and corner.scale == Vector2.ONE and not PanelFit.apply(null, 2.0)
+			and again and inset.scale == Vector2.ONE and inset.anchor_right == 1.0 and inset.offset_right == -60.0
+			and not inset.has_meta(PanelFit.META) and PanelFit.apply(full, 99.0) and full.scale == Vector2(3, 3),
+			"fit: not full-rect or freed: left alone; a bad scale is 1 and puts the anchors back; capped at 3")
+	root.free()
+	old.free()
+
+
+## TextKeysDock: the keyboard for whichever text field has the focus. A pad's Y opens it; with `auto` (the VR panel)
+## a click on the field opens it and a tab shows otherwise; B, Hide or the focus leaving closes it; it sits at the
+## bottom, or at the top while the field is low; a field with its own keys is left alone; hidden when not needed.
+func _test_dock() -> void:
+	var host := Control.new()
+	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_vp.add_child(host)
+	var le := LineEdit.new()
+	le.position = Vector2(100, 100)
+	le.size = Vector2(300, 30)
+	host.add_child(le)
+	var other := Button.new()   # something later in the tree: the dock goes over it when it opens
+	host.add_child(other)
+	var dock := TextKeysDock.new()
+	host.add_child(dock)
+	host.move_child(dock, 0)
+	var sent := [0]
+	le.text_submitted.connect(func(_t: String) -> void: sent[0] += 1)
+	await _frames()
+	_check.call(not dock.visible and dock.target == null and not dock.handle_input(_pad(JOY_BUTTON_Y)),
+			"dock: hidden with no text field focused; Y does nothing")
+	le.grab_focus()
+	await _frames()
+	var quiet := dock.target == le and not dock.visible and not dock.is_open()
+	_vp.push_input(_pad(JOY_BUTTON_Y), true)
+	var opened := dock.is_open() and dock.visible and dock.panel.visible and dock.get_index() == host.get_child_count() - 1
+	var at_bottom := dock.panel.position.y > host.size.y / 2.0 \
+			and absf(dock.panel.position.x + dock.panel.get_combined_minimum_size().x / 2.0 - host.size.x / 2.0) < 1.0
+	_vp.push_input(_pad(JOY_BUTTON_A), true)
+	_vp.push_input(_act(&"ui_right"), true)
+	_vp.push_input(_act(&"ui_accept"), true)
+	_check.call(quiet and opened and at_bottom and le.text == "12",
+			"dock: a focused field alone shows nothing; a pad's Y opens the keys at the bottom, over the rest; the pad types (%s)" % le.text)
+	dock.keys.enter_button.pressed.emit()
+	_vp.push_input(_pad(JOY_BUTTON_B), true)
+	_check.call(sent[0] == 1 and not dock.is_open() and not dock.visible and le.has_focus(),
+			"dock: Enter reaches the field as a real Enter; B closes the keys, the field keeps the focus")
+	dock.auto = true
+	await _frames()
+	var tab := dock.visible and dock.tab.visible and not dock.panel.visible
+	_mouse(le.get_global_rect().get_center(), true)
+	_mouse(le.get_global_rect().get_center(), false)
+	await _frames()
+	var by_click := dock.is_open() and dock.panel.visible and not dock.tab.visible
+	dock.hide_button.pressed.emit()
+	_mouse(Vector2(900, 400), true)   # a click elsewhere doesn't open them
+	_mouse(Vector2(900, 400), false)
+	await _frames()
+	var stays := not dock.is_open() and dock.tab.visible
+	dock.tab.pressed.emit()
+	_check.call(tab and by_click and stays and dock.is_open(),
+			"dock auto: a tab while a field has the focus; a click on the field or the tab opens the keys, Hide closes them")
+	le.position.y = 600
+	dock.ui_scale = 1.35
+	dock.close()
+	dock.open()
+	_check.call(is_equal_approx(dock.panel.position.y, TextKeysDock.MARGIN) and dock.panel.scale == Vector2(1.35, 1.35)
+			and dock.panel.position.x >= 0.0, "dock: over a field low on the page the keys sit at the top; drawn larger with ui_scale")
+	le.release_focus()
+	await _frames()
+	var left := not dock.visible and dock.target == null and not dock.is_open()
+	le.set_meta(TextKeysDock.OWN_KEYS, true)
+	le.grab_focus()
+	await _frames()
+	var own := dock.target == null and not dock.visible
+	le.remove_meta(TextKeysDock.OWN_KEYS)
+	le.editable = false
+	await _frames()
+	_check.call(left and own and dock.target == null and not dock.open(),
+			"dock: it closes when the focus leaves; fields with their own keys or not editable are left alone")
+	host.free()
+
+
+## A text prompt by pad alone: Y opens its keys, the D-pad and A type, the keys' Enter sends the answer.
+func _test_string_pad() -> void:
+	ui.keyboard = false
+	_show(_req("string", {"title": "Name", "max_len": 8, "entries": [{"id": 0, "label": "", "enabled": true, "description": ""}]}))
+	await _frames()
+	var w := ui.widget as StringRequestWidget
+	var hidden := w != null and not w.keys.visible and w.edit.has_meta(TextKeysDock.OWN_KEYS)
+	_vp.push_input(_pad(JOY_BUTTON_Y), true)
+	var shown := w != null and w.keys.visible
+	_vp.push_input(_pad(JOY_BUTTON_A), true)
+	_vp.push_input(_pad(JOY_BUTTON_DPAD_DOWN), true)
+	_vp.push_input(_act(&"ui_accept"), true)
+	var text := w.edit.text if w != null else ""
+	if w != null:
+		w.keys.enter_button.pressed.emit()
+	_check.call(hidden and shown and text == "1q" and answers == [{"id": 7, "text": "1q"}],
+			"panel: a text prompt by pad: Y opens the keys, the D-pad and A type, Enter sends (%s, %s)" % [text, answers])
+	# on the VR panel the keys show from the start: accept still sends the prompt as it stands (it types nothing)
+	# until a direction has put the cursor on the keys
+	ui.keyboard = true
+	_show(_req("string", {"title": "How many?", "entries": [{"id": 0, "label": "5", "enabled": true, "description": ""}]}))
+	await _frames()
+	w = ui.widget as StringRequestWidget
+	var from_start := w != null and w.keys.visible and not w.keys.cursor_on
+	_vp.push_input(_act(&"ui_accept"), true)
+	var sent_as_is := answers == [{"id": 7, "text": "5"}]
+	_show(_req("string", {"title": "How many?", "entries": [{"id": 0, "label": "5", "enabled": true, "description": ""}]}))
+	await _frames()
+	w = ui.widget as StringRequestWidget
+	if w != null:
+		w.edit.deselect()
+		w.edit.caret_column = 1
+	_vp.push_input(_act(&"ui_down"), true)
+	_vp.push_input(_act(&"ui_accept"), true)
+	var typed := w.edit.text if w != null else ""
+	_check.call(from_start and sent_as_is and typed == "51" and answers.is_empty(),
+			"panel: keys shown from the start: accept sends the prompt as it stands; after a direction it types (%s)" % typed)
+	ui.keyboard = false
+	ui.clear()
+	_show(_req("string", {"entries": [{"id": 0, "label": "x", "enabled": true, "description": ""}]}))
+	await _frames()
+	_vp.push_input(_pad(JOY_BUTTON_Y), true)
+	_vp.push_input(_pad(JOY_BUTTON_B), true)
+	_check.call(answers == [{"id": 7, "cancel": true}], "panel: B still cancels a text prompt while its keys show (%s)" % [answers])
+
+
+func _pad(button: JoyButton) -> InputEventJoypadButton:
+	var e := InputEventJoypadButton.new()
+	e.button_index = button
+	e.pressed = true
+	return e
+
+
+func _act(a: StringName) -> InputEventAction:
+	var e := InputEventAction.new()
+	e.action = a
+	e.pressed = true
+	return e
 
 
 ## main.gd finds the VR panel's root by name (VrPanel.root) and only when it is a Control.

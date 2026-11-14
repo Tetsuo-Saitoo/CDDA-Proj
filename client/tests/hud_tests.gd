@@ -89,7 +89,7 @@ func _test_mood() -> void:
 	]
 	var m := Snapshot.morale_from(raw)
 	var short: Array = m.map(func(x: Dictionary) -> String: return (x["name"] as String).left(12))
-	_check.call(m.size() == 6 and m[0] == {"name": "Wet", "value": -12} and m[1]["value"] == 20 and m[3]["name"] == "Zero"
+	_check.call(m.size() == 6 and m[0] == {"name": "Wet", "value": -12, "percent": -1} and m[1]["value"] == 20 and m[3]["name"] == "Zero"
 			and (m[5]["name"] as String).length() == Snapshot.MAX_MORALE_NAME,
 			"mood: morale entries read and cleaned, bad ones skipped, names capped (%s)" % [short])
 	var many: Array = []
@@ -99,10 +99,33 @@ func _test_mood() -> void:
 			and Snapshot.morale_from("x").is_empty() and Snapshot.morale_from(null).is_empty(),
 			"mood: entries capped at %d; not a list: none" % Snapshot.MAX_MORALE)
 	var words := [HudData.mood_word(250), HudData.mood_word(100), HudData.mood_word(50), HudData.mood_word(10),
-			HudData.mood_word(9), HudData.mood_word(-10), HudData.mood_word(-11), HudData.mood_word(-51),
-			HudData.mood_word(-101), HudData.mood_word(-201)]
-	_check.call(words == ["Elated", "Joyful", "Happy", "Content", "Fine", "Fine", "Unhappy", "Miserable", "Depressed",
-			"Despairing"], "mood: a word per band (%s)" % [words])
+			HudData.mood_word(9), HudData.mood_word(-10), HudData.mood_word(-11), HudData.mood_word(-50),
+			HudData.mood_word(-51), HudData.mood_word(-100), HudData.mood_word(-101)]
+	var bands := [HudData.mood_band(100), HudData.mood_band(99), HudData.mood_band(10), HudData.mood_band(-10),
+			HudData.mood_band(-50), HudData.mood_band(-100), HudData.mood_band(-32768)]
+	_check.call(words == ["Joyful", "Joyful", "Happy", "Content", "Fine", "Fine", "Unhappy", "Unhappy", "Miserable",
+			"Miserable", "Depressed"] and bands == [3, 2, 1, 0, -1, -2, -3],
+			"mood: a word per band, the bands CDDA's mood face uses (%s)" % [words])
+	# the bridge's player.mood object: its own fields cleaned one by one, its entries with their share
+	var obj := {"level": -20.0, "band": -1, "face": "<color_red>):</color>" + String.chr(0x202E), "total": 9,
+			"entries": [{"name": "Craving caffeine", "value": -30, "percent": 100}, {"name": "Music", "value": 10, "percent": 250},
+				{"name": "Odd", "value": 4, "percent": "half"}]}
+	var info := Snapshot.mood_from(obj)
+	var ents := Snapshot.morale_from(obj["entries"])
+	var odd := Snapshot.mood_from({"level": 1.5, "band": 9, "face": 7, "total": -1, "extra": "x"})
+	_check.call(info == {"level": -20, "band": -1, "face": "):", "total": 9} and odd.is_empty() and Snapshot.mood_from("x").is_empty()
+			and Snapshot.mood_from(null).is_empty() and (Snapshot.mood_from({"face": "x".repeat(99)})["face"] as String).length() == 16
+			and ents == [{"name": "Craving caffeine", "value": -30, "percent": 100}, {"name": "Music", "value": 10, "percent": -1},
+				{"name": "Odd", "value": 4, "percent": -1}],
+			"mood: the bridge's mood object read field by field, bad ones left out; entries carry their share (%s)" % [info])
+	var from_obj := HudData.mood_from(-7, ents, info)
+	_check.call(from_obj["value"] == -20 and from_obj["band"] == -1 and from_obj["word"] == "Unhappy" and from_obj["face"] == "):"
+			and from_obj["more"] == 6 and from_obj["reasons"][0] == {"name": "Craving caffeine", "value": -30, "percent": 100}
+			and from_obj["text"] == "Mood: Unhappy (Craving caffeine -30, Music +10, Odd +4, +6 more)"
+			and HudData.mood_from(null, [], {"level": 120})["word"] == "Joyful"
+			and HudData.mood_from(120, [], {"band": -3})["word"] == "Depressed" and HudData.mood_from(5, [], "junk")["band"] == 0
+			and HudData.mood_from(5, [], {"band": 2.5, "total": "many", "face": 3})["more"] == 0,
+			"mood: the mood object's level and band win, CDDA's total counts the rest (%s)" % from_obj["text"])
 	var h := HudData.new()
 	var seen: Array = []
 	h.changed.connect(func(p: PackedStringArray) -> void: seen.append(p))
@@ -116,6 +139,7 @@ func _test_mood() -> void:
 	h.update(s, null)
 	var names: Array = h.mood["reasons"].map(func(r: Dictionary) -> String: return (r["name"] as String).left(8))
 	_check.call(h.mood["value"] == -20 and h.mood["word"] == "Unhappy" and h.mood["level"] == HudData.HURT
+			and h.mood["band"] == -1 and h.mood["face"] == "" and h.mood["more"] == 2
 			and names == ["Enjoyed ", "Killed i", "Wet", "Cold", "XXXXXXXX"]
 			and h.mood["text"] == "Mood: Unhappy (Enjoyed delicious food +20, Killed innocent -20, Wet -12, +2 more)"
 			and is_equal_approx(h.mood["cue"], -10.0 / 90.0) and seen.size() == 1 and "mood" in seen[0],
@@ -135,6 +159,13 @@ func _test_mood() -> void:
 	h.update(s, null)
 	_check.call(h.warnings.any(func(w: Dictionary) -> bool: return w["text"] == "Depressed" and w["level"] == HudData.BAD),
 			"mood: very low morale warns with its word")
+	s.player_mood = {"level": 10, "band": 1, "face": ":)", "total": 0}   # the object wins over player_needs
+	h.update(s, null)
+	_check.call(h.mood["value"] == 10 and h.mood["word"] == "Content" and h.mood["face"] == ":)" and h.mood["cue"] == 0.0
+			and HudView.mood_color(h.mood) == HudData.level_color(HudData.OK),
+			"mood: at exactly +10 the line is Content and green (the tint starts above it)")
+	s.player_mood = {}
+	h.update(s, null)
 	var view := HudView.new()
 	view.data = h
 	_check.call(view.mood_line() == [h.mood["text"], HudData.BAD] and view.mood.text == h.mood["text"]
@@ -147,6 +178,21 @@ func _test_mood() -> void:
 	_check.call(h.mood.is_empty() and view.mood.text == "" and view.mood_line().is_empty(),
 			"mood: gone when the snapshot stops sending it")
 	view.free()
+	# the left column: the mood line under the body block (12 rows: CDDA's main parts), the feed under the mood
+	var col := HudData.new()
+	for i in 12:
+		col.body.append({"name": "part %d" % i, "frac": 1.0, "level": HudData.OK})
+	col.mood = HudData.mood_from(-60, [{"name": "Wet", "value": -60, "percent": 100}])
+	var v2 := HudView.new()
+	v2.data = col
+	var body_end := HudView.BODY_TOP + 12 * HudView.ROW_H
+	var stacked := v2.mood.offset_top >= body_end and v2.feed.offset_top >= v2.mood.offset_bottom \
+			and v2.mood.offset_bottom - v2.mood.offset_top == HudView.MOOD_H
+	col.mood = {}
+	col.changed.emit(PackedStringArray(["mood"]))
+	_check.call(stacked and v2.feed.offset_top >= body_end and v2.feed.offset_top < v2.mood.offset_bottom,
+			"mood: the line sits under the body block and the feed under it; no line: the feed moves up")
+	v2.free()
 
 
 ## player.move_mode: the id tables name it, HudData words it, running says how much stamina is left once it runs

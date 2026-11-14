@@ -2,8 +2,10 @@ class_name StringRequestWidget
 extends RequestWidget
 ## `string` requests (string_input_popup): a text field holding CDDA's default text (`entries[0].label`).
 ## Enter sends, Esc cancels. The text goes out without control characters, within `max_len` characters and the
-## bridge's 1024 bytes. Answer: `text`. An on-screen keyboard (TextKeys) under the field, for the laser or a mouse:
-## shown from the start when `show_keys` (RequestUI.keyboard: on the VR panel), else behind the Keyboard button.
+## bridge's 1024 bytes. Answer: `text`. An on-screen keyboard (TextKeys) under the field, for the laser, a mouse,
+## a pad or the VR stick: shown from the start when `show_keys` (RequestUI.keyboard: on the VR panel), else behind
+## the Keyboard button or a pad's Y. While it shows, the pad and the stick work its keys (its Enter sends); accept
+## keeps sending the prompt until a direction has put the cursor on the keys (or the pad opened them).
 
 var edit: LineEdit
 var max_len := MAX_ANSWER_TEXT_BYTES
@@ -26,8 +28,10 @@ func setup(req: Dictionary) -> void:
 	edit.custom_minimum_size.x = 420
 	edit.text_submitted.connect(func(_t: String) -> void: submit())
 	add_child(edit)
+	edit.set_meta(TextKeysDock.OWN_KEYS, true)   # the dock leaves this field to the keys below
 	keys = TextKeys.new()
 	keys.target = edit
+	keys.enter.connect(submit)
 	keys.visible = show_keys
 	add_child(keys)
 	var bar := HBoxContainer.new()
@@ -44,6 +48,21 @@ func setup(req: Dictionary) -> void:
 func toggle_keys() -> void:
 	keys.visible = not keys.visible
 	mark(keys_button, keys.visible)
+
+
+## The pad opens the keys with Y; while they show, the pad and the stick's ui_* actions work them (B / ui_cancel
+## still cancels the prompt, through handle_input).
+func handle_raw(event: InputEvent) -> bool:
+	if done or event == null:
+		return false
+	if not keys.visible:
+		var pad := event as InputEventJoypadButton
+		if pad != null and pad.pressed and pad.button_index == JOY_BUTTON_Y:
+			toggle_keys()
+			keys.show_cursor()   # opened by the pad: A types from here on
+			return true
+		return false
+	return keys.handle_input(event)
 
 
 func submit() -> void:
