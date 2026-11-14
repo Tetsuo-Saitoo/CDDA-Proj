@@ -66,6 +66,12 @@ var _range_ops := {}
 var _range_poll_s := 0.0
 ## Waiting range ops at most: the bridge keeps 32 waiting but only the last 16 results, so more could lose theirs.
 const MAX_RANGE_OPS := RangeInfo.MAX_RESULTS
+## The weather cheat: at most this many types are looked at, each name cut to this length; wind in m/s.
+const MAX_WEATHER_TYPES := 128
+const MAX_WEATHER_NAME := 48
+const MAX_WIND := 45.0
+## cheat_set_weather's wind for "as the game decides".
+const WIND_GAME := -1.0
 const NO_ANSWER := "no answer yet (it may still run later)"
 const RANGE_POLL_S := 1.0           # outside a range game, how often to look again
 ## The running game was started new (not loaded): --test gives its test kit only then.
@@ -376,6 +382,59 @@ func cheat_teleport(pos: Vector3i) -> int:
 ## The teleport cheat can be asked for now (the F1 entry is greyed out otherwise).
 func can_teleport() -> bool:
 	return cheats_allowed and _can("cheat_teleport")
+
+
+## CDDA's weather types for the weather cheat (CddaSim.get_weather_types, lead-bridge), cleaned: [{id, name}] in
+## the bridge's order; [] without a game, before its data is loaded, or with a bridge that hasn't got it.
+func weather_types() -> Array:
+	if not _can("get_weather_types"):
+		return []
+	return clean_weather_types(_sim.get_weather_types())
+
+
+## get_weather_types' reply as hostile input: only the first MAX_WEATHER_TYPES entries are looked at; each must be
+## a Dictionary whose id is a CDDA id (1..64 of letters, digits, _ and -, like a monster id) not seen before; its
+## name becomes one plain line (no tags or control characters) of at most MAX_WEATHER_NAME, the id when empty.
+static func clean_weather_types(v: Variant) -> Array:
+	var out: Array = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_WEATHER_TYPES):
+		if not e is Dictionary:
+			continue
+		var id: Variant = (e as Dictionary).get("id")
+		if not id is String or not RangeInfo.monster_id_ok(id) or seen.has(id):
+			continue
+		seen[id] = true
+		var n := Snapshot.plain_text((e as Dictionary).get("name"), MAX_WEATHER_NAME)
+		out.append({"id": id, "name": n if not n.is_empty() else str(id)})
+	return out
+
+
+## The weather the cheat holds (get_cheats' "weather"): "" when the game decides, without a game, or for junk.
+func cheat_weather() -> String:
+	if not _can("get_cheats"):
+		return ""
+	var d: Variant = _sim.get_cheats()
+	var w: Variant = (d as Dictionary).get("weather", "") if d is Dictionary else ""
+	return str(w) if w is String and RangeInfo.monster_id_ok(w) else ""
+
+
+## Cheat: holds the weather at type `id` ("" hands it back to the game) with the wind at `wind` m/s (0..MAX_WIND;
+## WIND_GAME leaves the wind to the game). CddaSim.cheat_set_weather (lead-bridge): any game, cheats allowed. Same
+## op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, a bad id or wind).
+func cheat_set_weather(id: String, wind: float) -> int:
+	if not can_set_weather() or not (id.is_empty() or RangeInfo.monster_id_ok(id)):
+		return 0
+	if wind != WIND_GAME and not (wind >= 0.0 and wind <= MAX_WIND):   # NaN fails both
+		return 0
+	return _range_op("cheat_set_weather", [id, wind])
+
+
+## The weather cheat can be asked for now (the F1 row is greyed out otherwise).
+func can_set_weather() -> bool:
+	return cheats_allowed and _can("cheat_set_weather")
 
 
 func _range_op(method: String, args: Array) -> int:

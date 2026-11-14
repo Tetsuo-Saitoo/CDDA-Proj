@@ -2,13 +2,21 @@ class_name CheatPanel
 extends VBoxContainer
 ## K7: the "Cheats" page of the F1 menu (KeyMenu.add_cheat_page), shown only when the debug setting is on
 ## (HudSettings.debug_cheats) or the game was started with --test / --cheats. It draws CheatModel's rows (shared
-## with the VR page): one toggle per bridge cheat, "Auto-pause on hostiles", "Give test kit" and "Teleport to the
-## crosshair" (any game; greyed out while cheats aren't allowed). The toggles always
+## with the VR page): one toggle per bridge cheat, "Auto-pause on hostiles", "Give test kit", "Teleport to the
+## crosshair" and the weather (CDDA's weather types and a wind, each also "as the game decides"; any game; greyed
+## out while cheats aren't allowed). The toggles always
 ## show what the sim says (CheatModel.read, asked again on each refresh), never a copy kept here: a cheat asked
 ## for applies at the sim's next request, and cheats_changed brings the new state.
 ## `backend` is a LiveSession (or a test stand-in with the same methods); null = no live game.
+## A pad works the page through KeyMenu (pad_move / pad_adjust / pad_press): the D-pad or stick picks a control
+## (highlighted), left / right change a picker or a number, A presses or flips it, or puts the focus in a text
+## field (Y then opens the on-screen keys). The VR panel's laser clicks it, and its stick does what the D-pad does.
 
 const WARN := Color(1.0, 0.75, 0.3)
+const PICKED := Color(1.0, 0.8, 0.35)
+## The wind choices: label, m/s (LiveSession.WIND_GAME: the game decides).
+const WINDS := [["Wind as the game decides", -1.0], ["Calm", 0.0], ["Breeze", 5.0], ["Strong wind", 15.0]]
+const WEATHER_GAME := "Weather as the game decides"
 
 var backend: Object
 var toggles := {}   # cheat name -> CheckButton
@@ -33,6 +41,15 @@ var ahead_square := Callable()
 ## () -> int: teleports to the square at the screen's centre (main.gd's _teleport), the op id or 0. Main sets it.
 var teleport := Callable()
 var teleport_button: Button
+## The weather cheat: CDDA's weather types (LiveSession.weather_types), the wind, and the button that sends both.
+var weather_pick: OptionButton
+var wind_pick: OptionButton
+var weather_button: Button
+## The pad's pick: an index into pad_controls(), -1 = none yet.
+var pick := -1
+var _marked: Control
+var _weather_ids: Array = []   # the types shown, to rebuild the list only when it changed
+var _weather_held := "\n"     # the sim's weather when last shown ("\n": not yet)
 var _range_ops := {}   # op id -> what it was, for the status line
 const MAX_RANGE_OPS := 32
 
@@ -76,6 +93,7 @@ func _init() -> void:
 	teleport_button.name = "Teleport"
 	row.add_child(teleport_button)
 	add_child(row)
+	_build_weather()
 	_build_range()
 	status = Label.new()
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -93,6 +111,7 @@ func refresh() -> void:
 		b.disabled = not r["enabled"]
 		if b is CheckButton:
 			b.set_pressed_no_signal(r["on"])
+	refresh_weather()
 	teleport_button.disabled = not (_has("can_teleport") and backend.can_teleport())
 	teleport_button.tooltip_text = ("Moves you to the square at the screen's centre, through walls and between floors. "
 			+ "Key: %s (the square under the crosshair).%s") % [InputActions.key_of(&"cheat_teleport"),
@@ -132,6 +151,136 @@ func teleport_here() -> void:
 		_say("Teleport: not sent. Point the crosshair at a square in the loaded area.", true)
 		return
 	_sent("Teleport", id)
+
+
+func _build_weather() -> void:
+	var r := HBoxContainer.new()
+	r.name = "Weather"
+	weather_pick = OptionButton.new()
+	weather_pick.focus_mode = Control.FOCUS_NONE
+	weather_pick.fit_to_longest_item = false
+	weather_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	weather_pick.add_item(WEATHER_GAME)
+	weather_pick.set_item_metadata(0, "")
+	r.add_child(weather_pick)
+	wind_pick = OptionButton.new()
+	wind_pick.focus_mode = Control.FOCUS_NONE
+	for w: Array in WINDS:
+		wind_pick.add_item(w[0])
+	r.add_child(wind_pick)
+	weather_button = _button("Set weather", set_weather)
+	weather_button.tooltip_text = "Holds the weather and the wind you picked until you hand them back to the game."
+	r.add_child(weather_button)
+	add_child(r)
+
+
+## The weather row: CDDA's types, the list rebuilt only when it changed; the cheat's weather picked when the sim's
+## changed since it was last shown (a pick not sent yet stays otherwise); greyed out while cheats aren't allowed.
+func refresh_weather() -> void:
+	var ok: bool = _has("can_set_weather") and backend.can_set_weather()
+	var types: Array = backend.weather_types() if ok and _has("weather_types") else []
+	var ids: Array = types.map(func(t: Dictionary) -> String: return t["id"])
+	var held: String = backend.cheat_weather() if ok and _has("cheat_weather") else ""
+	if ids != _weather_ids:
+		_weather_ids = ids
+		weather_pick.clear()
+		weather_pick.add_item(WEATHER_GAME)
+		weather_pick.set_item_metadata(0, "")
+		for t: Dictionary in types:
+			weather_pick.add_item(t["name"])
+			weather_pick.set_item_metadata(weather_pick.item_count - 1, t["id"])
+		_weather_held = "\n"
+	if held != _weather_held:
+		_weather_held = held
+		weather_pick.select(ids.find(held) + 1)   # not in the list, or "": as the game decides
+	for c: BaseButton in [weather_pick, wind_pick, weather_button]:
+		c.disabled = not ok
+
+
+func set_weather() -> void:
+	if weather_button.disabled:
+		_say("Weather: needs a running game with cheats allowed.", true)
+		return
+	var i := weather_pick.selected
+	var id: Variant = weather_pick.get_item_metadata(i) if i >= 0 else ""
+	var w := wind_pick.selected
+	var wind: float = WINDS[w][1] if w >= 0 and w < WINDS.size() else LiveSession.WIND_GAME
+	var what := "Weather %s%s" % [weather_pick.get_item_text(i) if i > 0 else "back to the game",
+			", %s" % str(WINDS[w][0]).to_lower() if wind >= 0.0 else ""]
+	_sent(what, backend.cheat_set_weather(id, wind) if id is String and _has("cheat_set_weather") else 0)
+
+
+## The controls a pad reaches, in reading order: the visible buttons, pickers, number boxes and text fields.
+func pad_controls() -> Array[Control]:
+	var out: Array[Control] = []
+	_reachable(self, out)
+	return out
+
+
+## Moves the pad's pick `d` controls on, wrapping; the first move picks the first. A text field left loses the
+## focus (the keys follow the focus).
+func pad_move(d: int) -> void:
+	var cs := pad_controls()
+	if cs.is_empty():
+		return
+	var was := _picked(cs)
+	pick = 0 if pick < 0 or pick >= cs.size() else wrapi(pick + signi(d), 0, cs.size())
+	if was is LineEdit and was != cs[pick] and was.has_focus():
+		was.release_focus()
+	_mark(cs[pick])
+
+
+## Left / right: the next or previous choice of a picked picker, a number box's step; elsewhere a move.
+func pad_adjust(d: int) -> void:
+	var c := _picked(pad_controls())
+	if c is OptionButton and not (c as OptionButton).disabled and (c as OptionButton).item_count > 0:
+		var ob := c as OptionButton
+		ob.select(wrapi(ob.selected + signi(d), 0, ob.item_count))
+		ob.item_selected.emit(ob.selected)
+	elif c is SpinBox and (c as SpinBox).editable:
+		var sb := c as SpinBox
+		sb.value += signi(d) * maxf(sb.step, 1.0)
+	else:
+		pad_move(d)
+
+
+## A: presses the picked button or flips a toggle (a picker: its next choice), or puts the focus in a text field.
+func pad_press() -> void:
+	var c := _picked(pad_controls())
+	if c is OptionButton:
+		pad_adjust(1)
+	elif c is BaseButton and not (c as BaseButton).disabled:
+		var b := c as BaseButton
+		if b.toggle_mode:
+			b.button_pressed = not b.button_pressed
+		else:
+			b.pressed.emit()
+	elif c is LineEdit and (c as LineEdit).editable:
+		c.grab_focus()
+	elif c == null:
+		pad_move(1)
+
+
+func _picked(cs: Array[Control]) -> Control:
+	return cs[pick] if pick >= 0 and pick < cs.size() else null
+
+
+func _mark(c: Control) -> void:
+	if _marked != null and is_instance_valid(_marked):
+		_marked.modulate = Color.WHITE
+	_marked = c
+	if c != null:
+		c.modulate = PICKED
+
+
+static func _reachable(n: Node, out: Array[Control]) -> void:
+	for c: Node in n.get_children():
+		if not c is Control or not (c as Control).visible:
+			continue
+		if c is BaseButton or c is SpinBox or c is LineEdit:
+			out.append(c)
+		else:
+			_reachable(c, out)
 
 
 func _build_range() -> void:
@@ -293,7 +442,7 @@ func spawn_monster() -> void:
 
 func _sent(what: String, op_id: int) -> void:
 	if op_id < 1:
-		_say("%s: not sent (no range game, or too many waiting)." % what, true)
+		_say("%s: not sent (no game, or too many waiting)." % what, true)
 		return
 	if _range_ops.size() >= MAX_RANGE_OPS:
 		_range_ops.erase(_range_ops.keys()[0])
