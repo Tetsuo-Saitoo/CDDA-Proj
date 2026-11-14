@@ -151,8 +151,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	mood_check.toggled.connect(_on_mood_cues)
 	row.add_child(mood_check)
 	flash_check = CheckBox.new()
-	flash_check.text = "Lightning flash"
-	flash_check.tooltip_text = "Brightens the view for a moment when lightning strikes. Off: thunder only."
+	flash_check.text = "Bright flashes"
+	flash_check.tooltip_text = "Lightning and muzzle flashes. Off: thunder and recoil only."
 	flash_check.focus_mode = Control.FOCUS_NONE
 	flash_check.button_pressed = settings.weather_flash
 	flash_check.toggled.connect(_on_weather_flash)
@@ -229,7 +229,7 @@ func _on_weather_flash(on: bool) -> void:
 	hud.weather_flash = on
 	var err := hud.save_file(hud_path)
 	if err != OK:
-		_status.text = "Lightning flash setting not saved: %s" % error_string(err)
+		_status.text = "Bright flashes setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

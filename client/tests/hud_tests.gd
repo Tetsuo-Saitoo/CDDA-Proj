@@ -68,6 +68,8 @@ func _test_mood_cue() -> void:
 	back.load_file(path)
 	_check.call(was_on and not hs.mood_cues and not back.mood_cues and seen[0] == 1,
 			"mood cue: on by default; the F1 box turns it off and saves it")
+	_check.call(m.flash_check.text == "Bright flashes" and m.flash_check.tooltip_text.contains("muzzle"),
+			"F1 menu: the flash box names both flashes it turns off (lightning and the muzzle flash)")
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	f.store_string("[compass]\nopacity=0.5\n[mood]\ncues=\"no\"\n")
 	f.close()
