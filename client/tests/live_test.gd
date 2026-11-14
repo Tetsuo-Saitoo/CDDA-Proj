@@ -20,6 +20,7 @@ var _failed := 0
 var _sim: RefCounted
 var _events := {}   # kind -> count
 var _messages: Array[String] = []
+var _item_results: Array[Dictionary] = []   # item_result events since the last clear
 var _run_name := "live tests"
 var _data_dir := ""
 var _user_dir := ""
@@ -161,6 +162,11 @@ func _run() -> void:
 	_check(_events.get("turn_end", 0) > 0, "turn_end events (%s)" % _events)
 	_check(_events.get("item_result", 0) == 1, "one item_result event for the tagged item action (%s)" % _events)
 	_check(_sim.get_events_dropped() == 0, "no events dropped")
+	if req.is_empty():
+		_finish()
+		return
+
+	req = await _check_item_physics(req)
 	if req.is_empty():
 		_finish()
 		return
@@ -381,6 +387,8 @@ func _drain() -> void:
 		_events[e["kind"]] = _events.get(e["kind"], 0) + 1
 		if e["kind"] == "message":
 			_messages.append(e["text"])
+		elif e["kind"] == "item_result":
+			_item_results.append(e)
 
 
 func _finish() -> void:
@@ -405,3 +413,161 @@ func _check(cond: bool, what: String) -> void:
 
 func _repo(rel: String) -> String:
 	return ProjectSettings.globalize_path("res://").path_join("..").path_join(rel).simplify_path()
+
+
+## E2 item physics end to end, through LiveSession (the calls the client's ItemPlacer makes): a carried item is
+## dropped on the player's square, placed onto a square next to it with a pose (tried all 8 ways in one turn: a
+## random start may have walls around; exactly one place may go through, as an item moves once a turn), its pose
+## changed in place (spot), then refusals: a place from 3 squares out (by CDDA: a reason, never a log message) and
+## places LiveSession refuses itself (nothing sent). Returns the main-loop request it ends on ({} if the game stopped).
+func _check_item_physics(req: Dictionary) -> Dictionary:
+	var live := LiveSession.new()
+	live._sim = _sim   # only its item calls are used; outside the tree it drains nothing, so _drain() still sees all
+	var snap := Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	var me := snap.player_pos
+	# 1. Drop: the first loose carried item (in a pocket, not worn or held, holding nothing) CDDA lets go of.
+	var dropped := {}
+	for c in _loose_carried(snap).slice(0, 6):
+		_item_results.clear()
+		if not (_sim.queue_item_action({"op": "drop", "item": c[0], "type": c[1], "pos": me, "tag": 101})
+				and _sim.queue_action("pause")):
+			break
+		req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+		if req.is_empty():
+			break
+		if _result(101).get("amount", 0) == 1:
+			dropped = _handle(Snapshot.parse_text(_sim.get_snapshot_json(0, 0)), c[0], c[1], me)
+			break
+	_check(not dropped.is_empty(), "item physics: a carried item dropped on the player's square (%s)" % dropped)
+	if dropped.is_empty():
+		live.free()
+		return req
+	var uid: int = dropped["uid"]
+	var type: int = dropped["type"]
+	# 2. Place onto a next square with a pose: one of the 8 goes through, the rest are refused (it has moved on).
+	var ways: Array[Vector3i] = [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+			Vector3i(1, 1, 0), Vector3i(-1, -1, 0), Vector3i(1, -1, 0), Vector3i(-1, 1, 0)]
+	_item_results.clear()
+	var log_before := _messages.size()
+	var sent := 0
+	for i in ways.size():
+		sent += int(live.place_item(float(uid), float(type), me, me + ways[i], Vector2(0.3, 0.6), 90, true, 11 + i))
+	_check(sent == ways.size(), "item physics: LiveSession.place_item sends a place each way (%d)" % sent)
+	_check(_sim.queue_action("pause"), "item physics: a wait queued after the places")
+	req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+	if req.is_empty():
+		live.free()
+		return req
+	var done: Array[int] = []
+	var refused_ok := true
+	for i in ways.size():
+		var r := _result(11 + i)
+		if r.get("amount", -1) == 1:
+			done.append(i)
+		elif r.get("amount", -1) != 0 or str(r.get("text", "")).is_empty() or int(r.get("uid", 0)) != uid:
+			refused_ok = false
+	_check(_item_results.size() == ways.size() and done.size() == 1 and refused_ok,
+			"item physics: one item_result per place, exactly one done, the others refused with a reason (%s)"
+			% [_item_results])
+	if done.size() != 1:
+		live.free()
+		return req
+	var to := me + ways[done[0]]
+	snap = Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	var moved := _handle(snap, uid, type, to)
+	var left := _handle(snap, uid, type, me)
+	_check(not moved.is_empty() and absi(moved["spot"].x - 300) <= 1 and absi(moved["spot"].y - 600) <= 1
+			and (left.is_empty() or left["uid"] != uid),
+			"item physics: the snapshot has the item on the square it was placed on, at spot (300, 600) (%s)" % moved)
+	_check(_pose(uid) == [90, 1], "item physics: its submap's poses give [uid, 90, 1] (%s)" % [_pose(uid)])
+	_check(_messages.size() == log_before or _messages.slice(log_before).all(
+			func(m: String) -> bool: return not _item_results.any(func(r: Dictionary) -> bool: return r["text"] == m)),
+			"item physics: no refusal of a place reaches the message log (%s)" % [_messages.slice(log_before)])
+	# 3. Spot: the pose changes where it lies.
+	_item_results.clear()
+	_check(live.spot_item(float(uid), float(type), to, Vector2(0.5, 0.5), 180, false, 21)
+			and _sim.queue_action("pause"), "item physics: LiveSession.spot_item sends a spot")
+	req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+	if req.is_empty():
+		live.free()
+		return req
+	snap = Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	var rested := _handle(snap, uid, type, to)
+	_check(_result(21).get("amount", 0) == 1 and _pose(uid) == [180, 0] and not rested.is_empty()
+			and absi(rested["spot"].x - 500) <= 1 and absi(rested["spot"].y - 500) <= 1,
+			"item physics: a spot is done and the pose and spot follow (%s, %s, %s)" % [_result(21), _pose(uid), rested])
+	# 4. A place from 3 squares out: CDDA refuses it with a reason, and logs nothing.
+	_item_results.clear()
+	log_before = _messages.size()
+	var far := me + Vector3i(3, 0, 0)
+	_check(live.place_item(float(uid), float(type), far, far + Vector3i(1, 0, 0), Vector2(-1, -1), 0, false, 13)
+			and _sim.queue_action("pause"), "item physics: a place 3 squares out is sent")
+	req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+	var far_r := _result(13)
+	_check(far_r.get("amount", -1) == 0 and not str(far_r.get("text", "")).is_empty()
+			and not str(far_r.get("text", "")) in _messages.slice(log_before),
+			"item physics: CDDA refuses it with a reason that isn't in the message log (%s)" % far_r)
+	# 5. LiveSession refuses what can't be a place before anything is sent.
+	var queued: int = _sim.get_queued_actions()
+	_check(not live.place_item(float(uid), float(type), to, to, Vector2(-1, -1), 0, false, 14)
+			and not live.place_item(float(uid), float(type), to, to + Vector3i(2, 0, 0), Vector2(-1, -1), 0, false, 15)
+			and not live.place_item(float(uid), float(type), to, to + Vector3i(1, 0, 1), Vector2(-1, -1), 0, false, 16)
+			and _sim.get_queued_actions() == queued,
+			"item physics: a place onto its own square, 2 squares on or another level is refused, nothing sent")
+	live.free()
+	return req
+
+
+## Loose carried items, [uid, itype] each: in a pocket (parent set), not worn or held, holding nothing.
+static func _loose_carried(snap: Snapshot) -> Array:
+	var c := snap.carried
+	var parents := {}
+	for i in range(0, c.size(), Snapshot.CARRIED_STRIDE):
+		parents[c[i + 2]] = true
+	var out := []
+	for i in range(0, c.size(), Snapshot.CARRIED_STRIDE):
+		if c[i + 2] != 0 and c[i + 4] == 0 and not parents.has(c[i]):
+			out.append([int(c[i]), int(c[i + 1])])
+	return out
+
+
+## The handle `uid` (or, if a stack merged it, one of type `type`) lying on square `p`: {uid, type, spot}; {} none.
+static func _handle(snap: Snapshot, uid: int, type: int, p: Vector3i) -> Dictionary:
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(p)) if snap.is_valid() else null
+	if sm == null:
+		return {}
+	var l := CddaCoords.ms_to_local(p)
+	var tile := l.y * CddaCoords.SEEX + l.x
+	var hs := sm.handles
+	var by_type := {}
+	for k in range(0, hs.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		if hs[k] != tile:
+			continue
+		var h := {"uid": int(hs[k + 1]), "type": int(hs[k + 2]), "spot": Vector2i(int(hs[k + 3]), int(hs[k + 4]))}
+		if h["uid"] == uid:
+			return h
+		if h["type"] == type and by_type.is_empty():
+			by_type = h
+	return by_type
+
+
+## [yaw, side] the snapshot's `poses` give item `uid`, [] when none.
+func _pose(uid: int) -> Array:
+	var d: Variant = JSON.parse_string(_sim.get_snapshot_json(0, 0))
+	if not d is Dictionary or not (d as Dictionary).get("submaps") is Array:
+		return []
+	for s: Variant in d["submaps"]:
+		if not s is Dictionary or not (s as Dictionary).get("poses") is Array:
+			continue
+		for p: Variant in s["poses"]:
+			if p is Array and (p as Array).size() == 3 and int(p[0]) == uid:
+				return [int(p[1]), int(p[2])]
+	return []
+
+
+## The item_result event with this tag since _item_results was cleared: {uid, amount, text, ...}; {} none.
+func _result(tag: int) -> Dictionary:
+	for r: Dictionary in _item_results:
+		if int(r.get("detail", -1)) == tag:
+			return r
+	return {}
