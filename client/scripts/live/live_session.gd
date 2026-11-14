@@ -57,6 +57,7 @@ var _cheats := {}
 var _queries := {}
 var _recipe_results := {}
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
+const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
 const MAX_KEPT_RESULTS := 32
 const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
 ## Test range: the last info (no results), its seq, ops sent and waiting for a result (id -> msec sent).
@@ -610,6 +611,48 @@ func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
 func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
 			"container": int(container), "container_type": int(container_type), "pocket": pocket})
+
+
+## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
+## square without a floor makes CDDA drop it). `spot` (each 0..1 across the square, clamped) with `yaw` (whole
+## degrees 0..359, counter-clockwise from above, 0 = south) and `side` (lying on its side) is the pose it takes there;
+## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
+## whose detail is `tag` (1..MAX_ITEM_TAG). False when refused here (nothing sent): no game, a bad handle, square,
+## spot, yaw or tag.
+func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool,
+		tag: int) -> bool:
+	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not ItemActions.ok_square(to) or to.z != pos.z \
+			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite():
+		return false
+	var a := {"op": "place", "item": int(uid), "type": int(type), "pos": pos, "to": to, "tag": tag}
+	if spot != Vector2(-1, -1):
+		if spot.x < 0.0 or spot.y < 0.0:
+			return false   # half a spot: neither a pose nor none
+		a["spot"] = _clamp_spot(spot)
+		a["yaw"] = yaw
+		a["side"] = side
+	return _sim.queue_item_action(a)
+
+
+## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's). False when refused
+## here (nothing sent), as place_item, or without a spot.
+func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not spot.is_finite() or spot.x < 0.0 \
+			or spot.y < 0.0:
+		return false
+	return _sim.queue_item_action({"op": "spot", "item": int(uid), "type": int(type), "pos": pos,
+			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
+
+
+## A whole uid and itype in the snapshot's ranges, a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
+static func _item_op_ok(uid: float, type: float, pos: Vector3i, yaw: int, tag: int) -> bool:
+	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
+			and uid < float(Snapshot.MAX_UID) and type >= 1.0 and type <= float(Snapshot.MAX_ID) \
+			and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 and tag <= MAX_ITEM_TAG
+
+
+static func _clamp_spot(spot: Vector2) -> Vector2:
+	return spot.clamp(Vector2.ZERO, Vector2(ItemActions.SPOT_MAX, ItemActions.SPOT_MAX))
 
 
 ## Actions waiting in the bridge's queue (0 without a game).

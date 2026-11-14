@@ -199,6 +199,7 @@ func _ready() -> void:
 		item_placer = ItemPlacer.new()
 		item_placer.bodies = item_bodies
 		item_placer.centre = func() -> Variant: return world.snapshot.player_pos if world.snapshot != null else null
+		item_placer.busy = item_actions.pending   # nothing is told about an item a hand's take / drop is under way on
 		item_placer.refused.connect(func(_uid: int, why: String) -> void:   # CDDA wouldn't move it: its reason
 			if why.is_empty():
 				return
@@ -224,6 +225,7 @@ func _ready() -> void:
 		_log.append(t)
 		hud_data.on_events([MockItems.message_event(t)]))
 	viewmodel = WeaponViewmodel.new()
+	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
 	fp.add_child(viewmodel)
 	aim.fired.connect(viewmodel.kick)
 	_set_view(start_view(_args, hud_settings.view))
@@ -1280,7 +1282,9 @@ func _setup_hud() -> void:
 	key_menu.hud_changed.connect(func() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
-		weather.flash_enabled = hud_settings.weather_flash)
+		weather.flash_enabled = hud_settings.weather_flash
+		if viewmodel != null:
+			viewmodel.flashes = hud_settings.weather_flash)
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows

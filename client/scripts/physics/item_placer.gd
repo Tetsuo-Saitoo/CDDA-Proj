@@ -6,8 +6,9 @@ extends Node
 ## pushed), then, once CDDA's own drop has landed and the body still lies still:
 ## - on the square CDDA has it on: the bridge op "spot" (where across the square, its yaw, whether it lies on its side);
 ## - on another square: the bridge op "place", one square at a time toward where it lies (CDDA moves an item one
-##   square per turn), the last step with the spot; ItemBodies keeps the body where it is meanwhile (transit). A square
-##   without a floor makes CDDA drop it a level, which the next snapshot shows.
+##   square per turn), the last step with the spot; ItemBodies keeps the body where it is meanwhile (transit). CDDA
+##   refuses a place onto open air or into a wall (falling is CDDA's, with its time and harm): a body that fell or
+##   lies on another level than CDDA's square goes back where CDDA has it, with nothing sent.
 ## CDDA answers each op with an `item_result` event (the `tag` sent with it: done or refused with its reason,
 ## contracts/bridge_api.md). A refused or unanswered place puts the body back where CDDA has the item (snap back); a
 ## refused spot only means the pose isn't kept. Only `amount` decides; the reason is for showing (`refused`).
@@ -20,6 +21,7 @@ extends Node
 ## `backend` (main.gd: the live session) is duck-typed: place_item(uid, type, pos, to, spot, yaw, side, tag) and
 ## spot_item(uid, type, pos, spot, yaw, side, tag), both -> bool (taken). Without them nothing is sent and the
 ## bodies behave as before. Events are checked (kinds, numbers, capped text): the bridge's data is not trusted.
+## Nothing is sent for an item a hand's one-item action (take, put, drop...) is under way on (`busy`).
 
 ## CDDA refused to move or pose item `uid` (its reason, cleaned and capped).
 signal refused(uid: int, reason: String)
@@ -53,6 +55,8 @@ var backend: Object
 var centre := Callable()
 ## Milliseconds (tests); invalid: the engine's clock.
 var clock := Callable()
+## uid -> the one-item action in flight on it, "" none (main.gd: ItemActions.pending).
+var busy := Callable()
 var spots := 0            # spot ops sent (tests)
 var places := 0           # place ops sent
 var refusals := 0         # ops CDDA refused
@@ -149,8 +153,8 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if bodies.body_of(uid) == null:
 		_drop(uid)
 		return false
-	if _by_uid.has(uid) or bodies.is_pending(uid) or now < int(_retry_ms.get(uid, 0)):
-		return false   # its op is in flight, CDDA's own drop hasn't landed yet, or the game was busy just now
+	if _by_uid.has(uid) or bodies.is_pending(uid) or now < int(_retry_ms.get(uid, 0)) or _busy(uid):
+		return false   # its op is in flight, CDDA's own drop or a hand's action on it hasn't landed, or the game was busy
 	if not bodies.at_rest(uid):
 		_drop(uid)   # moving again: it reports when it rests
 		return false
@@ -179,7 +183,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 			return false
 		return _send(uid, "spot", [float(uid), float(type), cdda, rest["spot"], rest["yaw"], rest["side"]], cdda, rest, now)
 	var to := Vector3i(cdda.x + clampi(sq.x - cdda.x, -1, 1), cdda.y + clampi(sq.y - cdda.y, -1, 1), cdda.z)
-	if to == cdda:   # lying on another level over or under its own square: not a move CDDA makes
+	if sq.z != cdda.z:   # it fell to (or lies on) another level: CDDA never moves an item down or up for free
 		_put_back(uid)
 		return false
 	if now - int(_placed_ms.get(uid, -PLACE_GAP_MS)) < PLACE_GAP_MS or _turn() <= int(_placed_turn.get(uid, -1)):
@@ -187,7 +191,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if not bodies.transit(uid, true):
 		_put_back(uid)
 		return false
-	var last := to == sq   # the last step carries the pose; a step on the way (or over a hole) has none
+	var last := to == sq   # the last step carries the pose; a step on the way has none
 	var spot: Vector2 = rest["spot"] if last else Vector2(-1, -1)
 	var args := [float(uid), float(type), cdda, to, spot, rest["yaw"] if last else 0, rest["side"] if last else false]
 	if not _send(uid, "place", args, to, rest if last else {}, now):
@@ -306,6 +310,12 @@ static func _int(v: Variant) -> int:
 	if v is float and is_finite(v) and absf(v) <= float(MAX_TAG):
 		return int(v)
 	return 0
+
+
+## A hand's one-item action on `uid` is in flight.
+func _busy(uid: int) -> bool:
+	var p: Variant = busy.call(uid) if busy.is_valid() else ""
+	return p is String and not (p as String).is_empty()
 
 
 ## The game turn the world's snapshot shows (0 without one).

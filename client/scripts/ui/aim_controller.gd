@@ -29,6 +29,10 @@ extends Node3D
 ## shot request, so bursts follow the hand.
 ## Hits are confirmed only by CDDA's events (`hits`, HitFeedback, fed by main.gd): the crosshair then shows a
 ## hit marker (white, bigger for head / eyes, red for a kill).
+## Melee techniques: where an aimed strike lands calls a technique family (technique_call: head stun, legs down,
+## arms disarm), sent as the swing answer's `action`; CDDA uses one of that family only when it says one is valid.
+## The technique CDDA then used shows as a short note over the crosshair, gold when it was the one called. A call
+## lasts only until its own swing's attack event (hit or miss), so a later strike never shows as called.
 
 signal fired
 
@@ -43,6 +47,8 @@ const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's,
 const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon strikes 2 squares off)
 const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
 const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
+const CALL_FAMILY := {"down": 2, "stun": 3, "disarm": 4}   # a swing answer's `action` -> the technique family
+const CALL_KEEP_MS := 5000        # a called technique's hit event counts as called this long after the answer
 const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
 		Vector2i(1, 1): "RIGHTDOWN", Vector2i(0, 1): "DOWN", Vector2i(-1, 1): "LEFTDOWN", Vector2i(-1, 0): "LEFT",
 		Vector2i(-1, -1): "LEFTUP"}
@@ -64,12 +70,14 @@ var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or 
 var view := Callable()
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
-var melee_aim := {}               # the last aimed strike: {square, uid, part, quality, time msec} (melee_from)
+var melee_aim := {}               # the last aimed strike: {square, uid, part, quality, want, time msec} (melee_from)
 var dispersion := 0.0             # arcmin, from the last target request (0 = none / old bridge)
 var shown_dispersion := 0.0       # dispersion while a fire-mode target request shows, else 0 (viewmodel sway)
 var _sim_rolls := false           # the last target request had `dispersion`: shot requests will follow FIRE
 var _wielded_fires := true        # the last target request fires the wielded gun (`weapon_wielded`)
 var _tracers := 0
+# the technique the last swing answer called, until that swing's attack event: {uid, family, time msec}, or {}
+var _last_call := {}
 
 
 func _init(w: WorldView, ui: RequestUI) -> void:
@@ -85,6 +93,8 @@ func _init(w: WorldView, ui: RequestUI) -> void:
 	hits = HitFeedback.new(w)
 	add_child(hits)
 	hits.hit_confirmed.connect(_on_hit)
+	hits.technique_used.connect(_on_technique)
+	hits.swing_resolved.connect(_on_swing_resolved)
 
 
 ## The square a ray through screen point `pos` of camera `cam` meets, or null. `captured`: mouse-look aiming
@@ -146,7 +156,7 @@ func aim_point(cam: Camera3D, mouse: Vector2, captured: bool) -> Vector2:
 func update(cam: Camera3D, captured: bool) -> void:
 	var t := request_ui.target_widget()
 	crosshair.show_cross = t != null
-	crosshair.visible = first_person and not _top() and (t != null or crosshair.marking())
+	crosshair.visible = first_person and not _top() and (t != null or crosshair.marking() or crosshair.noting())
 	crosshair.aiming = captured
 	shown_dispersion = dispersion if t != null and t.mode == "fire" else 0.0
 	var spread := 0.0
@@ -279,7 +289,8 @@ func fly_from(origin: Vector3, sight: Vector3, ammo: String, tracer := true) -> 
 
 
 ## Melee: the creature figure a strike from world point `origin` along `sight` meets within MELEE_REACH_M, with
-## nothing solid in between: {square, uid, part, quality, time} or {}. Kept as melee_aim for the swing request.
+## nothing solid in between: {square, uid, part, quality, want, time} or {}. Kept as melee_aim for the swing
+## request. `want` is the technique family the struck zone calls (technique_call), "" for none.
 func melee_from(origin: Vector3, sight: Vector3) -> Dictionary:
 	melee_aim = {}
 	if not origin.is_finite() or not sight.is_finite() or sight.length_squared() < 1e-12:
@@ -329,11 +340,27 @@ func _melee_pick(origin: Vector3, seg: Vector3) -> Dictionary:
 	for c: Snapshot.Creature in world.snapshot.creatures:
 		if c.uid == int(h["uid"]):
 			var d := CreatureView.def_of(world, c)
-			melee_aim = {"square": c.pos, "uid": c.uid, "part": BulletPhysics.cdda_part(str(h["zone"]),
+			var zone := str(h["zone"])
+			melee_aim = {"square": c.pos, "uid": c.uid, "part": BulletPhysics.cdda_part(zone,
 					c.kind == Snapshot.Creature.MONSTER, d.weakpoints if d != null else {}),
-					"quality": BulletPhysics.quality_of(float(h["quality"])), "time": Time.get_ticks_msec()}
+					"quality": BulletPhysics.quality_of(float(h["quality"])), "want": technique_call(zone),
+					"time": Time.get_ticks_msec()}
 			return melee_aim
 	return {}
+
+
+## The technique family a strike at a figure's zone calls (the zone names of CreatureFigure.hit_zones): "head" and
+## "eye" call "stun"; "leg_l", "leg_r" and "leg" call "down"; "arm_l" and "arm_r" call "disarm"; "torso", "wing"
+## and anything else call nothing ("").
+static func technique_call(zone: String) -> String:
+	match zone:
+		"head", "eye":
+			return "stun"
+		"leg_l", "leg_r", "leg":
+			return "down"
+		"arm_l", "arm_r":
+			return "disarm"
+	return ""
 
 
 ## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
@@ -367,7 +394,9 @@ static func strike_dir(me: Vector3i, to: Vector3i) -> String:
 
 
 ## A swing request (an aimed strike, fp3d/swing.h): the kept melee aim as a `shot` answer when it is fresh and on
-## the request's cursor square with a part to name; else a cancel (CDDA picks the part). {} for an unusable id.
+## the request's cursor square with a part to name or a technique to call; else a cancel (CDDA picks the part).
+## The aim's `want`, when it is a family of CALL_FAMILY, goes along as `action` (the part may then be "") and is
+## remembered as the last call. {} for an unusable id.
 func _swing_answer(req: Dictionary) -> Dictionary:
 	var id: Variant = RequestWidget.id_value(req.get("id"))
 	if id == null or id <= 0:
@@ -376,13 +405,22 @@ func _swing_answer(req: Dictionary) -> Dictionary:
 	var cancel := fallback_answer(id)
 	var aim := melee_aim
 	melee_aim = {}   # one strike, one answer
+	_last_call = {}
 	if aim.is_empty() or Time.get_ticks_msec() - int(aim.get("time", 0)) > MELEE_KEEP_MS:
 		return cancel
 	var cursor: Variant = req.get("cursor")
 	var part := str(aim.get("part", ""))
-	if not cursor is Vector3i or cursor != aim.get("square") or part == "" or part.to_utf8_buffer().size() > MAX_PART_BYTES:
+	var w: Variant = aim.get("want")
+	var want: String = w if w is String and CALL_FAMILY.has(w) else ""
+	if not cursor is Vector3i or cursor != aim.get("square") or part.to_utf8_buffer().size() > MAX_PART_BYTES \
+			or (part == "" and want == ""):
 		return cancel
-	return {"id": int(id), "shot": shot_answer(cursor, int(aim["uid"]), part, float(aim["quality"]))}
+	var uid := int(aim["uid"])
+	var answer := {"id": int(id), "shot": shot_answer(cursor, uid, part, float(aim["quality"]))}
+	if want != "":
+		answer["action"] = want
+		_last_call = {"uid": uid, "family": int(CALL_FAMILY[want]), "time": Time.get_ticks_msec()}
+	return answer
 
 
 ## Called by main.gd for every live request before it shows. `target`: remembers its `dispersion` and
@@ -511,6 +549,22 @@ func _on_hit(_uid: int, part: String, _amount: int, killed: bool) -> void:
 	crosshair.show_hit(part in HitFeedback.HEAD_PARTS, killed)
 
 
+## The technique CDDA used on the player's hit (HitFeedback): the crosshair's note, marked as called when the last
+## swing answer called that family on that creature at most CALL_KEEP_MS ago. One call, one note.
+func _on_technique(uid: int, technique: String, family: int) -> void:
+	var called: bool = _last_call.get("uid") == uid and _last_call.get("family") == family \
+			and Time.get_ticks_msec() - int(_last_call.get("time", 0)) <= CALL_KEEP_MS
+	crosshair.show_note(technique, called)
+	_last_call = {}
+
+
+## The player's strike at a creature is over (HitFeedback, after its technique): the call sent with its swing
+## answer ends, also when the strike missed or used no technique. Plain strikes and bump attacks ask no swing
+## request, so an old call would otherwise mark their technique as called.
+func _on_swing_resolved(_uid: int, _hit: bool) -> void:
+	_last_call = {}
+
+
 ## A bridge number as a float: ints and finite floats; anything else is 0.
 static func _finite(v: Variant) -> float:
 	if v is int:
@@ -580,13 +634,21 @@ static func _marker_mesh() -> MeshInstance3D:
 
 ## A small cross at the screen centre (while `show_cross`); brighter while aiming (mouse captured). A thin circle
 ## of radius `spread_px` shows CDDA's dispersion (0 = none). show_hit() flashes a hit marker, four diagonal ticks
-## around the centre fading over HIT_FADE_S: white, bigger for the head / eyes, red for a kill.
+## around the centre fading over HIT_FADE_S: white, bigger for the head / eyes, red for a kill. show_note() shows
+## a line of text over the centre for NOTE_S seconds (a technique's name): white, gold when it was called.
 class Crosshair:
 	extends Control
 	const HIT_FADE_S := 0.3
 	const HIT_WHITE := Color(1, 1, 1)
 	const HIT_RED := Color(1, 0.15, 0.1)
 	const HEAD_SCALE := 1.6
+	const NOTE_S := 1.5           # seconds a note shows
+	const NOTE_FADE_S := 0.5      # it fades over its last seconds
+	const NOTE_WHITE := Color(1, 1, 1)
+	const NOTE_GOLD := Color(1.0, 0.82, 0.3)
+	const NOTE_RISE := 26.0       # px from the centre up to the note's bottom
+	const NOTE_SIZE := 16
+	const MAX_NOTE_LEN := 64      # characters; longer notes are cut
 	var show_cross := true:
 		set(v):
 			if v != show_cross:
@@ -595,6 +657,9 @@ class Crosshair:
 	var hit_left := 0.0           # seconds the hit marker still shows
 	var hit_color := HIT_WHITE
 	var hit_scale := 1.0          # 1, or HEAD_SCALE for the head / eyes
+	var note := ""                # the text over the centre ("" when none shows)
+	var note_left := 0.0          # seconds the note still shows
+	var note_called := false      # the note names a technique the player called: gold
 	var aiming := false:
 		set(v):
 			if v != aiming:
@@ -623,9 +688,24 @@ class Crosshair:
 	func marking() -> bool:
 		return hit_left > 0.0
 
+	## Shows `text` over the centre for NOTE_S seconds, gold when `called`. Empty text: nothing.
+	func show_note(text: String, called: bool) -> void:
+		if text.is_empty():
+			return
+		note = text.left(MAX_NOTE_LEN)
+		note_left = NOTE_S
+		note_called = called
+		queue_redraw()
+
+	## The note is showing.
+	func noting() -> bool:
+		return note_left > 0.0
+
 	func _process(delta: float) -> void:
 		if hit_left > 0.0:
 			tick_hit(delta)
+		if note_left > 0.0:   # on its own: a note outlasts the hit marker, and may show without one
+			tick_note(delta)
 
 	## Fades the hit marker by `delta` seconds (tests call it directly).
 	func tick_hit(delta: float) -> void:
@@ -633,6 +713,21 @@ class Crosshair:
 			return
 		hit_left = maxf(hit_left - delta, 0.0)
 		queue_redraw()
+
+	## Counts the note down by `delta` seconds; at 0 the text is cleared (tests call it directly).
+	func tick_note(delta: float) -> void:
+		if not is_finite(delta) or delta < 0.0:
+			return
+		note_left = maxf(note_left - delta, 0.0)
+		if note_left <= 0.0:
+			note = ""
+		queue_redraw()
+
+	## The left end of the baseline of a note `w` px wide around the centre `c`: centred, its bottom NOTE_RISE px
+	## over the centre. Over it, clear of the hit marker and the hand icon: the hand pointer's hint lines
+	## (GrabController) are drawn under the centre.
+	static func note_at(c: Vector2, w: float) -> Vector2:
+		return Vector2(c.x - w / 2.0, c.y - NOTE_RISE - ThemeDB.fallback_font.get_descent(NOTE_SIZE))
 
 	func _draw() -> void:
 		var c := size / 2.0
@@ -654,3 +749,11 @@ class Crosshair:
 				var n := d.normalized()
 				draw_line(c + n * r0, c + n * r1, Color(0, 0, 0, 0.6 * a), 4.0)
 				draw_line(c + n * r0, c + n * r1, Color(hit_color, a), 2.0)
+		if note_left > 0.0 and note != "":
+			var font := ThemeDB.fallback_font
+			var na := clampf(note_left / NOTE_FADE_S, 0.0, 1.0)
+			var w := font.get_string_size(note, HORIZONTAL_ALIGNMENT_LEFT, -1, NOTE_SIZE).x
+			var at := note_at(c, w)
+			draw_string_outline(font, at, note, HORIZONTAL_ALIGNMENT_LEFT, -1, NOTE_SIZE, 4, Color(0, 0, 0, 0.75 * na))
+			draw_string(font, at, note, HORIZONTAL_ALIGNMENT_LEFT, -1, NOTE_SIZE,
+					Color(NOTE_GOLD if note_called else NOTE_WHITE, na))

@@ -128,7 +128,7 @@ Dictionary request_dict( const fp3d::ui_request &r )
 const char *event_kind_name( fp3d::event_kind k )
 {
     static const char *const names[] = { "sound", "message", "attack", "damage", "projectile", "explosion",
-                                         "death", "anim", "turn_end", "lightning"
+                                         "death", "anim", "turn_end", "lightning", "item_result"
                                        };
     static_assert( std::size( names ) == fp3d::event_kind_count, "a name for every event kind" );
     const size_t i = static_cast<size_t>( k );
@@ -510,6 +510,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::throw_;
     } else if( op == "pour" ) {
         a.op = fp3d::item_op::pour;
+    } else if( op == "place" ) {
+        a.op = fp3d::item_op::place;
+    } else if( op == "spot" ) {
+        a.op = fp3d::item_op::spot;
+    } else if( op == "hold" ) {
+        a.op = fp3d::item_op::hold;
     } else {
         return false;
     }
@@ -544,7 +550,29 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
-    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ) {
+    } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ||
+               a.op == fp3d::item_op::place || a.op == fp3d::item_op::spot ) {
+        return false;
+    }
+    // place: where the item comes to rest. Only place has it, and needs it.
+    if( !field( d, "to", Variant::VECTOR3I, v ) || d.has( "to" ) != ( a.op == fp3d::item_op::place ) ) {
+        return false;
+    }
+    if( d.has( "to" ) ) {
+        const Vector3i p = v;
+        const auto out = []( int32_t c ) {
+            return c < -max_abs_coord || c > max_abs_coord;
+        };
+        if( out( p.x ) || out( p.y ) || out( p.z ) ) {
+            return false;
+        }
+        a.to = fp3d::ui_point{ p.x, p.y, p.z };
+    }
+    // hold: a hand, never the pack. spot: its spot.
+    if( a.op == fp3d::item_op::hold && !d.has( "hand" ) ) {
+        return false;
+    }
+    if( a.op == fp3d::item_op::spot && !d.has( "spot" ) ) {
         return false;
     }
     // pour goes to exactly one place: a container (no pos) or a square (pos, no container and no pocket).
@@ -596,6 +624,34 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.has_spot = true;
         a.spot_x = permille( s.x );
         a.spot_y = permille( s.y );
+    }
+    // How the item lies on its spot: only next to a spot, for the ops that store one.
+    Variant yaw;
+    Variant side;
+    if( !field( d, "yaw", Variant::INT, yaw ) || !field( d, "side", Variant::BOOL, side ) ) {
+        return false;
+    }
+    if( d.has( "yaw" ) || d.has( "side" ) ) {
+        const bool stores = a.op == fp3d::item_op::drop || a.op == fp3d::item_op::place ||
+                            a.op == fp3d::item_op::spot;
+        const int64_t deg = d.has( "yaw" ) ? static_cast<int64_t>( yaw ) : 0;
+        if( !stores || !a.has_spot || deg < 0 || deg > fp3d::max_item_yaw ) {
+            return false;
+        }
+        a.has_pose = true;
+        a.yaw = static_cast<uint16_t>( deg );
+        a.side = d.has( "side" ) && static_cast<bool>( side );
+    }
+    // The client's number for this action: an `item_result` event answers it.
+    if( !field( d, "tag", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "tag" ) ) {
+        const int64_t tag = v;
+        if( tag < 1 || tag > static_cast<int64_t>( fp3d::max_item_tag ) ) {
+            return false;
+        }
+        a.tag = static_cast<uint32_t>( tag );
     }
     return fp3d::queue_item_action( a );
 }

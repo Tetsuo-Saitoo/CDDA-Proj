@@ -10,6 +10,10 @@ extends Node3D
 ## `set_faults()` shows a jam (CDDA's gun_mechanical_simple faults): slide / bolt held open, the gun canted to show
 ## its port, and a small label saying what jammed and that R (reload) clears it (the fork's fp3d::rack_jammed).
 ## A gun's parts are named (Muzzle, Grip, MagWell, Magazine, Slide / Bolt: see build()).
+## Muzzle flash: `kick()` on a gun (a shape with a Muzzle) shows a short star of fire at the muzzle (FLASH_S, a
+## new turn each time) and a warm light around it. Both come together at most once every FLASH_GAP_S: a shot
+## sooner only recoils, so a long burst never flashes faster than 3 times a second (photosensitivity, as the
+## lightning flash). `flashes` off (main.gd: the HUD's flash setting) shows neither.
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
@@ -34,6 +38,12 @@ const METAL := Color(0.18, 0.18, 0.2)
 const WOOD := Color(0.4, 0.26, 0.14)
 const OLIVE := Color(0.25, 0.3, 0.2)
 const BUNDLE := Color(0.5, 0.45, 0.35)
+const FLASH_S := 0.06                 # how long a muzzle flash shows (s)
+const FLASH_SIZE := {"pistol": 0.09, "long": 0.14, "launcher": 0.2}   # the star's width (m)
+const FLASH_COLOR := Color(1.0, 0.78, 0.45)
+const FLASH_ENERGY := 2.0             # the muzzle light at its brightest
+const FLASH_RANGE := 4.0              # m
+const FLASH_GAP_S := 0.34             # at least this long between two muzzle flashes (under 3 a second)
 
 var shape := ""          # "" none, "pistol", "long", "bow", "launcher", "melee", "item"
 var dirt := -1           # the held gun's fouling as last set (0..DIRT_MAX), -1 none / NON-FOULING
@@ -52,6 +62,10 @@ var _grime_mats: Array[ShaderMaterial] = []
 var jam := ""            # the held gun's jam (a JAMS key), "" none
 var _cant := 0.0         # 0..1, eased toward 1 while jammed
 var _jam_label: Label3D
+var flashes := true      # muzzle flashes at all (off: shots only recoil)
+var _flash: Node3D       # under the gun's Muzzle: the star (Star) and the light (Light); null for other shapes
+var _flash_t := 0.0      # seconds of the flash left
+var _flash_wait := 0.0   # seconds before the next muzzle flash may come
 
 
 func _init() -> void:
@@ -95,10 +109,16 @@ func set_item(index: int, tables: IdTables) -> void:
 		_root.queue_free()
 		_root = null
 	_grime_mats.clear()
+	_flash = null
+	_flash_t = 0.0
 	if s != "":
 		_root = build(s, grime)
 		add_child(_root)
 		_grime_mats = grime_materials(_root)
+		var muzzle := _root.get_node_or_null("Muzzle") as Node3D
+		if muzzle != null:
+			_flash = build_flash(FLASH_SIZE.get(s, 0.1))
+			muzzle.add_child(_flash)
 	_pose_jam()
 
 
@@ -176,9 +196,27 @@ static func grime_for(d: int) -> float:
 
 func kick() -> void:
 	_kick = 1.0
+	if _flash == null or not flashes or _flash_wait > 0.0:
+		return   # no gun, flashes off, or too soon after the last flash
+	_flash_t = FLASH_S
+	_flash_wait = FLASH_GAP_S
+	_flash.rotation.z = randf() * TAU
+	_tick_flash(0.0)   # shown at once, not on the next frame
+
+
+## True while a muzzle flash shows.
+func flashing() -> bool:
+	return _flash != null and _flash.visible
+
+
+## True while the muzzle light is on.
+func lit() -> bool:
+	var l := _flash.get_node_or_null("Light") as OmniLight3D if _flash != null else null
+	return l != null and l.visible
 
 
 func _process(delta: float) -> void:
+	_tick_flash(delta)
 	_kick = move_toward(_kick, 0.0, KICK_RATE * delta * maxf(_kick, 0.2))
 	var goal := (AIMED if aimed and shape != "melee" else REST) + Vector3(0, 0, KICK_BACK * _kick)
 	_base = _base.lerp(goal, minf(RAISE_RATE * delta, 1.0))
@@ -192,6 +230,76 @@ func _process(delta: float) -> void:
 	rotation.y = -sx * SWAY_ROT * _sway
 	_cant = move_toward(_cant, 1.0 if jam != "" and shape in GUN_SHAPES else 0.0, JAM_RATE * delta)
 	rotation.z = JAM_CANT * _cant
+
+
+## Fades the muzzle flash (star and light) out, and counts down the gap to the next one.
+func _tick_flash(delta: float) -> void:
+	if not is_finite(delta) or delta < 0.0:
+		delta = 0.0
+	_flash_wait = maxf(_flash_wait - delta, 0.0)
+	if _flash == null:
+		return
+	_flash_t = maxf(_flash_t - delta, 0.0) if flashes else 0.0
+	var f := _flash_t / FLASH_S
+	_flash.visible = f > 0.0
+	_flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
+	var light := _flash.get_node_or_null("Light") as OmniLight3D
+	if light != null:
+		light.visible = f > 0.0
+		light.light_energy = FLASH_ENERGY * f
+
+
+## A muzzle flash `size` wide, hidden: a star of fire facing back down the bore (Star: one quad across the bore
+## and two along it, a soft round glow) and a warm light (Light). Its -z is the muzzle's, so it sits on the bore.
+static func build_flash(size: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Flash"
+	root.visible = false
+	var glow := GradientTexture2D.new()
+	glow.fill = GradientTexture2D.FILL_RADIAL
+	glow.fill_from = Vector2(0.5, 0.5)
+	glow.fill_to = Vector2(1.0, 0.5)
+	glow.width = 64
+	glow.height = 64
+	var g := Gradient.new()
+	g.set_color(0, Color(1.0, 0.97, 0.85, 1.0))
+	g.set_color(1, Color(FLASH_COLOR, 0.0))
+	g.add_point(0.35, Color(FLASH_COLOR, 0.85))
+	glow.gradient = g
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_texture = glow
+	var star := Node3D.new()
+	star.name = "Star"
+	root.add_child(star)
+	# across the bore (seen from behind), then two along it, longer than wide (seen from the side): one lying
+	# flat (its height turned onto -z), one standing (its width turned onto z)
+	var quads := [[Vector2(size, size), Vector3.ZERO, Vector3(0, 0, -size * 0.1)],
+		[Vector2(size * 0.6, size * 1.6), Vector3(-PI / 2.0, 0, 0), Vector3(0, 0, -size * 0.6)],
+		[Vector2(size * 1.6, size * 0.6), Vector3(0, PI / 2.0, 0), Vector3(0, 0, -size * 0.6)]]
+	for q: Array in quads:
+		var mesh := QuadMesh.new()
+		mesh.size = q[0]
+		mesh.material = m
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.rotation = q[1]
+		mi.position = q[2]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		star.add_child(mi)
+	var light := OmniLight3D.new()
+	light.name = "Light"
+	light.light_color = FLASH_COLOR
+	light.light_energy = 0.0
+	light.omni_range = FLASH_RANGE
+	light.shadow_enabled = false
+	light.visible = false
+	light.position = Vector3(0, 0, -size * 0.5)
+	root.add_child(light)
+	return root
 
 
 ## The model for a shape, pointing down -z (the camera's forward). A gun's parts wear the grime shader at
