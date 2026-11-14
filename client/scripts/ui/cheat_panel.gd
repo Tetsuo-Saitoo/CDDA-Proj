@@ -217,16 +217,18 @@ func pad_controls() -> Array[Control]:
 	return out
 
 
-## Moves the pad's pick `d` controls on, wrapping; the first move picks the first. A text field left loses the
-## focus (the keys follow the focus).
+## Moves the pad's pick `d` controls on, wrapping; the first move picks the first. A text field of the page that
+## has the focus (picked with A, or clicked) is where it moves from, and loses the focus (the keys follow it).
 func pad_move(d: int) -> void:
 	var cs := pad_controls()
+	var f := focused_field()
+	if f != null:
+		f.release_focus()
+		if cs.has(f):
+			pick = cs.find(f)
 	if cs.is_empty():
 		return
-	var was := _picked(cs)
 	pick = 0 if pick < 0 or pick >= cs.size() else wrapi(pick + signi(d), 0, cs.size())
-	if was is LineEdit and was != cs[pick] and was.has_focus():
-		was.release_focus()
 	_mark(cs[pick])
 
 
@@ -245,8 +247,15 @@ func pad_adjust(d: int) -> void:
 
 
 ## A: presses the picked button or flips a toggle (a picker: its next choice), or puts the focus in a text field.
+## A text field focused by a click (not the pick) is picked first: A presses nothing else while the keys type there.
 func pad_press() -> void:
-	var c := _picked(pad_controls())
+	var cs := pad_controls()
+	var c := _picked(cs)
+	var f := focused_field()
+	if f != null and f != c:
+		pick = cs.find(f)
+		_mark(f)
+		return
 	if c is OptionButton:
 		pad_adjust(1)
 	elif c is BaseButton and not (c as BaseButton).disabled:
@@ -259,6 +268,13 @@ func pad_press() -> void:
 		c.grab_focus()
 	elif c == null:
 		pad_move(1)
+
+
+## The page's text field that has the keyboard focus, or null.
+func focused_field() -> LineEdit:
+	var vp: Viewport = get_viewport() if is_inside_tree() else null
+	var f: LineEdit = vp.gui_get_focus_owner() as LineEdit if vp != null else null
+	return f if f != null and is_ancestor_of(f) else null
 
 
 func _picked(cs: Array[Control]) -> Control:

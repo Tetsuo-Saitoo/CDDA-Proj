@@ -234,6 +234,18 @@ func _test_weather(root: Node) -> void:
 			and p.weather_button.modulate == CheatPanel.PICKED and p.wind_pick.modulate == Color.WHITE
 			and sim.calls.size() == n + 1 and sim.calls[-1] == ["weather", "", 15.0],
 			"weather pad: the pad picks the row, changes the wind and presses Set weather (%s)" % [sim.calls[-1]])
+	# a text field focused by a click while the pick is elsewhere: A picks the field and presses nothing; a move
+	# goes on from the field and takes its focus away
+	p.visible = true
+	p.range_box.visible = true
+	p.item_id.grab_focus()
+	var n2 := sim.calls.size()
+	p.pad_press()
+	var took := p.pick == p.pad_controls().find(p.item_id) and sim.calls.size() == n2 and p.item_id.has_focus() \
+			and p.item_id.modulate == CheatPanel.PICKED
+	p.pad_move(1)
+	_check.call(took and not p.item_id.has_focus() and p.pick == p.pad_controls().find(p.item_count),
+			"weather pad: A on a clicked text field picks it, presses nothing; a move leaves it without the focus")
 	var m := KeyMenu.new()
 	m.save_path = preload("res://tests/test_dir.gd").path("weather_keys.cfg")
 	m.hud_path = preload("res://tests/test_dir.gd").path("weather_hud.cfg")
