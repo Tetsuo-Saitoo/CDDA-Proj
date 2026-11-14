@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-14 — Item physics live test (QA lead): the live test now drops a carried item, places it with a pose, turns it where it lies and checks the refusals through the client's LiveSession; passes on Windows and Linux.
 - 2026-11-14 — Weather picker marks the held wind too (lead-bridge's final contract: get_cheats().wind); junk reads as the game decides. Client tests pass.
 - 2026-11-13 — Gun leftovers (combat lead): a monster's damage event names the weak point the hit landed on (fork fp3d-combat; the head marker now shows for zombie head and eye hits), and the first-person gun shows a muzzle flash, under 3 flashes a second and off with the flash setting.
 - 2026-11-12 — Melee techniques (combat lead, fork fp3d-combat + client): the player's hit names its technique and family in the `attack` event, and aiming at the head, a leg or an arm calls a stun, trip or disarm that CDDA still has to allow. Windows events and sim tests pass.
