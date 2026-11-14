@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-13 — Gun leftovers (combat lead): a monster's damage event names the weak point the hit landed on (fork fp3d-combat; the head marker now shows for zombie head and eye hits), and the first-person gun shows a muzzle flash, under 3 flashes a second and off with the flash setting.
 - 2026-11-12 — Melee techniques (combat lead, fork fp3d-combat + client): the player's hit names its technique and family in the `attack` event, and aiming at the head, a leg or an arm calls a stun, trip or disarm that CDDA still has to allow. Windows events and sim tests pass.
 - 2026-11-13 — F1 menu: the Lightning flash box is now Bright flashes (it also turns off the first-person muzzle flash, the combat lead's change); the saved setting is unchanged.
 - 2026-11-13 — LiveSession.hold_item for the VR hand-over (lead-vr's ask): sends lead-bridge's new `hold` op; hands other than main / off and bad handles are refused before the sim. Client tests pass.
