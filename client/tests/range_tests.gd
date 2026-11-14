@@ -70,6 +70,7 @@ class FakeSim extends RefCounted:
 class WeatherSim extends FakeSim:
 	var types: Variant = [{"id": "clear", "name": "Clear"}, {"id": "rain", "name": "<color_blue>Rain</color>"}]
 	var held := ""
+	var wind: Variant = -1.0
 
 	func get_weather_types() -> Variant:
 		return types
@@ -78,7 +79,7 @@ class WeatherSim extends FakeSim:
 		return _op("weather", [id, wind])
 
 	func get_cheats() -> Dictionary:
-		return {"seq": 1, "cheats": {}, "weather": held}
+		return {"seq": 1, "cheats": {}, "weather": held, "wind": wind}
 
 
 func run(root: Node, check: Callable, tables: IdTables) -> void:
@@ -218,6 +219,23 @@ func _test_weather(root: Node) -> void:
 	p.set_weather()
 	_check.call(p.weather_pick.item_count == 4 and sim.calls[-1] == ["weather", "", -1.0]
 			and p.status.text == "Weather back to the game: asked for.", "weather panel: a new list shows; back to the game")
+	# the held wind (whole mph in the sim: 5 m/s comes back as 4.92) is marked like the weather; junk is the game's
+	sim.wind = 4.92
+	var read := ls.cheat_wind()
+	p.refresh()
+	var breeze := p.wind_pick.selected == 2
+	sim.wind = 15.2
+	p.refresh()
+	var strong := p.wind_pick.selected == 3
+	var bad_wind := true
+	for w: Variant in [NAN, "5", 99.0, -3.0]:
+		sim.wind = w
+		bad_wind = bad_wind and ls.cheat_wind() == LiveSession.WIND_GAME
+	p.refresh()
+	_check.call(is_equal_approx(read, 4.92) and breeze and strong and bad_wind and p.wind_pick.selected == 0,
+			"weather panel: the held wind is picked (nearest choice); junk or none: as the game decides")
+	sim.wind = -1.0
+	p.refresh()
 	# the pad: up / down pick the page's controls, left / right change a picker, A presses
 	var cs := p.pad_controls()
 	p.pick = cs.find(p.wind_pick) - 1

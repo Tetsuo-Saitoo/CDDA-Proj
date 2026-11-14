@@ -422,6 +422,16 @@ func cheat_weather() -> String:
 	return str(w) if w is String and RangeInfo.monster_id_ok(w) else ""
 
 
+## The wind the cheat holds (get_cheats' "wind", m/s 0..MAX_WIND): WIND_GAME when the game decides, without a game,
+## or for junk (NaN, a string, out of range).
+func cheat_wind() -> float:
+	if not _can("get_cheats"):
+		return WIND_GAME
+	var d: Variant = _sim.get_cheats()
+	var w: Variant = (d as Dictionary).get("wind", WIND_GAME) if d is Dictionary else WIND_GAME
+	return float(w) if (w is float or w is int) and float(w) >= 0.0 and float(w) <= MAX_WIND else WIND_GAME
+
+
 ## Cheat: holds the weather at type `id` ("" hands it back to the game) with the wind at `wind` m/s (0..MAX_WIND;
 ## WIND_GAME leaves the wind to the game). CddaSim.cheat_set_weather (lead-bridge): any game, cheats allowed. Same
 ## op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, a bad id or wind).
@@ -634,11 +644,10 @@ func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, 
 			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
 
 
-## A whole uid and itype in the snapshot's ranges, a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
+## A snapshot item handle (handle_ok), a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
 static func _item_op_ok(uid: float, type: float, pos: Vector3i, yaw: int, tag: int) -> bool:
-	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
-			and uid < float(Snapshot.MAX_UID) and type >= 1.0 and type <= float(Snapshot.MAX_ID) \
-			and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 and tag <= MAX_ITEM_TAG
+	return handle_ok(uid, type) and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 \
+			and tag <= MAX_ITEM_TAG
 
 
 static func _clamp_spot(spot: Vector2) -> Vector2:
