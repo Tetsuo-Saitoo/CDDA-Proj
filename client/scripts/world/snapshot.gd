@@ -55,8 +55,9 @@ const MAX_EFFECTS := 64                   # the contract's cap
 const MAX_EFFECT_ID := 64
 const MAX_EFFECT_NAME := 40
 const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
-const MAX_MORALE := 32                    # morale entries kept
+const MAX_MORALE := 32                    # morale entries kept (the contract sends at most 12)
 const MAX_MORALE_NAME := 64
+const MAX_MOOD_FACE := 16
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
 const EFFECT_BAD := -1
@@ -134,9 +135,14 @@ var player_needs := {}                     # NEEDS key -> int, only the ones sen
 ## player.effects (what CDDA's @ screen lists): {id, name, body_part, intensity, rating, seconds_left}, at most
 ## MAX_EFFECTS. HUD-only data: a bad entry is skipped, not a failed snapshot. seconds_left -1 = permanent or unknown.
 var player_effects: Array[Dictionary] = []
-## player.morale_entries (CDDA's morale list, the reasons behind player_needs["morale"]): {name, value}, at most
+## player.mood.entries (CDDA's morale list, strongest first: the reasons behind the morale level): {name, value
+## (what it adds now, signed), percent (its share of its side, good or bad, 0..100; -1 not sent)}, at most
 ## MAX_MORALE. HUD-only data: a bad entry is skipped, not a failed snapshot.
 var player_morale: Array[Dictionary] = []
+## player.mood without its entries: {level (CDDA's morale level), band (-3..3, CDDA's mood face bands), face (its
+## mood face text, ":)"), total (entries CDDA's morale screen lists)}, each only when sent and well-formed; {}
+## when the snapshot has no mood object. HUD-only.
+var player_mood := {}
 ## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
 ## (HUD-only: never fails the snapshot).
 var player_move_mode := -1
@@ -314,7 +320,9 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	player_effects = effects_from((v as Dictionary).get("effects"))
-	player_morale = morale_from((v as Dictionary).get("morale_entries"))
+	var md: Variant = (v as Dictionary).get("mood")
+	player_mood = mood_from(md)
+	player_morale = morale_from((md as Dictionary).get("entries") if md is Dictionary else null)
 	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
 	player_move_mode = mm if mm is int else -1
 
@@ -341,7 +349,29 @@ static func effects_from(v: Variant) -> Array[Dictionary]:
 	return out
 
 
-## player.morale_entries, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
+## player.mood's own fields, cleaned: the ones malformed or not sent are left out (HUD-only data never fails a
+## snapshot); {} when it isn't an object.
+static func mood_from(v: Variant) -> Dictionary:
+	var out := {}
+	if not v is Dictionary:
+		return out
+	var d: Dictionary = v
+	var level: Variant = _whole(d.get("level"), -32768, 32767)
+	if level != null:
+		out["level"] = level
+	var band: Variant = _whole(d.get("band"), -3, 3)
+	if band != null:
+		out["band"] = band
+	var face := plain_text(d.get("face"), MAX_MOOD_FACE)
+	if not face.is_empty():
+		out["face"] = face
+	var total: Variant = _whole(d.get("total"), 0, 1 << 20)
+	if total != null:
+		out["total"] = total
+	return out
+
+
+## player.mood.entries, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
 static func morale_from(v: Variant) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if not v is Array:
@@ -353,7 +383,8 @@ static func morale_from(v: Variant) -> Array[Dictionary]:
 		var value: Variant = _whole((e as Dictionary).get("value"), -32768, 32767)
 		if name.is_empty() or value == null:
 			continue
-		out.append({"name": name, "value": value})
+		var pct: Variant = _whole((e as Dictionary).get("percent", -1), 0, 100)
+		out.append({"name": name, "value": value, "percent": pct if pct != null else -1})
 	return out
 
 

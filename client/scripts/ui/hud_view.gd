@@ -129,12 +129,13 @@ func mood_line() -> Array:
 	return [data.mood["text"], data.mood["level"]]
 
 
-## The mood line's colour: by level when low, green when good (Content and up), plain while calm.
+## The mood line's colour: by level when low, green when good (Content and up: band 1..3), plain while calm.
 static func mood_color(m: Dictionary) -> Color:
 	var level: int = m.get("level", HudData.UNKNOWN)
 	if level == HudData.HURT or level == HudData.BAD:
 		return HudData.level_color(level)
-	return HudData.level_color(HudData.OK) if float(m.get("cue", 0.0)) > 0.0 else Color(1, 1, 0.9)
+	var band: Variant = m.get("band")
+	return HudData.level_color(HudData.OK) if band is int and band > 0 else Color(1, 1, 0.9)
 
 
 ## [text, level] per effect line shown (at most EFFECT_LINES; the last says how many more when cut).
