@@ -6,8 +6,9 @@ extends Node
 ## pushed), then, once CDDA's own drop has landed and the body still lies still:
 ## - on the square CDDA has it on: the bridge op "spot" (where across the square, its yaw, whether it lies on its side);
 ## - on another square: the bridge op "place", one square at a time toward where it lies (CDDA moves an item one
-##   square per turn), the last step with the spot; ItemBodies keeps the body where it is meanwhile (transit). A square
-##   without a floor makes CDDA drop it a level, which the next snapshot shows.
+##   square per turn), the last step with the spot; ItemBodies keeps the body where it is meanwhile (transit). CDDA
+##   refuses a place onto open air or into a wall (falling is CDDA's, with its time and harm): a body that fell or
+##   lies on another level than CDDA's square goes back where CDDA has it, with nothing sent.
 ## CDDA answers each op with an `item_result` event (the `tag` sent with it: done or refused with its reason,
 ## contracts/bridge_api.md). A refused or unanswered place puts the body back where CDDA has the item (snap back); a
 ## refused spot only means the pose isn't kept. Only `amount` decides; the reason is for showing (`refused`).
@@ -182,7 +183,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 			return false
 		return _send(uid, "spot", [float(uid), float(type), cdda, rest["spot"], rest["yaw"], rest["side"]], cdda, rest, now)
 	var to := Vector3i(cdda.x + clampi(sq.x - cdda.x, -1, 1), cdda.y + clampi(sq.y - cdda.y, -1, 1), cdda.z)
-	if to == cdda:   # lying on another level over or under its own square: not a move CDDA makes
+	if sq.z != cdda.z:   # it fell to (or lies on) another level: CDDA never moves an item down or up for free
 		_put_back(uid)
 		return false
 	if now - int(_placed_ms.get(uid, -PLACE_GAP_MS)) < PLACE_GAP_MS or _turn() <= int(_placed_turn.get(uid, -1)):
@@ -190,7 +191,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	if not bodies.transit(uid, true):
 		_put_back(uid)
 		return false
-	var last := to == sq   # the last step carries the pose; a step on the way (or over a hole) has none
+	var last := to == sq   # the last step carries the pose; a step on the way has none
 	var spot: Vector2 = rest["spot"] if last else Vector2(-1, -1)
 	var args := [float(uid), float(type), cdda, to, spot, rest["yaw"] if last else 0, rest["side"] if last else false]
 	if not _send(uid, "place", args, to, rest if last else {}, now):
