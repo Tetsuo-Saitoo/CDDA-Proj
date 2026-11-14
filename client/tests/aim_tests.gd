@@ -1408,8 +1408,9 @@ func _test_gun_parts() -> void:
 		m.free()
 
 
-## Muzzle flash: a gun's kick shows a star at its muzzle for FLASH_S and lights it, the light at most once every
-## LIGHT_GAP_S (a long burst never strobes over 3 a second), none for a knife; `flash_light` off keeps the star.
+## Muzzle flash: a gun's kick shows a star at its muzzle for FLASH_S and lights it, both at most once every
+## FLASH_GAP_S (a burst at any rate never flashes over 3 times a second, and nothing shows between flashes), none
+## for a knife or with `flashes` off.
 func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	var VM := WeaponViewmodel
 	var rifle := tables.index_of("itype", "remington_870")
@@ -1427,22 +1428,45 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	var off := not vm.flashing() and not vm.lit()
 	_check.call(rifle > 0 and under_muzzle and on and fading and off,
 			"muzzle flash: a shot shows the star and the light at the muzzle, gone after %.2f s" % VM.FLASH_S)
-	# a burst: a shot every 50 ms for 1.5 s, the star every shot, the light at most once every LIGHT_GAP_S
+	# bursts of 3 s at 20, 10 and 3.3 shots a second, at 60 frames a second: the star only shows when a flash
+	# starts (no re-show, no pulse in between), and no 4 flashes start within one second
+	var bursts := []
+	var bursts_ok := true
+	for period: float in [0.05, 0.1, 0.3]:
+		vm._process(1.0)
+		var starts: Array[float] = []
+		var shows := 0
+		var was := vm.flashing()
+		var t := 0.0
+		var next := 0.0
+		while t < 3.0:
+			if t >= next:
+				vm.kick()
+				next += period
+				if vm._flash_t == VM.FLASH_S:
+					starts.append(t)
+			shows += 1 if vm.flashing() and not was else 0
+			vm._process(1.0 / 60.0)
+			was = vm.flashing()
+			t += 1.0 / 60.0
+		var spaced := not starts.is_empty()
+		for i in starts.size() - 3:
+			spaced = spaced and starts[i + 3] - starts[i] > 1.0
+		bursts_ok = bursts_ok and spaced and shows == starts.size() and starts.size() <= 9
+		bursts.append([period, starts.size(), shows])
+	_check.call(bursts_ok, "muzzle flash: bursts at 20, 10 and 3.3 shots a second flash under 3 times a second, "
+			+ "nothing between ([period, flashes, shown] %s)" % [bursts])
 	vm._process(1.0)
-	var stars := 0
-	var lights := 0
-	for i in 30:
-		vm.kick()
-		stars += 1 if vm.flashing() else 0
-		lights += 1 if vm.lit() and vm._light_t == VM.FLASH_S else 0
-		vm._process(0.05)
-	_check.call(stars == 30 and lights >= 4 and lights <= 5,
-			"muzzle flash: a 30-shot burst shows 30 stars and %d lights (under 3 a second)" % lights)
-	vm._process(1.0)
-	vm.flash_light = false
+	vm.flashes = false
 	vm.kick()
-	var dark := vm.flashing() and not vm.lit()
-	vm.flash_light = true
+	var dark := not vm.flashing() and not vm.lit()
+	vm.flashes = true
+	vm._process(1.0)
+	vm.kick()
+	vm.flashes = false
+	vm._process(0.001)
+	dark = dark and not vm.flashing() and not vm.lit()
+	vm.flashes = true
 	vm._process(1.0)
 	vm.set_item(pistol, tables)
 	var rebuilt := vm._root.get_node_or_null("Muzzle/Flash") != null and not vm.flashing()
@@ -1451,7 +1475,7 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm.set_item(knife, tables)
 	vm.kick()
 	_check.call(dark and rebuilt and pistol_on and not vm.flashing() and vm._flash == null,
-			"muzzle flash: light off keeps the star, a new gun gets its own, a knife has none")
+			"muzzle flash: none with flashes off (and one showing goes), a new gun gets its own, a knife has none")
 	vm.free()
 
 

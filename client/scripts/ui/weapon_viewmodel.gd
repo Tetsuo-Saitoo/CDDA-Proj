@@ -11,9 +11,9 @@ extends Node3D
 ## its port, and a small label saying what jammed and that R (reload) clears it (the fork's fp3d::rack_jammed).
 ## A gun's parts are named (Muzzle, Grip, MagWell, Magazine, Slide / Bolt: see build()).
 ## Muzzle flash: `kick()` on a gun (a shape with a Muzzle) shows a short star of fire at the muzzle (FLASH_S, a
-## new turn each shot) and a warm light around it. The light (it lights the room, a large area) comes at most
-## once every LIGHT_GAP_S, so a long burst never strobes the view faster than 3 times a second; `flash_light`
-## turns the light off (the small star stays).
+## new turn each time) and a warm light around it. Both come together at most once every FLASH_GAP_S: a shot
+## sooner only recoils, so a long burst never flashes faster than 3 times a second (photosensitivity, as the
+## lightning flash). `flashes` off (main.gd: the HUD's flash setting) shows neither.
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
@@ -43,7 +43,7 @@ const FLASH_SIZE := {"pistol": 0.09, "long": 0.14, "launcher": 0.2}   # the star
 const FLASH_COLOR := Color(1.0, 0.78, 0.45)
 const FLASH_ENERGY := 2.0             # the muzzle light at its brightest
 const FLASH_RANGE := 4.0              # m
-const LIGHT_GAP_S := 0.34             # at least this long between two muzzle lights (under 3 a second)
+const FLASH_GAP_S := 0.34             # at least this long between two muzzle flashes (under 3 a second)
 
 var shape := ""          # "" none, "pistol", "long", "bow", "launcher", "melee", "item"
 var dirt := -1           # the held gun's fouling as last set (0..DIRT_MAX), -1 none / NON-FOULING
@@ -62,11 +62,10 @@ var _grime_mats: Array[ShaderMaterial] = []
 var jam := ""            # the held gun's jam (a JAMS key), "" none
 var _cant := 0.0         # 0..1, eased toward 1 while jammed
 var _jam_label: Label3D
-var flash_light := true  # the muzzle light (the star shows either way)
+var flashes := true      # muzzle flashes at all (off: shots only recoil)
 var _flash: Node3D       # under the gun's Muzzle: the star (Star) and the light (Light); null for other shapes
 var _flash_t := 0.0      # seconds of the flash left
-var _light_t := 0.0      # seconds of the light left
-var _light_wait := 0.0   # seconds before the next muzzle light may come
+var _flash_wait := 0.0   # seconds before the next muzzle flash may come
 
 
 func _init() -> void:
@@ -112,7 +111,6 @@ func set_item(index: int, tables: IdTables) -> void:
 	_grime_mats.clear()
 	_flash = null
 	_flash_t = 0.0
-	_light_t = 0.0
 	if s != "":
 		_root = build(s, grime)
 		add_child(_root)
@@ -198,14 +196,11 @@ static func grime_for(d: int) -> float:
 
 func kick() -> void:
 	_kick = 1.0
-	if _flash == null:
-		return
+	if _flash == null or not flashes or _flash_wait > 0.0:
+		return   # no gun, flashes off, or too soon after the last flash
 	_flash_t = FLASH_S
-	_flash.visible = true
+	_flash_wait = FLASH_GAP_S
 	_flash.rotation.z = randf() * TAU
-	if flash_light and _light_wait <= 0.0:
-		_light_t = FLASH_S
-		_light_wait = LIGHT_GAP_S
 	_tick_flash(0.0)   # shown at once, not on the next frame
 
 
@@ -237,22 +232,21 @@ func _process(delta: float) -> void:
 	rotation.z = JAM_CANT * _cant
 
 
-## Fades the muzzle flash and its light out, and counts down the light's gap.
+## Fades the muzzle flash (star and light) out, and counts down the gap to the next one.
 func _tick_flash(delta: float) -> void:
 	if not is_finite(delta) or delta < 0.0:
 		delta = 0.0
-	_light_wait = maxf(_light_wait - delta, 0.0)
+	_flash_wait = maxf(_flash_wait - delta, 0.0)
 	if _flash == null:
 		return
-	_flash_t = maxf(_flash_t - delta, 0.0)
-	_light_t = maxf(_light_t - delta, 0.0)
+	_flash_t = maxf(_flash_t - delta, 0.0) if flashes else 0.0
 	var f := _flash_t / FLASH_S
 	_flash.visible = f > 0.0
 	_flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
 	var light := _flash.get_node_or_null("Light") as OmniLight3D
 	if light != null:
-		light.visible = _light_t > 0.0 and flash_light
-		light.light_energy = FLASH_ENERGY * _light_t / FLASH_S
+		light.visible = f > 0.0
+		light.light_energy = FLASH_ENERGY * f
 
 
 ## A muzzle flash `size` wide, hidden: a star of fire facing back down the bore (Star: one quad across the bore
