@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-14 — Weather picker marks the held wind too (lead-bridge's final contract: get_cheats().wind); junk reads as the game decides. Client tests pass.
 - 2026-11-13 — F1 menu: the Lightning flash box is now Bright flashes (it also turns off the first-person muzzle flash, the combat lead's change); the saved setting is unchanged.
 - 2026-11-13 — LiveSession.hold_item for the VR hand-over (lead-vr's ask): sends lead-bridge's new `hold` op; hands other than main / off and bad handles are refused before the sim. Client tests pass.
 - 2026-11-13 — Cheats page pad fix (lead-qa review): A with a clicked text field focused picks that field instead of pressing the pad's pick; a move takes the focus off it.

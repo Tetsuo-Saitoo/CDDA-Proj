@@ -421,6 +421,16 @@ func cheat_weather() -> String:
 	return str(w) if w is String and RangeInfo.monster_id_ok(w) else ""
 
 
+## The wind the cheat holds (get_cheats' "wind", m/s 0..MAX_WIND): WIND_GAME when the game decides, without a game,
+## or for junk (NaN, a string, out of range).
+func cheat_wind() -> float:
+	if not _can("get_cheats"):
+		return WIND_GAME
+	var d: Variant = _sim.get_cheats()
+	var w: Variant = (d as Dictionary).get("wind", WIND_GAME) if d is Dictionary else WIND_GAME
+	return float(w) if (w is float or w is int) and float(w) >= 0.0 and float(w) <= MAX_WIND else WIND_GAME
+
+
 ## Cheat: holds the weather at type `id` ("" hands it back to the game) with the wind at `wind` m/s (0..MAX_WIND;
 ## WIND_GAME leaves the wind to the game). CddaSim.cheat_set_weather (lead-bridge): any game, cheats allowed. Same
 ## op ids and range_done as the range ops; 0 when refused here (cheats not allowed, no game, a bad id or wind).

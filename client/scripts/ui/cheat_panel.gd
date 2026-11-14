@@ -50,6 +50,7 @@ var pick := -1
 var _marked: Control
 var _weather_ids: Array = []   # the types shown, to rebuild the list only when it changed
 var _weather_held := "\n"     # the sim's weather when last shown ("\n": not yet)
+var _wind_held := NAN         # the sim's wind when last shown (NaN: not yet)
 var _range_ops := {}   # op id -> what it was, for the status line
 const MAX_RANGE_OPS := 32
 
@@ -193,8 +194,24 @@ func refresh_weather() -> void:
 	if held != _weather_held:
 		_weather_held = held
 		weather_pick.select(ids.find(held) + 1)   # not in the list, or "": as the game decides
+	var wind: float = backend.cheat_wind() if ok and _has("cheat_wind") else LiveSession.WIND_GAME
+	if wind != _wind_held:   # likewise the wind
+		_wind_held = wind
+		wind_pick.select(wind_index(wind))
 	for c: BaseButton in [weather_pick, wind_pick, weather_button]:
 		c.disabled = not ok
+
+
+## The wind choice nearest `w` m/s (the bridge holds whole mph: 5 m/s comes back as 4.92); 0 (as the game decides)
+## for a negative one.
+static func wind_index(w: float) -> int:
+	if not w >= 0.0:
+		return 0
+	var best := 1
+	for i in range(1, WINDS.size()):
+		if absf(float(WINDS[i][1]) - w) < absf(float(WINDS[best][1]) - w):
+			best = i
+	return best
 
 
 func set_weather() -> void:
