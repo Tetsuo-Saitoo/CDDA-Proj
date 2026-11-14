@@ -1,6 +1,8 @@
 # WORKLOG
 
 - 2026-11-12 — Melee techniques (combat lead, fork fp3d-combat + client): the player's hit names its technique and family in the `attack` event, and aiming at the head, a leg or an arm calls a stun, trip or disarm that CDDA still has to allow. Windows events and sim tests pass.
+- 2026-11-13 — F1 menu: the Lightning flash box is now Bright flashes (it also turns off the first-person muzzle flash, the combat lead's change); the saved setting is unchanged.
+- 2026-11-13 — LiveSession.hold_item for the VR hand-over (lead-vr's ask): sends lead-bridge's new `hold` op; hands other than main / off and bad handles are refused before the sim. Client tests pass.
 - 2026-11-13 — Cheats page pad fix (lead-qa review): A with a clicked text field focused picks that field instead of pressing the pad's pick; a move takes the focus off it.
 - 2026-11-13 — UI looked at once on the real renderer: the mood tint works (subtle); the mood line and message feed overlapped the body list, now laid out under it; the F1 Cheats page scrolls when taller than the window (small windows, VR panel); the range's time box was too narrow. Client tests pass.
 - 2026-11-12 — Weather cheat on the F1 Cheats page: CDDA's weather names and a wind (calm, breeze, strong), each also as the game decides, on lead-bridge's weather calls (list read as hostile text); the Cheats page now works by pad (X swaps it in) and the VR stick. Client tests pass; the bridge side isn't on main yet.

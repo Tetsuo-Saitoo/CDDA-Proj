@@ -92,6 +92,32 @@ func _test_hold() -> void:
 	_check.call(waits and seen[-1] == ["refused", 32, "hold", ItemActions.NO_ANSWER] and a.pending_count() == 0,
 			"item actions: a held item gone from the carried list is no hand change: it times out (%s)" % [seen[-1]])
 	a.free()
+	# LiveSession.hold_item: the bridge's "hold" op, checked here first
+	var ls := LiveSession.new()
+	var off := ls.hold_item(31.0, 8.0, "main")
+	var sim := QueueSim.new()
+	ls._sim = sim
+	var ok := ls.hold_item(31.0, 8.0, "off")
+	var bad := [[31.0, 8.0, "pack"], [31.0, 8.0, "MAIN"], [31.0, 8.0, ""], [0.0, 8.0, "main"], [1.5, 8.0, "main"],
+		[NAN, 8.0, "main"], [INF, 8.0, "main"], [float(Snapshot.MAX_UID), 8.0, "main"], [31.0, 0.0, "main"],
+		[31.0, 8.5, "main"], [31.0, float(Snapshot.MAX_ID + 1), "main"], [-31.0, 8.0, "main"]]
+	var none := bad.all(func(c: Array) -> bool: return not ls.hold_item(c[0], c[1], c[2]))
+	sim.accept = false
+	var full := ls.hold_item(32.0, 8.0, "main")
+	_check.call(not off and ok and none and not full and sim.sent == [{"op": "hold", "item": 31, "type": 8, "hand": "off"},
+			{"op": "hold", "item": 32, "type": 8, "hand": "main"}],
+			"live session: hold_item sends the bridge's hold op; other hands and bad handles aren't sent (%s)" % [sim.sent])
+	ls.free()
+
+
+## A stand-in for CddaSim's queue_item_action: records what it is given, queues while `accept`.
+class QueueSim extends RefCounted:
+	var sent: Array = []
+	var accept := true
+
+	func queue_item_action(d: Dictionary) -> bool:
+		sent.append(d)
+		return accept
 
 
 func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
