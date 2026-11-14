@@ -1333,7 +1333,7 @@ func report_bug() -> void:
 	var i := 0 if settings["main_hand"] == "left" else 1
 	say(i, "Bug report saved: send the bug_reports folder" if not path.is_empty() else "The bug report couldn't be saved")
 	feel(main_ctrl())
-	print("VR bug report: " + (ProjectSettings.globalize_path(path) if not path.is_empty() else "not saved"))
+	print("VR bug report: " + (path if not path.is_empty() else "not saved"))   # user://: no account name in the log
 
 
 ## The menu sent a range op: a teleport remembers where the player stands now.

@@ -24,7 +24,8 @@ Each script lives here as `<area>-<nn>.md`. The VR lead keeps the VR ones up to 
 - The script with the blanks filled in (a line each is plenty; "as expected" is fine).
 - `vr_perf.log` and the `bug_reports/` folder from Godot's user folder: Windows `%APPDATA%\Godot\app_userdata\CDDA-3D\`,
   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`. The log starts with the headset runtime, the controllers and
-  any VR settings you changed, so you don't have to type them.
+  any VR settings you changed (your height setting included, which helps with size bugs), so you don't have to type
+  them. A bug report's picture shows your view as it was, wrist HUD and game messages included.
 - The console output, when the game was started from a terminal.
 
 ## Severity (how we sort what comes back)
