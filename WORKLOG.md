@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-13 — Weather cheat: `cheat_set_weather(id, wind)` and `get_weather_types()` (bridge_api.md); in a range game "" goes back to its clear sky. Sim test sets a lightning storm and sees the snapshot change and a flash event. Windows fork, client and live tests and Linux fork tests pass.
 - 2026-11-12 — Item ops for VR item physics: `queue_item_action` gains place, spot and hold, an optional `tag` answered by a new `item_result` event, and the snapshot's `poses`. Item actions: stricter checks after a four-lens review. Sim test checks each refusal; Windows fork, client and live tests and Linux fork tests pass.
 - 2026-11-12 — Snapshot: CDDA's weather in full (`env`: what the weather type does, wind, humidity and shelter at the player) and the player's mood (`player.mood`: level, band, face, strongest entries); new `lightning` event. Reviewed by three readers before commit (mod data edge cases fixed). Windows: snapshot, events, sim, range, client and live tests pass; Linux: snapshot, events, sim.
 - 2026-11-12 — Range weather fix merged (fork ea33efe, QA lead): every Windows suite passes. A three-lens review of the fork diff with a second reader per finding found nothing that blocks; two small leftovers go back to the QA lead (TASKS K7).

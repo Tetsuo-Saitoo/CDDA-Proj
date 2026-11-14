@@ -130,6 +130,14 @@ func _run() -> void:
 			"carried items with handles (%d)" % (kit_snap.carried.size() / Snapshot.CARRIED_STRIDE))
 	var ids: Variant = JSON.parse_string(_sim.get_id_tables_json())
 	_check(ids is Dictionary and (ids["ter"] as Array).size() > 1000, "id tables parse, >1000 terrain")
+	# The weather cheat's picker list, and the bridge's own refusals (the game's come as range results).
+	var weathers: Array = _sim.get_weather_types()
+	_check(weathers.size() > 3 and weathers.size() <= 128
+			and weathers.any(func(w: Dictionary) -> bool: return w.get("id") == "lightning"),
+			"weather types listed (%d)" % weathers.size())
+	_check(_sim.cheat_set_weather("light ning", -1.0) == 0 and _sim.cheat_set_weather("a".repeat(65), -1.0) == 0
+			and _sim.cheat_set_weather("lightning", NAN) == 0 and _sim.cheat_set_weather("lightning", INF) == 0,
+			"weather cheat: malformed calls refused")
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 
