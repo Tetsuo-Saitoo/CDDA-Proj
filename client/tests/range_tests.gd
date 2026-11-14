@@ -66,6 +66,21 @@ class FakeSim extends RefCounted:
 		allowed.append(on)
 
 
+## FakeSim with the weather cheat (CddaSim.get_weather_types / cheat_set_weather, get_cheats' "weather").
+class WeatherSim extends FakeSim:
+	var types: Variant = [{"id": "clear", "name": "Clear"}, {"id": "rain", "name": "<color_blue>Rain</color>"}]
+	var held := ""
+
+	func get_weather_types() -> Variant:
+		return types
+
+	func cheat_set_weather(id: String, wind: float) -> int:
+		return _op("weather", [id, wind])
+
+	func get_cheats() -> Dictionary:
+		return {"seq": 1, "cheats": {}, "weather": held}
+
+
 func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_check = check
 	print("range")
@@ -74,6 +89,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_panel(root, tables)
 	_test_loaded(root)
 	_test_teleport(root)
+	_test_weather(root)
 
 
 ## The teleport cheat: TeleportAim picks the square to stand on, LiveSession sends it only with cheats allowed (in
@@ -128,6 +144,124 @@ func _test_teleport(root: Node) -> void:
 	p.teleport_here()
 	_check.call(p.teleport_button.disabled and sent.size() == 1 and p.status.text.begins_with("Teleport: needs"),
 			"teleport panel: greyed out while cheats aren't allowed")
+	p.free()
+	ls.free()
+
+
+## The weather cheat: the types list read as hostile text; LiveSession sends it only with cheats allowed and a good
+## id and wind; the F1 row picks a weather and a wind (each also as the game decides) and says how it went; a pad
+## (and the VR stick, through KeyMenu) reaches it like the rest of the Cheats page.
+func _test_weather(root: Node) -> void:
+	var junk: Array = [{"id": "clear", "name": "Clear"}, {"id": "rain", "name": "<color_blue>Rain</color>\n\u202eX"},
+		"str", {"id": 5, "name": "n"}, {"id": "bad id!", "name": "n"}, {"id": "", "name": "n"},
+		{"id": "x".repeat(65), "name": "n"}, {"id": "clear", "name": "again"}, {"id": "fog", "name": "y".repeat(500)},
+		{"id": "snow"}, null]
+	for i in 300:
+		junk.append({"id": "w%d" % i, "name": "W"})
+	var c := LiveSession.clean_weather_types(junk)
+	var ok_ids := true
+	for t: Dictionary in c:
+		ok_ids = ok_ids and RangeInfo.monster_id_ok(t["id"]) and t["name"] is String \
+				and (t["name"] as String).length() <= LiveSession.MAX_WEATHER_NAME
+	_check.call(c.size() == 121 and ok_ids and c[0] == {"id": "clear", "name": "Clear"} and c[1]["name"] == "RainX"
+			and c[2]["id"] == "fog" and (c[2]["name"] as String).length() == 48 and c[3] == {"id": "snow", "name": "snow"}
+			and LiveSession.clean_weather_types("x").is_empty() and LiveSession.clean_weather_types(null).is_empty(),
+			"weather: the list is cleaned: first 128 looked at, ids checked once each, names plain and capped (%d)" % c.size())
+	var sim := WeatherSim.new()
+	sim.info = {"seq": 1, "range": false, "zones": [], "results": []}
+	var ls := _session(sim)
+	var done: Array = []
+	ls.range_done.connect(func(id: int, e: String) -> void: done.append([id, e]))
+	_check.call(not ls.can_set_weather() and ls.cheat_set_weather("rain", 5.0) == 0 and sim.calls.is_empty()
+			and ls.weather_types().size() == 2, "weather: refused here while cheats aren't allowed")
+	ls.set_cheats_allowed(true)
+	var id := ls.cheat_set_weather("rain", 5.0)
+	var refused := [["rain; x", 0.0], ["x".repeat(65), 0.0], ["rain", 45.5], ["rain", -0.5], ["rain", NAN], ["rain", INF]]
+	var none_sent := refused.all(func(r: Array) -> bool: return ls.cheat_set_weather(r[0], r[1]) == 0)
+	var back := ls.cheat_set_weather("", LiveSession.WIND_GAME)
+	_check.call(id == 1 and back == 2 and none_sent and sim.calls == [["weather", "rain", 5.0], ["weather", "", -1.0]],
+			"weather: sent with cheats allowed; a bad id or wind isn't; \"\" and -1 hand it back (%s)" % [sim.calls])
+	sim.info["results"] = [{"id": 1, "error": ""}, {"id": 2, "error": "No weather data."}]
+	ls._poll_range(0.0)
+	sim.held = "rain"
+	var held := ls.cheat_weather()
+	sim.held = "<b>x</b>"
+	_check.call(done == [[1, ""], [2, "No weather data."]] and held == "rain" and ls.cheat_weather() == "",
+			"weather: results by id; the held weather read back, junk as the game decides (%s)" % [done])
+	sim.info["results"] = []
+	sim.held = "rain"
+	var p := CheatPanel.new()
+	root.add_child(p)
+	p.backend = ls
+	ls.range_done.connect(p.on_range_done)
+	p.refresh()
+	_check.call(p.weather_pick.item_count == 3 and p.weather_pick.get_item_text(0) == CheatPanel.WEATHER_GAME
+			and p.weather_pick.get_item_text(2) == "Rain" and p.weather_pick.selected == 2 and not p.weather_pick.disabled
+			and p.wind_pick.item_count == 4 and not p.weather_button.disabled,
+			"weather panel: CDDA's names after \"as the game decides\", the held one picked")
+	p.weather_pick.select(1)
+	p.wind_pick.select(2)
+	p.set_weather()
+	var asked := p.status.text
+	p.refresh()   # the sim still holds rain: the pick not yet applied stays
+	var kept := p.weather_pick.selected == 1
+	sim.info["results"] = [{"id": 3, "error": ""}]
+	ls._poll_range(0.0)
+	_check.call(sim.calls[-1] == ["weather", "clear", 5.0] and asked == "Weather Clear, breeze: asked for." and kept
+			and p.status.text == "Weather Clear, breeze: done.", "weather panel: sends the pick and wind, says how it went (%s)"
+			% p.status.text)
+	sim.held = "clear"
+	sim.types = (sim.types as Array) + [{"id": "fog", "name": "Fog"}]
+	p.refresh()
+	p.weather_pick.select(0)
+	p.wind_pick.select(0)
+	p.set_weather()
+	_check.call(p.weather_pick.item_count == 4 and sim.calls[-1] == ["weather", "", -1.0]
+			and p.status.text == "Weather back to the game: asked for.", "weather panel: a new list shows; back to the game")
+	# the pad: up / down pick the page's controls, left / right change a picker, A presses
+	var cs := p.pad_controls()
+	p.pick = cs.find(p.wind_pick) - 1
+	p.pad_move(1)
+	p.pad_adjust(1)
+	var stepped := p.wind_pick.selected == 1
+	p.pad_adjust(-1)
+	p.pad_adjust(-1)
+	var wrapped := p.wind_pick.selected == 3
+	p.pad_move(1)
+	var n := sim.calls.size()
+	p.pad_press()
+	_check.call(cs.has(p.weather_pick) and cs.has(p.teleport_button) and not cs.has(p.zone_pick) and stepped and wrapped
+			and p.weather_button.modulate == CheatPanel.PICKED and p.wind_pick.modulate == Color.WHITE
+			and sim.calls.size() == n + 1 and sim.calls[-1] == ["weather", "", 15.0],
+			"weather pad: the pad picks the row, changes the wind and presses Set weather (%s)" % [sim.calls[-1]])
+	var m := KeyMenu.new()
+	m.save_path = preload("res://tests/test_dir.gd").path("weather_keys.cfg")
+	m.hud_path = preload("res://tests/test_dir.gd").path("weather_hud.cfg")
+	var p2 := CheatPanel.new()
+	m.add_cheat_page(p2)
+	root.add_child(m)
+	p2.backend = ls
+	m.cheats_forced = true
+	m.open()
+	var x := InputEventJoypadButton.new()
+	x.button_index = JOY_BUTTON_X
+	x.pressed = true
+	var down := InputEventJoypadButton.new()
+	down.button_index = JOY_BUTTON_DPAD_DOWN
+	down.pressed = true
+	var stick := InputEventAction.new()
+	stick.action = &"ui_down"
+	stick.pressed = true
+	m.take(x)
+	var swapped := m.showing_cheats()
+	m.take(down)
+	var first := p2.pick == 0
+	m.take(stick)
+	var second := p2.pick == 1
+	m.take(x)
+	_check.call(swapped and first and second and not m.showing_cheats() and m.visible,
+			"weather pad: X swaps in the Cheats page, the D-pad and the VR stick pick on it, X swaps back")
+	m.free()
 	p.free()
 	ls.free()
 

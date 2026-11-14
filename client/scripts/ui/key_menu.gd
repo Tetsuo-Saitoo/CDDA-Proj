@@ -4,7 +4,9 @@ extends PanelContainer
 ## button (modifiers count: Shift+E is its own key; a modifier alone binds when let go); click the pad slot,
 ## then press a pad button or push a stick / trigger one way. Esc cancels, Backspace clears the slot. Each change is saved at once (InputActions.save_bindings); a key that another action also uses is
 ## kept on both and named in the status line. While open the menu takes every key, so nothing reaches the game.
-## With a pad: the D-pad or left stick picks a slot (highlighted), A starts setting it, B / Back / Start close.
+## With a pad: the D-pad or left stick picks a slot (highlighted), A starts setting it, B / Back / Start close,
+## X swaps in the Cheats page (when it may show), where the D-pad, stick and A work its controls (CheatPanel.pad_*;
+## the VR stick's ui_* actions too).
 ## With add_hud_settings() it also has the HUD row (compass opacity slider, the debug-cheats switch), saved in
 ## user://hud.cfg. With add_cheat_page() a "Cheats" button swaps the key list for the CheatPanel; it shows only
 ## while cheats are allowed (the debug switch, or cheats_forced by --test / --cheats).
@@ -32,6 +34,7 @@ var debug_check: CheckBox
 var mood_check: CheckBox
 var flash_check: CheckBox
 var cheat_page: CheatPanel    # set by add_cheat_page
+var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
 var cheats_button: Button
 ## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
 var cheats_forced := false:
@@ -45,6 +48,8 @@ var _scroll: ScrollContainer
 var cursor := Vector2i(-1, PAD_SLOT)
 var _axis_held := {}   # stick axis -> -1 / 0 / 1 as last pushed: one step per push
 const PICKED := Color(1.0, 0.8, 0.35)
+## ui_* actions that work the Cheats page's controls (the VR stick) -> their step.
+const CHEAT_ACTIONS := {&"ui_up": -1, &"ui_down": 1, &"ui_left": -1, &"ui_right": 1, &"ui_accept": 0}
 const KEYS_TITLE := ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
 		+ "Esc cancels  Backspace clears  F1 / Esc closes.  Pad: D-pad picks, A sets, B closes")
 
@@ -167,8 +172,15 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
 func add_cheat_page(panel: CheatPanel) -> void:
 	cheat_page = panel
-	_box.add_child(panel)
-	_box.move_child(panel, _scroll.get_index() + 1)
+	cheat_scroll = ScrollContainer.new()
+	cheat_scroll.name = "CheatScroll"
+	cheat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cheat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	cheat_scroll.visible = false
+	_box.add_child(cheat_scroll)
+	_box.move_child(cheat_scroll, _scroll.get_index() + 1)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cheat_scroll.add_child(panel)
 	panel.visible = false
 	_update_cheats_button()
 
@@ -187,9 +199,11 @@ func show_cheats(on: bool) -> void:
 	_capture = []
 	refresh()
 	_scroll.visible = not on
-	_title.text = "Cheats (testing).  F1 / Esc closes" if on else KEYS_TITLE
+	_title.text = ("Cheats (testing).  F1 / Esc closes.  Pad: D-pad picks, left / right change, A presses, X keys, "
+			+ "B closes") if on else KEYS_TITLE
 	if cheat_page != null:
 		cheat_page.visible = on
+		cheat_scroll.visible = on
 		if on:
 			cheat_page.refresh()
 	if cheats_button != null:
@@ -302,7 +316,8 @@ func move_cursor(step: Vector2i) -> void:
 
 
 ## A pad event while nothing is being set: D-pad / left stick move the pick, A sets the picked slot, B / Back /
-## Start close. On the Cheats page only closing works. Always used (nothing reaches the game).
+## Start close, X swaps the Keys and Cheats pages. On the Cheats page the D-pad / stick and A go to its controls
+## (up / down pick, left / right change). Always used (nothing reaches the game).
 func _pad_nav(event: InputEvent) -> bool:
 	var step := Vector2i.ZERO
 	var b := event as InputEventJoypadButton
@@ -314,8 +329,14 @@ func _pad_nav(event: InputEvent) -> bool:
 				close()
 				return true
 			JOY_BUTTON_A:
-				if cursor.x >= 0 and not showing_cheats():
+				if showing_cheats():
+					cheat_page.pad_press()
+				elif cursor.x >= 0:
 					start_capture(InputActions.ACTIONS[cursor.x][0], cursor.y)
+				return true
+			JOY_BUTTON_X:
+				if cheats_allowed():
+					show_cheats(not showing_cheats())
 				return true
 			JOY_BUTTON_DPAD_UP:
 				step = Vector2i(0, -1)
@@ -332,7 +353,12 @@ func _pad_nav(event: InputEvent) -> bool:
 		if _axis_held.get(m.axis, 0) != sgn:
 			_axis_held[m.axis] = sgn
 			step = Vector2i(sgn, 0) if m.axis == JOY_AXIS_LEFT_X else Vector2i(0, sgn)
-	if step != Vector2i.ZERO and not showing_cheats():
+	if step != Vector2i.ZERO and showing_cheats():
+		if step.y != 0:
+			cheat_page.pad_move(step.y)
+		else:
+			cheat_page.pad_adjust(step.x)
+	elif step != Vector2i.ZERO:
 		move_cursor(step)
 	return true
 
@@ -380,7 +406,19 @@ func _typing(event: InputEvent) -> bool:
 func take(event: InputEvent) -> bool:
 	var k := event as InputEventKey
 	if event is InputEventAction:   # the VR panel's B / Y: backs out of a capture, else closes; others pass
-		if not event.is_pressed() or (event as InputEventAction).action != &"ui_cancel":
+		if not event.is_pressed():
+			return false
+		var act := (event as InputEventAction).action
+		if showing_cheats() and _capture.is_empty() and act in CHEAT_ACTIONS:   # the VR stick on the Cheats page
+			var d: int = CHEAT_ACTIONS[act]
+			if act == &"ui_accept":
+				cheat_page.pad_press()
+			elif act in [&"ui_up", &"ui_down"]:
+				cheat_page.pad_move(d)
+			else:
+				cheat_page.pad_adjust(d)
+			return true
+		if act != &"ui_cancel":
 			return false
 		if _capture.is_empty():
 			close()
