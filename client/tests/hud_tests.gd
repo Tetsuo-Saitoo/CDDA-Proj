@@ -178,6 +178,21 @@ func _test_mood() -> void:
 	_check.call(h.mood.is_empty() and view.mood.text == "" and view.mood_line().is_empty(),
 			"mood: gone when the snapshot stops sending it")
 	view.free()
+	# the left column: the mood line under the body block (12 rows: CDDA's main parts), the feed under the mood
+	var col := HudData.new()
+	for i in 12:
+		col.body.append({"name": "part %d" % i, "frac": 1.0, "level": HudData.OK})
+	col.mood = HudData.mood_from(-60, [{"name": "Wet", "value": -60, "percent": 100}])
+	var v2 := HudView.new()
+	v2.data = col
+	var body_end := HudView.BODY_TOP + 12 * HudView.ROW_H
+	var stacked := v2.mood.offset_top >= body_end and v2.feed.offset_top >= v2.mood.offset_bottom \
+			and v2.mood.offset_bottom - v2.mood.offset_top == HudView.MOOD_H
+	col.mood = {}
+	col.changed.emit(PackedStringArray(["mood"]))
+	_check.call(stacked and v2.feed.offset_top >= body_end and v2.feed.offset_top < v2.mood.offset_bottom,
+			"mood: the line sits under the body block and the feed under it; no line: the feed moves up")
+	v2.free()
 
 
 ## player.move_mode: the id tables name it, HudData words it, running says how much stamina is left once it runs

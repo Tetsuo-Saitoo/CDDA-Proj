@@ -14,6 +14,10 @@ const BAR_W := 90.0
 const ROW_H := 16.0
 const FONT_SIZE := 14
 const CHEAT_COLOR := Color(1.0, 0.55, 0.1)
+## The left column's top, in pixels from the screen's middle: the body block, then the mood line, then the feed,
+## each under what the one above draws (_layout), so they never overlap however many rows CDDA sends.
+const BODY_TOP := -140.0
+const MOOD_H := 36.0
 
 var data: HudData:
 	set(d):
@@ -41,11 +45,11 @@ func _init() -> void:
 	feed.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	feed.position = Vector2(12, 40)
 	feed.size = Vector2(560, FEED_LINES * 18)
-	mood = _label("Mood", HORIZONTAL_ALIGNMENT_LEFT)   # between the body bars and the feed
+	mood = _label("Mood", HORIZONTAL_ALIGNMENT_LEFT)   # between the body block and the feed (_layout)
 	mood.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	mood.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	mood.position = Vector2(12, 0)
-	mood.size = Vector2(310, 38)
+	mood.size = Vector2(310, MOOD_H)
 	mood.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	mood.max_lines_visible = 2
 	mood.clip_text = true
@@ -64,7 +68,7 @@ func _init() -> void:
 	_body.name = "Body"
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	_body.position = Vector2(12, -100)
+	_body.position = Vector2(12, BODY_TOP)
 	_body.size = Vector2(330 + EFFECT_W, 130)
 	_body.draw.connect(_draw_body)
 	add_child(_body)
@@ -190,6 +194,27 @@ func _on_changed(parts: PackedStringArray) -> void:
 		mood.add_theme_color_override("font_color", mood_color(data.mood))
 	if "body" in parts or "needs" in parts or "effects" in parts or "move" in parts:
 		_body.queue_redraw()
+	if "body" in parts or "needs" in parts or "effects" in parts or "move" in parts or "mood" in parts:
+		_layout()
+
+
+## The mood line goes under the body block's tallest column (body bars, move and needs, effects), the feed under
+## the mood line, or under the body when there is none.
+func _layout() -> void:
+	var needs := need_lines().size() + (0 if move_line().is_empty() else 1)
+	var rows := maxi(body_rows().size(), maxi(needs, effect_lines().size()))
+	var y := BODY_TOP + rows * ROW_H + 6.0
+	_place(mood, y)
+	if not mood.text.is_empty():
+		y += MOOD_H + 4.0
+	_place(feed, y)
+
+
+## Moves `c` (anchored at the left middle) to `y` px from the middle, keeping its height.
+static func _place(c: Control, y: float) -> void:
+	var h := c.offset_bottom - c.offset_top
+	c.offset_top = y
+	c.offset_bottom = y + h
 
 
 func _draw_body() -> void:

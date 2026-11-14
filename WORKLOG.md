@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-13 — UI looked at once on the real renderer: the mood tint works (subtle); the mood line and message feed overlapped the body list, now laid out under it; the F1 Cheats page scrolls when taller than the window (small windows, VR panel); the range's time box was too narrow. Client tests pass.
 - 2026-11-12 — Weather cheat on the F1 Cheats page: CDDA's weather names and a wind (calm, breeze, strong), each also as the game decides, on lead-bridge's weather calls (list read as hostile text); the Cheats page now works by pad (X swaps it in) and the VR stick. Client tests pass; the bridge side isn't on main yet.
 - 2026-11-12 — Review follow-ups (lead-qa, lead-bridge, lead-vr, coordinator): the mood reads the bridge's `player.mood` object (level, band, face, total, entries with their share); a text prompt's on-screen keys leave accept alone until the cursor is used, so it still sends on the VR panel; a hand change whose item left the carried list times out; a test path that is absolute on Linux too. Client tests pass.
 - 2026-11-12 — Tab view multi-select leftovers: Ctrl+A, a right-click menu with the selection's actions, and a box select dragged from empty space. Client tests pass; not looked at on screen.

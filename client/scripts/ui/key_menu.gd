@@ -34,6 +34,7 @@ var debug_check: CheckBox
 var mood_check: CheckBox
 var flash_check: CheckBox
 var cheat_page: CheatPanel    # set by add_cheat_page
+var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
 var cheats_button: Button
 ## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
 var cheats_forced := false:
@@ -171,8 +172,15 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
 func add_cheat_page(panel: CheatPanel) -> void:
 	cheat_page = panel
-	_box.add_child(panel)
-	_box.move_child(panel, _scroll.get_index() + 1)
+	cheat_scroll = ScrollContainer.new()
+	cheat_scroll.name = "CheatScroll"
+	cheat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cheat_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	cheat_scroll.visible = false
+	_box.add_child(cheat_scroll)
+	_box.move_child(cheat_scroll, _scroll.get_index() + 1)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cheat_scroll.add_child(panel)
 	panel.visible = false
 	_update_cheats_button()
 
@@ -195,6 +203,7 @@ func show_cheats(on: bool) -> void:
 			+ "B closes") if on else KEYS_TITLE
 	if cheat_page != null:
 		cheat_page.visible = on
+		cheat_scroll.visible = on
 		if on:
 			cheat_page.refresh()
 	if cheats_button != null:

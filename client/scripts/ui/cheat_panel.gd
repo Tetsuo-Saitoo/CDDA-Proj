@@ -271,6 +271,9 @@ func _mark(c: Control) -> void:
 	_marked = c
 	if c != null:
 		c.modulate = PICKED
+		var sc := get_parent() as ScrollContainer   # KeyMenu's: the pick scrolls into view
+		if sc != null and sc.is_inside_tree():
+			sc.ensure_control_visible(c)
 
 
 static func _reachable(n: Node, out: Array[Control]) -> void:
@@ -317,6 +320,7 @@ func _build_range() -> void:
 	hour.value = 12
 	hour.suffix = ":00"
 	hour.prefix = "Time"
+	hour.custom_minimum_size.x = 130   # room for "Time 23 :00"
 	r3.add_child(hour)
 	r3.add_child(_button("Set time", set_time))
 	range_box.add_child(r3)
