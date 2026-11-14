@@ -644,11 +644,10 @@ func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, 
 			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
 
 
-## A whole uid and itype in the snapshot's ranges, a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
+## A snapshot item handle (handle_ok), a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
 static func _item_op_ok(uid: float, type: float, pos: Vector3i, yaw: int, tag: int) -> bool:
-	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
-			and uid < float(Snapshot.MAX_UID) and type >= 1.0 and type <= float(Snapshot.MAX_ID) \
-			and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 and tag <= MAX_ITEM_TAG
+	return handle_ok(uid, type) and ItemActions.ok_square(pos) and yaw >= 0 and yaw < 360 and tag >= 1 \
+			and tag <= MAX_ITEM_TAG
 
 
 static func _clamp_spot(spot: Vector2) -> Vector2:
