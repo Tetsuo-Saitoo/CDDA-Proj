@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.
 - 2026-11-14 — Overnight (coordinator): merged and pushed, every Windows suite green each time: weather and mood in the snapshot, weather in the 3D world (sky, fog, rain, snow, lightning, sound, wet ground; `tests/render_check.gd` looks on the real GPU), mood line and tint, on-screen keyboard and menus on the VR panel, VR swing, melee techniques, weak points and muzzle flash, item ops for VR item physics, the weather cheat with its F1 picker. Open for the user: technique call balance (sure pick or extra weight).
 - 2026-11-14 — Item physics live test (QA lead): the live test now drops a carried item, places it with a pose, turns it where it lies and checks the refusals through the client's LiveSession; passes on Windows and Linux.
 - 2026-11-14 — Weather picker marks the held wind too (lead-bridge's final contract: get_cheats().wind); junk reads as the game decides. Client tests pass.
