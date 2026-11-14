@@ -555,6 +555,23 @@ func unload_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool
 			"pos": pos, "hand": hand})
 
 
+## Hold a carried item in hand "main" (CDDA's wield) or "off" (ItemActions.hold, for Hands.hand_over). CDDA never
+## puts anything away for it: it refuses (an m_info message) a full hand, a worn or two-handed item, a sealed pocket
+## or part of a gun or magazine, a liquid, and an open container with contents going from the main hand to the off
+## hand. False when refused here (nothing sent): no game, an other hand, a uid or itype not a whole number in the
+## snapshot's ranges.
+func hold_item(uid: float, type: float, hand: String) -> bool:
+	if _sim == null or not hand in ["main", "off"] or not handle_ok(uid, type):
+		return false
+	return bool(_sim.queue_item_action({"op": "hold", "item": int(uid), "type": int(type), "hand": hand}))
+
+
+## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
+static func handle_ok(uid: float, type: float) -> bool:
+	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
+			and uid < float(Snapshot.MAX_UID) and type >= 1.0 and type <= float(Snapshot.MAX_ID)
+
+
 ## Reload a carried item with ammo or a magazine (carried, else the one on square `pos`), as much as fits.
 func reload_item(uid: float, type: float, ammo: float, ammo_type: float, pos: Vector3i) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "reload", "item": int(uid), "type": int(type),
