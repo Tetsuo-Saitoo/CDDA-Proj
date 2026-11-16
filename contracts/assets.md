@@ -100,7 +100,7 @@ Terrain models replace the tile's procedural shape. They stand at the tile centr
 terrain: lifted like its slab, and hidden with the roofs), plus `offset`, scaled by `scale`. Facing: walls,
 windows and fences run along the model's X axis (+Z out of the wall: south for an east-west run, east for
 a north-south one); stairs and ramps have the bottom step at the front and rise toward the back, along the
-flight; anything else keeps the model's own orientation (+Z south), or turns freely with `random_yaw`.
+flight (a stairs model is drawn once per lane of a longer flight, stretched along it; a ramp's on each tile); anything else keeps the model's own orientation (+Z south), or turns freely with `random_yaw`.
 Floor, roof and water models replace the slab; trees, shrubs, ladders, fences and other standing things
 keep the ground slab under them. Doors, open air and the holes stairs come up through stay procedural (a
 door leaf is a grabbable node; door models come later).
