@@ -84,13 +84,17 @@ struct creature_view {
     uint8  attitude;              // CDDA's Attitude to the player (attitude_to): 0 hostile, 1 neutral, 2 friendly
                                   // (ANY and the player itself: 1). Sent since 2026-11-09; optional for older
                                   // bridges: without it the client counts monsters as hostile, people not.
+    string name;                  // NPCs only (kind 1; the key is left out for the player and monsters): CDDA's
+                                  // name for them, color tags and control characters removed, up to 40 columns
+                                  // (160 bytes), never cut inside a character; may be "". Sent since 2026-11-16;
+                                  // older bridges leave it out. Text from saves and mods: show it, never parse it.
 };
 
 struct vehicle_view {
     uint64 uid; ui_point pos;     // absolute square of the vehicle's position
     float face_deg, turn_deg;     // facing and the facing it is turning to
     float velocity;               // m/s
-    string name;
+    string name;                  // color tags and control characters removed, up to 60 columns (240 bytes)
     std::vector<vehicle_part_view> parts;   // cap 4096
 };
 struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled */ };
