@@ -345,6 +345,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
 	character_data.update(hud_data, snap, world.tables)
+	if character.visible:
+		_ask_character()   # each new turn while shown (refused while the last one is still out)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -599,6 +601,10 @@ func _start_live() -> void:
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
+	live.character_sheet.connect(character_data.set_sheet)   # G4: the character screen's stats, skills ...
+	live.state_changed.connect(func(s: String) -> void:
+		if s != "running":
+			character_data.set_sheet(null))   # another game, another character
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
@@ -1193,6 +1199,13 @@ func _use_tap() -> void:
 
 ## Tab opens the inspect view: first person or VR, in the main loop, no prompt, menu or held item in the way.
 ## The character screen may open: a world is shown, no menu or CDDA prompt is up.
+## G4: asks the game for the character sheet (stats, skills, traits ...); the screen says it's waiting until the
+## first one comes. Nothing without a live game or with an older DLL.
+func _ask_character() -> void:
+	if live != null and live.query_character() > 0:
+		character_data.set_waiting(true)
+
+
 func _can_open_character() -> bool:
 	return world.snapshot != null and main_menu == null and not request_ui.visible and not key_menu.visible \
 			and not inspect.visible
@@ -1325,6 +1338,7 @@ func _setup_hud() -> void:
 	layer.add_child(classic)
 	character = CharacterView.new()
 	character.data = character_data
+	character.opened.connect(_ask_character)
 	layer.add_child(character)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
