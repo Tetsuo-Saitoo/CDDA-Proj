@@ -1,0 +1,271 @@
+extends SceneTree
+## Headless run of CDDA's action keys in the test range, through main's own input path: each key's first binding
+## is pushed into the window as a key press, the menu or prompt CDDA answers with must show in RequestUI with the
+## widget for its kind, and Esc must cancel it back to the main loop with the game still running. The lists get
+## things to list first: the test kit and a few items at the feet. A key whose action finds nothing to work on may
+## answer with a message instead (CDDA's "nothing to ..."): that is reported, not failed, except for the keys whose
+## list or direction prompt is sure (KEYS). Uses this run's own CDDA folder, never the player's saves.
+## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
+## root:
+##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
+## Exit code 0 = all passed.
+
+const Main := preload("res://scripts/main.gd")
+const TestDir := preload("res://tests/test_dir.gd")
+const BOOT_TIMEOUT_MS := 300000
+const OP_TIMEOUT_MS := 90000
+const ASK_TIMEOUT_MS := 15000    # a key's prompt or message showing up
+const SETTLE_MS := 1500          # after a message: a prompt may still follow
+const MAX_ESC := 4               # Esc presses to get back to the main loop (chained prompts)
+const LIST_KINDS := ["menu", "item_select", "item_multi"]
+## [action, what CDDA must answer with: "list", "direction", or "" for either a prompt or a message]
+const KEYS := [
+	[&"cdda_inventory", "list"], [&"cdda_eat", "list"], [&"cdda_wear", "list"], [&"cdda_wield", "list"],
+	[&"cdda_drop", "list"], [&"cdda_throw", "list"], [&"cdda_read", ""], [&"cdda_apply", ""],
+	[&"cdda_take_off", ""], [&"cdda_unload", ""], [&"cdda_pickup", ""], [&"cdda_butcher", ""],
+	[&"cdda_smash", "direction"], [&"cdda_open", ""], [&"cdda_close", ""], [&"cdda_examine", ""],
+	[&"cdda_grab", ""],
+]
+## Laid at the feet for the lists: the first id of each the game knows (something to wear, read and eat).
+const AT_FEET := [["tshirt", "jeans"], ["novel_mystery", "mag_guns", "textbook_firearms", "news_regional"],
+		["apple", "can_beans"]]
+
+var _failed := 0
+var _main: Main
+var _live: LiveSession
+var _cp: CheatPanel
+var _done := {}       # op id -> error ("" = done), from LiveSession.range_done
+var _answered := 0    # the last prompt this script answered (setup only)
+var _messages: PackedStringArray = []
+var _seen: Array[String] = []   # one line per key, printed at the end
+
+
+func _initialize() -> void:
+	_run()
+
+
+func _run() -> void:
+	if not "--live" in OS.get_cmdline_user_args():
+		_check(false, "run with -- --live (main takes its mode from the command line)")
+		_finish()
+		return
+	_check(LiveSession.test_range_available(), "the bridge has the test range")
+	if _failed > 0:
+		_finish()
+		return
+	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate() as Main
+	_main.cdda_user_dir = TestDir.global("cdda-actions")
+	root.add_child(_main)
+	await process_frame
+	_live = _main.live
+	_cp = _main.cheat_panel
+	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
+	_live.events_arrived.connect(_on_events)
+	var menu := _main.main_menu
+	var button := _find_button(menu, "Test range") if menu != null else null
+	_check(menu != null and button != null, "the main menu shows the Test range button")
+	if button == null:
+		_finish()
+		return
+	button.pressed.emit()
+	var t0 := Time.get_ticks_msec()
+	var up := func() -> bool: return (_live.state == "running" and _main.world.snapshot != null
+			and _cp.tables != null)
+	_check(await _until(up, BOOT_TIMEOUT_MS, true), "the range runs (%.0f s, state %s %s)"
+			% [(Time.get_ticks_msec() - t0) / 1000.0, _live.state, _live.error])
+	if _live.state != "running":
+		_finish()
+		return
+	var kits := _live.kits_given()
+	_check(_live.give_test_kit(), "test kit asked for")
+	_live.queue_action("pause")
+	var kit_in := func() -> bool: return _live.kits_given() > kits
+	_check(await _until(kit_in, OP_TIMEOUT_MS, true), "the test kit arrived")
+	for ids: Array in AT_FEET:
+		var id := ""
+		for c: String in ids:
+			if _cp.tables.index_of("itype", c) >= 0:
+				id = c
+				break
+		if id.is_empty():
+			print("  (none of %s in this game's data)" % [ids])
+			continue
+		_cp.item_id.text = id
+		_cp.item_count.value = 1
+		_check(await _op(_cp.spawn_item, "Spawn " + id) == "", "spawned a %s at the feet" % id)
+	if _main.key_menu.visible:
+		_main.key_menu.close()
+	for k: Array in KEYS:
+		await _try_key(k[0], k[1])
+		if _live.state != "running":
+			_check(false, "the game stopped after %s (%s %s)" % [k[0], _live.state, _live.error])
+			break
+	print("  what each key did:")
+	for line in _seen:
+		print("    " + line)
+	await _stop()
+	_finish()
+
+
+## Presses `action`'s key in the main loop; CDDA's answer must show (and be the `want` kind, when set), and Esc
+## must bring the game back to its main loop.
+func _try_key(action: StringName, want: String) -> void:
+	var ev := _key_of(action)
+	var label := "%s (%s)" % [action, ev.as_text() if ev != null else "no key"]
+	if ev == null:
+		_check(false, label + ": has a key")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	if not await _until(in_loop, ASK_TIMEOUT_MS, false):
+		_check(false, label + ": the game is in its main loop first (%s)" % [_live.request])
+		return
+	var msgs := _messages.size()
+	root.push_input(ev)
+	var asked := func() -> bool: return not _main._in_main_loop() or _messages.size() > msgs
+	await _until(asked, ASK_TIMEOUT_MS, false)
+	if _main._in_main_loop() and _messages.size() > msgs:   # a message first: a prompt may still follow
+		var prompt := func() -> bool: return not _main._in_main_loop()
+		await _until(prompt, SETTLE_MS, false)
+	if _main._in_main_loop():
+		var said := " / ".join(_messages.slice(msgs)) if _messages.size() > msgs else "nothing"
+		_seen.append("%s: no prompt; said %s" % [label, said.left(160)])
+		_check(want.is_empty(), label + ": %s (said %s)" % ["no prompt is fine" if want.is_empty()
+				else "should ask with a " + want, said.left(160)])
+		return
+	var req := _live.request
+	var kind := str(req.get("kind", ""))
+	var id := int(req.get("id", 0))
+	var drawn := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.request_id == id
+	var shown := await _until(drawn, ASK_TIMEOUT_MS, false)
+	var w := _main.request_ui.widget
+	var fits := ((kind in LIST_KINDS and w is ListRequestWidget) or (kind == "direction" and w is DirectionRequestWidget)
+			or not (kind in LIST_KINDS or kind == "direction"))
+	var title := (str(req.get("context", "")) + " " + str(req.get("text", ""))).strip_edges().left(80).replace("\n", " ")
+	_check(shown and fits, label + ": CDDA asks (%s \"%s\"), RequestUI shows it with %s" % [kind, title,
+			"nothing" if w == null else String((w.get_script() as Script).get_global_name())])
+	var wanted := (want == "list" and kind in LIST_KINDS) or (want == "direction" and kind == "direction") or want.is_empty()
+	_check(wanted, label + ": asks with a %s" % (want if not want.is_empty() else "prompt"))
+	var esc := 0
+	while not _main._in_main_loop() and esc < MAX_ESC:
+		var now := int(_live.request.get("id", 0))
+		var on_screen := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.request_id == now
+		await _until(on_screen, ASK_TIMEOUT_MS, false)
+		root.push_input(_esc_key())
+		esc += 1
+		var gone := func() -> bool: return _main._in_main_loop() or int(_live.request.get("id", 0)) != now
+		if not await _until(gone, ASK_TIMEOUT_MS, false):
+			break
+	var back := _main._in_main_loop() and _live.state == "running"
+	_seen.append("%s: %s \"%s\", %d Esc back to the game%s" % [label, kind, title, esc, "" if back else " (NOT back)"])
+	_check(back, label + ": Esc goes back to the game (%d Esc; now %s)" % [esc, _live.request])
+
+
+## The key bound first to `action` (F1 defaults), as a press; null if it has none.
+func _key_of(action: StringName) -> InputEventKey:
+	for e in InputActions.slots(action):
+		if e is InputEventKey:
+			var k := (e as InputEventKey).duplicate() as InputEventKey
+			if k.keycode == KEY_NONE:
+				k.keycode = k.physical_keycode
+			if k.physical_keycode == KEY_NONE:
+				k.physical_keycode = k.keycode
+			k.pressed = true
+			return k
+	return null
+
+
+func _esc_key() -> InputEventKey:
+	var k := InputEventKey.new()
+	k.keycode = KEY_ESCAPE
+	k.physical_keycode = KEY_ESCAPE
+	k.pressed = true
+	return k
+
+
+func _on_events(events: Array) -> void:
+	for e: Variant in events:
+		if e is Dictionary and str((e as Dictionary).get("kind", "")) == "message":
+			_messages.append(CddaText.plain(str((e as Dictionary).get("text", ""))).left(200))
+
+
+## Presses a range control and waits for the game's answer: "" done, else the error (or why it wasn't sent).
+func _op(press: Callable, label: String) -> String:
+	var before: Array = _cp._range_ops.keys()
+	press.call()
+	var sent: Array = _cp._range_ops.keys().filter(func(k: int) -> bool: return not k in before)
+	if sent.is_empty():
+		return "not sent: " + _cp.status.text
+	var id: int = sent[0]
+	var answered := func() -> bool: return _done.has(id)
+	if not await _until(answered, OP_TIMEOUT_MS, true):
+		return "no answer"
+	print("  %s -> %s" % [label, "done" if str(_done[id]).is_empty() else _done[id]])
+	return _done[id]
+
+
+## Waits (playing on) until `cond` holds; false on timeout or if the game stops. `answer`: prompts get the answer
+## a player would give meanwhile (setup only; the keys' own prompts are this test's to answer).
+func _until(cond: Callable, timeout_ms: int, answer: bool) -> bool:
+	var deadline := Time.get_ticks_msec() + timeout_ms
+	while Time.get_ticks_msec() < deadline:
+		if cond.call():
+			return true
+		if _live.state == "ended" or _live.state == "failed":
+			return false
+		if answer:
+			_answer_prompt()
+		await create_timer(0.05).timeout
+	return false
+
+
+## A prompt main would show the player gets the answer a player would give (YES to confirmations, else cancel);
+## main answers raw-key screens and shots itself.
+func _answer_prompt() -> void:
+	var req := _live.request
+	if req.is_empty() or req.get("timed", false) or req.get("context", "") == "RAW_KEY":
+		return
+	var id := int(req.get("id", 0))
+	if id == _answered:
+		return
+	_answered = id
+	var a := {"id": id, "cancel": true}
+	var acts: Array = req.get("actions", [])
+	if req.get("kind", "") == "popup" and not acts.is_empty():
+		a = {"id": id, "action": "YES" if "YES" in acts else acts[0]}
+	print("  answering %s %s %s: %s" % [req.get("kind", "?"), req.get("context", ""), acts, a])
+	_live.answer(a)
+
+
+func _stop() -> void:
+	_live.stop()
+	var stopped := func() -> bool: return _live.state != "running"
+	await _until(stopped, 30000, false)
+	_main.queue_free()
+	await process_frame
+
+
+func _find_button(n: Node, text: String) -> Button:
+	if n is Button and (n as Button).text == text:
+		return n
+	for c in n.get_children():
+		var b := _find_button(c, text)
+		if b != null:
+			return b
+	return null
+
+
+func _finish() -> void:
+	if _failed == 0:
+		TestDir.clean()
+	else:
+		print("  files kept in " + ProjectSettings.globalize_path(TestDir.dir()))
+	print("actions live tests: " + ("all passed" if _failed == 0 else "%d FAILED" % _failed))
+	quit(0 if _failed == 0 else 1)
+
+
+func _check(cond: bool, what: String) -> void:
+	if cond:
+		print("  ok    " + what)
+	else:
+		_failed += 1
+		printerr("  FAIL  " + what)
