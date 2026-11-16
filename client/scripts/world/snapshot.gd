@@ -95,6 +95,7 @@ class Submap:
 	var items: PackedInt32Array   # piles, PILE_STRIDE ints each: tile, count, top[4] (itype indices, 0 = none), corpse (mtype index, 0 = none)
 	var fields: PackedInt32Array  # FIELD_STRIDE ints each (seen tiles only)
 	var handles: PackedInt64Array # HANDLE_STRIDE ints per item a client can point at (seen tiles only)
+	var poses := {}               # uid -> Vector2i(yaw whole degrees 0..359, side 0 / 1): how a placed item lies
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -672,6 +673,7 @@ func _read_submaps(v: Variant) -> void:
 		sm.items = _piles(s.get("items"), what + ".items")
 		sm.fields = _fields(s.get("fields"), what + ".fields")
 		sm.handles = _handles(s.get("handles"), what + ".handles")
+		sm.poses = _poses(s.get("poses"), sm.handles, what + ".poses")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -830,6 +832,36 @@ func _handles(v: Variant, what: String) -> PackedInt64Array:
 		uids[uid] = true
 		if not is_valid():
 			return out
+	return out
+
+
+## [[uid, yaw, side], ...]: how placed items lie (older bridges send none); each uid one of the submap's
+## handles, at most once.
+func _poses(v: Variant, handles: PackedInt64Array, what: String) -> Dictionary:
+	var out := {}
+	if v == null or not is_valid():
+		return out
+	var n := handles.size() / HANDLE_STRIDE
+	if not v is Array or (v as Array).size() > n:
+		_fail("%s: expected a list of at most %d poses (one per handle)" % [what, n])
+		return out
+	var known := {}
+	for k in range(1, handles.size(), HANDLE_STRIDE):
+		known[handles[k]] = true
+	for i in (v as Array).size():
+		var e: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not e is Array or (e as Array).size() != 3:
+			_fail(w + ": expected [uid, yaw, side]")
+			return out
+		var uid := _int(e[0], 1, MAX_UID - 1, w + ".uid")
+		var yaw := _int(e[1], 0, 359, w + ".yaw")
+		var side := _flag(e[2], w + ".side")
+		if is_valid() and (not known.has(uid) or out.has(uid)):
+			_fail("%s: uid %d is not a handle here, or comes twice" % [w, uid])
+		if not is_valid():
+			return out
+		out[uid] = Vector2i(yaw, 1 if side else 0)
 	return out
 
 
