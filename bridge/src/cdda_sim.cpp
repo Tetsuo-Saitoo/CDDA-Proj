@@ -759,9 +759,9 @@ void CddaSim::set_auto_pause( bool on )
     fp3d::set_auto_pause_hostiles( on );
 }
 
-void CddaSim::interrupt()
+bool CddaSim::interrupt()
 {
-    fp3d::interrupt();
+    return fp3d::interrupt();
 }
 
 bool CddaSim::save_game( bool only_if_changed )

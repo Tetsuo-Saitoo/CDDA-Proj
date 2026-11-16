@@ -129,7 +129,9 @@ code calls its tile renderer directly).
   auto-pauses real time when a new hostile comes into view (`pause_reason` "hostile spotted"; where CDDA's safe
   mode would stop you) unless the client turned that off (`set_auto_pause_hostiles`); only the client resumes.
   CDDA's safe mode itself is off in FP3D games, new and loaded (`safemode` toggles it).
-- **Interrupt**: `fp3d::interrupt()` stops the current activity (CDDA confirms with a popup first).
+- **Interrupt**: `fp3d::interrupt()` stops the current activity or auto-travel (CDDA confirms with a popup
+  first). Refused (false) while the main loop waits for input with nothing queued or while paused; dropped if
+  nothing took it by the main loop's next wait for input.
 
 ### Action queue (block B5: `fp3d::queue_action`, `clear_actions`, `queued_actions`)
 
