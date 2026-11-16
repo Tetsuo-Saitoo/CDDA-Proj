@@ -616,6 +616,41 @@ func _test_stairs(world: WorldView) -> void:
 	_check.call(fp.use_stair(s) and fp.z == up.z + 1, "stairs: the free-walk camera goes up them")
 	_check.call(not fp.use_stair({}), "stairs: no stair, no move")
 	fp.free()
+	_test_vr_stairs(world, up, mid, me, flat)
+
+
+## C2 in VR: the rig stands on the stair flight under the head and glides to it; the teleport arc lands on it.
+func _test_vr_stairs(world: WorldView, up: Vector3i, mid: float, me: Vector3i, flat: float) -> void:
+	var rig := VrRig.new(world, {"height": 0.0, "blink": false})
+	world.get_parent().add_child(rig)
+	rig.camera.position = Vector3(0, FirstPersonCamera.EYE_H, 0)
+	rig.go_to_square(up)
+	_check.call(is_equal_approx(rig.floor_y(), mid) and is_equal_approx(rig.global_position.y, mid)
+			and is_equal_approx(rig.camera.global_position.y, mid + FirstPersonCamera.EYE_H),
+			"vr stairs: on a flight the origin stands on it (%.2f m up)" % (mid - world.coords.ms_to_world(up).y))
+	rig.go_to_square(me)
+	_check.call(is_equal_approx(rig.global_position.y, flat), "vr stairs: back on a floor, the origin is on it")
+	rig.global_position.y = flat + 0.3
+	rig.follow_ground(0.05)
+	var y1 := rig.global_position.y
+	for i in 40:
+		rig.follow_ground(0.05)
+	_check.call(y1 < flat + 0.3 and y1 > flat + 0.01 and absf(rig.global_position.y - flat) < 0.001,
+			"vr stairs: a small gap to the ground glides shut (%.3f after one frame)" % (y1 - flat))
+	rig.global_position.y = flat + 2.0
+	rig.follow_ground(0.01)
+	_check.call(is_equal_approx(rig.global_position.y, flat), "vr stairs: a big gap closes at once")
+	rig.z = up.z   # on the flight's level, on its floor, then walked (or leant) onto it
+	rig.global_position.y = world.coords.ms_to_world(up).y
+	var head := rig.camera.global_position
+	var over := world.coords.ms_center_to_world(up)
+	rig.global_position += Vector3(over.x - head.x, 0.0, over.z - head.z)
+	rig.follow_ground(1.0)
+	_check.call(is_equal_approx(rig.global_position.y, mid), "vr stairs: walking onto a flight climbs it")
+	var arc := rig.walk.teleport_arc(Vector3(over.x, mid + 1.2, over.z), Vector3.UP, up.z)
+	_check.call(arc["hit"] and is_equal_approx((arc["pos"] as Vector3).y, mid),
+			"vr stairs: the teleport arc lands on the flight, not under it")
+	rig.free()
 
 
 ## Stair blocks draw as one flight: every square of a 2x2 block rises the same way, split along its length.

@@ -17,7 +17,8 @@ extends XROrigin3D
 ## Main hand (setting `main_hand`, right unless left-handed): its trigger uses pointed stairs (else it pulls, below),
 ## it aims the teleport arc and the menu pointer, and it shows CDDA's main hand; the compass sits on the off wrist,
 ## the HUD panel (VrHud, setting `wrist_hud`) on the inside of the off forearm.
-## Seated play: the origin stands `height` over the level's floor (floor_y), so the head rises by it; the menu
+## Seated play: the origin stands `height` over the ground under the head (floor_y: the level's floor, or a stair
+## flight or ramp drawn there, which it glides up: follow_ground), so the head rises by it; the menu
 ## can set it from the head's height now ("Calibrate height").
 ## Hands (block L2): each controller is a hand of the shared Hands layer ("vr_l" / "vr_r"; `hands`, set by main.gd).
 ## What a free hand touches (a door leaf or an item in reach) is outlined; the grip (setting `grip`: hold, or toggle)
@@ -382,6 +383,7 @@ func _process(delta: float) -> void:
 				settings["turn"] == "smooth")
 	update_panel(delta)
 	step(delta, inp)
+	follow_ground(delta)
 	update_pointer()
 	track_hands(delta)
 	update_hands(delta)
@@ -1176,10 +1178,11 @@ func shift(d: Vector3) -> void:
 		_fly_from[i].origin += d
 
 
-## Moves so the head stands over `pos` (only x and z; the level stays).
+## Moves so the head stands over `pos` (x and z; the level stays), on the ground there (place_height).
 func teleport_to(pos: Vector3) -> void:
 	var head := camera.global_position
 	global_position += Vector3(pos.x - head.x, 0.0, pos.z - head.z)
+	place_height()
 	if settings["blink"]:
 		_fade = 1.0
 
@@ -1219,20 +1222,38 @@ func use_stair(c: XRController3D, s: Dictionary) -> bool:
 
 func go_to_square(sq: Vector3i) -> void:
 	z = sq.z
-	place_height()
 	teleport_to(world.coords.ms_center_to_world(sq))
 	level_changed.emit(z)
 
 
-## The floor of the rig's level (world y): where the body stands. The origin is `height` above it.
+## What the body stands on under the head (world y): the level's floor, or the stair flight or ramp drawn on
+## that square (WorldView.ground_y). The origin is `height` above it.
 func floor_y() -> float:
-	return VrWalk.floor_y(z)
+	if not camera.is_inside_tree():
+		return VrWalk.floor_y(z)
+	var y := world.ground_y(camera.global_position, z)
+	return y if is_finite(y) else VrWalk.floor_y(z)
 
 
 ## Stands the origin `height` over the level's floor: a seated player (head 0.4 m lower) with height 0.4
 ## sees from standing eye height. Every vertical placement of the rig goes through here.
 func place_height() -> void:
 	global_position.y = floor_y() + float(settings["height"])
+
+
+const GROUND_RATE := 12.0   # 1/s: how fast the origin glides to the ground under the head (a stair flight, a ramp)
+const GROUND_JUMP := 0.6    # m: a bigger gap (onto a flight from its side) is jumped at once
+
+
+## Each frame: the origin glides to `height` over the ground under the head (floor_y), so walking or leaning
+## onto a stair flight or ramp climbs it and stepping off comes down; a gap over GROUND_JUMP is closed at once.
+func follow_ground(delta: float) -> void:
+	var goal := floor_y() + float(settings["height"])
+	var gap := goal - global_position.y
+	if absf(gap) > GROUND_JUMP or not is_finite(delta) or delta < 0.0:
+		global_position.y = goal
+	else:
+		global_position.y += gap * (1.0 - exp(-GROUND_RATE * delta))
 
 
 ## The height setting that puts a head now `head_y` over the tracking floor at standing eye height

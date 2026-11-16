@@ -121,27 +121,31 @@ func _passable(p: Vector3i) -> bool:
 	return world.catalog.style_for(sm.ter[l.y * CddaCoords.SEEX + l.x]).kind in NO_STAND
 
 
-## Teleport arc from `origin` along `aim` (Godot space), landing on level z's floor. Returns
-## {points: PackedVector3Array, hit: bool, pos: Vector3, valid: bool}; `pos` is the landing point.
+## Teleport arc from `origin` along `aim` (Godot space), landing on level z's ground (WorldView.ground_y: the
+## floor, or a stair flight or ramp). Returns {points: PackedVector3Array, hit: bool, pos: Vector3, valid: bool};
+## `pos` is the landing point.
 func teleport_arc(origin: Vector3, aim: Vector3, z: int) -> Dictionary:
 	var pts := PackedVector3Array([origin])
 	var v := aim.normalized() * ARC_SPEED
 	var p := origin
-	var fy := floor_y(z)
+	var fy := world.ground_y(p, z)
 	var out := {"points": pts, "hit": false, "pos": origin, "valid": false}
 	if p.y < fy:
 		return out
 	for i in ARC_STEPS:
 		var q := p + v * ARC_STEP
 		v.y -= GRAVITY * ARC_STEP
-		if q.y <= fy:
-			var hit := p.lerp(q, (p.y - fy) / maxf(p.y - q.y, 1e-6))
+		var gq := world.ground_y(q, z)
+		if q.y <= gq:
+			var hit := p.lerp(q, clampf((p.y - fy) / maxf((p.y - fy) - (q.y - gq), 1e-6), 0.0, 1.0))
+			hit.y = world.ground_y(hit, z)
 			pts.append(hit)
 			out["hit"] = true
 			out["pos"] = hit
 			break
 		pts.append(q)
 		p = q
+		fy = gq
 	out["points"] = pts
 	if out["hit"]:
 		var to: Vector3 = out["pos"]
