@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Sim test flake noted (QA lead): the teleport cheat round timed out once on a loaded Linux machine; the scenes after it were skipped, not failed.
 - 2026-11-16 — ThreadSanitizer run of the fork tests clean in WSL (QA lead): the TSan preset keeps GCC 13's flow-based warnings non-fatal; fork f46b331 makes faults::all_of_type give the stored list; fork 15bacde stretches the tests' waits and time limits in a TSan build (`fp3d::slow_build`). The CI run on main is next.
 - 2026-11-15 — Live test: item physics passes over an item CDDA won't move by hand (a drink's liquid, frozen water) and places the next carried one (5a18178).
 - 2026-11-15 — Range test checks the weather cheat (QA lead, fork fp3d-qa ba1a727): a lightning storm and a wind hold over turns in a range game at 20 C, a flash arrives as an event, and an empty id gives back the range's clear sky and still air.
