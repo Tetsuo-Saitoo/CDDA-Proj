@@ -99,6 +99,12 @@ func _run() -> void:
 		_cp.item_id.text = id
 		_cp.item_count.value = 1
 		_check(await _op(_cp.spawn_item, "Spawn " + id) == "", "spawned a %s at the feet" % id)
+	# the spawn pickers find types by name in this game's own tables
+	var zs := SpawnSearch.find(_cp.tables, "mtype", "zombie").map(func(f: Dictionary) -> String: return f["id"])
+	var gs := SpawnSearch.find(_cp.tables, "itype", "glock 19").map(func(f: Dictionary) -> String: return f["id"])
+	_check(zs.size() > 1 and zs[0] == "mon_zombie" and not gs.is_empty() and gs[0] == "glock_19",
+			"spawn search: \"zombie\" finds %d monster types, mon_zombie first; \"glock 19\" finds glock_19 first" % zs.size())
+	print("    zombie: %s; glock 19: %s" % [zs.slice(0, 6), gs.slice(0, 4)])
 	if _main.key_menu.visible:
 		_main.key_menu.close()
 	for k: Array in KEYS:

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Spawn pickers: the F1 Cheats page finds items and monsters by name (SpawnSearch, shared with VR); type "zombie" or "glock" and pick. Client tests and the live check pass.
 - 2026-11-16 — G4 character screen, first cut: P shows body, needs, mood and effects as cards; stats, skills, traits and bionics fill in when the bridge's character query lands. Client tests and the live check pass.
 - 2026-11-15 — G8 classic overlay: F3 shows CDDA's ASCII view of the snapshot around the player (id-table symbols and colours, joined walls) for parity checks. Client tests and the live check pass.
 - 2026-11-15 — Shift+E eats or drinks what a hand holds (client side of lead-bridge's coming consume op); falls back to CDDA's eat menu. Client tests pass.
