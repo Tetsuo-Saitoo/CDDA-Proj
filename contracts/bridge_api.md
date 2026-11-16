@@ -104,7 +104,8 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   results through `take_query_result`). All text is game data: color tags, line breaks and control characters
   removed; names ≤ 60 columns, descriptions ≤ 400 columns; ids are printable ASCII ≤ 64 bytes (entries with others
   are left out). Result: `{"id", "ok": true, "kind": "character", "name", "profession", "age", "height_cm",
-  "stats": [{"id": "str"|"dex"|"int"|"per", "cur", "base"}], "speed": {"cur", "move_cost", "modifiers": [{"name",
+  "weight_g", "weight_max_g", "volume_ml", "volume_max_ml" (what the character carries and can carry, as CDDA's
+  inventory screen counts it; ints ≥ 0), "stats": [{"id": "str"|"dex"|"int"|"per", "cur", "base"}], "speed": {"cur", "move_cost", "modifiers": [{"name",
   "value", "percent", "move_cost"}]}, "encumbrance": [{"enc", "layer", "warmth"}], "skills": [{"id", "name",
   "level", "knowledge", "progress", "knowledge_progress", "description"}], "proficiencies": {"known": [{"id",
   "name", "description"}], "learning": [{"id", "name", "percent", "description"}]}, "traits": [{"id", "name",
