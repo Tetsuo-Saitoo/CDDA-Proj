@@ -49,6 +49,20 @@ class Backend extends RefCounted:
 			(c["callable"] as Callable).call(uid, result)
 
 
+## With LiveSession's cook_item: records what it took ([uid, type, pos, recipe, batch, tag]); `refuse_cook`: says no.
+class Cooker extends Backend:
+	var cooked: Array = []
+	var tries := 0
+	var refuse_cook := false
+
+	func cook_item(uid: float, type: float, pos: Vector3i, recipe: String, batch := 1, tag := 0) -> bool:
+		tries += 1
+		if refuse_cook:
+			return false
+		cooked.append([uid, type, pos, recipe, batch, tag])
+		return true
+
+
 ## Only recipe_matches (no signal): VrCook polls it.
 class Polled extends RefCounted:
 	var calls := 0
@@ -85,6 +99,8 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_limits()
 	_test_hostile()
 	_test_polled()
+	_test_cook()
+	_test_resume()
 	_test_rig()
 	if is_instance_valid(_cook):
 		_cook.free()
@@ -458,6 +474,99 @@ func _test_polled() -> void:
 	_new_cook(RefCounted.new())
 	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, _water_in())]))
 	_check.call(_lines(100).size() == 2 and not _cook.can_ask(), "vr cook: a backend without match_recipes: heat and contents only")
+
+
+## Pot 100 on a lit heat at (6, 5) with `contents`, asked and answered with `matches`.
+func _answered(b: Backend, contents: Array, matches: Array) -> void:
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, contents)]))
+	b.answer(100, b._next, matches)
+	_cook.refresh()
+
+
+## Where line `k` (0 = the top) of card `c` is, in the world.
+func _line_pt(c: VrCook.Card, k: int) -> Vector3:
+	var lh := ThemeDB.fallback_font.get_height(VrCook.FONT) * VrCook.PIXEL
+	var n := c.text.split("\n").size()
+	return c.global_transform * Vector3(0.0, c.label.position.y + (n - 1 - k + 0.5) * lh, 0.0)
+
+
+## L9 cooking through cook_item: the one recipe CDDA would start now starts by itself, once; what it leaves doesn't
+## start another; of several the hand on a "+" line picks one; a refused send goes again; bad recipe ids never go.
+func _test_cook() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	_answered(b, _water_in(), [_m("Soup", 720, true), _m("Stew", 3900, false, PackedStringArray(["boiling 1"]))])
+	_cook.refresh()
+	_check.call(b.cooked == [[100.0, float(_pot), Vector3i(6, 5, 0), "soup", 1, 0]] and _lines(100)[2] == "starting Soup...",
+			"vr cook: the one recipe CDDA would start now starts by itself, once: 'starting Soup...' (%s)" % [b.cooked])
+	_cook.update(VrCook.STARTING_S + 0.1)
+	_check.call(b.cooked.size() == 1 and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min",
+			"- Stew — needs boiling 1", VrCook.PICK_HINT]),
+			"vr cook: ... a while later its lines are back with the hint (CDDA may have said no), nothing sent again")
+	_answered(b, [906, _soup, 1], [_m("Broth", 60, true)])
+	_check.call(b.cooked.size() == 1 and _lines(100).slice(2) == PackedStringArray(["+ Broth — 1 min", VrCook.PICK_HINT]),
+			"vr cook: what that craft left doesn't start another by itself")
+	_answered(b, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	var c: VrCook.Card = _cook.cards[100]
+	_cook.face()
+	var many := b.cooked.size() == 1 and c.matches.size() == 3
+	var top := _cook.press_at(_line_pt(c, 0))
+	var stew := _cook.press_at(_line_pt(c, 3))
+	var beside := _cook.press_at(_line_pt(c, 4) + c.global_transform.basis.x * 0.4)
+	var behind := _cook.press_at(_line_pt(c, 4) + c.global_transform.basis.z * 0.2)
+	var tea := _cook.press_at(_line_pt(c, 4))
+	_cook.refresh()
+	_check.call(many and not top and not stew and not beside and not behind and tea and b.cooked.size() == 2
+			and b.cooked[1][3] == "tea" and _lines(100)[2] == "starting Tea..." and c.matches.is_empty(),
+			"vr cook: several: none by itself; the hand on the '+ Tea' line starts tea, on the heat or a '-' line, beside or behind the text nothing (%s %s %s %s %s)"
+			% [top, stew, beside, behind, tea])
+	_new_cook(b)
+	b.refuse_cook = true
+	_answered(b, _water_in(), [_m("Soup", 720, true)])
+	var tried := b.tries
+	_cook.refresh()
+	b.refuse_cook = false
+	_cook.refresh()
+	_check.call(b.tries == tried + 2 and b.cooked.size() == 3 and _cook.cooks_sent == 1,
+			"vr cook: a send the backend refused goes again on the next look")
+	_new_cook(b)
+	var bad := _m("Soup", 720, true)
+	bad["recipe"] = "soup\" x"
+	_answered(b, _water_in(), [bad])
+	var pressed := _cook.press_at(_line_pt(_cook.cards[100], 2))
+	_check.call(b.cooked.size() == 3 and not pressed and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min"]),
+			"vr cook: a recipe id LiveSession wouldn't take is shown but never sent (no hint)")
+	_new_cook(b)
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, _water_in())], Vector3i(20, 20, 0)))
+	_check.call(b.cooked.size() == 3, "vr cook: out of the player's reach: nothing")
+
+
+## A paused craft goes on when its heat is lit under it or the pot is put back from the hands, once; not when the
+## player walks up to it, nor with a recipe id LiveSession wouldn't take.
+func _test_resume() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	var craft := [902, _meat, 1]
+	_look(_snap([_heat(6, 5, false)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	var cold := b.cooked.is_empty()
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	_cook.refresh()
+	_check.call(cold and b.cooked.size() == 1 and b.cooked[0][3] == "soup_meat" and b.calls.is_empty(),
+			"vr cook: its heat lit under a paused craft: it goes on, once (%s)" % [b.cooked])
+	_new_cook(b)
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	var walked := b.cooked.size() == 1
+	var held := _snap([_heat(6, 5)], [])
+	held.carried = PackedInt64Array([100, _pot, 0, 0, 0])
+	_look(held)
+	var holding := b.cooked.size() == 1
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	_check.call(walked and holding and b.cooked.size() == 2 and b.cooked[1][3] == "soup_meat",
+			"vr cook: walking up to a paused craft: nothing; putting its pot back from the hands: it goes on")
+	_new_cook(b)
+	_look(_snap([_heat(6, 5, false)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup meat")]))
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup meat")]))
+	_check.call(b.cooked.size() == 2, "vr cook: a paused craft whose recipe id LiveSession wouldn't take: nothing sent")
 
 
 func _test_rig() -> void:

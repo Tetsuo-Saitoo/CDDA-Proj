@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — L9 VR cooking card starts crafts: one recipe CDDA would start now starts by itself (not again from what it left), of several the trigger with a hand on a "+" line picks one, a paused craft goes on when the pot is put back on a lit heat or its heat is lit. Client tests pass.
 - 2026-11-16 — L9 client ops for the bridge's cooking leftovers: LiveSession.cook_item (also goes on with a paused craft), light_fire, extinguish_fire; pour_item / pour_into now check their handles (a pot on the burner can be poured from or into). Client tests pass.
 - 2026-11-16 — VR test range page: spawn rows for a few test items (at your feet) and monsters (two squares ahead of where you look). Client tests pass.
 - 2026-11-16 — L8 tray (desktop): point at a bag lying next to you, or a big pile, and press K: its contents are laid out on a tray in front of you; click one to take it into your pack, Esc closes it. Client tests pass.
