@@ -345,8 +345,45 @@ func _test_take_container() -> void:
 			acts.take(inside.call(424245, 424245)), acts.take(away), acts.take(inside.call(424247, 31337))]
 	_check.call(not refused.has(true) and be.calls.size() == 2,
 			"loot: container take: a carried, negative, own, elsewhere or unknown parent is refused, nothing sent (%s)" % [refused])
+	_test_take_judged(acts, be, c)
 	acts.free()
 	_test_mock_take_container(c)
+
+
+## A container take is judged by the container's `inside` (the item was never a handle on the square): still
+## listed there = not done (refused after two looks), cut short = unknown, gone from it = done.
+func _test_take_judged(acts: ItemActions, be: TakeBackend, c: int) -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var r := ItemRef.on_square(424260, rock, E)
+	r.parent = c
+	r.pocket = 0
+	sm.inside[c] = [[424260, rock, 0]]
+	acts.on_snapshot(_snap)
+	var sent := acts.take(r)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	var after_one := acts.pending(424260)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	_check.call(sent and after_one == "take" and acts.pending(424260) == "" and be.calls.size() == 3,
+			"loot: container take: still in the container is not done; a second look refuses it (%s)" % after_one)
+	var r2 := r.duplicate_ref()
+	r2.uid = 424261
+	sm.inside[c] = [[424261, rock, 0]]
+	acts.on_snapshot(_snap)
+	sent = acts.take(r2)
+	sm.inside[c] = []
+	sm.inside_more[c] = 3
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	var cut := acts.pending(424261)
+	sm.inside_more.erase(c)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	_check.call(sent and cut == "take" and acts.pending(424261) == "",
+			"loot: container take: a cut list is unknown; gone from the container is done (%s)" % cut)
+	sm.inside.erase(c)
 
 
 ## MockItems answers a container take the bridge's way: out of `inside` only for that container on that square.

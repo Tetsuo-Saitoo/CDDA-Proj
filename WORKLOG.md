@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — L8 slice 3 fix: a take out of a lying container is judged by that container's contents (it never lay on the square), so a refused one no longer counts as done. Client tests pass.
 - 2026-11-16 — L8 slice 3, mock: MockItems takes an item out of a container lying next to you (the snapshot's `inside`), refusing as the game does when it isn't there. Null-headset VR check on main 8a42fdf: 4 ok. Client tests pass.
 - 2026-11-16 — L8 slice 3, client take: an item in a bag or box lying next to you can be taken out (ItemActions.take / LiveSession.take_item send the container; bad or half pairs send nothing). Client tests pass.
 - 2026-11-16 — Bridge: the E3 `number` request. CDDA's query_int, query_int64_t and edit( int ) ask the client for a whole number (`min`, `max`, `default`; answer `number`); out of range or no number is asked again with a status, 8 asks at most, then cancel. Sim test `number` checks each path.
