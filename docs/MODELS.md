@@ -26,8 +26,9 @@ owner before making many models, and keep one style across a set.
   row of counters, are several tiles with one model each, made so neighbours line up.
   - Joined pieces (optional, registry `joins`): besides the lone model, a counter can have an `end_left`
     (the run goes on to its right, +X), an `end_right` (it goes on to its left), a `middle` (both sides) and
-    a `corner` (it goes on to its right and toward you, the front, +Z: the corner of an L). Same tile, same
-    front; the game picks and turns them. Anything left out uses the lone model.
+    a `corner` (it goes on to its right and toward you, the front, +Z: the corner of an L), a `tee` (both
+    sides and the front: where a run branches) and a `cross` (all four sides). Same tile, same front; the game
+    picks and turns them. Anything left out uses the lone model.
 - **Terrain:** one tile, 1 m × 1 m, and 3 m high for walls (one storey). The game turns terrain models
   itself:
   - Walls, windows and fences: the wall runs left to right in Front view (along X). The front is one face

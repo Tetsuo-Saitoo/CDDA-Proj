@@ -28,7 +28,8 @@
         "type": "object", "additionalProperties": false,
         "properties": {
           "end_left": { "$ref": "#/$defs/model_path" }, "end_right": { "$ref": "#/$defs/model_path" },
-          "middle": { "$ref": "#/$defs/model_path" }, "corner": { "$ref": "#/$defs/model_path" }
+          "middle": { "$ref": "#/$defs/model_path" }, "corner": { "$ref": "#/$defs/model_path" },
+          "tee": { "$ref": "#/$defs/model_path" }, "cross": { "$ref": "#/$defs/model_path" }
         }
       },
       "states": { "type": "object", "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/cdda_id" } },
