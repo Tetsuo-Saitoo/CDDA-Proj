@@ -140,7 +140,7 @@ func _test_poses(world: WorldView, data: Variant, plain: Snapshot) -> void:
 func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 	var r := _build(world, snap)
 	var on_floor := _slots(r, AT_FLOOR)
-	_check.call(r.items == 2 + 5 + 20 + 1 and on_floor.map(func(e: Array) -> int: return e[0]) == [201, 202, 203]
+	_check.call(r.items == 2 + 5 + 2 + 20 + 1 and on_floor.map(func(e: Array) -> int: return e[0]) == [201, 202, 203]
 			and on_floor.map(func(e: Array) -> int: return e[1]) == [_it("rock"), _it("can_beans"), _it("backpack")],
 			"items: one per handle, in order, with its itype; clutter for the rest (%d shown)" % r.items)
 	var rect: Array = PropShapes.FLOOR_INFO["rect"]
@@ -154,7 +154,8 @@ func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 			+ Vector3((tr[2] - tr[0]) * (0.25 - 0.5), 0.0, (tr[3] - tr[1]) * (0.75 - 0.5))
 	_check.call(table.model == null and table.shape == "table" and o102.distance_to(want_t) < 0.001,
 			"items: a spot on a table: on its top, toward that side of the square (%s)" % o102)
-	_check.call(_slots(r, AT_DRESSER).is_empty(), "items: handles in a closed dresser get no slot")
+	_check.call(_slots(r, AT_DRESSER).size() == 2 and _slots(r, AT_DRESSER).all(func(e: Array) -> bool: return (e[6] as String).contains("/drawer_")),
+			"items: handles in a dresser ride its drawers (pointable while one is open)")
 	_check.call(str(_build(world, snap).item_slots) == str(r.item_slots), "items: placement is deterministic")
 	var st := _slots(r, AT_STACK)
 	var spread := st.size() == 20
@@ -170,7 +171,7 @@ func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 				and hi.origin.y > lo.origin.y + 0.005 and (st[16][5] as Vector3).y > (st[0][5] as Vector3).y,
 				"items: the 17th and later lie on top of the first ones")
 	var rb := _build(world, bare)
-	_check.call(rb.item_slots.is_empty() and rb.items == 2 + 5 + 8 + 1, "items: piles without handles draw as before (%d)" % rb.items)
+	_check.call(rb.item_slots.is_empty() and rb.items == 2 + 5 + 2 + 8 + 1, "items: piles without handles draw as before (%d)" % rb.items)
 	var rh := _build(world, snap, {201: true})
 	_check.call(rh.items == r.items - 1 and not rh.item_slots.any(func(e: Array) -> bool: return e[0] == 201),
 			"items: a hidden item is neither drawn, slotted nor clutter")

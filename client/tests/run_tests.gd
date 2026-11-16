@@ -41,6 +41,7 @@ func _initialize() -> void:
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/part_tests.gd").new().run(root, _check, data, tables, _repo)
+	preload("res://tests/box_tests.gd").new().run(_check, data, tables, _scene, _repo)
 	preload("res://tests/item_action_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/item_pick_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/hands_tests.gd").new().run(root, _check, data, tables)
@@ -575,7 +576,7 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 	var pm := PropMesher.new(snap, terrain, cat)
 	var base := CddaCoords.sm_to_ms(sm.pos)
 	var r := pm.build(sm.pos)
-	_check(r.furniture == 6 and r.traps == 1 and r.items == 3 + 8 and r.glyphs.is_empty() and r.props != null,
+	_check(r.furniture == 6 and r.traps == 1 and r.items == 3 + 2 + 8 and r.glyphs.is_empty() and r.props != null,
 			"builds furniture, a trap and piles (%d, %d, %d)" % [r.furniture, r.traps, r.items])
 	var r2 := pm.build(sm.pos)
 	_check(r2.vertices == r.vertices and r2.props.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == r.props.surface_get_arrays(0)[Mesh.ARRAY_VERTEX],
@@ -589,7 +590,9 @@ func _test_props(data: Variant, tables: IdTables) -> void:
 		var o: Vector3 = (e[0] as Transform3D).origin
 		return o.x > 5.0 and o.x < 6.0 and o.z > 5.0 and o.z < 6.0)
 	_check(in_box, "and stay on their tile")
-	_check((pile.call(1) as Array).is_empty(), "items in a closed dresser are hidden")
+	var in_dresser: Array = pile.call(1)
+	_check(in_dresser.size() == 2 and in_dresser.all(func(e: Array) -> bool: return int(e[6]) >= 0 and (e[0] as Transform3D).origin.y < 1.0),
+			"items in a dresser lie in its drawers (PropBoxes)")
 	var floor_items: Array = pile.call(2)
 	_check(floor_items.size() == PropMesher.MAX_SHOWN and floor_items[1][1] == 0, "a pile of 20 shows %d, clutter after the top 4" % PropMesher.MAX_SHOWN)
 	var spread := true
