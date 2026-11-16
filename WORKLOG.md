@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — L8 tray (desktop): point at a bag lying next to you, or a big pile, and press K: its contents are laid out on a tray in front of you; click one to take it into your pack, Esc closes it. Client tests pass.
 - 2026-11-16 — L8 tray (VR): touch a bag lying next to you, or a big pile, and pull the trigger: what is in it is laid out on a tray in front of you, a page at a time; grip an item to take it. Client tests and the null-headset check (tray) pass.
 - 2026-11-16 — L8 slice 3 fix: a take out of a lying container is judged by that container's contents (it never lay on the square), so a refused one no longer counts as done. Client tests pass.
 - 2026-11-16 — L8 slice 3, mock: MockItems takes an item out of a container lying next to you (the snapshot's `inside`), refusing as the game does when it isn't there. Null-headset VR check on main 8a42fdf: 4 ok. Client tests pass.

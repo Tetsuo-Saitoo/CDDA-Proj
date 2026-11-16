@@ -42,6 +42,9 @@ const HOVER_SCALE := 1.2
 var hands: Hands
 var world: WorldView
 var head: Node3D
+## Where open() puts it: this far in front of the head and this far under it (the desktop: nearer the view).
+var rest_m := REST_M
+var rest_low := REST_LOW
 ## Hands ids whose held items hide on the tray.
 var ids: Array[String] = ["vr_l", "vr_r", "mouse"]
 ## {kind: "container", uid, type, square} or {kind: "pile", square}; {} while closed.
@@ -133,7 +136,7 @@ func open(src: Dictionary, head_xf: Transform3D) -> bool:
 	source = src.duplicate()
 	page = 0
 	_sig = []
-	global_transform = rest_pose(head_xf)
+	global_transform = rest_pose(head_xf, rest_m, rest_low)
 	visible = true
 	refresh(true)
 	return is_open()
@@ -204,12 +207,12 @@ func refresh(force := false) -> bool:
 	return true
 
 
-## The tray's pose: REST_M in front of the head (level), REST_LOW under it, the board facing the head.
-static func rest_pose(head_xf: Transform3D) -> Transform3D:
+## The tray's pose: `m` in front of the head (level), `low` under it, the board facing the head.
+static func rest_pose(head_xf: Transform3D, m := REST_M, low := REST_LOW) -> Transform3D:
 	var f := -head_xf.basis.z
 	f.y = 0.0
 	f = f.normalized() if f.length() > 0.01 else Vector3.FORWARD
-	var o := head_xf.origin + f * REST_M + Vector3.DOWN * REST_LOW
+	var o := head_xf.origin + f * m + Vector3.DOWN * low
 	var n := (head_xf.origin - o).normalized()
 	var x := Vector3.UP.cross(n).normalized()
 	return Transform3D(Basis(x, n.cross(x), n), o)

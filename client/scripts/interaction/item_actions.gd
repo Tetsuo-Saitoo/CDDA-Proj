@@ -541,6 +541,17 @@ func _on_square(snap: Snapshot, item: ItemRef) -> Where:
 	return Where.STILL if handle_index(sm, tile, item.uid, item.type) >= 0 else Where.MOVED
 
 
+## L8: item `it` (its `parent` a container lying on its square) is still listed inside that container in `snap`.
+static func listed_inside(snap: Snapshot, it: ItemRef) -> bool:
+	if snap == null or it == null or it.parent <= 0 or lying_type(snap, it.parent, it.square) <= 0:
+		return false
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(it.square))
+	for r: Array in sm.inside.get(it.parent, []):
+		if r[0] == it.uid and r[1] == it.type:
+			return true
+	return false
+
+
 ## L8: an item taken out of container item.parent lying on item.square: STILL while that container's `inside`
 ## there still lists it; UNKNOWN when the square isn't seen, the container isn't listed there any more or its list
 ## was cut short (`inside_more`); else MOVED (it left the container).

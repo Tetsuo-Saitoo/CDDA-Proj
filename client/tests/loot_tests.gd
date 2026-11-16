@@ -29,6 +29,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_shelf_ops()
 	_test_take_container()
 	_test_tray()
+	_test_desk_tray()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -496,3 +497,53 @@ func _test_tray() -> void:
 	_check.call(not tray.is_open() and why.back() == "far", "tray: the head walking off closes it (%s)" % [why])
 	hd.free()
 	tray.free()
+
+
+## The desktop tray (GrabController, lead-ui's OK): opens on a lying bag in front of the camera with the mouse free,
+## a click takes an item into the pack, a click on an arrow pages, Esc closes it and gives the mouse back; a view
+## coming up closes it; something with nothing listed opens nothing.
+func _test_desk_tray() -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var inside: Array = []
+	for k in 14:
+		inside.append([424500 + k, rock, 0])
+	sm.inside[c] = inside
+	_snap.seq += 1
+	var g := GrabController.new(_world)
+	g.reach = func() -> Variant: return P
+	g.hands = _hands
+	var tray := ItemTray.new()
+	tray.world = _world
+	tray.hands = _hands
+	_world.add_child(tray)
+	g.tray = tray
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	var cam := Transform3D(Basis.IDENTITY, eye)
+	var mouse := Input.mouse_mode
+	var none := g.open_tray_on(ItemRef.on_square(424999, rock, P), cam)
+	var ok := g.open_tray_on(ItemRef.on_square(c, ham, E), cam)
+	_check.call(not none and ok and g.tray_open() and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE
+			and tray.global_position.distance_to(eye + Vector3(0, -GrabController.TRAY_LOW, -GrabController.TRAY_M)) < 0.01,
+			"desk tray: opens on a lying bag in front of the camera, the mouse free; nothing listed opens nothing")
+	var p0 := tray.global_transform * ItemTray.cell_pos(0)
+	var took := g.tray_click(eye, p0 - eye)
+	var stale := g.tray_click(eye, p0 - eye)   # the tray not refreshed yet: that one isn't listed in the bag any more
+	var paged := g.tray_click(eye, tray.global_transform * ItemTray.arrow_pos(1) - eye)
+	var miss := g.tray_click(eye, Vector3.UP)
+	_check.call(took == "take" and ItemActions.carried_row(_snap, 424500, rock) >= 0 and stale == "" and paged == "page"
+			and tray.page == 1 and miss == "",
+			"desk tray: a click takes an item into the pack (not twice), on the arrow pages, off it nothing (%s %s %s %s)" % [took, stale, paged, miss])
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	var closed := g.tray_event(esc, null, Vector2.ZERO, true)
+	_check.call(closed and not g.tray_open() and Input.mouse_mode == mouse, "desk tray: Esc closes it and gives the mouse back")
+	ok = g.open_tray_on(ItemRef.on_square(c, ham, E), cam)
+	g.update_tray(null, Vector2.ZERO, true)
+	_check.call(ok and not g.tray_open() and Input.mouse_mode == mouse, "desk tray: a view or menu coming up closes it")
+	sm.inside.erase(c)
+	tray.free()
+	g.free()
