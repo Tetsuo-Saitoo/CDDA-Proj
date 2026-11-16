@@ -96,6 +96,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_grime(root, tables)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
+	_test_misfires(root, aim, tables)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -1476,6 +1477,44 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	_check.call(dark and rebuilt and pistol_on and not vm.flashing() and vm._flash == null,
 			"muzzle flash: none with flashes off (and one showing goes), a new gun gets its own, a knife has none")
+	vm.free()
+
+
+## Misfires: the viewmodel kicks and flashes only for a round CDDA fired (shot_went: each shot request, never a
+## target request); the player's `misfire` event clicks instead (HitFeedback.misfired, jammed for detail
+## 2), anyone else's or a malformed one does nothing; a click neither kicks nor flashes.
+func _test_misfires(root: Node, aim: AimController, tables: IdTables) -> void:
+	var went := [0]
+	var count_went := func() -> void: went[0] += 1
+	aim.shot_went.connect(count_went)
+	aim.on_request({"kind": "target", "mode": "fire"})
+	var none_yet: int = went[0]
+	aim.on_request({"kind": "shot", "id": 7, "shot_error": 0.0, "shot_angle": 0.0})
+	aim.on_request({"kind": "shot"})   # a bad id: the round still went off
+	_check.call(none_yet == 0 and went[0] == 2, "misfire: shot_went for each shot request only (%d, %d)" % [none_yet, went[0]])
+	aim.shot_went.disconnect(count_went)
+
+	var hf := aim.hits
+	var me := hf.player_uid()
+	var got: Array = []
+	var on_misfire := func(jammed: bool) -> void: got.append(jammed)
+	hf.misfired.connect(on_misfire)
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	vm.set_item(tables.index_of("itype", "glock_19"), tables)
+	hf.misfired.connect(vm.click)
+	hf.on_events([{"kind": "misfire", "uid": me, "detail": 1}, {"kind": "misfire", "uid": me, "detail": 2},
+			{"kind": "misfire", "uid": me + 5, "detail": 1}, {"kind": "misfire", "uid": "x", "detail": 1},
+			{"kind": "misfire"}, {"kind": "misfire", "uid": me, "detail": 9.5}])
+	var quiet := not vm.flashing() and not vm.lit() and vm._kick == 0.0
+	var snd := WeaponViewmodel.click_stream()
+	var player := vm.get_node_or_null("Click") as AudioStreamPlayer
+	_check.call(got == [false, true, false] and vm.clicks == 3 and quiet and player != null
+			and snd.data.size() == int(WeaponViewmodel.CLICK_RATE * WeaponViewmodel.CLICK_S) * 2
+			and WeaponViewmodel.click_stream() == snd,
+			"misfire: the player's misfire events click (jammed for detail 2), no kick, no flash; others nothing (%s)" % [got])
+	hf.misfired.disconnect(on_misfire)
+	hf.misfired.disconnect(vm.click)
 	vm.free()
 
 

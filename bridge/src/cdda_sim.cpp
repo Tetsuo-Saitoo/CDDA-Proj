@@ -132,7 +132,7 @@ Dictionary request_dict( const fp3d::ui_request &r )
 const char *event_kind_name( fp3d::event_kind k )
 {
     static const char *const names[] = { "sound", "message", "attack", "damage", "projectile", "explosion",
-                                         "death", "anim", "turn_end", "lightning", "item_result"
+                                         "death", "anim", "turn_end", "lightning", "item_result", "misfire"
                                        };
     static_assert( std::size( names ) == fp3d::event_kind_count, "a name for every event kind" );
     const size_t i = static_cast<size_t>( k );

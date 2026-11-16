@@ -9,7 +9,10 @@ extends Node3D
 ## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors); in the shoulder and top
 ## views it starts in front of the player and bullets fly from the eyes (`view`). Answers go through
 ## TargetRequestWidget (pos + FIRE etc.), so CDDA still checks range, line of fire and ammo.
-## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera; `fired` kicks it.
+## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera. `fired` is the trigger pull (VR
+## haptics); `shot_went` kicks the viewmodel and flashes its muzzle when CDDA really fired a round: each shot
+## request (it comes only for a round that went off), or at once for a plain FIRE, which gets no shot requests.
+## A misfire never sends it: HitFeedback.misfired clicks instead (main.gd).
 ## Guns (fire mode with a wielded gun): the client flies the bullet (BulletPhysics: speed, drag, drop, sights
 ## zeroed at 25 m) from the eye along the crosshair / clicked point against the creature figures' body parts
 ## and the map, and answers FIRE with that exact outcome plus `fly: true` (`shot`), keeping the aim (origin,
@@ -35,6 +38,8 @@ extends Node3D
 ## lasts only until its own swing's attack event (hit or miss), so a later strike never shows as called.
 
 signal fired
+## A round went off (see above): recoil and muzzle flash.
+signal shot_went
 
 const MARKER_COLOR := Color(1.0, 0.2, 0.15)
 const AIM_KEEP_MS := 60000        # a kept aim answers shot requests this long after the trigger pull
@@ -204,6 +209,7 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 		if not _fire_flown(t, line[0], line[1]):
 			if TargetRequestWidget.is_attack_mode(t.mode):
 				fired.emit()
+				shot_went.emit()   # plain FIRE: no shot request will tell
 				shot_aim = {}   # a new trigger pull replaces the kept aim
 			t.fire()
 	else:
@@ -444,6 +450,7 @@ func on_request(req: Dictionary) -> Dictionary:
 		return _swing_answer(req)
 	if kind != "shot":
 		return {}
+	shot_went.emit()   # CDDA fired this round (a misfire asks nothing)
 	var id: Variant = RequestWidget.id_value(req.get("id"))
 	if id == null or id <= 0:
 		push_warning("aim: shot request without a usable id")

@@ -34,6 +34,9 @@ signal strike_confirmed(uid: int, part: String, amount: int, killed: bool)
 signal technique_used(uid: int, technique: String, family: int)
 ## The player's strike at creature `uid` is over: a hit (after its technique_used, when it has one) or a miss.
 signal swing_resolved(uid: int, hit: bool)
+## The player pulled the trigger and no round went off (a `misfire` event of the player's: CDDA's misfire,
+## malfunction, or a jam it set then, `jammed`). WeaponViewmodel.click plays it (main.gd).
+signal misfired(jammed: bool)
 
 const MAX_EVENTS := 4096       # the bridge queue's cap; more in one batch are ignored
 const MAX_UID := 1 << 53       # JSON numbers are doubles
@@ -91,6 +94,10 @@ func on_events(events: Array) -> void:
 					pending.append(h)
 			"message", "sound":
 				pass   # a strike's own messages come between its attack and its damage
+			"misfire":
+				run.clear()
+				if _uint((e as Dictionary).get("uid"), MAX_UID) == me:
+					misfired.emit(_uint((e as Dictionary).get("detail"), 2) == 2)
 			"projectile":
 				run.clear()
 				_on_projectile(e, me, pending)
