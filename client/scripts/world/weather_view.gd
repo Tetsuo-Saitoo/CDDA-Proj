@@ -8,9 +8,20 @@ extends Node
 ## sun's energy and shadows, so VR gets the same per eye and nothing is drawn extra. A change of weather blends
 ## over blend_s seconds in a few steps (each step makes the engine filter the sky's light again); between changes
 ## this node only moves the fog's start with the camera, and does nothing at all without fog.
+##
+## `quality` (the player's setting) trims what the weather draws beyond what it means for play: HIGH all of it; LOW
+## half the rain and snow particles and a change blended in 4 steps instead of 12; MINIMAL no rain or snow, no
+## cloud layer, no wet ground and a change shown at once. The darker light and the fog (CDDA's sight distance) stay
+## at every quality, and so do the lightning flash (its own setting) and the sound.
 
 const BLEND_S := 3.0
 const BLEND_STEP_S := 0.25
+const LOW_BLEND_STEP_S := 0.75   # LOW quality: 4 steps (each re-filters the sky's light)
+const LOW_PARTICLES := 0.5       # LOW quality: this share of the rain and snow particles
+const MINIMAL := 0
+const LOW := 1
+const HIGH := 2
+const QUALITY_NAMES: Array[String] = ["minimal", "low", "high"]   # by quality, for settings and menus
 ## Changes smaller than this (dusk getting darker turn by turn) show at once.
 const BLEND_MIN := 0.08
 const AMBIENT_ENERGY := 0.8
@@ -45,6 +56,20 @@ const COVER_H := 256
 const CLOUD_SCALE := 2.2      # cloud shapes per unit of the layer (its height above the eye is 1)
 const CLOUD_HORIZON := 0.2    # keeps the layer's far end finite at the horizon
 
+## MINIMAL, LOW or HIGH (out of range: the nearest); a change shows at once.
+var quality := HIGH:
+	set(q):
+		q = clampi(q, MINIMAL, HIGH)
+		if q == quality:
+			return
+		quality = q
+		precip.particle_share = [0.0, LOW_PARTICLES, 1.0][q]
+		if q == MINIMAL and _blend_t < 1.0:
+			_blend_t = 1.0
+			state = target
+		_show()
+		_show_wet()
+		_update_processing()
 var state := WeatherState.new()    # shown now
 var target := WeatherState.new()   # the last snapshot's
 var blend_s := BLEND_S             # 0: every change shows at once
@@ -146,9 +171,9 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	# The same weather as the last snapshot's (light and wind drift a little each turn): a blend toward it goes on.
 	var same_goal := _shown and _close(target, next)
 	target = next
-	if not _shown or blend_s <= 0.0:
+	if not _shown or _blend_s() <= 0.0:
 		_clear_m = indoor_clear_m()
-	if not _shown or blend_s <= 0.0 or (_blend_t >= 1.0 and _close(state, target)):
+	if not _shown or _blend_s() <= 0.0 or (_blend_t >= 1.0 and _close(state, target)):
 		_blend_t = 1.0
 		state = target
 	elif _blend_t >= 1.0 or not same_goal:
@@ -175,9 +200,20 @@ func _soak(turn: int) -> void:
 	else:
 		wet = maxf(0.0, wet - (turn - _wet_turn) / DRY_IN_S)
 	_wet_turn = turn
-	if absf(wet - _wet_shown) >= WET_STEP or (wet != _wet_shown and (wet == 0.0 or wet == 1.0)):
-		_wet_shown = wet
-		TerrainMesher.wet_ground(wet)
+	_show_wet()
+
+
+## Puts `wet` on the ground's material (dry at MINIMAL quality), only by steps of WET_STEP.
+func _show_wet() -> void:
+	var shown := wet if quality != MINIMAL else 0.0
+	if absf(shown - _wet_shown) >= WET_STEP or (shown != _wet_shown and (shown == 0.0 or shown == 1.0)):
+		_wet_shown = shown
+		TerrainMesher.wet_ground(shown)
+
+
+## How long a change of weather blends: none at MINIMAL quality.
+func _blend_s() -> float:
+	return 0.0 if quality == MINIMAL else blend_s
 
 
 ## The game's events: a `lightning` event (the bridge sends one each time CDDA flashes) lights the scene for a
@@ -281,9 +317,9 @@ func _process(delta: float) -> void:
 			_flash_t = -1.0
 		_show_flash()
 	if _blend_t < 1.0:
-		_blend_t = minf(1.0, _blend_t + delta / maxf(blend_s, 0.001))
+		_blend_t = minf(1.0, _blend_t + delta / maxf(_blend_s(), 0.001))
 		_since_step += delta
-		if _since_step >= BLEND_STEP_S or _blend_t >= 1.0:
+		if _since_step >= (LOW_BLEND_STEP_S if quality == LOW else BLEND_STEP_S) or _blend_t >= 1.0:
 			_since_step = 0.0
 			state = target if _blend_t >= 1.0 else WeatherState.blend(_from, target, smoothstep(0.0, 1.0, _blend_t))
 			_show()
@@ -303,7 +339,7 @@ static func _close(a: WeatherState, b: WeatherState) -> bool:
 
 func _show() -> void:
 	if _sky != null:
-		var layer := state.cloud_layer()
+		var layer := state.cloud_layer() if quality != MINIMAL else 0.0
 		_set_sky(&"sky_top_color", state.sky_top())
 		_set_sky(&"sky_horizon_color", state.sky_horizon())
 		_set_sky(&"ground_horizon_color", state.sky_horizon())

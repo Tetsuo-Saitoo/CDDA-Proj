@@ -280,3 +280,51 @@ func _test_emitters(root: Node) -> void:
 	_check.call(not weather.precip.rain.emitting, "rain: and stops it")
 	root.remove_child(weather)
 	weather.free()
+	_test_quality(root, snap, clear, coords)
+
+
+## WeatherView.quality: LOW halves the particles and blends in fewer steps; MINIMAL draws no rain, clouds or wet
+## ground and shows a change at once, but keeps the fog and the darker light; each change shows without waiting for
+## a snapshot; out-of-range values take the nearest.
+func _test_quality(root: Node, rain: Snapshot, clear: Snapshot, coords: CddaCoords) -> void:
+	var ground := TerrainMesher.material(TerrainMesher.GROUND)
+	var sky := ProceduralSkyMaterial.new()
+	var env := Environment.new()
+	env.sky = Sky.new()
+	env.sky.sky_material = sky
+	var weather := WeatherView.new()
+	root.add_child(weather)
+	weather.blend_s = 0.0
+	weather.setup(env, null)
+	weather.apply(rain, coords, true)   # a game loaded in the rain: wet at once
+	var p := weather.precip
+	var high := [p.rain.amount, p.rain.emitting, sky.sky_cover_modulate.r > 0.0, is_equal_approx(ground.roughness, TerrainMesher.WET_ROUGHNESS)]
+	weather.quality = WeatherView.LOW
+	var low := [p.rain.amount, p.rain.emitting, sky.sky_cover_modulate.r > 0.0]
+	weather.quality = WeatherView.MINIMAL
+	var light := env.ambient_light_energy
+	var minimal := [p.rain.emitting, sky.sky_cover_modulate.r, is_equal_approx(ground.roughness, 0.9)]
+	weather.apply(rain, coords, true)
+	minimal.append(p.rain.emitting or sky.sky_cover_modulate.r > 0.0 or not is_equal_approx(ground.roughness, 0.9))
+	weather.quality = WeatherView.HIGH
+	var back := [p.rain.amount, p.rain.emitting, sky.sky_cover_modulate.r > 0.0, is_equal_approx(ground.roughness, TerrainMesher.WET_ROUGHNESS)]
+	_check.call(high == [PrecipView.MAX_RAIN, true, true, true] and low == [PrecipView.MAX_RAIN / 2, true, true]
+			and minimal == [false, 0.0, true, false] and back == high and env.ambient_light_energy == light
+			and light < WeatherView.AMBIENT_ENERGY,
+			"weather quality: low halves the rain, minimal draws no rain, clouds or wet ground (the gloom stays), high all again %s %s %s %s"
+			% [high, low, minimal, back])
+	weather.blend_s = WeatherView.BLEND_S
+	weather.apply(clear, coords, true)
+	var blends := weather.blending()
+	weather.quality = WeatherView.MINIMAL
+	var stopped := not weather.blending()
+	weather.apply(rain, coords, true)
+	_check.call(blends and stopped and not weather.blending(), "weather quality: minimal shows a change at once")
+	weather.quality = 9
+	var hi := weather.quality
+	weather.quality = -3
+	_check.call(hi == WeatherView.HIGH and weather.quality == WeatherView.MINIMAL
+			and WeatherView.QUALITY_NAMES.size() == WeatherView.HIGH + 1, "weather quality: out of range takes the nearest")
+	root.remove_child(weather)
+	weather.free()
+	TerrainMesher.wet_ground(0.0)
