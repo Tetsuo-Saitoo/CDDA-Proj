@@ -18,7 +18,8 @@ extends RefCounted
 ## (HitFeedback.strike_confirmed for the creature struck, within HIT_KEEP_MS). Nothing here talks to the sim but
 ## that one action.
 
-## A strike went out: CDDA's hand ("main" / "off"), the way (a direction name such as "LEFT"), the creature touched.
+## A strike went out: CDDA's hand ("main" / "off"), the way (a direction name such as "LEFT", or "at": a knight's
+## move, AimController.strike_square), the creature touched.
 signal struck(hand: String, dir: String, uid: int)
 
 const SWING_SPEED := 2.5   # m/s: a hand this fast swings ...

@@ -535,6 +535,13 @@ func queue_action(action: String) -> bool:
 	return _sim != null and _sim.queue_action(action)
 
 
+## A main-loop action for one square (CddaSim.queue_action_at, contracts/bridge_api.md): `square` is absolute (map
+## squares, as the snapshot's positions). False when the bridge refuses it (out of range, a reserved action) or this
+## DLL has no queue_action_at; an action CDDA doesn't allow at that square isn't a false but a message event.
+func queue_action_at(action: String, square: Vector3i) -> bool:
+	return _sim != null and _sim.has_method("queue_action_at") and _sim.queue_action_at(action, square)
+
+
 ## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
 ## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
 ## Take from square `pos` into hand "pack", "main" or "off".
