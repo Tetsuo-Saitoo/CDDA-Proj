@@ -712,8 +712,9 @@ func _on_misfired(_jammed: bool) -> void:
 	rig.feel(rig.main_ctrl(), CLICK_AMP, CLICK_S)
 
 
-## The player's shot hit (HitFeedback.shot_confirmed: CDDA's damage, the player's projectile): while the gun shows
-## in the main hand, a thump there, a strong one for a kill. A melee hit never comes here.
+## The player's projectile hit (HitFeedback.shot_confirmed: CDDA's damage, the player's projectile; a throw too, which
+## the event can't tell from an arrow): while the gun shows in the main hand, a thump there, a strong one for a kill.
+## A melee hit never comes here.
 func _on_hit(_uid: int, _part: String, _amount: int, killed: bool) -> void:
 	if not shown or rig == null:
 		return

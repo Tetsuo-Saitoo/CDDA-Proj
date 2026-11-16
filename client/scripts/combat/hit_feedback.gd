@@ -29,7 +29,8 @@ extends Node
 signal hit_confirmed(uid: int, part: String, amount: int, killed: bool)
 ## Also sent, after hit_confirmed, when the hit was the player's melee strike (a stronger buzz in VR, say).
 signal strike_confirmed(uid: int, part: String, amount: int, killed: bool)
-## Or, after hit_confirmed, when it was the player's shot (VrGun's buzz in the gun hand).
+## Or, after hit_confirmed, when it was the player's projectile: a shot, an arrow, or a thrown item (the projectile
+## event doesn't tell a throw from an arrow; VrGun's buzz in the gun hand).
 signal shot_confirmed(uid: int, part: String, amount: int, killed: bool)
 ## The player's melee hit on creature `uid` used a technique: its display name (plain, never empty) and its
 ## family (0 none, 1 strike, 2 down, 3 stun, 4 disarm, 5 push). Sent at the hit, before its damage confirms.
