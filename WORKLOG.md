@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — An L of kitchen counters no longer shows a corner cabinet's doors in a gap inside the other arm: the corner tile's body runs on into it, with no doors (lead-world, placeholder shape). Client tests pass.
 - 2026-11-16 — Items stay on the shelf they were put on (L8 slice 2, world side, lead-world, for lead-vr): the snapshot's `shelves` are read, such an item is drawn on that shelf or drawer, and `WorldView.shelf_at` tells a drop which shelf and spot lie under a hand or pointer. Client tests pass.
 - 2026-11-15 — Events test (combat lead, fork fp3d-combat): the forced-technique check compares CDDA's translated name, not the English one.
 - 2026-11-15 — Suppressed guns don't flash (combat lead, fork fp3d-combat + client): the snapshot's wielded gun says `suppressed` when a gunmod (an integral one too) lowers its report; the viewmodel then only recoils (snapshot_test, aim_tests). Not seen on screen.
