@@ -32,6 +32,7 @@ var compass_slider: HSlider
 var _compass_value: Label
 var debug_check: CheckBox
 var mood_check: CheckBox
+var hurt_check: CheckBox
 var flash_check: CheckBox
 var cheat_page: CheatPanel    # set by add_cheat_page
 var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
@@ -150,6 +151,13 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	mood_check.button_pressed = settings.mood_cues
 	mood_check.toggled.connect(_on_mood_cues)
 	row.add_child(mood_check)
+	hurt_check = CheckBox.new()
+	hurt_check.text = "Hurt tint"
+	hurt_check.tooltip_text = "Darkens the edges of the view red when you are hit or bleeding."
+	hurt_check.focus_mode = Control.FOCUS_NONE
+	hurt_check.button_pressed = settings.hurt_cues
+	hurt_check.toggled.connect(_on_hurt_cues)
+	row.add_child(hurt_check)
 	flash_check = CheckBox.new()
 	flash_check.text = "Bright flashes"
 	flash_check.tooltip_text = "Lightning and muzzle flashes. Off: thunder and recoil only."
@@ -238,6 +246,14 @@ func _on_mood_cues(on: bool) -> void:
 	var err := hud.save_file(hud_path)
 	if err != OK:
 		_status.text = "Mood tint setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _on_hurt_cues(on: bool) -> void:
+	hud.hurt_cues = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Hurt tint setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

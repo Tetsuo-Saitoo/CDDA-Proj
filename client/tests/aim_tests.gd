@@ -98,6 +98,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_muzzle_flash(root, tables)
 	_test_misfires(root, aim, tables)
 	_test_queue_at()
+	_test_hurt_cue(root, aim)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -1614,3 +1615,85 @@ func _test_queue_at() -> void:
 			% [sim.sent])
 	ls._sim = null
 	ls.free()
+
+
+## F3: the player's damage events reach HurtCue (others' and junk don't); it rises smoothly, fades out, holds up
+## (no blinking) under fast hits, keeps a faint floor while a body part bleeds, and stays dark when off.
+func _test_hurt_cue(root: Node, aim: AimController) -> void:
+	var hf := aim.hits
+	var me := hf.player_uid()
+	var got: Array = []
+	var on_hurt := func(a: int) -> void: got.append(a)
+	hf.player_hurt.connect(on_hurt)
+	hf.on_events([{"kind": "damage", "uid": me, "amount": 12, "other": 5}, {"kind": "damage", "uid": me + 1, "amount": 9},
+			{"kind": "damage", "uid": me, "amount": 0}, {"kind": "damage", "uid": me, "amount": "7"},
+			{"kind": "damage", "uid": me, "amount": -3}, {"kind": "death", "uid": me}, {"kind": "damage", "amount": 4},
+			{"kind": "damage", "uid": float(me), "amount": 3.0}])
+	hf.player_hurt.disconnect(on_hurt)
+	_check.call(got == [12, 3], "hurt: only the player's damage with an amount reaches the cue (%s)" % [got])
+
+	var cue := HurtCue.new()
+	cue.world = aim.world
+	root.add_child(cue)
+	var parts: Array[Snapshot.BodyPart] = aim.world.snapshot.player_parts.duplicate()
+	aim.world.snapshot.player_parts.clear()   # nobody bleeding
+	cue.hurt(10)
+	cue.step(0.05)
+	var rising := cue.shown > 0.0 and cue.shown < cue.peak and cue.visible
+	var up := cue.shown
+	for i in 6:
+		cue.step(0.05)
+		up = maxf(up, cue.shown)
+	for i in 40:
+		cue.step(0.1)
+	var gone := cue.shown == 0.0 and not cue.visible
+	_check.call(rising and up > 0.3 and gone, "hurt: a hit rises over a few frames and fades out (%.2f)" % up)
+	var lows: Array[float] = []
+	for f in 90:   # 3 s of hits 10 times a second, at 60 frames a second
+		if f % 6 == 0:
+			cue.hurt(3)
+		cue.step(1.0 / 60.0)
+		if f >= 30:   # settled after half a second
+			lows.append(cue.shown)
+	var held: bool = lows.min() > 0.3 and lows.max() - lows.min() < 0.25
+	var cap := HurtCue.MAX_ALPHA + 1e-6   # Color is float32
+	var top := HurtCue.tint_for(1.0).a <= cap and HurtCue.tint_for(5.0).a <= cap \
+			and HurtCue.tint_for(0.0).a == 0.0 and HurtCue.tint_for(NAN).a == 0.0
+	_check.call(held and top, "hurt: fast hits hold it up without blinking, the tint stays under %.2f (%.2f..%.2f)"
+			% [HurtCue.MAX_ALPHA, lows.min(), lows.max()])
+	var b := Snapshot.BodyPart.new()
+	b.bleed = 2
+	aim.world.snapshot.player_parts.append(b)
+	for i in 40:
+		cue.step(0.1)
+	var floor_ok := is_equal_approx(cue.shown, HurtCue.BLEED_LEVEL) and cue.visible
+	cue.enabled = false
+	cue.hurt(30)
+	for i in 10:
+		cue.step(0.1)
+	var off_ok := cue.shown < HurtCue.BLEED_LEVEL and cue.peak == 0.0
+	for i in 10:
+		cue.step(0.1)
+	off_ok = off_ok and cue.shown == 0.0 and not cue.visible
+	_check.call(floor_ok and off_ok, "hurt: bleeding keeps a faint steady edge; off, hits do nothing and it fades out")
+	aim.world.snapshot.player_parts.assign(parts)
+	cue.free()
+	var path := preload("res://tests/test_dir.gd").path("hud_hurt.cfg")
+	var hs := HudSettings.new()
+	var m := KeyMenu.new()
+	m.add_hud_settings(hs, path)
+	var was_on := hs.hurt_cues and m.hurt_check.button_pressed and m.hurt_check.text == "Hurt tint"
+	m.hurt_check.button_pressed = false
+	var back := HudSettings.new()
+	var why := back.load_file(path)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hurt]
+cues=\"no\"
+")
+	f.close()
+	var odd := HudSettings.new()
+	var odd_why := odd.load_file(path)
+	_check.call(was_on and not hs.hurt_cues and not back.hurt_cues and back.mood_cues and why == ""
+			and odd.hurt_cues and odd_why.contains("hurt tint"),
+			"hurt: on by default; the F1 box turns it off and saves it; a non-bool in the file leaves it on, with a warning")
+	m.free()

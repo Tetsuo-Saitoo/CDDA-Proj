@@ -72,6 +72,7 @@ var character: CharacterView      # P: the character screen
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
+var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -232,6 +233,7 @@ func _ready() -> void:
 	fp.add_child(viewmodel)
 	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
 	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
+	aim.hits.player_hurt.connect(hurt_cue.hurt)   # damage to the player: a red edge, fading
 	_set_view(start_view(_args, hud_settings.view))
 	_boot_log("client set up")
 	if _args.has("live"):
@@ -1280,6 +1282,9 @@ func _setup_hud() -> void:
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
+	hurt_cue.world = world
+	layer.add_child(hurt_cue)
 	hud = Label.new()
 	hud.position = Vector2(10, 50)   # under the compass's hostile markers
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -1298,6 +1303,7 @@ func _setup_hud() -> void:
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
+	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -1338,6 +1344,7 @@ func _setup_hud() -> void:
 	key_menu.hud_changed.connect(func() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
+		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash)
