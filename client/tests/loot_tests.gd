@@ -28,6 +28,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_open_at()
 	_test_shelf_ops()
 	_test_take_container()
+	_test_tray()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -412,3 +413,86 @@ func _test_mock_take_container(c: int) -> void:
 	ok = _mock.take_item(424251, rock, E, "pack", c, ham)
 	_check.call(ok and not sm.inside.has(c) and ItemActions.carried_row(_snap, 424251, _it["rock"]) >= 0, "loot: mock container take: the last one empties its list")
 	_mock.message.disconnect(hear)
+
+
+## L8 slices 3-4: ItemTray lays out a lying container's contents (or a big pile) in front of the head, paged, as
+## ItemRefs; a hand takes one out through Hands (the container take); it closes when the container goes.
+func _test_tray() -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var cref := ItemRef.on_square(c, ham, E)
+	_check.call(c > 0 and ItemTray.source_for(_snap, cref).is_empty(),
+			"tray: a lying item with nothing listed in it, in a small pile, opens nothing")
+	var inside: Array = []
+	for k in 14:
+		inside.append([424300 + k, rock, 0])
+	sm.inside[c] = inside
+	sm.inside_more[c] = 5
+	var src := ItemTray.source_for(_snap, cref)
+	var carried := cref.duplicate_ref()
+	carried.carried = true
+	var bad: Array[Dictionary] = [ItemTray.source_for(_snap, carried),
+			ItemTray.source_for(_snap, ItemRef.on_square(c, ham, E + Vector3i(3, 0, 0))),
+			ItemTray.source_for(_snap, ItemRef.on_square(c, rock, E)), ItemTray.source_for(null, cref)]
+	_check.call(src == {"kind": "container", "uid": c, "type": ham, "square": E} and bad.all(func(d: Dictionary) -> bool: return d.is_empty()),
+			"tray: a lying container with contents opens; carried, elsewhere, another itype or no snapshot don't (%s)" % [src])
+	var tray := ItemTray.new()
+	tray.world = _world
+	tray.hands = _hands
+	_world.add_child(tray)
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	var head := Transform3D(Basis.IDENTITY, eye)   # looking north (-z)
+	var ok := tray.open(src, head)
+	var first: ItemRef = tray.items[0]["item"] if not tray.items.is_empty() else null
+	_check.call(ok and tray.rows.size() == 14 and tray.items.size() == ItemTray.PAGE and tray.pages() == 2 and tray.more == 5
+			and first != null and first.uid == 424300 and first.parent == c and first.pocket == 0 and first.square == E
+			and tray.title.ends_with("1/2") and tray.global_position.distance_to(eye + Vector3(0, -ItemTray.REST_LOW, -ItemTray.REST_M)) < 0.01,
+			"tray: opens in front of the head, a page of the container's contents with its parent, 2 pages, +5 more (%s, %d rows)" % [tray.title, tray.rows.size()])
+	var p0 := tray.global_transform * ItemTray.cell_pos(0)
+	var t := tray.target_at(p0 + Vector3(0.01, 0, 0))
+	var ray := tray.target_on_ray(eye, p0 - eye)
+	var arrow := tray.target_at(tray.global_transform * ItemTray.arrow_pos(1))
+	var none := tray.target_at(p0 + Vector3(0, 0.5, 0))
+	_check.call(t.get("kind") == "item" and (t["item"] as ItemRef).uid == 424300 and (t["item"] as ItemRef).point.distance_to(p0) < 0.001
+			and ray.get("kind") == "item" and (ray["item"] as ItemRef).uid == 424300 and arrow == {"kind": "page", "dir": 1} and none.is_empty(),
+			"tray: a hand at a cell or a ray onto it finds that item; the arrow pages; away from it nothing (%s %s)" % [t.get("kind"), ray.get("kind")])
+	_check.call(tray.turn_page(1) and tray.items.size() == 2 and (tray.items[0]["item"] as ItemRef).uid == 424300 + ItemTray.PAGE
+			and tray.turn_page(1) and tray.page == 0, "tray: pages turn and wrap")
+	# a VR hand grips the first item: the container take goes out (MockItems answers), the tray drops it
+	_hands.set_hand_pose("vr_r", Transform3D(Basis.IDENTITY, p0), true)
+	var took := _hands.grab("vr_r", tray.target_at(p0), "pack")
+	tray.update()
+	var gone := tray.rows.all(func(r: ItemRef) -> bool: return r.uid != 424300)
+	_check.call(took and gone and ItemActions.carried_row(_snap, 424300, rock) >= 0 and tray.rows.size() == 13,
+			"tray: a grip on an item takes it out of the container into the hand; the tray lists the rest (%d)" % tray.rows.size())
+	_hands.release("vr_r", {})
+	# the container goes (taken away): the tray closes
+	var why := []
+	tray.closed.connect(func(w: String) -> void: why.append(w))
+	sm.inside.erase(c)
+	sm.inside_more.erase(c)
+	_snap.seq += 1
+	tray.update()
+	_check.call(not tray.is_open() and why == ["empty"] and not tray.visible, "tray: emptied, it closes (%s)" % [why])
+	# a big pile: MIN_PILE items on a square next to the player
+	var pile := ItemRef.on_square(c, ham, E)
+	var hs := sm.handles
+	var tile := ItemActions.tile_of(E)
+	for k in ItemTray.MIN_PILE:
+		hs.append_array(PackedInt64Array([tile, 424400 + k, rock, -1, -1]))
+	sm.handles = hs
+	src = ItemTray.source_for(_snap, pile)
+	ok = Snapshot.HANDLE_STRIDE == 5 and src == {"kind": "pile", "square": E} and tray.open(src, head)
+	_check.call(ok and tray.rows.size() >= ItemTray.MIN_PILE and tray.rows[0].parent == 0,
+			"tray: a big pile opens with its items, lying ones (%s)" % [src])
+	head.origin += Vector3(0, 0, 3)
+	var hd := Node3D.new()
+	_world.add_child(hd)
+	hd.global_transform = head
+	tray.head = hd
+	tray.update()
+	_check.call(not tray.is_open() and why.back() == "far", "tray: the head walking off closes it (%s)" % [why])
+	hd.free()
+	tray.free()
