@@ -37,6 +37,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hidden(world, data)
 	_test_picker(world)
 	_test_carried(world)
+	_test_shelves(world, data, _root)
 	_test_no_snapshot()
 	world.free()
 
@@ -55,7 +56,7 @@ func _it(id: String) -> int:
 
 ## The mock's first submap rewritten (floor; a table, a dresser, a wall; piles with or without handles) and
 ## its second as it is; the player stands at 3,4 carrying a backpack with a book in it and a hammer.
-func _scene(data: Variant, with_handles: bool, poses: Variant = null) -> Snapshot:
+func _scene(data: Variant, with_handles: bool, poses: Variant = null, shelves: Variant = null) -> Snapshot:
 	var d: Dictionary = (data as Dictionary).duplicate()
 	var src: Array = d["submaps"]
 	var sm: Dictionary = (src[0] as Dictionary).duplicate(true)
@@ -89,6 +90,8 @@ func _scene(data: Variant, with_handles: bool, poses: Variant = null) -> Snapsho
 	sm["handles"] = hs if with_handles else []
 	if poses != null:
 		sm["poses"] = poses
+	if shelves != null:
+		sm["shelves"] = shelves
 	return Snapshot.from_data(d)
 
 
@@ -135,6 +138,74 @@ func _test_poses(world: WorldView, data: Variant, plain: Snapshot) -> void:
 		_check.call(not _scene(data, true, bad).is_valid(), "poses: refused " + str(bad).left(40))
 	_check.call(not _scene(data, true, {}).is_valid() and not _scene(data, false, [[201, 0, 0]]).is_valid(),
 			"poses: refused when not a list, or with no handles")
+
+
+## L8 slice 2: the snapshot's `shelves` (bounded like poses), an item put on a shelf drawn there (riding its
+## drawer), and WorldView.shelf_at finding the shelf and spot under a point that draws an item there.
+func _test_shelves(world: WorldView, data: Variant, root: Node) -> void:
+	var snap := _scene(data, true, null, [[302, 2], [101, 0]])
+	_check.call(snap.is_valid() and (snap.submaps[_pos] as Snapshot.Submap).shelves == {302: 2, 101: 0},
+			"shelves: read per submap " + snap.error)
+	if not snap.is_valid():
+		return
+	for bad: Array in [[[302, 16]], [[302, -1]], [[999, 0]], [[302, 0], [302, 1]], [[302]], [[302, 0.5]],
+			range(29).map(func(i: int) -> Array: return [302, 0])]:
+		_check.call(not _scene(data, true, null, bad).is_valid(), "shelves: refused " + str(bad).left(40))
+	_check.call(not _scene(data, true, null, {}).is_valid() and not _scene(data, false, null, [[302, 0]]).is_valid()
+			and (_scene(data, true).submaps[_pos] as Snapshot.Submap).shelves.is_empty(),
+			"shelves: refused when not a list or with no handles; none from an older bridge")
+	var m := PropBoxes.model_of(world.props.furniture(_tables.index_of("furn", "f_dresser")))
+	var sq := _sq(AT_DRESSER)
+	var mi := m.surface_mover[2] if m != null and m.surfaces.size() > 2 else -1
+	var want := "%d_%d_%d/%s" % [sq.x, sq.y, sq.z, m.movers[mi].name] if mi >= 0 else ""
+	var r := _build(world, snap)
+	var ride := func(res: PropMesher.Result, uid: int) -> Variant:
+		for e: Array in res.item_slots:
+			if e[0] == uid:
+				return e
+		return []
+	var e302: Array = ride.call(r, 302)
+	var list: Array = r.shelves.get(sq, [])
+	_check.call(want != "" and e302.size() > 6 and e302[6] == want and list.size() == m.surfaces.size()
+			and list[2][2] == want and r.shelves.has(_sq(AT_TABLE)) and not r.shelves.has(_sq(AT_FLOOR)),
+			"shelves: a book put on shelf 2 of a dresser rides that surface's drawer (%s); the dresser has %d shelves"
+			% [e302[6] if e302.size() > 6 else "?", list.size()])
+	if list.size() < 3 or want == "":
+		return
+	root.add_child(world)   # shelf_at reads where the submap and its drawers are now
+	world.apply_snapshot(snap)
+	var rest: Transform3D = list[2][0]
+	var rect: Rect2 = list[2][1]
+	var mid := rest * Vector3(rect.get_center().x, 0.0, rect.get_center().y)   # submap-local, the drawer shut
+	_check.call((e302[3] as Transform3D).origin.distance_to(mid) < 0.01,
+			"shelves: put at the middle of the square (spot 500, 500) it lies at that surface's middle")
+	var node_xf := Transform3D(Basis.IDENTITY, world.coords.sm_to_world(_pos))
+	var local := Vector3(rect.position.x + rect.size.x * 0.3, 0.05, rect.position.y + rect.size.y * 0.7)
+	var hit := world.shelf_at(node_xf * (rest * local))
+	var surf := PropMesher.Surface.new()
+	surf.planes = [[rest, rect, 0.0]]
+	var spot: Vector2 = hit.get("spot", Vector2(-1, -1))
+	var uv := surf.spot_uv(0, spot)
+	var drawn := surf.at(0, uv.x, uv.y)
+	_check.call(hit.get("square") == sq and hit.get("shelf") == 2
+			and drawn.distance_to(rest * Vector3(local.x, 0.0, local.z)) < 0.01,
+			"shelves: shelf_at finds shelf 2 under a point over it, and its spot draws an item right there " + str(hit))
+	var g: Grabbable = world.parts.get(want)
+	if g != null:
+		g.set_amount(g.max_amount)
+		var open := world.shelf_at(g.surface_global(list[2][3]) * local)
+		_check.call(open.get("shelf") == 2 and (open.get("spot", Vector2.ZERO) as Vector2).distance_to(spot) < 0.01,
+				"shelves: in the drawer pulled out, the same shelf and spot")
+		g.set_amount(0.0)
+	var table := world.coords.ms_center_to_world(_sq(AT_TABLE)) + Vector3(0, 0.82, 0)
+	var on_table := world.shelf_at(table)
+	_check.call(on_table.get("shelf") == 0 and (on_table.get("spot", Vector2.ZERO) as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.01,
+			"shelves: over a placeholder table, its top is shelf 0 " + str(on_table))
+	_check.call(world.shelf_at(table + Vector3(0, 1.0, 0)).is_empty()
+			and world.shelf_at(world.coords.ms_center_to_world(_sq(AT_FLOOR)) + Vector3(0, 0.05, 0)).is_empty()
+			and world.shelf_at(Vector3(NAN, 0, 0)).is_empty(),
+			"shelves: none in mid-air, on the bare floor or at a broken point")
+	root.remove_child(world)
 
 
 func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
