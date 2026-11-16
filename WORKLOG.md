@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Indoor fog cheaper (lead-qa's perf note): the roofed room around the player is followed again only on leaving it, a level change or every 10 turns, not on every step. Client tests pass.
 - 2026-11-15 — Placeholder containers open (L8, lead-world, for lead-vr): cupboards, wardrobes, lockers, fridges, dressers, filing cabinets, freezers, crates, boxes, bins and dumpsters get doors, drawers or a lid as Grabbable parts, with shelves and drawer floors that hold their items; sealed crates stay shut. Client tests pass.
 - 2026-11-15 — Joined furniture models (C3, lead-world): a registry entry can name `joins` pieces (ends, middle, an L's corner); a run of counters draws each tile's piece, turned to meet its neighbours; a missing piece draws the plain model. Schema and docs updated. Client tests pass.
 - 2026-11-15 — Item poses drawn (lead-world): placed items lie at their spot turned as their body lay (the snapshot's `poses`, lead-vr's convention), on their side resting on the surface; no pose, as before. Indoor fog: under a roof the fog now starts past the roofed room in sight (long halls stay clear), not at 8 m. Client tests pass.
