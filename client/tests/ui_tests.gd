@@ -1030,13 +1030,13 @@ func _test_options() -> void:
 	var hs := HudSettings.new()
 	_check.call(hs.look_speed == 1.0 and hs.fov == HudSettings.DEFAULT_FOV and hs.render_scale == 1.0
 			and not hs.fullscreen and hs.vsync and not hs.invert_y and hs.ui_scale == 1.0
-			and hs.weather_quality == WeatherView.HIGH, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
+			and hs.weather_quality == WeatherView.HIGH and hs.volume == 1.0, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
 	var menu := KeyMenu.new()
 	menu.add_hud_settings(hs, path)
 	var seen := [0]
 	menu.hud_changed.connect(func() -> void: seen[0] += 1)
 	for sv: Array in [[menu.fov_slider, 90.0], [menu.look_slider, 2.0], [menu.scale_slider, 0.75],
-			[menu.ui_slider, 1.5]]:
+			[menu.ui_slider, 1.5], [menu.volume_slider, 0.5]]:
 		var s := sv[0] as HSlider
 		s.value = sv[1]
 		s.value_changed.emit(s.value)   # a slider outside the tree doesn't emit it itself
@@ -1049,16 +1049,16 @@ func _test_options() -> void:
 	var why := back.load_file(path)
 	_check.call(why == "" and back.fov == 90.0 and back.look_speed == 2.0 and back.render_scale == 0.75
 			and back.fullscreen and not back.vsync and back.invert_y and back.ui_scale == 1.5
-			and back.weather_quality == WeatherView.LOW and seen[0] == 8,
-			"options: the F1 controls set and save each (%s, %s, %s, %s, %s, %s, %s, weather %s; %d changes)"
+			and back.weather_quality == WeatherView.LOW and back.volume == 0.5 and seen[0] == 9,
+			"options: the F1 controls set and save each (%s, %s, %s, %s, %s, %s, %s, weather %s, volume %s; %d changes)"
 			% [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync, back.invert_y,
-			back.ui_scale, back.weather_quality, seen[0]])
+			back.ui_scale, back.weather_quality, back.volume, seen[0]])
 	_check.call(menu.weather_pick.item_count == 3 and menu.weather_pick.get_item_text(WeatherView.HIGH) == "High",
 			"options: the weather picker lists WeatherView's qualities by index")
 	var shown := [(menu._option_values[&"fov"] as Label).text, (menu._option_values[&"render_scale"] as Label).text]
 	_check.call(shown == ["90%s" % char(0xb0), "75 %"], "options: the values show next to the sliders (%s)" % [shown])
 	menu.set_option(&"debug_cheats", true)
-	_check.call(not hs.debug_cheats and seen[0] == 8, "options: set_option takes only the option fields")
+	_check.call(not hs.debug_cheats and seen[0] == 9, "options: set_option takes only the option fields")
 	hs.fov = 300.0   # out of range in memory: saved clamped
 	hs.save_file(path)
 	back = HudSettings.new()
@@ -1066,14 +1066,14 @@ func _test_options() -> void:
 	_check.call(back.fov == HudSettings.FOVS.y, "options: an out-of-range value is saved clamped (%s)" % back.fov)
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\ninvert=2\nfov=nan\n[display]\nscale=-3\n"
-			+ "fullscreen=1\nvsync=\"no\"\nui_scale=9\n[weather]\nquality=-5\n")
+			+ "fullscreen=1\nvsync=\"no\"\nui_scale=9\n[weather]\nquality=-5\n[sound]\nvolume=-1\n")
 	f.close()
 	var junk := HudSettings.new()
 	junk.load_file(path)
 	_check.call(junk.look_speed == HudSettings.LOOK_SPEEDS.y and junk.fov == HudSettings.DEFAULT_FOV
 			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync
 			and not junk.invert_y and junk.ui_scale == HudSettings.UI_SCALES.y
-			and junk.weather_quality == WeatherView.MINIMAL,
+			and junk.weather_quality == WeatherView.MINIMAL and junk.volume == 0.0,
 			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
 			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
 	menu.free()
