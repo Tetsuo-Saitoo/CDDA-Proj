@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Snow lies on the open ground and roofs (lead-world): it builds while snow falls, melts by the air's temperature (snapshot `temperature_c`) and in rain, in patches that close as it deepens; none at minimal weather quality. Client tests pass; render check pictures look right.
 - 2026-11-16 — Weather quality (lead-world): WeatherView.quality high / low / minimal trims rain and snow particles, cloud layer, wet ground and blend steps; the fog and darker light stay. Client tests pass; the menu row is lead-ui's.
 - 2026-11-16 — Blood, gibs, fire, smoke and gas follow a cutaway change (PgUp / PgDn, top-down view) at once instead of on the next snapshot (lead-world). Client tests pass.
 - 2026-11-16 — A stairs model on a flight longer than one tile is drawn once per lane, stretched over it, instead of a whole stair on every tile (C3 leftover, lead-world). Client tests pass.

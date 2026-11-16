@@ -1,7 +1,8 @@
 class_name WeatherView
 extends Node
 ## Blocks C6 / I2: shows the weather on the sky, the sun and the distance (clouds, darker days, fog), and runs the
-## rest of it: rain and snow (PrecipView), sound (WeatherSound), the lightning flash and the wet ground.
+## rest of it: rain and snow (PrecipView), sound (WeatherSound), the lightning flash, the wet ground and snow lying
+## on it.
 ##
 ## setup() takes the scene's Environment (a ProceduralSkyMaterial sky) and its sun; apply() shows a snapshot's
 ## weather (WeatherState). Only engine features: the procedural sky with a cloud cover texture, depth fog and the
@@ -11,7 +12,7 @@ extends Node
 ##
 ## `quality` (the player's setting) trims what the weather draws beyond what it means for play: HIGH all of it; LOW
 ## half the rain and snow particles and a change blended in 4 steps instead of 12; MINIMAL no rain or snow, no
-## cloud layer, no wet ground and a change shown at once. The darker light and the fog (CDDA's sight distance) stay
+## cloud layer, no wet ground or snow lying on it, and a change shown at once. The darker light and the fog (CDDA's sight distance) stay
 ## at every quality, and so do the lightning flash (its own setting) and the sound.
 
 const BLEND_S := 3.0
@@ -50,7 +51,12 @@ const SLEEP_EFFECT := "sleep" # CDDA's effect while the character sleeps
 const NIGHT_FOG := 0.05       # share of the fog's colour left at night
 const WET_IN_S := 120.0       # game seconds of heavy rain that soak the ground
 const DRY_IN_S := 1800.0      # game seconds a soaked ground takes to dry
-const WET_STEP := 0.02        # the ground's material changes only by steps this large
+const WET_STEP := 0.02        # the ground's material changes only by steps this large (snow lying too)
+const SNOW_IN_S := 1800.0     # game seconds of heavy snow that cover the ground (lighter falls take longer)
+const MELT_S := 7200.0        # game seconds covered ground takes to melt at MELT_REF_C (twice as warm: twice as fast)
+const MELT_REF_C := 4.0
+const MELT_UNKNOWN_C := 2.0   # the air's temperature when the snapshot doesn't say
+const RAIN_MELT_S := 1800.0   # heavy rain melts it this fast besides
 const COVER_W := 512
 const COVER_H := 256
 const CLOUD_SCALE := 2.2      # cloud shapes per unit of the layer (its height above the eye is 1)
@@ -90,6 +96,10 @@ var _rate_from_ms := 0             # start of the window the turn rate is measur
 var _rate_turns := 0               # turns ended in it
 var wet := 0.0                     # how wet the ground is, 0 dry .. 1 soaked
 var _wet_shown := -1.0
+var snow_cover := 0.0              # how much of the open ground lies under snow, 0 bare .. 1 covered
+var _snow_shown := -1.0
+var _snow_origin := Vector3i.ZERO  # the bubble's origin for the snow's patches
+var _snow_origin_shown := Vector3i.MAX
 var _wet_turn := -1                # the game turn `wet` is for, -1 none yet
 var _flash_t := -1.0               # seconds into the flash, -1 none
 var _flash_light := DirectionalLight3D.new()
@@ -127,6 +137,9 @@ func _exit_tree() -> void:
 	if _wet_shown > 0.0:   # the ground's material is shared: leave it dry
 		_wet_shown = -1.0
 		TerrainMesher.wet_ground(0.0)
+	if _snow_shown > 0.0:   # and bare
+		_snow_shown = -1.0
+		TerrainMesher.snow_ground(0.0, Vector3i.ZERO)
 
 
 ## `env` and `sun` may be null (a test with only one of them).
@@ -186,29 +199,46 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	_update_processing()
 	precip.apply(snap, coords, target)
 	sound.apply(target)
-	_soak(snap.turn)
+	_soak(snap.turn, snap.temperature_c, coords.origin_ms if coords != null else _snow_origin)
 
 
-## The ground gets wet in rain and dries after it, in game time (waiting an hour dries it). A game that starts or
-## loads in rain starts wet. Snow doesn't wet.
-func _soak(turn: int) -> void:
+## The ground gets wet in rain and dries after it, in game time (waiting an hour dries it); snow lies on it while it
+## falls and melts after, faster when warmer or in rain, not at all at or below freezing. A game that starts or loads
+## in rain starts wet, one in snow covered. Snow doesn't wet. CDDA keeps neither: the client follows them.
+func _soak(turn: int, temp_c: float, origin: Vector3i) -> void:
 	var rain := 0.0 if target.snow else target.precip
+	var falling := target.precip if target.snow else 0.0
 	if _wet_turn < 0 or turn < _wet_turn:
 		wet = 1.0 if rain > 0.0 else 0.0
-	elif rain > 0.0:
-		wet = minf(1.0, wet + (turn - _wet_turn) * rain / WET_IN_S)
+		snow_cover = 1.0 if falling > 0.0 else 0.0
 	else:
-		wet = maxf(0.0, wet - (turn - _wet_turn) / DRY_IN_S)
+		var dt := turn - _wet_turn
+		if rain > 0.0:
+			wet = minf(1.0, wet + dt * rain / WET_IN_S)
+		else:
+			wet = maxf(0.0, wet - dt / DRY_IN_S)
+		if falling > 0.0:
+			snow_cover = minf(1.0, snow_cover + dt * falling / SNOW_IN_S)
+		else:
+			var t := temp_c if is_finite(temp_c) else MELT_UNKNOWN_C
+			snow_cover = maxf(0.0, snow_cover - dt * (maxf(t, 0.0) / MELT_REF_C / MELT_S + rain / RAIN_MELT_S))
 	_wet_turn = turn
+	_snow_origin = origin
 	_show_wet()
 
 
-## Puts `wet` on the ground's material (dry at MINIMAL quality), only by steps of WET_STEP.
+## Puts `wet` and `snow_cover` on the ground's material (dry and bare at MINIMAL quality), only by steps of WET_STEP.
 func _show_wet() -> void:
 	var shown := wet if quality != MINIMAL else 0.0
 	if absf(shown - _wet_shown) >= WET_STEP or (shown != _wet_shown and (shown == 0.0 or shown == 1.0)):
 		_wet_shown = shown
 		TerrainMesher.wet_ground(shown)
+	var cover := snow_cover if quality != MINIMAL else 0.0
+	if absf(cover - _snow_shown) >= WET_STEP or (cover != _snow_shown and (cover == 0.0 or cover == 1.0)) \
+			or (cover > 0.0 and _snow_origin != _snow_origin_shown):
+		_snow_shown = cover
+		_snow_origin_shown = _snow_origin
+		TerrainMesher.snow_ground(cover, _snow_origin)
 
 
 ## How long a change of weather blends: none at MINIMAL quality.
