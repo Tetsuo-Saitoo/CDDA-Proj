@@ -560,7 +560,8 @@ func _part_builder(pi: int) -> PropShapes.Builder:
 ## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
 ## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
 ## slot, the 17th and later on top of the ones before on the same slot; `hidden` ones are skipped (their
-## slot stays empty, so the rest don't move); then clutter for the items without a handle.
+## slot stays empty, so the rest don't move); then clutter for the items without a handle. An item with a
+## pose (the snapshot's `poses`) lies turned as it was placed (pose_basis), else at a turn of its own.
 func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary,
 		handles: Array = []) -> Array:
 	var out := []
@@ -603,6 +604,8 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 		var uid := 0
 		var itype := 0
 		var spot := Vector2(-1, -1)
+		var yaw := -1
+		var side := false
 		if k < n:
 			var hd: Array = handles[k]
 			uid = hd[0]
@@ -611,13 +614,21 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 			itype = hd[1]
 			if hd[2] >= 0 and hd[3] >= 0:
 				spot = Vector2(hd[2] / 1000.0, hd[3] / 1000.0)
+			if hd.size() > 5 and hd[4] >= 0:
+				yaw = hd[4]
+				side = hd[5] != 0
 		rng.seed = hash([h, uid] if uid != 0 else [h, -1 - k])   # an item keeps its turn when others leave
 		var slot := (start + k * step) % (SUB * SUB)
 		var sk := k % surf.count()
 		var uv := surf.spot_uv(sk, spot) if spot.x >= 0.0 else \
 				Vector2((slot % SUB + 0.5) / SUB, (slot / SUB + 0.5) / SUB) + jitter[slot]
 		var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
-		var xf := Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), surf.at(sk, uv.x, uv.y))
+		var turn := surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU)
+		if yaw >= 0:
+			turn = pose_basis(yaw, side)   # the world's axes, as the item's body lay
+		var xf := Transform3D(turn.scaled(Vector3.ONE * size), surf.at(sk, uv.x, uv.y))
+		if side:
+			xf.origin.y += rest_lift(_item_box(_cat.item(itype), itype), xf.basis)
 		var key := Vector2i(slot, sk)
 		var lift: float = tops.get(key, 0.0) if spot.x < 0.0 else 0.0
 		xf.origin.y += lift
@@ -629,6 +640,19 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 
 
 const ITEM_CLUTTER_M := 0.07
+
+
+## How a placed item lies (lead-vr's convention, contracts/bridge_api.md "Single items"): turned `yaw` whole
+## degrees counter-clockwise seen from above, after a quarter turn about X when on its side. Yaw 0 points the
+## item's own +Z south (+Z) when it stands, its own +Y (its top) when it lies on its side.
+static func pose_basis(yaw: int, side: bool) -> Basis:
+	var b := Basis(Vector3.UP, deg_to_rad(float(yaw)))
+	return b * Basis(Vector3.RIGHT, PI / 2.0) if side else b
+
+
+## How far an item `box` drawn with basis `b` (scaled) rises so its lowest point rests on the surface.
+static func rest_lift(box: AABB, b: Basis) -> float:
+	return maxf(0.0, -(Transform3D(b, Vector3.ZERO) * box).position.y)
 
 
 ## Items on square `i` lie on a furniture model's inner surface_N planes behind doors that are drawn closed
@@ -650,15 +674,21 @@ func _placed(xf: Transform3D, itype: int, uid: int, size: float, plane := -1) ->
 ## [size_m (longest side), centre, height] of an item drawn at `xf`: from its model's bounds, its shape's
 ## (ITEM_BOX), or around a glyph card.
 static func _extent(prop: PropCatalog.Prop, itype: int, xf: Transform3D, size: float) -> Array:
-	var box: AABB = ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
-	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
-		box = prop.model.aabb
-	elif itype != 0 and prop.model == null and prop.shape.is_empty():
+	if itype != 0 and prop.model == null and prop.shape.is_empty():
 		return [size, xf.origin + Vector3(0, GLYPH_UP, 0), size]
+	var box := _item_box(prop, itype)
 	return [box.get_longest_axis_size() * size, xf * box.get_center(), maxf(box.end.y, 0.0) * size]
 
 
-## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y], ...] in the snapshot's order.
+## An item's bounds before its scale: its model's, else its shape's (ITEM_BOX).
+static func _item_box(prop: PropCatalog.Prop, itype: int) -> AABB:
+	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
+		return prop.model.aabb
+	return ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
+
+
+## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y, yaw, side], ...] in the snapshot's
+## order; yaw -1 (side 0) for an item without a pose.
 static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 	var out := {}
 	var hs := sm.handles
@@ -666,8 +696,12 @@ static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 		var t := int(hs[k])
 		if not out.has(t):
 			out[t] = []
-		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4])])
+		var pose: Vector2i = sm.poses.get(hs[k + 1], NO_POSE)
+		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4]), pose.x, pose.y])
 	return out
+
+
+const NO_POSE := Vector2i(-1, 0)
 
 
 ## Where the items of one tile can lie: the placeholder's surface heights and rect, or a furniture model's
