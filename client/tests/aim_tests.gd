@@ -569,6 +569,69 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	ev.flash_rect.free()
 	ev.free()
 
+	# The older kinds look as before (pulses only add keys): the same profiles, and a blast's light, fireball and
+	# smoke follow the same curves.
+	var old := {
+		"blast": {"fire": Color(1.0, 0.55, 0.15), "smoke": Color(0.25, 0.24, 0.22), "light": Color(1.0, 0.6, 0.25),
+				"time": 0.9, "size": 1.0, "ring": false, "flash": 0.0, "kind": "blast", "smoke_scale": 1.0},
+		"fire_blast": {"fire": Color(1.0, 0.4, 0.05), "smoke": Color(0.2, 0.17, 0.15), "light": Color(1.0, 0.45, 0.1),
+				"time": 1.4, "size": 1.2, "ring": false, "flash": 0.0, "kind": "fire_blast", "smoke_scale": 1.0},
+		"flashbang": {"fire": Color(1.0, 1.0, 0.95), "smoke": Color(0.75, 0.75, 0.75), "light": Color(1.0, 1.0, 1.0),
+				"time": 0.5, "size": 0.35, "ring": false, "flash": 1.0, "kind": "flashbang", "smoke_scale": 1.0},
+		"shockwave": {"fire": Color(0.8, 0.85, 1.0, 0.5), "smoke": Color(0.5, 0.5, 0.5), "light": Color(0.7, 0.8, 1.0),
+				"time": 0.7, "size": 1.0, "ring": true, "flash": 0.0, "kind": "shockwave", "smoke_scale": 1.0},
+	}
+	var same := true
+	for k: String in old:
+		same = same and P.profile_for(k, "") == old[k]
+	var ev2 := ExplosionView.new(world)
+	root.add_child(ev2)
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 2, "text": "blast", "detail": 0, "path": []}])
+	var x: Dictionary = ev2._live[0]
+	var lit0 := (x["light"] as OmniLight3D).light_energy
+	var fire_on := (x["fire"] as Node3D).visible
+	var shook := ev2.shake_strength() > 0.0
+	ev2.tick(0.3)
+	var kb := 0.3 / 0.9
+	var curves := (is_equal_approx((x["light"] as OmniLight3D).light_energy, 6.0 * (1.0 - kb * 2.0))
+			and is_equal_approx((x["fire"] as Node3D).scale.x, 2.0 * ease(kb * 2.5, 0.4))
+			and (x["smoke"] as Node3D).visible and is_equal_approx((x["smoke"] as Node3D).scale.x, 2.0 * (0.4 + kb)))
+	_check.call(same and lit0 == 6.0 and fire_on and shook and curves,
+			"explosions: the older kinds look as before (profiles; a blast's light, fireball and smoke)")
+
+	# Pulses: EMP and scrambler a fading ring and a light that rises and falls, no fireball, smoke, flash or shake;
+	# radius 0 still a square-wide ring, a huge radius clamped; resonance shakes a little.
+	var ep := P.profile_for("emp", "rocket_emp")
+	_check.call(not ep["ball"] and ep["fire"] == P.KINDS["emp"]["fire"] and ep["size"] == 1.0 and ep["flash"] == 0.0,
+			"explosions: an EMP is a pulse; its item doesn't change it")
+	ev2.tick(5.0)
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 0, "text": "emp", "detail": 0, "path": []},
+			{"kind": "explosion", "pos": me, "amount": 999, "text": "scrambler", "detail": 0, "path": []}])
+	var e: Dictionary = ev2._live[0] if ev2.live_count() == 2 else {}
+	var sc: Dictionary = ev2._live[1] if ev2.live_count() == 2 else {}
+	var calm := (not e.is_empty() and not (e["fire"] as Node3D).visible
+			and (e["light"] as OmniLight3D).light_energy == 0.0 and ev2.flash_strength() == 0.0
+			and ev2.shake_strength() == 0.0 and is_equal_approx(e["r"], 1.0)
+			and is_equal_approx(sc["r"], float(ExplosionView.MAX_RADIUS)))
+	ev2.tick(0.05)
+	calm = calm and (e["light"] as OmniLight3D).light_energy < 0.5
+	ev2.tick(0.35)
+	var ring := e["ring"] as MeshInstance3D
+	var mid := (is_equal_approx((e["light"] as OmniLight3D).light_energy, 2.0) and is_equal_approx(ring.scale.x, 0.5)
+			and (ring.material_override as StandardMaterial3D).albedo_color.a < 0.3 and ring.visible
+			and not (e["smoke"] as Node3D).visible)
+	ev2.tick(0.5)
+	_check.call(calm and mid and ev2.live_count() == 0,
+			"explosions: EMP and scrambler pulse smoothly (ring, light up and down), no fireball, flash or shake")
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 8, "text": "resonance", "detail": 0, "path": []}])
+	var buzz := ev2.sound_for("emp", 1.0)
+	_check.call(ev2.shake_strength() > 0.0 and ev2.shake_strength() <= 0.41 and ev2.flash_strength() == 0.0
+			and buzz.data.size() == int(ExplosionView.SOUND_RATE * 0.6) * 2 and ev2.sound_for("emp", 9.0) == buzz
+			and ev2.sound_for("resonance", 8.0).data.size() > buzz.data.size(),
+			"explosions: resonance shakes a little; pulses buzz or hum, each sound made once")
+	ev2.flash_rect.free()
+	ev2.free()
+
 
 ## C9 views: over the shoulder the pick still finds what's under the crosshair but the bullet leaves the eyes;
 ## top-down (the screen centre is the player) mouse-look aiming follows the facing, a click picks what's under the
