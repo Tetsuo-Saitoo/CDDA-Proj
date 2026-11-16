@@ -38,8 +38,9 @@ var hurt_check: CheckBox
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
-## G7 options (HudSettings look_speed, fov, render_scale, fullscreen, vsync).
+## G7 options (HudSettings look_speed, invert_y, fov, render_scale, fullscreen, vsync).
 var look_slider: HSlider
+var invert_check: CheckBox
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -227,6 +228,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	opt_row.add_child(ol)
 	look_slider = _option_slider(opt_row, HudSettings.LOOK_SPEEDS, 0.05, settings.look_speed, &"look_speed")
 	look_slider.tooltip_text = "How far the view turns for a mouse move."
+	invert_check = _option_check(opt_row, "Invert Y", "Moving the mouse up looks down.", &"invert_y",
+			settings.invert_y)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -278,7 +281,7 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
-	if not key in [&"look_speed", &"fov", &"render_scale", &"fullscreen", &"vsync"]:
+	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"fullscreen", &"vsync"]:
 		return
 	hud.set(key, v)
 	_show_options()
@@ -408,6 +411,7 @@ func open() -> void:
 		compass_slider.set_value_no_signal(hud.compass_opacity)
 		_show_compass_value()
 		look_slider.set_value_no_signal(hud.look_speed)
+		invert_check.set_pressed_no_signal(hud.invert_y)
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)

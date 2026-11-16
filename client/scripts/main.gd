@@ -193,6 +193,11 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	var tray := ItemTray.new()   # L8: the mouse's tray (`loot_tray`); VR has its own (VrRig.tray)
+	tray.world = world
+	tray.hands = hands
+	add_child(tray)
+	grab.tray = tray
 	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
 	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
 	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
@@ -1378,7 +1383,7 @@ func _setup_environment() -> void:
 const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
 
 
-## G7 options: the look speed and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
@@ -1388,8 +1393,10 @@ func _apply_options() -> void:
 	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
 	if fp != null:
 		fp.sensitivity = speed
+		fp.invert_y = o.invert_y
 	if camera != null:
 		camera.sensitivity = speed
+		camera.invert_y = o.invert_y
 	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
 		return
 	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
@@ -1553,7 +1560,8 @@ func _demo_tick() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
+	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible \
+			or grab.tray_open()   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	if vr == null and view_mode == "top" and fp.z != _top_z:   # top-down: the cut follows the player's level
 		_top_z = fp.z
@@ -1570,6 +1578,8 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	grab.update_tray(get_viewport().get_camera_3d(), _pointer(), vr != null or key_menu.visible or inspect.visible
+			or character.visible or request_ui.visible or main_menu != null)
 	if typing or vr != null or (live != null and not _in_main_loop()):
 		pour.cancel()   # a menu or prompt took the keys: its release won't come here
 	elif pour.update(Time.get_ticks_msec()) == "refused":
@@ -1669,6 +1679,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
+	if vr == null and grab.tray_event(event, get_viewport().get_camera_3d(), _pointer(), _can_inspect()):
+		return   # L8: the tray opens on the bag or pile pointed at; while open it takes the clicks, Esc closes it
 	if inspect.handle_key(event, _can_inspect()):
 		return
 	if character.handle_key(event, _can_open_character()):

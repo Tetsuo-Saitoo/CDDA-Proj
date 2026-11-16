@@ -1029,7 +1029,7 @@ func _test_options() -> void:
 	var path := preload("res://tests/test_dir.gd").path("hud_options.cfg")
 	var hs := HudSettings.new()
 	_check.call(hs.look_speed == 1.0 and hs.fov == HudSettings.DEFAULT_FOV and hs.render_scale == 1.0
-			and not hs.fullscreen and hs.vsync, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
+			and not hs.fullscreen and hs.vsync and not hs.invert_y, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
 	var menu := KeyMenu.new()
 	menu.add_hud_settings(hs, path)
 	var seen := [0]
@@ -1040,29 +1040,31 @@ func _test_options() -> void:
 		s.value_changed.emit(s.value)   # a slider outside the tree doesn't emit it itself
 	menu.fullscreen_check.button_pressed = true
 	menu.vsync_check.button_pressed = false
+	menu.invert_check.button_pressed = true
 	var back := HudSettings.new()
 	var why := back.load_file(path)
 	_check.call(why == "" and back.fov == 90.0 and back.look_speed == 2.0 and back.render_scale == 0.75
-			and back.fullscreen and not back.vsync and seen[0] == 5,
-			"options: the F1 controls set and save each (%s, %s, %s, %s, %s; %d changes)"
-			% [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync, seen[0]])
+			and back.fullscreen and not back.vsync and back.invert_y and seen[0] == 6,
+			"options: the F1 controls set and save each (%s, %s, %s, %s, %s, %s; %d changes)"
+			% [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync, back.invert_y, seen[0]])
 	var shown := [(menu._option_values[&"fov"] as Label).text, (menu._option_values[&"render_scale"] as Label).text]
 	_check.call(shown == ["90%s" % char(0xb0), "75 %"], "options: the values show next to the sliders (%s)" % [shown])
 	menu.set_option(&"debug_cheats", true)
-	_check.call(not hs.debug_cheats and seen[0] == 5, "options: set_option takes only the option fields")
+	_check.call(not hs.debug_cheats and seen[0] == 6, "options: set_option takes only the option fields")
 	hs.fov = 300.0   # out of range in memory: saved clamped
 	hs.save_file(path)
 	back = HudSettings.new()
 	back.load_file(path)
 	_check.call(back.fov == HudSettings.FOVS.y, "options: an out-of-range value is saved clamped (%s)" % back.fov)
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\nfov=nan\n[display]\nscale=-3\nfullscreen=1\n"
-			+ "vsync=\"no\"\n")
+	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\ninvert=2\nfov=nan\n[display]\nscale=-3\n"
+			+ "fullscreen=1\nvsync=\"no\"\n")
 	f.close()
 	var junk := HudSettings.new()
 	junk.load_file(path)
 	_check.call(junk.look_speed == HudSettings.LOOK_SPEEDS.y and junk.fov == HudSettings.DEFAULT_FOV
-			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync,
+			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync
+			and not junk.invert_y,
 			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
 			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
 	menu.free()
