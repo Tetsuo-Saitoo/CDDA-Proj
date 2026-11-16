@@ -20,6 +20,7 @@ const CORPSE_M := 1.0
 
 class Prop:
 	var model: ModelLibrary.Model   # drawn instead of the shape when set (real size: no item scaling)
+	var joins := {}                 # AssetRegistry.JOINS name -> Model: pieces of joined furniture (with a model)
 	var shape := ""            # "" and no model = glyph card
 	var step := AssetRegistry.Step.GLYPH
 	var via := ""
@@ -42,7 +43,7 @@ class Prop:
 	var open_id := ""
 	var close_id := ""
 	var is_open := false
-	var locked := false        # furniture with CDDA's LOCKED flag
+	var locked := false        # furniture with CDDA's LOCKED or SEALED flag: its parts only rattle
 
 
 var registry: AssetRegistry
@@ -135,7 +136,9 @@ func _make(table: String, index: int) -> Prop:
 			for fc: Array in FURNITURE_CATEGORIES:
 				if d.has(fc[0]):
 					cats.append(fc[1])
-			p.locked = d.has("LOCKED")
+			# Sealed with no open state (a nailed crate): pried open in CDDA, never by hand. A closed safe is
+			# sealed too, but CDDA opens it.
+			p.locked = d.has("LOCKED") or (d.has("SEALED") and d.open.is_empty() and d.close.is_empty())
 			if not d.close.is_empty():   # the open state (as terrain doors: a `close` link means open)
 				p.open_id = d.id
 				p.close_id = d.close
@@ -151,6 +154,7 @@ func _make(table: String, index: int) -> Prop:
 	if found.entry != null and (model != null or PropShapes.has_shape(found.entry.placeholder)):
 		var e := found.entry
 		p.model = model
+		p.joins = registry.joins_of(e) if model != null else {}
 		p.shape = e.placeholder if PropShapes.has_shape(e.placeholder) else ""
 		p.step = found.step
 		p.via = found.via

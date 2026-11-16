@@ -31,8 +31,9 @@ extends RefCounted
 ## furniture model's `surface_N` planes replace the placeholder's surfaces (items behind a model's doors
 ## are drawn there and hidden by the doors).
 ##
-## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8) is drawn as
-## the model's `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
+## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8), and a
+## placeholder container that opens (PropBoxes: cupboards, dressers, crates, bins...), is drawn as the model's
+## `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
 ## Grabbables): plain data, so this stays worker-safe. Items on a mover's surface_N are drawn with it (the
 ## spec's items_*), in its own space; their item slot names the part (WorldView moves the slot with it and
 ## points at it only while the part is open, or always on a lid). Items behind a model's doors get a slot
@@ -53,7 +54,7 @@ const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
 const WALKABLE := [K.FLOOR, K.ROOF, K.SHRUB]
 ## Layouts of joined tiles (see the class notes).
 enum Lay { FREE, ROW, LENGTH }
-const ROW_SHAPES := ["counter", "sink", "sofa", "bench", "park_bench", "shelf", "bookcase", "desk",
+const ROW_SHAPES := ["counter", "cupboard", "sink", "sofa", "bench", "park_bench", "shelf", "bookcase", "desk",
 		"workbench", "dresser", "cabinet_tall", "locker", "filing_cabinet", "fridge", "glass_fridge",
 		"chest_freezer", "appliance", "oven", "stove", "toilet", "display_case", "glass_cabinet", "vending",
 		"arcade", "machine", "console", "chair", "stool", "armchair"]
@@ -124,6 +125,7 @@ var _layout := {}       # absolute square -> Vector2i(facing, piece); piece -1: 
 var _run_facing := {}   # Vector4i(first square of a run, axis) -> facing
 var _pieces := 0
 var _tile_parts := {}   # tile -> [Model, PackedInt32Array of indices into Result.parts, one per mover] (this build)
+var _drawn := {}        # absolute square -> [Model, Transform3D]: a furniture's join piece (this build)
 var _part_bufs := {}    # index into Result.parts -> [solid Buf, glass Buf] of the item shapes on it
 
 
@@ -141,6 +143,7 @@ func build(sm_pos: Vector3i) -> Result:
 	var r := Result.new()
 	_tile_parts = {}
 	_part_bufs = {}
+	_drawn = {}
 	var sm: Snapshot.Submap = _snap.submaps[sm_pos]
 	var base := CddaCoords.sm_to_ms(sm_pos)
 	var tile_xf := {}   # tile -> furniture transform, for items resting on it
@@ -158,8 +161,17 @@ func build(sm_pos: Vector3i) -> Result:
 			rng.seed = _hash(p)
 			var xf := _place(p, i, prop, rng)
 			tile_xf[i] = xf
-			if _ter.style_for(sm.ter[i]).kind == K.ROOF or not _add_parts(p, i, prop, xf, md, r):
-				_emit(b, md, prop, xf, _links(p, prop, _facing_of(xf)), r, rng)
+			var links := _links(p, prop, _facing_of(xf))
+			var drawn := drawn_model(prop, links, xf)
+			var roof := _ter.style_for(sm.ter[i]).kind == K.ROOF
+			var box := PropBoxes.model_of(prop) if drawn[0] == null and not roof else null
+			if box != null and _add_parts(p, i, prop, box, xf * MODEL_TURN, md, r):
+				_drawn[p] = [box, xf * MODEL_TURN]   # a placeholder container that opens (PropBoxes)
+			else:
+				if drawn[0] != prop.model:
+					_drawn[p] = drawn
+				if roof or not _add_parts(p, i, prop, drawn[0], drawn[1], md, r):
+					_emit(b, md, prop, xf, links, r, rng, drawn)
 			r.furniture += 1
 		if t != 0:
 			var prop := _cat.trap(t)
@@ -183,14 +195,13 @@ func build(sm_pos: Vector3i) -> Result:
 	return r
 
 
-## Furniture at p (tile i, placed at xf) whose model has movers: its `still` model goes to `md` and each mover
-## to r.parts; false (nothing added) when it has none, would pass MAX_PARTS, or a pivot comes out degenerate
-## (a tiny registry scale): the caller draws the whole model as before.
-func _add_parts(p: Vector3i, i: int, prop: PropCatalog.Prop, xf: Transform3D, md: Dictionary, r: Result) -> bool:
-	var m := prop.model
+## Furniture at p (tile i) drawn as model `m` at `mxf` whose model has movers: its `still` model goes to `md`
+## and each mover to r.parts; false (nothing added) when it has none, would pass MAX_PARTS, or a pivot comes
+## out degenerate (a tiny registry scale): the caller draws the whole model as before.
+func _add_parts(p: Vector3i, i: int, prop: PropCatalog.Prop, m: ModelLibrary.Model, mxf: Transform3D, md: Dictionary,
+		r: Result) -> bool:
 	if m == null or m.movers.is_empty() or m.still == null or r.parts.size() + m.movers.size() > MAX_PARTS:
 		return false
-	var mxf := xf * MODEL_TURN
 	var pivots: Array[Transform3D] = []
 	for mv: ModelLibrary.Mover in m.movers:
 		var pv := mxf * mv.pivot
@@ -438,6 +449,46 @@ static func _facing_of(xf: Transform3D) -> int:
 	return 2 if f.z > 0 else 0
 
 
+## The model a furniture tile draws and its transform, [Model, Transform3D]: one of the prop's `joins` pieces
+## when its links (shape-local bits, _links) make it an end, the middle or the corner of joined tiles and the
+## prop has that piece, else its own model (null for a placeholder) at xf * MODEL_TURN.
+static func drawn_model(prop: PropCatalog.Prop, links: int, xf: Transform3D) -> Array:
+	var j := join_of(links)
+	if prop.model != null and prop.joins.has(j[0]):
+		return [prop.joins[j[0]], xf * MODEL_TURN * Transform3D(Basis(Vector3.UP, j[1] * PI / 2.0), Vector3.ZERO)]
+	return [prop.model, xf * MODEL_TURN]
+
+
+## The `joins` piece (contracts/assets.md) for a tile with these links (shape-local bits: 1 front, 2 its left
+## seen from the front, 4 back, 8 its right) and the quarter turns (counter-clockwise seen from above) it
+## takes in model space: an end joins the run on one side, the middle on both, the corner on its right and
+## its front. A tile joined in front or behind (a block laid out with one facing: tables, model-only props)
+## takes an end or the middle turned a quarter, its front sideways. ["", 0] for none: alone, a T or a cross.
+static func join_of(links: int) -> Array:
+	match links:
+		8:
+			return ["end_left", 0]
+		2:
+			return ["end_right", 0]
+		1:
+			return ["end_left", 3]
+		4:
+			return ["end_left", 1]
+		10:
+			return ["middle", 0]
+		5:
+			return ["middle", 1]
+		9:
+			return ["corner", 0]
+		12:
+			return ["corner", 1]
+		6:
+			return ["corner", 2]
+		3:
+			return ["corner", 3]
+	return ["", 0]
+
+
 ## Neighbours this prop joins, as shape-local direction bits (1 front, 2 +x, 4 back, 8 -x): the same
 ## furniture (a sofa, a table), or furniture in each other's connect groups (counters, tent walls); a bed
 ## or bathtub only joins the tiles of its own bed (see the class notes).
@@ -451,10 +502,12 @@ func _links(p: Vector3i, prop: PropCatalog.Prop, facing: int) -> int:
 	return bits
 
 
+## A prop at `xf`: its model (`drawn`: drawn_model's [Model, transform] when given), else its shape with
+## `links`, else a glyph card.
 func _emit(b: PropShapes.Builder, md: Dictionary, prop: PropCatalog.Prop, xf: Transform3D, links: int,
-		r: Result, rng: RandomNumberGenerator) -> void:
+		r: Result, rng: RandomNumberGenerator, drawn: Array = []) -> void:
 	if prop.model != null:
-		_add_model(md, prop.model, xf * MODEL_TURN)
+		_add_model(md, drawn[0] if not drawn.is_empty() else prop.model, drawn[1] if not drawn.is_empty() else xf * MODEL_TURN)
 		r.model_props += 1
 		return
 	if prop.shape.is_empty():
@@ -472,7 +525,7 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 	var placed := pile_transforms(sm, base, pile, tile_xf, handles)
 	var b := _builder(sm, pile[0])
 	var md := _models(sm, pile[0], r)
-	var behind_doors := _inside_closed(sm, pile[0])
+	var behind_doors := _inside_closed(sm, base, pile[0])
 	for k in placed.size():
 		var e: Array = placed[k]
 		var xf: Transform3D = e[0]
@@ -487,7 +540,7 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		# has doors or lids that open (WorldView checks one is). On a part: named, WorldView moves it with it.
 		var glyph_only := prop.model == null and prop.shape.is_empty()
 		var gates := _gates(pile[0], r) if behind_doors else PackedStringArray()
-		var pointable: bool = e[2] != 0 and not (behind_doors and gates.is_empty()) \
+		var pointable: bool = e[2] != 0 and (pi >= 0 or not (behind_doors and gates.is_empty())) \
 				and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
 		if pointable:
 			var ride: String = r.parts[pi]["id"] if pi >= 0 else ""
@@ -560,7 +613,8 @@ func _part_builder(pi: int) -> PropShapes.Builder:
 ## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
 ## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
 ## slot, the 17th and later on top of the ones before on the same slot; `hidden` ones are skipped (their
-## slot stays empty, so the rest don't move); then clutter for the items without a handle.
+## slot stays empty, so the rest don't move); then clutter for the items without a handle. An item with a
+## pose (the snapshot's `poses`) lies turned as it was placed (pose_basis), else at a turn of its own.
 func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf: Dictionary,
 		handles: Array = []) -> Array:
 	var out := []
@@ -568,7 +622,12 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	var count := pile[1]
 	var furn: PropCatalog.Prop = _cat.furniture(sm.furn[i]) if sm.furn[i] != 0 else null
 	var info := PropShapes.info(furn.shape) if furn != null else PropShapes.FLOOR_INFO
-	var planes: Array = furn.model.surfaces if furn != null and furn.model != null else []
+	var drawn: Array = _drawn.get(base + Vector3i(i % SEEX, i / SEEX, 0), [])   # a join piece: its surfaces
+	var planes: Array = []
+	if not drawn.is_empty():
+		planes = (drawn[0] as ModelLibrary.Model).surfaces
+	elif furn != null and furn.model != null:
+		planes = furn.model.surfaces
 	if count <= 0 or (planes.is_empty() and info.get("hide", false)):
 		return out
 	var surf := Surface.new()
@@ -577,7 +636,7 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	surf.planes = planes
 	var full: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
 	surf.on = Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
-	surf.model_xf = full * MODEL_TURN
+	surf.model_xf = drawn[1] if not drawn.is_empty() else full * MODEL_TURN
 	var h := _hash(base + Vector3i(i % SEEX, i / SEEX, 0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = h
@@ -603,6 +662,8 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 		var uid := 0
 		var itype := 0
 		var spot := Vector2(-1, -1)
+		var yaw := -1
+		var side := false
 		if k < n:
 			var hd: Array = handles[k]
 			uid = hd[0]
@@ -611,13 +672,21 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 			itype = hd[1]
 			if hd[2] >= 0 and hd[3] >= 0:
 				spot = Vector2(hd[2] / 1000.0, hd[3] / 1000.0)
+			if hd.size() > 5 and hd[4] >= 0:
+				yaw = hd[4]
+				side = hd[5] != 0
 		rng.seed = hash([h, uid] if uid != 0 else [h, -1 - k])   # an item keeps its turn when others leave
 		var slot := (start + k * step) % (SUB * SUB)
 		var sk := k % surf.count()
 		var uv := surf.spot_uv(sk, spot) if spot.x >= 0.0 else \
 				Vector2((slot % SUB + 0.5) / SUB, (slot / SUB + 0.5) / SUB) + jitter[slot]
 		var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
-		var xf := Transform3D(surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * size), surf.at(sk, uv.x, uv.y))
+		var turn := surf.on.basis * Basis(Vector3.UP, rng.randf() * TAU)
+		if yaw >= 0:
+			turn = pose_basis(yaw, side)   # the world's axes, as the item's body lay
+		var xf := Transform3D(turn.scaled(Vector3.ONE * size), surf.at(sk, uv.x, uv.y))
+		if side:
+			xf.origin.y += rest_lift(_item_box(_cat.item(itype), itype), xf.basis)
 		var key := Vector2i(slot, sk)
 		var lift: float = tops.get(key, 0.0) if spot.x < 0.0 else 0.0
 		xf.origin.y += lift
@@ -631,13 +700,28 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 const ITEM_CLUTTER_M := 0.07
 
 
+## How a placed item lies (lead-vr's convention, contracts/bridge_api.md "Single items"): turned `yaw` whole
+## degrees counter-clockwise seen from above, after a quarter turn about X when on its side. Yaw 0 points the
+## item's own +Z south (+Z) when it stands, its own +Y (its top) when it lies on its side.
+static func pose_basis(yaw: int, side: bool) -> Basis:
+	var b := Basis(Vector3.UP, deg_to_rad(float(yaw)))
+	return b * Basis(Vector3.RIGHT, PI / 2.0) if side else b
+
+
+## How far an item `box` drawn with basis `b` (scaled) rises so its lowest point rests on the surface.
+static func rest_lift(box: AABB, b: Basis) -> float:
+	return maxf(0.0, -(Transform3D(b, Vector3.ZERO) * box).position.y)
+
+
 ## Items on square `i` lie on a furniture model's inner surface_N planes behind doors that are drawn closed
 ## (its placeholder hides contents): drawn, but not pointable through the doors.
-func _inside_closed(sm: Snapshot.Submap, i: int) -> bool:
+func _inside_closed(sm: Snapshot.Submap, base: Vector3i, i: int) -> bool:
 	if sm.furn[i] == 0:
 		return false
 	var furn := _cat.furniture(sm.furn[i])
-	return furn.model != null and not furn.model.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
+	var drawn: Array = _drawn.get(base + Vector3i(i % SEEX, i / SEEX, 0), [])
+	var m: ModelLibrary.Model = drawn[0] if not drawn.is_empty() else furn.model
+	return m != null and not m.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
 
 
 ## [transform, itype, uid, size_m, centre, height, plane] of an item drawn at `xf` (scaled by `size`) on model
@@ -650,15 +734,21 @@ func _placed(xf: Transform3D, itype: int, uid: int, size: float, plane := -1) ->
 ## [size_m (longest side), centre, height] of an item drawn at `xf`: from its model's bounds, its shape's
 ## (ITEM_BOX), or around a glyph card.
 static func _extent(prop: PropCatalog.Prop, itype: int, xf: Transform3D, size: float) -> Array:
-	var box: AABB = ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
-	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
-		box = prop.model.aabb
-	elif itype != 0 and prop.model == null and prop.shape.is_empty():
+	if itype != 0 and prop.model == null and prop.shape.is_empty():
 		return [size, xf.origin + Vector3(0, GLYPH_UP, 0), size]
+	var box := _item_box(prop, itype)
 	return [box.get_longest_axis_size() * size, xf * box.get_center(), maxf(box.end.y, 0.0) * size]
 
 
-## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y], ...] in the snapshot's order.
+## An item's bounds before its scale: its model's, else its shape's (ITEM_BOX).
+static func _item_box(prop: PropCatalog.Prop, itype: int) -> AABB:
+	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
+		return prop.model.aabb
+	return ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
+
+
+## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y, yaw, side], ...] in the snapshot's
+## order; yaw -1 (side 0) for an item without a pose.
 static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 	var out := {}
 	var hs := sm.handles
@@ -666,8 +756,12 @@ static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 		var t := int(hs[k])
 		if not out.has(t):
 			out[t] = []
-		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4])])
+		var pose: Vector2i = sm.poses.get(hs[k + 1], NO_POSE)
+		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4]), pose.x, pose.y])
 	return out
+
+
+const NO_POSE := Vector2i(-1, 0)
 
 
 ## Where the items of one tile can lie: the placeholder's surface heights and rect, or a furniture model's

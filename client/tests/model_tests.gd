@@ -32,6 +32,7 @@ func run(check: Callable, data: Variant, tables: IdTables, scene: Callable, repo
 	_test_cache(glb)
 	_test_links(glb)
 	_test_props(data, tables, scene, repo)
+	_test_joins(data, tables, scene, repo)
 	_test_terrain(glb, data, tables, scene, repo)
 	_remove(_dir)
 
@@ -615,8 +616,8 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	var r := pm.build(sm.pos)
 	# The cupboard's door_1 opens (a Grabbable part): the furniture draws the model without it (`still`).
 	var xfs: Array = r.models.get(cupboard.model.still, []) if cupboard.model.still != null else []
-	_check.call(r.model_props == 3 and xfs.size() == 1 and (r.models.get(cupboard.model, []) as Array).size() == 2
-			and r.parts.size() == 1, "model props listed: the cupboard (still, its door a part) and two books (%d)" % r.model_props)
+	_check.call(r.model_props == 5 and xfs.size() == 1 and (r.models.get(cupboard.model, []) as Array).size() == 2
+			and r.parts.size() == 4, "model props listed: the cupboard (still, its door a part), two books on it, the placeholder dresser (its three drawers parts) and the book in it (%d)" % r.model_props)
 	if xfs.is_empty():
 		return
 	var base := CddaCoords.sm_to_ms(sm.pos)
@@ -632,8 +633,8 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	_check.call(heights == [0.5, 1.0, 0.5], "items lie on the model's surface_1, surface_2, surface_1 " + str(heights))
 	var first: Vector3 = (on[0][0] as Transform3D).origin - xf.origin
 	_check.call(first.dot(front) > 0.0 and absf(first.dot(front)) <= 0.21, "surface_1 (front half) turns with the model")
-	_check.call((pm.pile_transforms(sm, base, sm.items.slice(Snapshot.PILE_STRIDE, 2 * Snapshot.PILE_STRIDE), {}) as Array).is_empty(),
-			"items in the dresser (placeholder, closed) stay hidden")
+	var in_dresser: Array = pm.pile_transforms(sm, base, sm.items.slice(Snapshot.PILE_STRIDE, 2 * Snapshot.PILE_STRIDE), {})
+	_check.call(in_dresser.size() == 1 and int(in_dresser[0][6]) >= 0, "the book in the placeholder dresser lies in a drawer (PropBoxes)")
 
 	var world := WorldView.new()
 	world.catalog = terrain
@@ -644,10 +645,88 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	var mms := holder.get_children() if holder else []
 	var counts := mms.map(func(n: Node) -> int: return (n as MultiMeshInstance3D).multimesh.instance_count)
 	var door_sq := base + Vector3i(5, 5, 0)
-	_check.call(counts == [1, 2, 2, 2] and world.prop_counts["models"] >= 3
+	_check.call(counts == [1, 1, 2, 2, 2] and world.prop_counts["models"] >= 3
 			and world.parts.has("%d_%d_%d/door_1" % [door_sq.x, door_sq.y, door_sq.z]),
-			"the world draws one multimesh per model part, an instance per prop (the cupboard's still body; books) " + str(counts))
+			"the world draws one multimesh per model part, an instance per prop (the cupboard's and the dresser's still bodies; books) " + str(counts))
 	world.free()
+
+
+## Join pieces (`joins`): an L of counters draws its ends, middles and corner as the registry names them,
+## each turned so its joining sides meet its neighbours; a lone counter draws the plain model. Bad `joins`
+## refuse the entry.
+func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
+	DirAccess.make_dir_recursive_absolute(_dir.path_join("registry_joins"))
+	var names := ["single", "end_left", "end_right", "middle", "corner"]
+	var joins := {}
+	for n: String in names:
+		_write("models/furniture/c_%s.glb" % n, tri_glb())
+		if n != "single":
+			joins[n] = "furniture/c_%s.glb" % n
+	var one := "furniture/c_single.glb"
+	var entries := [
+		{"type": "fp3d_model", "id": "f_counter", "kind": "furniture", "model": one, "placeholder": "counter", "joins": joins},
+		{"type": "fp3d_model", "id": "x_bad1", "kind": "furniture", "model": one, "joins": {"end": one}},
+		{"type": "fp3d_model", "id": "x_bad2", "kind": "furniture", "model": one, "joins": {"middle": "../c.glb"}},
+		{"type": "fp3d_model", "id": "x_bad3", "kind": "furniture", "model": one, "joins": {"middle": 5}},
+		{"type": "fp3d_model", "id": "x_bad4", "kind": "item", "model": one, "joins": {"middle": one}},
+		{"type": "fp3d_model", "id": "x_bad5", "kind": "furniture", "placeholder": "counter", "joins": {"middle": one}},
+		{"type": "fp3d_model", "id": "x_bad6", "kind": "furniture", "model": one, "joins": [one]},
+	]
+	_write("registry_joins/test.json", JSON.stringify(entries).to_utf8_buffer())
+	var reg := AssetRegistry.new()
+	reg.models.root = _dir.path_join("models")
+	reg.load_dir(repo.call("assets/registry"))
+	var before := reg.warnings.size()
+	reg.load_dir(_dir.path_join("registry_joins"))
+	var refused := range(1, 7).all(func(k: int) -> bool:
+		return reg.entry("x_bad%d" % k, "furniture") == null and reg.entry("x_bad%d" % k, "item") == null)
+	_check.call(refused and reg.warnings.size() - before == 6, "joins: an unknown piece, a bad path, joins on an item or without a model refuse the entry")
+	var terrain := TerrainCatalog.new()
+	terrain.registry = reg
+	terrain.set_tables(tables)
+	var cat := PropCatalog.new(reg)
+	cat.set_tables(tables)
+	_check.call(cat.furniture(tables.index_of("furn", "f_counter")).joins.size() == 4, "joins: the counter has its four pieces")
+	var at := func(x: int, y: int) -> int: return y * 12 + x
+	var counters := [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(2, 3), Vector2i(2, 4), Vector2i(9, 9)]
+	var furn := {}
+	for c: Vector2i in counters:
+		furn[at.call(c.x, c.y)] = "f_counter"
+	var snap: Snapshot = scene.call(data, tables, {}, furn, [])
+	var pos: Array = (data as Dictionary)["submaps"][0]["pos"]
+	terrain.set_snapshot(snap)
+	cat.set_snapshot(snap)
+	var r := PropMesher.new(snap, terrain, cat).build(Vector3i(int(pos[0]), int(pos[1]), int(pos[2])))
+	var sides := {"single": [], "end_left": [Vector3.RIGHT], "end_right": [Vector3.LEFT], "middle": [Vector3.RIGHT, Vector3.LEFT],
+			"corner": [Vector3.RIGHT, Vector3.BACK]}
+	var count := {}
+	var meets := true
+	for n: String in names:
+		var xfs: Array = r.models.get(reg.models.get_model("furniture/c_%s.glb" % n), [])
+		count[n] = xfs.size()
+		for xf: Transform3D in xfs:
+			var tile := Vector2i(floori(xf.origin.x), floori(xf.origin.z))
+			var around := 0
+			for d: Vector2i in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
+				around += 1 if counters.has(tile + d) else 0
+			meets = meets and around == (sides[n] as Array).size()
+			for s: Vector3 in sides[n]:
+				var w := (xf.basis * s).normalized()
+				meets = meets and counters.has(tile + Vector2i(roundi(w.x), roundi(w.z)))
+	_check.call(count["single"] == 1 and count["end_left"] + count["end_right"] == 2 and count["middle"] == 3 and count["corner"] == 1,
+			"joins: an L of six counters draws two ends, three middles and a corner; a lone one the plain model " + str(count))
+	_check.call(meets, "joins: each piece's joining sides meet its neighbours, and only them")
+	var turned := true
+	for links: int in [1, 2, 3, 4, 5, 6, 8, 9, 10, 12]:   # shape-local bits -> the sides the piece must join
+		var j := PropMesher.join_of(links)
+		var b := PropMesher.MODEL_TURN.basis * Basis(Vector3.UP, int(j[1]) * PI / 2.0)
+		var got := 0
+		for s: Vector3 in sides[j[0]]:
+			var w := b * s   # shape-local: front -z (bit 1), +x (2), back +z (4), -x (8)
+			got |= 1 if w.z < -0.5 else (2 if w.x > 0.5 else (4 if w.z > 0.5 else 8))
+		turned = turned and got == links
+	_check.call(turned and PropMesher.join_of(7)[0] == "" and PropMesher.join_of(15)[0] == "" and PropMesher.join_of(0)[0] == "",
+			"joins: every one- and two-sided join gets a piece turned to it; a T, a cross or none gets the plain model")
 
 
 ## Terrain models (assets/models/terrain/<id>.glb + a registry entry): they replace the procedural shape,

@@ -24,6 +24,13 @@
       "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
       "offset": { "type": "array", "items": { "type": "number", "minimum": -10, "maximum": 10 }, "minItems": 3, "maxItems": 3 },
       "random_yaw": { "type": "boolean" },
+      "joins": {
+        "type": "object", "additionalProperties": false,
+        "properties": {
+          "end_left": { "$ref": "#/$defs/model_path" }, "end_right": { "$ref": "#/$defs/model_path" },
+          "middle": { "$ref": "#/$defs/model_path" }, "corner": { "$ref": "#/$defs/model_path" }
+        }
+      },
       "states": { "type": "object", "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/cdda_id" } },
       "anim_set": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
       "//": { "type": "string" }
@@ -31,6 +38,7 @@
     "anyOf": [ { "required": ["model"] }, { "required": ["mesher"] }, { "required": ["placeholder"] } ]
   },
   "$defs": {
-    "cdda_id": { "type": "string", "pattern": "^[A-Za-z0-9_:\\-]+$", "maxLength": 128 }
+    "cdda_id": { "type": "string", "pattern": "^[A-Za-z0-9_:\\-]+$", "maxLength": 128 },
+    "model_path": { "type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.glb$", "maxLength": 200, "not": { "pattern": "\\.\\." } }
   }
 }
