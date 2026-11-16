@@ -8,8 +8,8 @@ extends SceneTree
 ## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
 ## key opens the inventory. Then the screen HUD: body bars, needs, move line and message feed from the live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
-## puts it away.
-## Uses this run's own CDDA folder, never the player's saves.
+## puts it away. Then F3's classic view of the map around the player. Uses this run's own CDDA folder, never the
+## player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -110,6 +110,7 @@ func _run() -> void:
 		await _rebind_live(&"cdda_inventory")
 		_hud_live()
 		await _hands_live()
+		_classic_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -174,6 +175,23 @@ func _hud_live() -> void:
 	var last: String = _main.hud_data.messages.back()["text"] if not _main.hud_data.messages.is_empty() else ""
 	_check(said and not last.is_empty() and feed[feed.size() - 1] == last,
 			"HUD: CDDA's messages reach the feed, newest last (\"%s\")" % last)
+
+
+## F3 in the live game: the classic view shows CDDA's symbols around the player, @ in the middle; F3 hides it.
+func _classic_live() -> void:
+	var v := _main.classic
+	root.push_input(_key_of(&"classic_view"))
+	var lines := v.text().split("
+")
+	var mid := lines[ClassicView.RY].substr(ClassicView.RX, 1) if lines.size() > ClassicView.RY else ""
+	var drawn := 0
+	for l in lines:
+		drawn += l.length() - l.count(" ")
+	_check(v.visible and mid == "@" and drawn > 100, "F3: CDDA's classic view, @ in the middle, %d squares drawn" % drawn)
+	print("    " + "
+    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
+	root.push_input(_key_of(&"classic_view"))
+	_check(not v.visible, "F3 again hides it")
 
 
 ## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the

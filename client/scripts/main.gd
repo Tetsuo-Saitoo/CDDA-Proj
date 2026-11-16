@@ -66,6 +66,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -331,6 +332,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
+	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -1278,6 +1280,8 @@ func _setup_hud() -> void:
 	hud_view = HudView.new()
 	hud_view.data = hud_data
 	layer.add_child(hud_view)
+	classic = ClassicView.new()
+	layer.add_child(classic)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
@@ -1492,6 +1496,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_open_key_menu()
 		return
 	if inspect.handle_key(event, _can_inspect()):
+		return
+	if InputActions.pressed(event, &"classic_view"):
+		classic.toggle()
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
