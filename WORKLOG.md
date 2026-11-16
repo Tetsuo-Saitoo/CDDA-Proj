@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge: NPC names in the snapshot (creatures' `name`, NPCs only, up to 40 columns, color tags and control characters removed); vehicle names cleaned and capped too (60 columns). Snapshot test checks both with a hostile name.
 - 2026-11-16 — Bridge: character names, stricter input validation (`/`, `\`, `..` and control characters refused with a reason the client shows). Chargen tests pass on Windows and Linux.
 - 2026-11-16 — Bridge: the character query also gives the carried weight and volume and their limits (`weight_g`, `weight_max_g`, `volume_ml`, `volume_max_ml`, CDDA's own numbers), for lead-ui's weight/volume bar. Sim test checks them against CDDA.
 - 2026-11-16 — Bridge: game over (B2). A death or "Abandon this character" ends the game without asking the client anything (CDDA's end screens skipped in FP3D), and polling loops end on `stop()`, so quitting after a death no longer hangs. A cancelled world setup or character creation is `ended` / `cancelled` instead of `failed`, and the world that start made is deleted again. Fork tests (range `death`, chargen) and lead-qa's game_over_live_test pass.
