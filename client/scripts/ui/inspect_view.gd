@@ -989,7 +989,17 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	for g: Dictionary in col["groups"]:
 		var gs := _slot({"kind": "group", "column": id, "key": g["key"]})
 		var head := "%s   %s" % [g["title"], _totals(g)] if not (g["rows"] as Array).is_empty() else str(g["title"])
-		gs.add_child(_label(head, DIM))
+		var full := InventoryModel.fill(g)
+		if full < 0.0:
+			gs.add_child(_label(head, DIM))
+		else:   # a worn container's pocket: how full it is, as a thin bar under the heading
+			var hv := VBoxContainer.new()
+			hv.add_theme_constant_override("separation", 1)
+			hv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			hv.add_child(_label(head, DIM))
+			hv.add_child(_fill_bar(full))
+			gs.add_child(hv)
+			gs.tooltip_text = _fill_tip(g)
 		rows.add_child(gs)
 		_group_slots[_gkey(id, g["key"])] = gs
 		if (g["rows"] as Array).is_empty():
@@ -999,6 +1009,37 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	if int(col["cut"]) > 0:
 		rows.add_child(_label("... and %d more" % int(col["cut"]), DIM))
 	return slot
+
+
+## A pocket's fill bar: 0..1 of its width, red when full.
+static func _fill_bar(full: float) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.name = "Fill"
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.step = 0.0
+	bar.value = clampf(full, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 4)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE   # drops land on the group's slot under it
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = BAD if full >= 1.0 else Color(0.45, 0.7, 0.45)
+	bar.add_theme_stylebox_override("fill", fg)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.2, 0.2, 0.24)
+	bar.add_theme_stylebox_override("background", bg)
+	return bar
+
+
+## "About 0.75 L of 1.00 L, 1.20 kg of 2.00 kg used."
+static func _fill_tip(g: Dictionary) -> String:
+	var parts := PackedStringArray()
+	if int(g["max_ml"]) > 0:
+		parts.append("%s of %s" % [InventoryModel.volume_text(g["used_ml"]), InventoryModel.volume_text(g["max_ml"])])
+	if int(g["max_g"]) > 0:
+		parts.append("%s of %s" % [InventoryModel.weight_text(g["weight_g"]), InventoryModel.weight_text(g["max_g"])])
+	return ("About %s used. Counted from item types: a stack counts as one item, so this can read low."
+			% ", ".join(parts))
 
 
 func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
