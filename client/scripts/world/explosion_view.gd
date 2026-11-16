@@ -1,13 +1,13 @@
 class_name ExplosionView
 extends Node3D
 ## Explosions from the bridge's `explosion` events (contracts/events.md): `pos` centre, `amount` radius in
-## squares, `text` CDDA's kind (blast, fire_blast, flashbang, shockwave, emp, scrambler, resonance), `detail` the itype of what exploded
-## (grenade, C4, rocket ammo, ...; 0 unknown), `path` the blast area. Each gets an effect from `profile_for`:
-## a fireball growing to the radius, a light, smoke, glowing squares over the area, a ring for shockwaves,
-## and for a flashbang a white screen flash that fades (stronger the closer the camera). EMP, scrambler and resonance
-## are pulses (`ball` false): only a fading ring and a light that rises and falls smoothly, no fireball, smoke or
-## screen flash; radius 0 (one square) still shows a ring a square wide. Effects only: what
-## the blast did comes from the snapshot. Anything malformed is skipped; at most MAX_LIVE at once.
+## squares, `text` CDDA's kind (blast, fire_blast, flashbang, shockwave, emp, scrambler, resonance), `detail`
+## the itype of what exploded (grenade, C4, rocket ammo, ...; 0 unknown), `path` the blast area. Each gets an
+## effect from `profile_for`: a fireball growing to the radius, a light, smoke, glowing squares over the area, a
+## ring for shockwaves, and for a flashbang a white screen flash that fades (stronger the closer the camera).
+## EMP, scrambler and resonance are pulses (`ball` false): only a fading ring and a light that rises and falls
+## smoothly, no fireball, smoke or screen flash; radius 0 (one square) still shows a ring a square wide.
+## Effects only: what the blast did comes from the snapshot. Anything malformed is skipped; at most MAX_LIVE at once.
 
 const MAX_LIVE := 16
 const MAX_AREA := 1024
