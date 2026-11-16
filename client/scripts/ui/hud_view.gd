@@ -214,14 +214,15 @@ func _layout() -> void:
 
 
 ## `box`: the developer status lines' text (main.gd's top-left label, in this view's canvas; empty while hidden). The
-## warning lines go just under it while their text (centred) would overlap it, else back under the compass.
+## warning lines go just under it while their text (centred) would overlap it, else back under the compass. A box
+## reaching down the screen pushes them no lower than the bottom edge: they stay in sight.
 func avoid(box: Rect2) -> void:
 	var top := WARN_TOP
 	if not warn.text.is_empty() and box.has_area():
 		var w := warn.get_combined_minimum_size().x
 		var mine := Rect2(global_position.x + (size.x - w) / 2.0, global_position.y + WARN_TOP, w, warn.size.y)
 		if mine.intersects(box):
-			top = box.end.y - global_position.y + 4.0
+			top = maxf(WARN_TOP, minf(box.end.y - global_position.y + 4.0, size.y - warn.size.y))
 	if not is_equal_approx(warn.offset_top, top):
 		_place(warn, top)
 

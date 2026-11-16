@@ -328,10 +328,12 @@ func _test_view(tables: IdTables) -> void:
 	var under := v.warn.offset_top == 174.0 and v.warn.offset_bottom - v.warn.offset_top == HudView.WARN_LINES * 20
 	v.avoid(Rect2(10, 50, 100, 120))
 	var narrow := v.warn.offset_top == HudView.WARN_TOP
+	v.avoid(Rect2(10, 50, 900, 2000))   # taller than the view: the warnings stop at its bottom edge
+	var kept := v.warn.offset_top == 540.0 - v.warn.size.y
 	v.avoid(Rect2(10, 50, 900, 120))
 	v.avoid(Rect2())
-	_check.call(under and narrow and v.warn.offset_top == HudView.WARN_TOP,
-			"hud view: warnings move under the status lines they would cover, else stay under the compass")
+	_check.call(under and narrow and kept and v.warn.offset_top == HudView.WARN_TOP,
+			"hud view: warnings move under the status lines they would cover (no lower than the bottom), else stay under the compass")
 	v.data = null
 	_check.call(v.feed.text == "" and v.warn.text == "" and v.body_rows().is_empty(), "hud view: no data, nothing shown")
 	v.free()
