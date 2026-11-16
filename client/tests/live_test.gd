@@ -148,6 +148,11 @@ func _run() -> void:
 	_check(_sim.cheat_set_weather("light ning", -1.0) == 0 and _sim.cheat_set_weather("a".repeat(65), -1.0) == 0
 			and _sim.cheat_set_weather("lightning", NAN) == 0 and _sim.cheat_set_weather("lightning", INF) == 0,
 			"weather cheat: malformed calls refused")
+	# An action for one square: the bridge refuses an empty name and squares out of range (the fork checks the rest).
+	var queued_before: int = _sim.get_queued_actions()
+	_check(not _sim.queue_action_at("", Vector3i.ZERO) and not _sim.queue_action_at("open", Vector3i(1 << 30, 0, 0))
+			and not _sim.queue_action_at("open", Vector3i(0, 0, 1000)) and _sim.get_queued_actions() == queued_before,
+			"queue_action_at: malformed calls refused")
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 
