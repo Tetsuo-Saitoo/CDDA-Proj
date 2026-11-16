@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Blood, gibs, fire, smoke and gas follow a cutaway change (PgUp / PgDn, top-down view) at once instead of on the next snapshot (lead-world). Client tests pass.
 - 2026-11-16 — A stairs model on a flight longer than one tile is drawn once per lane, stretched over it, instead of a whole stair on every tile (C3 leftover, lead-world). Client tests pass.
 - 2026-11-16 — Joined furniture models get T and cross pieces (C3 leftover, lead-world): a registry entry's `joins` may name `tee` (where a run branches) and `cross`; PropMesher turns them to meet the neighbours. Schema and docs updated. Client tests pass.
 - 2026-11-16 — Registry schema: a `model` or join path must be a plain relative path, the same rule the model loader keeps (no leading `/`, empty part, `..` or part ending in `.`) (lead-world).
