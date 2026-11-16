@@ -65,6 +65,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 		return
 	_test_shown()
 	_test_fire()
+	_test_misfire()
 	_test_mag_out()
 	_test_mag_in()
 	_test_mag_out_refused()
@@ -234,6 +235,26 @@ func _test_shown() -> void:
 			"vr gun: the main grip on nothing holds the gun: nothing adopted, no buzz")
 	_rig.release(_rig.right, "grip_click")
 	_check.call(_clean() and g.shown and _row(_gun) == [0, Snapshot.CARRIED_WIELDED], "vr gun: ... and letting go keeps it in CDDA's hand")
+
+
+## A trigger pull CDDA fired no round for (the player's `misfire` event): the kick stops, a light buzz; anyone
+## else's misfire does nothing.
+func _test_misfire() -> void:
+	var g := _rig.gun
+	_frame()
+	var rest := g.part_pose("Muzzle")
+	_aim.fired.emit()   # a trigger pull: the model kicks ...
+	_frame(0.0)
+	var kicked := _part("Muzzle").global_position.distance_to(rest.origin) > 0.005
+	var b := _rig.buzzes.duplicate()
+	var me := _aim.hits.player_uid()
+	_aim.hits.on_events([{"kind": "misfire", "uid": me + 1, "detail": 1}])
+	var others := _rig.buzzes == b and g.misfires == 0
+	_aim.hits.on_events([{"kind": "misfire", "uid": me, "detail": 2}])   # ... and CDDA fired no round
+	_frame(0.0)
+	_check.call(g.shown and kicked and others and g.misfires == 1 and _rig.buzzes[1] == b[1] + 1
+			and _rig.buzz_amp[1] == VrGun.CLICK_AMP and _part("Muzzle").global_position.distance_to(rest.origin) < 0.001,
+			"vr gun: the player's misfire stops the kick and buzzes a light click (another's does nothing)")
 
 
 ## Trigger with a fire request: flown from the Muzzle pose (fire_from), a kick and a buzz; a kill buzzes harder;

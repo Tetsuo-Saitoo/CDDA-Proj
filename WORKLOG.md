@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — VR gun misfires (combat lead, client): the player's misfire stops the VR gun's kick and gives a light buzz; the dry click is the flat viewmodel's sound (vr_gun_tests). Not felt in a headset.
 - 2026-11-15 — Misfires (combat lead, fork fp3d-combat + client): a trigger pull with no round sends a `misfire` event and the gun clicks; recoil and the muzzle flash now follow CDDA's real shots. Windows and Linux tests pass.
 - 2026-11-15 — HUD warnings no longer lie over the developer status lines: they move just under them while they would overlap, else stay under the compass. Client tests pass.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
