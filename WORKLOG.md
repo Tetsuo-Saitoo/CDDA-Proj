@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — L8 slice 3, client take: an item in a bag or box lying next to you can be taken out (ItemActions.take / LiveSession.take_item send the container; bad or half pairs send nothing). Client tests pass.
 - 2026-11-16 — L8 slice 2, hand side: a carried item let go inside an open drawer or over a shelf goes on that shelf, where the hand or crosshair is (VR hand, mouse, thrown bodies coming to rest), and is drawn there riding the drawer. Client tests and the null-headset `loot` check pass.
 - 2026-11-16 — L8 safes and doors: a door, drawer or lid past its threshold opens or closes through `LiveSession.open_at` (CDDA's open / close for exactly that square, `queue_action_at`); only older DLLs still answer the "where?" prompt. Client tests pass.
 - 2026-11-16 — Items stay on the shelf they were put on (L8 slice 2, world side, lead-world, for lead-vr): the snapshot's `shelves` are read, such an item is drawn on that shelf or drawer, and `WorldView.shelf_at` tells a drop which shelf and spot lie under a hand or pointer. Client tests pass.

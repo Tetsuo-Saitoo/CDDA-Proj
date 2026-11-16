@@ -27,6 +27,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_vr()
 	_test_open_at()
 	_test_shelf_ops()
+	_test_take_container()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -285,3 +286,63 @@ func _test_shelf_ops() -> void:
 	var none := odd.all(func(o: Dictionary) -> bool:
 		return DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, o)["shelf"] == -1)
 	_check.call(none, "loot: shelf: a malformed or out-of-reach shelf counts as none")
+
+
+## Stands in for an ItemActions backend: keeps each take_item call's arguments.
+class TakeBackend extends RefCounted:
+	var calls: Array = []
+
+	func take_item(uid: float, type: float, pos: Vector3i, hand := "pack", container := -1.0,
+			container_type := -1.0) -> bool:
+		calls.append([int(uid), int(type), pos, hand, container, container_type])
+		return true
+
+	func queued_actions() -> int:
+		return 0
+
+
+## L8 slice 3, taking out of a lying container (the bridge's take `container` + `container_type`): LiveSession
+## sends the pair only when both are good handles (else nothing), a take without one exactly as before; ItemActions
+## takes the container only from the item's own lying parent, with its itype from the snapshot.
+func _test_take_container() -> void:
+	var ls := LiveSession.new()
+	var sim := ItemSim.new()
+	ls._sim = sim
+	var ok := ls.take_item(5.0, 3.0, E, "pack", 9.0, 4.0) and ls.take_item(5.0, 3.0, E)
+	var sent := sim.sent.duplicate()
+	var plain := {"op": "take", "item": 5, "type": 3, "pos": E, "hand": "pack"}
+	_check.call(ok and sent.size() == 2 and sent[0].get("container") == 9 and sent[0].get("container_type") == 4
+			and sent[1] == plain, "loot: container take: LiveSession sends the pair; without one, the take as before (%s)" % [sent])
+	var bad: Array[bool] = [ls.take_item(5.0, 3.0, E, "pack", NAN, 4.0), ls.take_item(5.0, 3.0, E, "pack", 9.0, NAN),
+			ls.take_item(5.0, 3.0, E, "pack", 0.0, 4.0), ls.take_item(5.0, 3.0, E, "pack", -3.0, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", 9.0, 0.0), ls.take_item(5.0, 3.0, E, "pack", 9.0),
+			ls.take_item(5.0, 3.0, E, "pack", -1.0, 4.0), ls.take_item(5.0, 3.0, E, "pack", 9.5, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", INF, 4.0), ls.take_item(5.0, 3.0, E, "pack", 1e30, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", 5.0, 3.0)]
+	_check.call(not bad.has(true) and sim.sent.size() == 2,
+			"loot: container take: a bad, half or self pair is refused, nothing sent (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+	var acts := ItemActions.new()
+	var be := TakeBackend.new()
+	acts.backend = be
+	var c := _handle(E, _it["hammer"])   # lying on E; the client doesn't judge what's a container, CDDA does
+	var inside := func(u: int, parent: int) -> ItemRef:
+		var r := ItemRef.on_square(u, _it["rock"], E)
+		r.parent = parent
+		r.pocket = 0
+		return r
+	ok = not acts.take(inside.call(424240, c))   # no snapshot yet: no container known
+	acts.on_snapshot(_snap)
+	ok = ok and acts.take(inside.call(424241, c)) and acts.take(ItemRef.on_square(424242, _it["rock"], E))
+	_check.call(c > 0 and ok and be.calls.size() == 2 and be.calls[0].slice(4) == [float(c), float(_it["hammer"])]
+			and be.calls[1].size() == 6 and be.calls[1].slice(4) == [-1.0, -1.0],
+			"loot: container take: ItemActions sends the item's lying parent and its type from the snapshot (%s)" % [be.calls])
+	var worn := int(_snap.carried[0]) if _snap.carried.size() > 0 else 999999
+	var away: ItemRef = inside.call(424246, c)
+	away.square = P   # the container lies on E, not where this item claims to be
+	var refused: Array[bool] = [acts.take(inside.call(424243, worn)), acts.take(inside.call(424244, -7)),
+			acts.take(inside.call(424245, 424245)), acts.take(away), acts.take(inside.call(424247, 31337))]
+	_check.call(not refused.has(true) and be.calls.size() == 2,
+			"loot: container take: a carried, negative, own, elsewhere or unknown parent is refused, nothing sent (%s)" % [refused])
+	acts.free()
