@@ -1,10 +1,12 @@
 class_name ExplosionView
 extends Node3D
 ## Explosions from the bridge's `explosion` events (contracts/events.md): `pos` centre, `amount` radius in
-## squares, `text` CDDA's kind (blast, fire_blast, flashbang, shockwave), `detail` the itype of what exploded
+## squares, `text` CDDA's kind (blast, fire_blast, flashbang, shockwave, emp, scrambler, resonance), `detail` the itype of what exploded
 ## (grenade, C4, rocket ammo, ...; 0 unknown), `path` the blast area. Each gets an effect from `profile_for`:
 ## a fireball growing to the radius, a light, smoke, glowing squares over the area, a ring for shockwaves,
-## and for a flashbang a white screen flash that fades (stronger the closer the camera). Effects only: what
+## and for a flashbang a white screen flash that fades (stronger the closer the camera). EMP, scrambler and resonance
+## are pulses (`ball` false): only a fading ring and a light that rises and falls smoothly, no fireball, smoke or
+## screen flash; radius 0 (one square) still shows a ring a square wide. Effects only: what
 ## the blast did comes from the snapshot. Anything malformed is skipped; at most MAX_LIVE at once.
 
 const MAX_LIVE := 16
@@ -22,7 +24,20 @@ const KINDS := {
 			"time": 0.5, "size": 0.35, "ring": false, "flash": 1.0},
 	"shockwave": {"fire": Color(0.8, 0.85, 1.0, 0.5), "smoke": Color(0.5, 0.5, 0.5), "light": Color(0.7, 0.8, 1.0),
 			"time": 0.7, "size": 1.0, "ring": true, "flash": 0.0},
+	# Pulses. Optional keys (defaults keep the kinds above as they were): ball (true), shake (factor, 1),
+	# energy (the light's peak, 6), smoke_scale (1).
+	"emp": {"fire": Color(0.55, 0.75, 1.0, 0.45), "smoke": Color(0.5, 0.6, 0.8), "light": Color(0.5, 0.7, 1.0),
+			"time": 0.8, "size": 1.0, "ring": true, "flash": 0.0, "ball": false, "shake": 0.0, "energy": 2.0,
+			"smoke_scale": 0.0},
+	"scrambler": {"fire": Color(0.4, 1.0, 0.8, 0.35), "smoke": Color(0.4, 0.7, 0.6), "light": Color(0.4, 1.0, 0.75),
+			"time": 0.8, "size": 1.0, "ring": true, "flash": 0.0, "ball": false, "shake": 0.0, "energy": 1.2,
+			"smoke_scale": 0.0},
+	"resonance": {"fire": Color(0.75, 0.45, 1.0, 0.5), "smoke": Color(0.3, 0.2, 0.4), "light": Color(0.7, 0.4, 1.0),
+			"time": 2.5, "size": 1.0, "ring": true, "flash": 0.0, "ball": false, "shake": 0.4, "energy": 3.0,
+			"smoke_scale": 0.0},
 }
+## Pulse sounds: seconds and buzz pitch (Hz). EMP and scrambler crackle over a buzz; resonance is a low hum.
+const PULSE_SOUNDS := {"emp": [0.6, 120.0], "scrambler": [0.5, 180.0], "resonance": [2.5, 55.0]}
 ## Item id parts that change the look (first match wins).
 const ITEM_LOOKS := [
 	["flashbang", {"flash": 1.0}],
@@ -62,11 +77,13 @@ func _init(w: WorldView) -> void:
 	flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 
-## The look of one explosion: KINDS[kind] (blast for unknown kinds) changed by the item's id.
+## The look of one explosion: KINDS[kind] (blast for unknown kinds) changed by the item's id (not for pulses).
 static func profile_for(kind: String, item_id: String) -> Dictionary:
 	var p: Dictionary = (KINDS.get(kind, KINDS["blast"]) as Dictionary).duplicate()
 	p["kind"] = kind if KINDS.has(kind) else "blast"
-	p["smoke_scale"] = 1.0
+	p["smoke_scale"] = p.get("smoke_scale", 1.0)
+	if not p.get("ball", true):
+		return p
 	var id := item_id.to_lower()
 	for l: Array in ITEM_LOOKS:
 		if id.contains(l[0]):
@@ -97,6 +114,7 @@ func start(e: Dictionary) -> bool:
 	root.position = world.coords.ms_center_to_world(e["pos"]) + Vector3(0, 0.6, 0)
 	add_child(root)
 	var fire := _sphere(p["fire"], 1.0)
+	fire.visible = p.get("ball", true)
 	root.add_child(fire)
 	var smoke := _sphere(p["smoke"], 0.6)
 	smoke.visible = false
@@ -104,11 +122,13 @@ func start(e: Dictionary) -> bool:
 	var ring: MeshInstance3D = null
 	if p["ring"]:
 		ring = _ring(p["fire"])
+		if not p.get("ball", true):
+			(ring.material_override as StandardMaterial3D).albedo_color.a = (p["fire"] as Color).a
 		root.add_child(ring)
 	var light := OmniLight3D.new()
 	light.light_color = p["light"]
 	light.omni_range = r_m * 3.0 + 4.0
-	light.light_energy = 6.0
+	light.light_energy = 6.0 if p.get("ball", true) else 0.0   # a pulse's light rises (tick)
 	root.add_child(light)
 	var area: Array = e.get("path") if e.get("path") is Array else []
 	if not area.is_empty():
@@ -120,7 +140,8 @@ func start(e: Dictionary) -> bool:
 	if float(p["flash"]) > 0.0:
 		_flash = maxf(_flash, float(p["flash"]) * clampf(1.0 - dist / 20.0, 0.0, 1.0))
 	# Shake: stronger for bigger blasts, fading out over ~6 radii; flashbangs and shockwaves shake too.
-	_shake = maxf(_shake, clampf(1.0 - dist / (r_m * 6.0 + 4.0), 0.0, 1.0) * clampf(r_m / 4.0, 0.3, 1.0))
+	_shake = maxf(_shake, clampf(1.0 - dist / (r_m * 6.0 + 4.0), 0.0, 1.0) * clampf(r_m / 4.0, 0.3, 1.0)
+			* float(p.get("shake", 1.0)))
 	var snd := AudioStreamPlayer3D.new()
 	snd.stream = sound_for(p["kind"], r_m)
 	snd.unit_size = 6.0 + r_m * 2.0
@@ -160,13 +181,19 @@ func tick(delta: float) -> void:
 		fire.scale = Vector3.ONE * maxf(r * ease(minf(k * 2.5, 1.0), 0.4), 0.05)
 		(fire.material_override as StandardMaterial3D).albedo_color.a = 1.0 - k
 		var smoke: MeshInstance3D = x["smoke"]
-		smoke.visible = k > 0.15
+		smoke.visible = k > 0.15 and float(p["smoke_scale"]) > 0.0
 		smoke.scale = Vector3.ONE * r * float(p["smoke_scale"]) * (0.4 + k)
 		smoke.position.y = k * r * 0.8
 		(smoke.material_override as StandardMaterial3D).albedo_color.a = 0.6 * (1.0 - k)
 		if x["ring"] != null:
 			(x["ring"] as MeshInstance3D).scale = Vector3.ONE * maxf(r * k, 0.05)
-		(x["light"] as OmniLight3D).light_energy = 6.0 * (1.0 - minf(k * 2.0, 1.0))
+		if p.get("ball", true):
+			(x["light"] as OmniLight3D).light_energy = 6.0 * (1.0 - minf(k * 2.0, 1.0))
+		else:   # a pulse: the light rises and falls smoothly, the ring fades as it grows (no flash)
+			(x["light"] as OmniLight3D).light_energy = float(p.get("energy", 2.0)) * sin(PI * k)
+			if x["ring"] != null:
+				var rm := (x["ring"] as MeshInstance3D).material_override as StandardMaterial3D
+				rm.albedo_color.a = (p["fire"] as Color).a * (1.0 - k)
 		if x["t"] >= dur:
 			(x["root"] as Node3D).queue_free()
 			_live.remove_at(i)
@@ -187,6 +214,8 @@ func shake_offset() -> Vector2:
 ## A boom made once per kind and size class: noise through a falling low-pass, with a decaying envelope.
 ## Flashbangs are a sharp bright crack, shockwaves a low thump, blasts a crack and a rumble.
 func sound_for(kind: String, r_m: float) -> AudioStreamWAV:
+	if PULSE_SOUNDS.has(kind):
+		return _pulse_sound(kind)
 	var big := r_m >= 4.0
 	var key := "%s:%s" % [kind, big]
 	if _sounds.has(key):
@@ -252,6 +281,35 @@ static func _ring(c: Color) -> MeshInstance3D:
 	mi.material_override = _mat(Color(c, 0.7))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
+
+
+## A pulse's sound, made once per kind: a buzz with crackles (EMP, scrambler) or a hum that swells and fades.
+func _pulse_sound(kind: String) -> AudioStreamWAV:
+	if _sounds.has(kind):
+		return _sounds[kind]
+	var secs: float = PULSE_SOUNDS[kind][0]
+	var hz: float = PULSE_SOUNDS[kind][1]
+	var hum := kind == "resonance"
+	var n := int(SOUND_RATE * secs)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(kind)
+	for i in n:
+		var t := float(i) / SOUND_RATE
+		var env := sin(PI * t / secs) if hum else exp(-t * 6.0) * minf(t * 200.0, 1.0)
+		var buzz := sin(TAU * hz * t) + 0.4 * sin(TAU * hz * 2.0 * t)
+		var crackle := 0.0
+		if not hum and rng.randf() < 0.15:
+			crackle = rng.randf_range(-1.0, 1.0)
+		var v := clampf((0.35 * buzz + 0.6 * crackle) * env, -1.0, 1.0)
+		data.encode_s16(i * 2, int(v * 30000.0))
+	var w := AudioStreamWAV.new()
+	w.format = AudioStreamWAV.FORMAT_16_BITS
+	w.mix_rate = SOUND_RATE
+	w.data = data
+	_sounds[kind] = w
+	return w
 
 
 ## Glowing floor squares over the blast area (one MultiMesh), relative to the explosion's root.
