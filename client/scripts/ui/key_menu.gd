@@ -34,6 +34,15 @@ var debug_check: CheckBox
 var mood_check: CheckBox
 var hurt_check: CheckBox
 var flash_check: CheckBox
+## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
+var feed_checks := {}
+const FEED_TIPS := {
+	"good": "Good things that happen to you: healing, learning, a good find.",
+	"bad": "Bad or mixed things that happen to you: hits, pain, a skill getting rusty.",
+	"warning": "Dangers: a monster comes into view, an alarm, a noise.",
+	"info": "What you examine or look at, how something works.",
+	"other": "Everything else: misses, small things.",
+}
 var cheat_page: CheatPanel    # set by add_cheat_page
 var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
 var cheats_button: Button
@@ -174,6 +183,21 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	row.add_child(debug_check)
 	_box.add_child(row)
 	_box.move_child(row, 1)
+	var feed_row := HBoxContainer.new()
+	var fl := Label.new()
+	fl.text = "Messages shown"
+	feed_row.add_child(fl)
+	for g: String in HudSettings.FEED_GROUPS:
+		var c := CheckBox.new()
+		c.text = HudSettings.FEED_GROUPS[g]
+		c.tooltip_text = FEED_TIPS[g]
+		c.focus_mode = Control.FOCUS_NONE
+		c.button_pressed = not settings.feed_hidden.has(g)
+		c.toggled.connect(_on_feed_group.bind(g))
+		feed_checks[g] = c
+		feed_row.add_child(c)
+	_box.add_child(feed_row)
+	_box.move_child(feed_row, 2)
 	_show_compass_value()
 
 
@@ -238,6 +262,21 @@ func _on_weather_flash(on: bool) -> void:
 	var err := hud.save_file(hud_path)
 	if err != OK:
 		_status.text = "Bright flashes setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+## A feed group's box: checked shows the group's messages in the feed (HudData.set_feed_hidden via main).
+func _on_feed_group(on: bool, group: String) -> void:
+	var hidden := PackedStringArray(hud.feed_hidden)
+	if on:
+		if hidden.has(group):
+			hidden.remove_at(hidden.find(group))
+	elif not hidden.has(group):
+		hidden.append(group)
+	hud.feed_hidden = HudSettings.feed_groups_from(hidden)
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Message filter not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

@@ -67,8 +67,17 @@ var mood := {}
 ## {main, off: ItemRef (carried) or null; main_liquid, off_liquid: String; main_fill, off_fill: 0..1 or -1;
 ## liquid, fill_frac: the first hand's (main, then off) that holds a liquid}.
 var held := {}
-## The newest last: {text, type, turn}.
+## The feed, newest last: {text, type, turn}; messages of the groups in `feed_hidden` left out (every view shows
+## this list, so the screen and the VR wrist filter alike).
 var messages: Array[Dictionary] = []
+## G1: the feed's filter, HudSettings.FEED_GROUPS names left out (set_feed_hidden).
+var feed_hidden := PackedStringArray()
+## CDDA's game_message_type (enums.h: m_good, m_bad, m_mixed, m_warning, m_info, m_neutral, m_debug, m_headshot,
+## m_critical, m_grazing) -> the filter's group; other numbers count as "other".
+const MESSAGE_GROUPS := ["good", "bad", "bad", "warning", "info", "other", "other", "other", "other", "other"]
+## Messages kept unfiltered, so a group turned back on shows its recent ones again.
+const MAX_ALL_MESSAGES := MAX_MESSAGES * 4
+var _all_messages: Array[Dictionary] = []
 ## What to flash, worst first: {id, text, level}.
 var warnings: Array[Dictionary] = []
 ## Testing cheats that are on, in LiveSession.CHEATS order: the views show a marker while it isn't empty.
@@ -151,13 +160,35 @@ func on_events(events: Array) -> void:
 		var t := clean((e as Dictionary).get("text", ""), MAX_TEXT)
 		if t.is_empty():
 			continue
-		messages.append({"text": t, "type": _int((e as Dictionary).get("type", 0), 0, 255),
+		_all_messages.append({"text": t, "type": _int((e as Dictionary).get("type", 0), 0, 255),
 				"turn": _int((e as Dictionary).get("turn", 0), 0, 1 << 52)})
 		added = true
+	if added:
+		_filter_messages()
+		changed.emit(PackedStringArray(["messages"]))
+
+
+## The feed's filter (HudSettings.feed_hidden): those groups' messages leave the feed, also the ones already in it.
+func set_feed_hidden(groups: PackedStringArray) -> void:
+	var g := HudSettings.feed_groups_from(groups)
+	if g == feed_hidden:
+		return
+	feed_hidden = g
+	_filter_messages()
+	changed.emit(PackedStringArray(["messages"]))
+
+
+## The filter group of a CDDA message type: "good", "bad" (mixed too), "warning", "info" or "other".
+static func message_group(type: int) -> String:
+	return MESSAGE_GROUPS[type] if type >= 0 and type < MESSAGE_GROUPS.size() else "other"
+
+
+func _filter_messages() -> void:
+	if _all_messages.size() > MAX_ALL_MESSAGES:
+		_all_messages = _all_messages.slice(_all_messages.size() - MAX_ALL_MESSAGES)
+	messages.assign(_all_messages.filter(func(m: Dictionary) -> bool: return not message_group(m["type"]) in feed_hidden))
 	if messages.size() > MAX_MESSAGES:
 		messages = messages.slice(messages.size() - MAX_MESSAGES)
-	if added:
-		changed.emit(PackedStringArray(["messages"]))
 
 
 ## The colour of a level, opaque (views apply their own opacity).
