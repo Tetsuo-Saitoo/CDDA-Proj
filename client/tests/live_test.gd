@@ -106,6 +106,7 @@ func _run() -> void:
 			take.merged({"container": 0, "container_type": 3}, true)])
 	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
 			"rejects malformed item actions")
+	_check(_sim.query_character() == 0, "query_character: nothing while no game runs")
 	_check_listing()
 
 	var why: String = _sim.start(data_dir, user_dir, WORLD)
@@ -162,6 +163,20 @@ func _run() -> void:
 	_check(not _sim.queue_action_at("", Vector3i.ZERO) and not _sim.queue_action_at("open", Vector3i(1 << 30, 0, 0))
 			and not _sim.queue_action_at("open", Vector3i(0, 0, 1000)) and _sim.get_queued_actions() == queued_before,
 			"queue_action_at: malformed calls refused")
+	# G4: the character sheet, answered by the main loop while it waits.
+	var cq: int = _sim.query_character()
+	var sheet: Variant = null
+	var cq_until := Time.get_ticks_msec() + TURN_TIMEOUT_MS
+	while cq > 0 and Time.get_ticks_msec() < cq_until:
+		var cq_text: String = _sim.take_query_result(cq)
+		if not cq_text.is_empty():
+			sheet = JSON.parse_string(cq_text)
+			break
+		await create_timer(0.05).timeout
+	_check(cq > 0 and sheet is Dictionary and sheet.get("ok") == true and int(sheet.get("id", 0)) == cq
+			and sheet.get("kind") == "character" and (sheet.get("stats", []) as Array).size() == 4
+			and (sheet.get("skills", []) as Array).size() > 0,
+			"query_character: the sheet arrives (query %d)" % cq)
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 

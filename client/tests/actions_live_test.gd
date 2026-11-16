@@ -116,8 +116,9 @@ func _run() -> void:
 		await _rebind_live(&"cdda_inventory")
 		_hud_live()
 		await _hands_live()
+		await _consume_live()
 		_classic_live()
-		_character_live()
+		await _character_live()
 		await _compass_live()
 	print("  what each key did:")
 	for line in _seen:
@@ -252,6 +253,19 @@ func _character_live() -> void:
 	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
 	var at := t.find("[Worn]")
 	print("    " + "\n    ".join(t.substr(at if at >= 0 else 0).split("\n").slice(0, 14)))
+	# G4: the game's character sheet (bridge query_character), asked when the screen opens
+	if _live._sim.has_method("query_character"):
+		var cd := _main.character_data
+		var came: bool = await _until(func() -> bool: return cd.has_sheet(), ASK_TIMEOUT_MS, false)
+		var stats: Array = cd.card("stats").get("rows", [])
+		var skills: Array = cd.card("skills").get("rows", [])
+		_check(came and stats.size() == 5 and skills.size() >= 10 and cd.title != "Character" and not cd.subtitle.is_empty()
+				and cd.note.is_empty() and v.text().find("[Skills]") >= 0,
+				"P: the game's sheet: %s (%s), %d stats, %d skills, %d traits" % [cd.title, cd.subtitle, stats.size(),
+				skills.size(), (cd.card("traits").get("rows", []) as Array).size()])
+		print("    " + "\n    ".join(v.text().substr(maxi(0, v.text().find("[Stats]"))).split("\n").slice(0, 8)))
+	else:
+		print("    (this DLL has no query_character: the sheet's cards not checked)")
 	var esc := InputEventKey.new()
 	esc.keycode = KEY_ESCAPE
 	esc.physical_keycode = KEY_ESCAPE
@@ -302,6 +316,81 @@ func _hands_live() -> void:
 	var empty := func() -> bool: return _main.hud_data.held.get("off") == null
 	_check(await _until(empty, OP_TIMEOUT_MS, false), "Shift+H puts it away: the off hand is empty (%s)"
 			% [_main.hud_data.held.get("off")])
+
+
+## H, then the first enabled entry whose name has `want` (not frozen or sealed), typed into the list's filter and
+## Enter, as a player would; the off hand's ItemRef once it holds it, else null (the list closed).
+func _hold_off(want: String) -> ItemRef:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"hold_off"))
+	var asked := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ListRequestWidget
+	if not await _until(asked, ASK_TIMEOUT_MS, false):
+		return null
+	var w := _main.request_ui.widget as ListRequestWidget
+	var pick := ""
+	for it: Dictionary in w.items:
+		var n := str(it.get("plain", ""))
+		var ok: bool = it.get("enabled", false) and not n.contains("frozen") and not n.contains("sealed")
+		if pick.is_empty() and ok and n.to_lower().contains(want):
+			pick = n
+	if pick.is_empty():
+		root.push_input(_esc_key())
+		return null
+	w.set_filter(pick)
+	var enter := InputEventKey.new()
+	enter.keycode = KEY_ENTER
+	enter.physical_keycode = KEY_ENTER
+	enter.pressed = true
+	root.push_input(enter)
+	var in_off := func() -> bool: return _main.hud_data.held.get("off") is ItemRef
+	await _until(in_off, OP_TIMEOUT_MS, false)
+	return _main.hud_data.held.get("off") as ItemRef
+
+
+## Shift+E with water in the off hand drinks it with CDDA's consume rules, no menu (its own questions answered as a
+## player would); a held knife sent to consume anyway is refused with CDDA's words, and the player sees them.
+func _consume_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	var seen: Array = []
+	var on_done := func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op, ""])
+	var on_refused := func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why])
+	_main.item_actions.finished.connect(on_done)
+	_main.item_actions.refused.connect(on_refused)
+	var water := await _hold_off("water")
+	var food := _main._held_consumable()
+	_check(water != null and food != null and food.uid == water.uid, "Shift+E: held water counts as something to drink (%s)"
+			% [_main.hud_data.held.get("off")])
+	if food != null:
+		var msgs := _messages.size()
+		root.push_input(_key_of(&"cdda_eat"))
+		var over := func() -> bool: return not seen.is_empty() and _main._in_main_loop()
+		await _until(over, OP_TIMEOUT_MS, true)   # CDDA's own questions (not thirsty ...) answered YES
+		var said := " / ".join(_messages.slice(msgs)).left(200)
+		_check(not seen.is_empty() and seen[0][0] == "finished" and seen[0][2] == "consume",
+				"Shift+E drinks the held water, no menu (%s; said %s)" % [seen, said])
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"stow_off"))
+	await _until(func() -> bool: return _main.hud_data.held.get("off") == null, OP_TIMEOUT_MS, false)
+	var knife := await _hold_off("knife")
+	if knife == null:
+		_check(false, "consume refusal: a knife held in the off hand")
+	else:
+		seen.clear()
+		var msgs := _messages.size()
+		var feed := _main.hud_data.messages.size()
+		var sent := _main.item_actions.consume(knife)
+		await _until(func() -> bool: return not seen.is_empty(), OP_TIMEOUT_MS, true)
+		var why: String = seen[0][3] if not seen.is_empty() else ""
+		var shown := _main.hud_data.messages.slice(feed).any(func(m: Dictionary) -> bool: return m["text"] == why)
+		_check(sent and not seen.is_empty() and seen[0][0] == "refused" and not why.is_empty() and shown,
+				"consume refusal: a knife is refused with CDDA's words, in the feed (%s; said %s)"
+				% [seen, " / ".join(_messages.slice(msgs)).left(160)])
+		await _until(in_loop, ASK_TIMEOUT_MS, false)
+		root.push_input(_key_of(&"stow_off"))
+		await _until(func() -> bool: return _main.hud_data.held.get("off") == null, OP_TIMEOUT_MS, false)
+	_main.item_actions.finished.disconnect(on_done)
+	_main.item_actions.refused.disconnect(on_refused)
 
 
 ## Holding E with a liquid in the off hand pours it out on the square you face.
