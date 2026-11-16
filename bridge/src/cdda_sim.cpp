@@ -530,6 +530,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::spot;
     } else if( op == "hold" ) {
         a.op = fp3d::item_op::hold;
+    } else if( op == "consume" ) {
+        a.op = fp3d::item_op::consume;
     } else {
         return false;
     }
@@ -609,6 +611,11 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
     }
+    // take: out of a container lying on `pos` (L8), when one is named.
+    if( a.op == fp3d::item_op::take && ( d.has( "container" ) || d.has( "container_type" ) ) &&
+        !ref( "container", "container_type", a.container ) ) {
+        return false;
+    }
     if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
@@ -655,6 +662,20 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.has_pose = true;
         a.yaw = static_cast<uint16_t>( deg );
         a.side = d.has( "side" ) && static_cast<bool>( side );
+    }
+    // Which furniture shelf it was put on (the client's numbering): only next to a spot, for the same ops.
+    if( !field( d, "shelf", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "shelf" ) ) {
+        const int64_t shelf = v;
+        const bool stores = a.op == fp3d::item_op::drop || a.op == fp3d::item_op::place ||
+                            a.op == fp3d::item_op::spot;
+        if( !stores || !a.has_spot || shelf < 0 || shelf > fp3d::max_item_shelf ) {
+            return false;
+        }
+        a.has_shelf = true;
+        a.shelf = static_cast<uint8_t>( shelf );
     }
     // The client's number for this action: an `item_result` event answers it.
     if( !field( d, "tag", Variant::INT, v ) ) {

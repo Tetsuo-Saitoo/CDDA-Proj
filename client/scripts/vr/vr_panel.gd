@@ -119,7 +119,8 @@ func _input(e: InputEvent) -> void:
 ## only sees what is pushed here). True if something in the panel handled it (the caller marks it handled in the
 ## window); else the window's own nodes still get it.
 func forward(e: InputEvent) -> bool:
-	if not shown or not viewport.is_inside_tree() 			or not (e is InputEventKey or e is InputEventJoypadButton or e is InputEventJoypadMotion):
+	if not shown or not viewport.is_inside_tree() \
+			or not (e is InputEventKey or e is InputEventJoypadButton or e is InputEventJoypadMotion):
 		return false
 	_push(e)
 	return viewport.is_input_handled()

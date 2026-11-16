@@ -559,10 +559,15 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 
 
 ## Drop a carried item on square `pos`; `spot` (each 0..1 across the square) places it there, (-1, -1) none.
-func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) -> bool:
+## `shelf` (L8: 0..ItemActions.MAX_SHELF, -1 none) goes only with a spot; outside that range: false, nothing sent.
+func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+	if shelf < -1 or shelf > ItemActions.MAX_SHELF:
+		return false
 	var a := {"op": "drop", "item": int(uid), "type": int(type), "pos": pos}
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		a["spot"] = spot
+		if shelf >= 0:
+			a["shelf"] = shelf
 	return _sim != null and _sim.queue_item_action(a)
 
 
@@ -582,6 +587,15 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 	if _sim == null or not hand in ["main", "off"] or not handle_ok(uid, type):
 		return false
 	return bool(_sim.queue_item_action({"op": "hold", "item": int(uid), "type": int(type), "hand": hand}))
+
+
+## Eat, drink or take carried (or held) `uid` with CDDA's consume rules and move costs, no menu: a container's
+## contents. CDDA's refusals come as messages. False when refused here (nothing sent): no game, a bad handle, or a
+## bridge without the op (it refuses an unknown op), so callers can fall back to CDDA's eat menu.
+func consume_item(uid: float, type: float) -> bool:
+	if _sim == null or not handle_ok(uid, type):
+		return false
+	return bool(_sim.queue_item_action({"op": "consume", "item": int(uid), "type": int(type)}))
 
 
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
@@ -620,16 +634,34 @@ func pour_into(uid: float, type: float, container: float, container_type: float,
 			"container": int(container), "container_type": int(container_type), "pocket": pocket})
 
 
+## L8: CDDA's own open (or close) of exactly the door, drawer or lid's furniture on `square`, one of the eight
+## squares around `player` on its level (queue_action_at: CDDA never takes another square it would pick by itself;
+## one it doesn't allow is CDDA's message, "There is nothing that can be opened nearby."). False when refused here
+## (no game, a bad square, not next to the player) or when this DLL has no queue_action_at (see can_act_at).
+func open_at(open: bool, square: Vector3i, player: Vector3i) -> bool:
+	if not can_act_at() or not ItemActions.ok_square(square) or not ItemActions.ok_square(player) \
+			or not GrabController.adjacent(square - player):
+		return false
+	return queue_action_at("open" if open else "close", square)
+
+
+## The bridge takes actions for one square (CddaSim.queue_action_at; older DLLs don't).
+func can_act_at() -> bool:
+	return _sim != null and _sim.has_method("queue_action_at")
+
+
 ## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
 ## square without a floor makes CDDA drop it). `spot` (each 0..1 across the square, clamped) with `yaw` (whole
 ## degrees 0..359, counter-clockwise from above, 0 = south) and `side` (lying on its side) is the pose it takes there;
-## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
+## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). `shelf` (L8: the furniture shelf
+## it lies on, 0..ItemActions.MAX_SHELF, -1 none) goes only with a spot. CDDA answers with an `item_result` event
 ## whose detail is `tag` (1..MAX_ITEM_TAG). False when refused here (nothing sent): no game, a bad handle, square,
-## spot, yaw or tag.
+## spot, yaw, tag or shelf.
 func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool,
-		tag: int) -> bool:
+		tag: int, shelf := -1) -> bool:
 	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not ItemActions.ok_square(to) or to.z != pos.z \
-			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite():
+			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite() or shelf < -1 \
+			or shelf > ItemActions.MAX_SHELF:
 		return false
 	var a := {"op": "place", "item": int(uid), "type": int(type), "pos": pos, "to": to, "tag": tag}
 	if spot != Vector2(-1, -1):
@@ -638,17 +670,23 @@ func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vect
 		a["spot"] = _clamp_spot(spot)
 		a["yaw"] = yaw
 		a["side"] = side
+		if shelf >= 0:
+			a["shelf"] = shelf
 	return _sim.queue_item_action(a)
 
 
-## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's). False when refused
-## here (nothing sent), as place_item, or without a spot.
-func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's, `shelf` too). False
+## when refused here (nothing sent), as place_item, or without a spot.
+func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int,
+		shelf := -1) -> bool:
 	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not spot.is_finite() or spot.x < 0.0 \
-			or spot.y < 0.0:
+			or spot.y < 0.0 or shelf < -1 or shelf > ItemActions.MAX_SHELF:
 		return false
-	return _sim.queue_item_action({"op": "spot", "item": int(uid), "type": int(type), "pos": pos,
-			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
+	var a := {"op": "spot", "item": int(uid), "type": int(type), "pos": pos, "spot": _clamp_spot(spot), "yaw": yaw,
+			"side": side, "tag": tag}
+	if shelf >= 0:
+		a["shelf"] = shelf
+	return _sim.queue_item_action(a)
 
 
 ## A snapshot item handle (handle_ok), a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.

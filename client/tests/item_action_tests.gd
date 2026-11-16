@@ -62,6 +62,10 @@ class FakeBackend:
 		calls.append(["hold", uid, type, hand])
 		return ok
 
+	func consume_item(uid: float, type: float) -> bool:
+		calls.append(["consume", uid, type])
+		return ok
+
 	func queued_actions() -> int:
 		return queued
 
@@ -110,6 +114,67 @@ func _test_hold() -> void:
 	ls.free()
 
 
+## consume (Shift+E on what a hand holds): only carried items go out; eaten whole (gone) or its contents changed
+## finishes, a sip that doesn't show finishes quietly at the timeout, CDDA's m_info message refuses. consumable():
+## food and drugs by the id tables' category, or a container with some inside it; LiveSession.consume_item sends the
+## bridge's consume op.
+func _test_consume() -> void:
+	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "apple", "category": "food"}, {"id": "bottle", "category": "container"},
+			{"id": "water", "category": "food"}, {"id": "gas", "category": "fuel"}, {"id": "aspirin", "category": "drugs"},
+			{"id": "pouch", "category": "container"}]})
+	# carried: apple 41; bottle 42 > water 43; can 44 > gas 45; bottle 46 empty; pouch 47 > bottle 48 > water 49; aspirin 50
+	var rows := [[41, 1, 0, -1, OFFHAND], [42, 2, 0, -1, WIELDED], [43, 3, 42, 0, 0], [44, 2, 0, -1, 0],
+		[45, 4, 44, 0, 0], [46, 2, 0, -1, 0], [47, 6, 0, -1, 0], [48, 2, 47, 0, 0], [49, 3, 48, 0, 0], [50, 5, 0, -1, 0]]
+	var snap := _snap(5, [], rows)
+	var eats := func(uid: int, type: int) -> bool:
+		return ItemActions.consumable(ItemRef.on_player(uid, type, 0, -1, 0, SQ), snap, t)
+	_check.call(t.is_valid() and eats.call(41, 1) and eats.call(42, 2) and eats.call(50, 5) and eats.call(47, 6)
+			and not eats.call(44, 2) and not eats.call(46, 2) and not eats.call(45, 4)
+			and not ItemActions.consumable(ItemRef.on_player(41, 1, 0, -1, 0, SQ), snap, null),
+			"item actions: consumable = food or drugs, or a container with some inside (deep too); fuel, empty bottles not")
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var now := [1000]
+	a.clock = func() -> int: return now[0]
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	a.on_snapshot(snap)
+	var sent: bool = a.consume(ItemRef.on_player(41, 1, 0, -1, OFFHAND, SQ)) and b.calls[-1] == ["consume", 41.0, 1.0]
+	var lying := not a.consume(ItemRef.on_square(51, 1, SQ)) and b.calls.size() == 1
+	a.on_snapshot(_snap(6, [], rows.slice(1)))   # the apple: eaten whole
+	_check.call(sent and lying and seen == [["finished", 41, "consume"]],
+			"item actions: consume sends the held item, refuses a lying one here, finishes when it is gone (%s)" % [seen])
+	a.consume(ItemRef.on_player(42, 2, 0, -1, WIELDED, SQ))   # a sip of the bottle: nothing the snapshot shows
+	a.on_snapshot(_snap(7, [], rows.slice(1)))
+	a.on_snapshot(_snap(8, [], rows.slice(1)))
+	var waited := seen.size() == 1 and a.pending(42) == "consume"
+	now[0] = 6100
+	a.check_timeouts()
+	var quiet: bool = seen.size() == 2 and seen[-1] == ["finished", 42, "consume"]
+	a.consume(ItemRef.on_player(50, 5, 0, -1, 0, SQ))
+	a.on_events([{"kind": "message", "text": "You're full.", "type": ItemActions.M_INFO}])
+	a.on_snapshot(_snap(9, [], rows.slice(1)))
+	_check.call(waited and quiet and seen[-1] == ["refused", 50, "consume", "You're full."],
+			"item actions: a sip that doesn't show finishes at the timeout; CDDA's message refuses (%s)" % [seen])
+	a.free()
+	var ls := LiveSession.new()
+	var off := ls.consume_item(41.0, 1.0)
+	var sim := QueueSim.new()
+	ls._sim = sim
+	var ok := ls.consume_item(41.0, 1.0)
+	var none := not ls.consume_item(0.0, 1.0) and not ls.consume_item(41.5, 1.0) and not ls.consume_item(NAN, 1.0) \
+			and not ls.consume_item(41.0, 0.0)
+	sim.accept = false   # a bridge without the op (or a full queue): false, Shift+E falls back to CDDA's eat menu
+	var old := ls.consume_item(42.0, 2.0)
+	_check.call(not off and ok and none and not old and sim.sent == [{"op": "consume", "item": 41, "type": 1},
+			{"op": "consume", "item": 42, "type": 2}],
+			"live session: consume_item sends the bridge's consume op; bad handles aren't sent (%s)" % [sim.sent])
+	ls.free()
+
+
 ## A stand-in for CddaSim's queue_item_action: records what it is given, queues while `accept`.
 class QueueSim extends RefCounted:
 	var sent: Array = []
@@ -132,6 +197,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_throw_pour()
 	_test_pour_hold()
 	_test_hold()
+	_test_consume()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)

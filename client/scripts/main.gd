@@ -66,6 +66,9 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
+var character_data := CharacterData.new()   # the character screen's cards (G4), for screen and VR
+var character: CharacterView      # P: the character screen
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -254,6 +257,13 @@ func _ready() -> void:
 		_open_key_menu()
 	if _args.has("screenshot"):
 		_screenshot_and_quit(_args["screenshot"])
+	if _args.has("vr-check") and vr != null:   # automated checks in a real VR session (VrCheck)
+		var vc := VrCheck.new()
+		vc.rig = vr
+		vc.quit = _quit
+		vc.mock_of = func() -> MockItems: return mock_items
+		add_child(vc)
+		vc.run(str(_args["vr-check"]))
 
 
 ## A file of the repo (cdda/, assets/, contracts/). An exported game (the AppImage) has them next to its executable.
@@ -334,6 +344,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
+	character_data.update(hud_data, snap, world.tables)
+	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -512,7 +524,8 @@ func _start_vr() -> void:
 	# Each is a direct child of the panel's root (the panel shows while one of them is visible), drawn larger.
 	var panel := panel_root(vr)
 	if panel != null:
-		menus_to_panel(panel, [inspect, key_menu, main_menu.get_parent() if main_menu != null else null], PANEL_UI_SCALE)
+		menus_to_panel(panel, [inspect, character, key_menu, main_menu.get_parent() if main_menu != null else null],
+				PANEL_UI_SCALE)
 		request_ui.reparent(panel, false)
 		if inspect.get_parent() == panel:   # prompts draw over the Tab view, under the F1 menu
 			panel.move_child(request_ui, inspect.get_index() + 1)
@@ -547,6 +560,10 @@ func open_ui(which: String) -> bool:
 			if not inspect.visible and _can_inspect():
 				inspect.open()
 			return inspect.visible
+		"character":
+			if not character.visible and _can_open_character():
+				character.open()
+			return character.visible
 	return false
 
 
@@ -924,6 +941,10 @@ func _live_action(event: InputEvent) -> bool:
 			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
 					captured, world.snapshot.player_pos, facing)
+	if act == "eat" and _in_main_loop():
+		var food := _held_consumable()
+		if food != null and item_actions.consume(food):
+			return true   # what a hand holds is eaten or drunk, no menu (else CDDA's eat menu, below)
 	if act == "":
 		return false
 	if _in_main_loop():
@@ -960,8 +981,7 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 		where += ", %d level%s %s" % [absi(d.z), "" if absi(d.z) == 1 else "s", "up" if d.z > 0 else "down"]
 	var lines := PackedStringArray(["look: %s, %s" % [r["what"], where]])
 	lines.append_array(look_ray.describe(sq))
-	look_panel.text = "
-".join(lines)
+	look_panel.text = "\n".join(lines)
 	_look_end = r["point"]
 	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
@@ -1132,6 +1152,16 @@ func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
 
+## What a hand holds that CDDA eats, drinks or takes, or holds such (a bottle of water), main hand first; null if
+## none (ItemActions.consumable).
+func _held_consumable() -> ItemRef:
+	for h: String in ["main", "off"]:
+		var it: Variant = hud_data.held.get(h)
+		if it is ItemRef and ItemActions.consumable(it, world.snapshot, world.tables):
+			return it
+	return null
+
+
 ## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
 func _held_liquid() -> Variant:
 	for h: String in ["main", "off"]:
@@ -1162,6 +1192,12 @@ func _use_tap() -> void:
 
 
 ## Tab opens the inspect view: first person or VR, in the main loop, no prompt, menu or held item in the way.
+## The character screen may open: a world is shown, no menu or CDDA prompt is up.
+func _can_open_character() -> bool:
+	return world.snapshot != null and main_menu == null and not request_ui.visible and not key_menu.visible \
+			and not inspect.visible
+
+
 func _can_inspect() -> bool:
 	return (_fp_active() or vr != null) and world.snapshot != null and main_menu == null and not request_ui.visible \
 			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
@@ -1185,7 +1221,10 @@ func _reach_square() -> Variant:
 func _on_door_wants(square: Vector3i, open: bool) -> void:
 	if live == null or world.snapshot == null or not _in_main_loop():
 		return
-	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
+	if live.can_act_at():   # CDDA takes exactly this square; one it refuses never falls back to its own pick
+		live.open_at(open, square, world.snapshot.player_pos)
+		return
+	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())   # older DLLs: answer "where?"
 	if act != "" and not live.queue_action(act):
 		grab.ask = {}
 
@@ -1266,6 +1305,7 @@ func _setup_hud() -> void:
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
+	hud_data.set_feed_hidden(hud_settings.feed_hidden)
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1281,6 +1321,11 @@ func _setup_hud() -> void:
 	hud_view = HudView.new()
 	hud_view.data = hud_data
 	layer.add_child(hud_view)
+	classic = ClassicView.new()
+	layer.add_child(classic)
+	character = CharacterView.new()
+	character.data = character_data
+	layer.add_child(character)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
@@ -1298,6 +1343,7 @@ func _setup_hud() -> void:
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void:
+		hud_data.set_feed_hidden(hud_settings.feed_hidden)
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
@@ -1489,13 +1535,18 @@ static func _keys(actions: Array) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible or inspect.visible:
-		return   # the inspect view takes Tab / Esc itself (InspectView._input)
+	if key_menu.visible or inspect.visible or character.visible:
+		return   # the inspect view and the character screen take their keys themselves (their _input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
 	if inspect.handle_key(event, _can_inspect()):
+		return
+	if character.handle_key(event, _can_open_character()):
+		return
+	if InputActions.pressed(event, &"classic_view"):
+		classic.toggle()
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return

@@ -312,6 +312,7 @@ static func _tinted_mesh(mesh: Mesh, src: Variant, factor: Color, materials: Dic
 			if not materials.has(mat):
 				var tm := mat.duplicate() as BaseMaterial3D
 				tm.albedo_color = (mat as BaseMaterial3D).albedo_color * factor
+				under_light(tm)
 				materials[mat] = tm
 			copy.set_surface_material(s, materials[mat])
 	var out := copy.get_mesh()
@@ -891,13 +892,26 @@ func _read(scene: Node, m: Model) -> String:
 	return ""
 
 
-## The file's `extras` (kept by the importer as metadata) go: cached models don't carry them.
+## The file's `extras` (kept by the importer as metadata) go: cached models don't carry them. See-through
+## materials are drawn under the light pass (under_light).
 static func _drop_extras(mesh: Mesh) -> void:
 	mesh.remove_meta("extras")
 	for s in mesh.get_surface_count():
 		var mat := mesh.surface_get_material(s)
 		if mat != null:
 			mat.remove_meta("extras")
+			under_light(mat)
+
+
+## A see-through material (alpha blended, drawn among transparent things) is drawn before the light pass
+## (WorldLighting.UNDER_PRIORITY), so it darkens with the world instead of glowing at night. True when it is one.
+static func under_light(mat: Material) -> bool:
+	var bm := mat as BaseMaterial3D
+	if bm == null or bm.transparency not in [BaseMaterial3D.TRANSPARENCY_ALPHA,
+			BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS]:
+		return false
+	bm.render_priority = WorldLighting.UNDER_PRIORITY
+	return true
 
 
 ## Whether a marker name is a mover: lid, door_N or drawer_N.

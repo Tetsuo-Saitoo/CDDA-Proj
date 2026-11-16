@@ -616,6 +616,60 @@ func _test_stairs(world: WorldView) -> void:
 	_check.call(fp.use_stair(s) and fp.z == up.z + 1, "stairs: the free-walk camera goes up them")
 	_check.call(not fp.use_stair({}), "stairs: no stair, no move")
 	fp.free()
+	_test_vr_stairs(world, up, mid, me, flat)
+
+
+## C2 in VR: the rig stands on the stair flight under the head and glides to it; the teleport arc lands on it.
+func _test_vr_stairs(world: WorldView, up: Vector3i, mid: float, me: Vector3i, flat: float) -> void:
+	var rig := VrRig.new(world, {"height": 0.0, "blink": false, "vignette": 1.0})
+	world.get_parent().add_child(rig)
+	rig.camera.position = Vector3(0, FirstPersonCamera.EYE_H, 0)
+	rig.go_to_square(up)
+	_check.call(is_equal_approx(rig.floor_y(), mid) and is_equal_approx(rig.global_position.y, mid)
+			and is_equal_approx(rig.camera.global_position.y, mid + FirstPersonCamera.EYE_H),
+			"vr stairs: on a flight the origin stands on it (%.2f m up)" % (mid - world.coords.ms_to_world(up).y))
+	rig.go_to_square(me)
+	_check.call(is_equal_approx(rig.global_position.y, flat), "vr stairs: back on a floor, the origin is on it")
+	rig.global_position.y = flat + 0.3
+	rig.follow_ground(0.05)
+	var y1 := rig.global_position.y
+	for i in 40:
+		rig.follow_ground(0.05)
+	_check.call(y1 < flat + 0.3 and y1 > flat + 0.01 and absf(rig.global_position.y - flat) < 0.001,
+			"vr stairs: a small gap to the ground glides shut (%.3f after one frame)" % (y1 - flat))
+	_check.call(not rig._gliding, "vr stairs: on the ground, no glide")
+	rig.global_position.y = flat + 2.0
+	var steps := 0
+	var most := 0.0
+	var before := rig.global_position.y
+	while absf(rig.global_position.y - flat) > 0.001 and steps < 200:
+		rig.follow_ground(1.0 / 90.0)
+		most = maxf(most, before - rig.global_position.y)
+		before = rig.global_position.y
+		steps += 1
+		if steps == 1:
+			rig.step(0.1, {})
+	_check.call(steps > 20 and steps < 200 and most < 0.2 and rig.vignette > 0.0,
+			"vr stairs: a big gap glides too, never jumps (%d frames at 90 fps, at most %.2f m a frame), the vignette shows"
+			% [steps, most])
+	rig.global_position.y = NAN
+	rig.follow_ground(0.01)
+	_check.call(is_equal_approx(rig.global_position.y, flat), "vr stairs: a broken height is put back on the ground")
+	rig.z = up.z   # on the flight's level, on its floor, then walked (or leant) onto it
+	rig.global_position.y = world.coords.ms_to_world(up).y
+	var head := rig.camera.global_position
+	var over := world.coords.ms_center_to_world(up)
+	rig.global_position += Vector3(over.x - head.x, 0.0, over.z - head.z)
+	for i in 120:
+		rig.follow_ground(1.0 / 90.0)
+	_check.call(absf(rig.global_position.y - mid) < 0.001, "vr stairs: walking onto a flight climbs it")
+	rig.global_position.y = world.coords.ms_to_world(up).y
+	rig.teleport_to(over)
+	_check.call(is_equal_approx(rig.global_position.y, mid), "vr stairs: a teleport lands on the flight with the jump")
+	var arc := rig.walk.teleport_arc(Vector3(over.x, mid + 1.2, over.z), Vector3.UP, up.z)
+	_check.call(arc["hit"] and is_equal_approx((arc["pos"] as Vector3).y, mid),
+			"vr stairs: the teleport arc lands on the flight, not under it")
+	rig.free()
 
 
 ## Stair blocks draw as one flight: every square of a 2x2 block rises the same way, split along its length.

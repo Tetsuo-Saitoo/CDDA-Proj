@@ -25,6 +25,7 @@ signal confirmed(hand: String, target: Dictionary)
 signal refused(hand: String, target: Dictionary, reason: String)
 
 const RAY_M := 4.0
+const SHELF_EPS := 0.02   # m: a shelf this much behind what LookRay meets still counts (drop_on_ray)
 const THROW_SPEED := 4.0    # m/s at release: a throw (VR's release doesn't use it yet; throw() does the throwing)
 const OUTLINE := Color(1.0, 0.85, 0.3)
 
@@ -100,7 +101,8 @@ func reach_square() -> Variant:
 	return world.snapshot.player_pos if world.snapshot != null else null
 
 
-## The nearest door leaf or item a ray meets within reach (the crosshair, a VR pointer); {} if none.
+## The nearest door leaf or item a ray meets within reach (the crosshair, a VR pointer); {} if none. An item inside
+## an open furniture part's box (a drawer) wins over the part.
 func find_on_ray(origin: Vector3, dir: Vector3, max_m := RAY_M) -> Dictionary:
 	var centre: Variant = reach_square()
 	if centre == null:
@@ -116,7 +118,9 @@ func find_on_ray(origin: Vector3, dir: Vector3, max_m := RAY_M) -> Dictionary:
 	var it := picker.on_ray(origin, dir, max_m)
 	if it != null and _usable(it):
 		var dist := origin.distance_to(it.point)
-		if best.is_empty() or dist < float(best["dist"]):
+		# an item inside an open drawer is behind the drawer's box, but it's what the ray is on
+		var g: Variant = best.get("node")
+		if best.is_empty() or dist < float(best["dist"]) or (is_instance_valid(g) and g is Grabbable and (g as Grabbable).holds(it.point)):
 			best = _item_target(it, dist)
 	return best
 
@@ -286,27 +290,37 @@ func proxy(id: String) -> Node3D:
 	return h.proxy if h != null and is_instance_valid(h.proxy) else null
 
 
-## What letting go of `held` does when the crosshair ray is (origin, dir): DropTarget.resolve's answer.
+## What letting go of `held` does when the crosshair ray is (origin, dir): DropTarget.resolve's answer. A ray coming
+## down onto a shown shelf puts it there (L8: WorldView.shelf_on_ray; a table top, an open drawer's floor), unless
+## LookRay meets something nearer on another square (a wall, other furniture; it sees furniture as solid boxes, so
+## the shelf's own square doesn't count).
 func drop_on_ray(origin: Vector3, dir: Vector3, held: ItemRef, max_m := RAY_M) -> Dictionary:
 	var hit := look_ray.cast(origin, dir, max_m, false)
 	var under := picker.on_ray(origin, dir, max_m)
 	if under != null and held != null and under.uid == held.uid:
 		under = null
-	return _drop(hit, under, held)
+	var shelf := world.shelf_on_ray(origin, dir, max_m)
+	var sp: Variant = shelf.get("point")
+	var hp: Variant = hit.get("point")
+	if sp is Vector3 and hit.get("hit") == true and hp is Vector3 and hit.get("square") is Vector3i \
+			and hit["square"] != shelf.get("square") and origin.distance_to(hp) + SHELF_EPS < origin.distance_to(sp):
+		shelf = {}
+	return _drop(hit, under, held, shelf)
 
 
-## The same for a hand at `p` (VR): what is under it and the item it touches.
+## The same for a hand at `p` (VR): what is under it and the item it touches; a hand over a shelf, in an open
+## drawer or cupboard too, puts it on that shelf (L8: WorldView.shelf_at).
 func drop_at(p: Vector3, held: ItemRef) -> Dictionary:
 	var hit := look_ray.cast(p + Vector3.UP * 0.05, Vector3.DOWN, 2.0, false)
 	var under := picker.near(p, 0.12)
 	if under != null and held != null and under.uid == held.uid:
 		under = null
-	return _drop(hit, under, held)
+	return _drop(hit, under, held, world.shelf_at(p))
 
 
 ## DropTarget's answer plus `point`: where the ray met something (the carried item can rest there), or null.
-func _drop(hit: Dictionary, under: ItemRef, held: ItemRef) -> Dictionary:
-	var d := DropTarget.resolve(world.coords, hit, under, held, world.tables, world.snapshot, picker.in_reach)
+func _drop(hit: Dictionary, under: ItemRef, held: ItemRef, shelf := {}) -> Dictionary:
+	var d := DropTarget.resolve(world.coords, hit, under, held, world.tables, world.snapshot, picker.in_reach, shelf)
 	d["point"] = under.point if under != null and d.get("kind") == "container" else hit.get("point")
 	return d
 
@@ -507,10 +521,11 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	var spot: Vector2 = drop.get("spot", Vector2(-1, -1))
 	var container: ItemRef = drop.get("container")
 	var pocket: int = drop.get("pocket", -1)
+	var shelf: int = drop.get("shelf", -1)
 	var second := func(c: ItemRef) -> bool:
 		if kind == "container":
 			return actions.put(c, container, pocket)
-		return actions.drop(c, square, spot)
+		return actions.drop(c, square, spot, shelf)
 	return _two_step(id, it, second, "put" if kind == "container" else "drop")
 
 

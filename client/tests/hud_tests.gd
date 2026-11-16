@@ -17,6 +17,62 @@ func run(check: Callable, tables: IdTables) -> void:
 	_test_move(tables)
 	_test_mood()
 	_test_mood_cue()
+	_test_feed_filter()
+
+
+## G1: the feed's filter. CDDA's message types fall in five groups; hidden groups leave the feed (also what is in
+## it already) and come back when shown again; the F1 menu's boxes set and save it; the file is hostile.
+func _test_feed_filter() -> void:
+	var h := HudData.new()
+	var ev := func(t: Variant, n: int) -> Dictionary: return {"kind": "message", "text": "m%d" % n, "type": t, "turn": n}
+	h.on_events([ev.call(0, 1), ev.call(3, 2), ev.call(4, 3), ev.call(2, 4), ev.call(99, 5), ev.call("x", 6)])
+	var fired := [0]
+	h.changed.connect(func(p: PackedStringArray) -> void: fired[0] += 1 if "messages" in p else 0)
+	h.set_feed_hidden(PackedStringArray(["info", "nope", "warning", "info"]))
+	var texts := func() -> Array: return h.messages.map(func(m: Dictionary) -> String: return m["text"])
+	var hid: Array = texts.call()
+	h.set_feed_hidden(PackedStringArray(["info", "warning"]))   # the same again: nothing to do
+	var same: int = fired[0]
+	h.set_feed_hidden(PackedStringArray())
+	_check.call(h.feed_hidden.is_empty() and hid == ["m1", "m4", "m5", "m6"] and texts.call().size() == 6 and same == 1
+			and fired[0] == 2 and HudData.message_group(2) == "bad" and HudData.message_group(-1) == "other"
+			and HudData.message_group(6) == "other",
+			"feed filter: warnings and info hidden and back, mixed counts as bad, unknown names and types ignored (%s)" % [hid])
+	var many: Array = []
+	for i in 200:
+		many.append(ev.call(4 if i % 2 == 0 else 0, 100 + i))
+	h.on_events(many)
+	h.set_feed_hidden(PackedStringArray(["good"]))
+	_check.call(h.messages.size() == HudData.MAX_MESSAGES and h._all_messages.size() == HudData.MAX_ALL_MESSAGES
+			and h.messages.back()["text"] == "m298" and h.messages.all(func(m: Dictionary) -> bool: return m["type"] == 4),
+			"feed filter: the feed stays capped, the kept unfiltered list too")
+	var path := preload("res://tests/test_dir.gd").path("hud_feed.cfg")
+	var hs := HudSettings.new()
+	var m := KeyMenu.new()
+	m.add_hud_settings(hs, path)
+	var shown_all: bool = m.feed_checks.size() == HudSettings.FEED_GROUPS.size() and m.feed_checks.values().all(
+			func(c: CheckBox) -> bool: return c.button_pressed)
+	(m.feed_checks["other"] as CheckBox).button_pressed = false
+	(m.feed_checks["good"] as CheckBox).button_pressed = false
+	(m.feed_checks["other"] as CheckBox).button_pressed = true
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(shown_all and hs.feed_hidden == PackedStringArray(["good"]) and back.feed_hidden == PackedStringArray(["good"])
+			and (m.feed_checks["warning"] as CheckBox).tooltip_text.contains("monster"),
+			"feed filter: every group shown by default; the F1 boxes hide and show groups and save them")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[feed]\nhide=[1, \"bad\", \"bad\", \"Object\", null, \"warning\"]\n")
+	f.close()
+	var odd := HudSettings.new()
+	odd.load_file(path)
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[feed]\nhide=\"good\"\n")
+	f.close()
+	var odd2 := HudSettings.new()
+	odd2.load_file(path)
+	_check.call(odd.feed_hidden == PackedStringArray(["bad", "warning"]) and odd2.feed_hidden.is_empty(),
+			"feed filter: only known group names in the file count, each once; a non-list hides nothing")
+	m.free()
 
 
 ## MoodCue: no tint while calm, off or unknown; a cold tint for low mood, a fainter warm one for high; it fades
@@ -328,10 +384,12 @@ func _test_view(tables: IdTables) -> void:
 	var under := v.warn.offset_top == 174.0 and v.warn.offset_bottom - v.warn.offset_top == HudView.WARN_LINES * 20
 	v.avoid(Rect2(10, 50, 100, 120))
 	var narrow := v.warn.offset_top == HudView.WARN_TOP
+	v.avoid(Rect2(10, 50, 900, 2000))   # taller than the view: the warnings stop at its bottom edge
+	var kept := v.warn.offset_top == 540.0 - v.warn.size.y
 	v.avoid(Rect2(10, 50, 900, 120))
 	v.avoid(Rect2())
-	_check.call(under and narrow and v.warn.offset_top == HudView.WARN_TOP,
-			"hud view: warnings move under the status lines they would cover, else stay under the compass")
+	_check.call(under and narrow and kept and v.warn.offset_top == HudView.WARN_TOP,
+			"hud view: warnings move under the status lines they would cover (no lower than the bottom), else stay under the compass")
 	v.data = null
 	_check.call(v.feed.text == "" and v.warn.text == "" and v.body_rows().is_empty(), "hud view: no data, nothing shown")
 	v.free()

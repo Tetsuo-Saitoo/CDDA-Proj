@@ -578,11 +578,19 @@ func ray_distance(origin: Vector3, dir: Vector3) -> float:
 	return maxf(t0, 0.0)
 
 
-## Distance from `p` (world) to the leaf's surface (0 inside).
+## Distance from `p` (world) to the leaf's surface (0 inside a door's leaf). A furniture part counts from its handle
+## once `p` is inside its box: a hand reaching into an open drawer takes what lies there, not the drawer.
 func distance_to(p: Vector3) -> float:
+	if holds(p):
+		return p.distance_to(handle_point())
 	var l := leaf.global_transform.affine_inverse() * p
 	var box := _box()
 	return (p - leaf.global_transform * l.clamp(box.position, box.end)).length()
+
+
+## `p` (world) lies inside this furniture part's box (an open drawer holds its items there); false for a door's leaf.
+func holds(p: Vector3) -> bool:
+	return mech != "" and _box().has_point(leaf.global_transform.affine_inverse() * p)
 
 
 ## The box ray_distance and distance_to use, in Leaf space: a door's fixed leaf, a part's size.

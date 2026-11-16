@@ -401,8 +401,8 @@ func _test_drawer(holder: Node3D, world: WorldView) -> void:
 	var front := at + Vector3(0, 0, 2)
 	_check.call(absf(g.ray_distance(front, Vector3.FORWARD) - 1.775) < 0.001
 			and g.ray_distance(front + Vector3(0.4, 0, 0), Vector3.FORWARD) == INF
-			and absf(g.distance_to(front) - 1.775) < 0.001 and g.distance_to(at) < 0.0001,
-			"parts: a ray hits the drawer and misses beside it; distance to it")
+			and absf(g.distance_to(front) - 1.775) < 0.001 and absf(g.distance_to(at) - 0.225) < 0.001,
+			"parts: a ray hits the drawer and misses beside it; distance to it (from inside it: to its handle)")
 	g.begin_hand(h0)
 	g.drag_hand(h0 + Vector3(0, 0, 0.2))
 	_check.call(absf(g.amount - 0.2) < 0.001 and _near(g.handle_point(), h0 + Vector3(0, 0, 0.2)),

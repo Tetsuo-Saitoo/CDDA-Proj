@@ -32,6 +32,11 @@ var hour: SpinBox
 var item_id: LineEdit
 var item_count: SpinBox
 var monster_id: LineEdit
+## The spawn pickers: what SpawnSearch finds for the text typed in item_id / monster_id (a name or an id), best
+## first; hidden while nothing matches. Item metadata: itype index; monster metadata: the mtype id.
+var item_pick: OptionButton
+var monster_pick: OptionButton
+var _searched := {"itype": "\n", "mtype": "\n"}   # the text each picker was last filled for
 ## Item ids to itype indices (the live id tables); main sets it.
 var tables: IdTables
 ## () -> Vector3i: the player's square (items spawn there). Main sets it.
@@ -359,25 +364,62 @@ func _build_range() -> void:
 	range_box.add_child(r3)
 	var r4 := HBoxContainer.new()
 	item_id = LineEdit.new()
-	item_id.placeholder_text = "item id, e.g. glock_19"
-	item_id.max_length = 64
+	item_id.placeholder_text = "item name or id, e.g. glock"
+	item_id.max_length = SpawnSearch.MAX_QUERY
 	item_id.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	item_id.text_changed.connect(func(_t: String) -> void: search("itype"))
+	item_pick = _pick()
 	item_count = SpinBox.new()
 	item_count.min_value = 1
 	item_count.max_value = RangeInfo.MAX_COUNT
 	item_count.value = 1
 	r4.add_child(item_id)
+	r4.add_child(item_pick)
 	r4.add_child(item_count)
 	r4.add_child(_button("Spawn at feet", spawn_item))
 	range_box.add_child(r4)
 	var r5 := HBoxContainer.new()
 	monster_id = LineEdit.new()
-	monster_id.placeholder_text = "monster id, e.g. mon_zombie"
-	monster_id.max_length = RangeInfo.MAX_MONSTER_ID
+	monster_id.placeholder_text = "monster name or id, e.g. zombie"
+	monster_id.max_length = SpawnSearch.MAX_QUERY
 	monster_id.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	monster_id.text_changed.connect(func(_t: String) -> void: search("mtype"))
+	monster_pick = _pick()
 	r5.add_child(monster_id)
+	r5.add_child(monster_pick)
 	r5.add_child(_button("Spawn ahead", spawn_monster))
 	range_box.add_child(r5)
+
+
+static func _pick() -> OptionButton:
+	var p := OptionButton.new()
+	p.visible = false
+	p.clip_text = true
+	p.custom_minimum_size.x = 240
+	p.fit_to_longest_item = false
+	p.focus_mode = Control.FOCUS_NONE
+	return p
+
+
+## Fills the item ("itype") or monster ("mtype") picker with what the typed text finds, the best picked; hidden
+## when nothing matches. Only when the text changed since the last fill, so a choice made in the picker stays.
+func search(table: String) -> void:
+	var field := item_id if table == "itype" else monster_id
+	var pick := item_pick if table == "itype" else monster_pick
+	var q := field.text.strip_edges()
+	var key := "%d:%d|%s" % [tables.get_instance_id() if tables != null else 0, tables.generation if tables != null else 0, q]
+	if _searched[table] == key:   # (new id tables fill it again: they may come after the typing)
+		return
+	_searched[table] = key
+	pick.clear()
+	for f: Dictionary in SpawnSearch.find(tables, table, q):
+		if table == "mtype" and not RangeInfo.monster_id_ok(f["id"]):
+			continue
+		pick.add_item(f["text"])
+		pick.set_item_metadata(pick.item_count - 1, f["index"] if table == "itype" else f["id"])
+	pick.visible = pick.item_count > 0
+	if pick.visible:
+		pick.select(0)
 
 
 func _button(text: String, f: Callable) -> Button:
@@ -452,23 +494,30 @@ func set_time() -> void:
 	_sent("Time %d:00" % h, backend.range_set_time(h * 60) if _has("range_set_time") else 0)
 
 
+## Spawns the picked item type (what the typed name or id finds; text set from code is searched here) at the feet.
 func spawn_item() -> void:
-	var id := item_id.text.strip_edges()
-	var t := tables.index_of("itype", id) if tables != null and not id.is_empty() else -1
-	if t < 1:
-		_say("No item type \"%s\" (use a CDDA id, e.g. glock_19)." % id.left(64), true)
+	search("itype")   # text set from code sends no text_changed
+	var typed := item_id.text.strip_edges()
+	var t: int = item_pick.get_item_metadata(item_pick.selected) if item_pick.selected >= 0 else -1
+	var d := tables.def_at("itype", t) if tables != null and t > 0 else null
+	if d == null:
+		_say("No item type \"%s\" (type a name or a CDDA id, e.g. glock)." % HudData.clean(typed, 64), true)
 		return
 	var sq: Variant = player_square.call() if player_square.is_valid() else null
 	if not sq is Vector3i or not _has("range_spawn_item"):
 		_say("Not sent: no running range game.", true)
 		return
-	_sent("Spawn %s" % id, backend.range_spawn_item(t, int(item_count.value), sq))
+	_sent("Spawn %s" % HudData.clean(d.id, 64), backend.range_spawn_item(t, int(item_count.value), sq))
 
 
+## Spawns the picked monster type ahead; with nothing found (no id tables, or a type they don't list) the typed
+## text goes as a CDDA id when it is one, and the bridge says whether it knows it.
 func spawn_monster() -> void:
-	var id := monster_id.text.strip_edges()
+	search("mtype")
+	var typed := monster_id.text.strip_edges()
+	var id: String = monster_pick.get_item_metadata(monster_pick.selected) if monster_pick.selected >= 0 else typed
 	if not RangeInfo.monster_id_ok(id):
-		_say("Monster ids are letters, digits, _ and - (e.g. mon_zombie).", true)
+		_say("No monster type \"%s\" (type a name or a CDDA id, e.g. zombie)." % HudData.clean(typed, 64), true)
 		return
 	var sq: Variant = ahead_square.call() if ahead_square.is_valid() else null
 	if not sq is Vector3i or not _has("range_spawn_monster"):
