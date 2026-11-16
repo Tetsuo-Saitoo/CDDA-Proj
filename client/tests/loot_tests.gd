@@ -25,6 +25,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_closed()
 	_test_mouse()
 	_test_vr()
+	_test_open_at()
+	_test_shelf_ops()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -133,10 +135,20 @@ func _test_mouse() -> void:
 	_hands.release("mouse", {})
 	_check.call(grabbed and dr.open_amount() > 0.99 and not _world.item_slot(rock).is_empty() and _hands.holding("mouse").is_empty(),
 			"loot: mouse: drag a drawer out; what it holds shows (%.2f open)" % dr.open_amount())
-	t = _hands.find_on_ray(eye, _mid(rock) - eye)
+	var at := _mid(rock)
+	t = _hands.find_on_ray(eye, at - eye)
 	_check.call(_uid(t) == rock, "loot: mouse: the crosshair on an item in an open drawer finds the item (%s)" % [t.get("kind")])
 	_check.call(_uid(t) == rock and _hands.take("mouse", t, "pack") and _carried(rock) and _handle(E, _it["rock"]) != rock,
 			"loot: mouse: E takes it out of the drawer into the pack")
+	# slice 2: the crosshair on the open drawer's floor puts it back on that drawer's shelf; shut, it's no shelf
+	var held := ItemRef.on_player(rock, _it["rock"], 0, -1, 0, P)
+	var d := _hands.drop_on_ray(eye, at - eye, held)
+	_check.call(d["kind"] == "surface" and d["square"] == E and int(d["shelf"]) >= 0,
+			"loot: mouse: the crosshair on the open drawer's floor puts it back on its shelf (%s)" % [d])
+	dr.set_amount(0.0)
+	d = _hands.drop_on_ray(eye, at - eye, held)
+	_check.call(int(d["shelf"]) == -1, "loot: mouse: a shut drawer is no shelf (%s)" % [d])
+	dr.set_amount(1.0)
 
 
 ## VR: a hand at the handle grabs the drawer and pulls it; a grip inside the open drawer takes the hammer into the
@@ -160,3 +172,116 @@ func _test_vr() -> void:
 	t = _hands.find_near(mid)
 	_check.call(_uid(t) == hammer and _hands.grab("vr_r", t, "main") and (_hands.holding("vr_r")["item"] as ItemRef).is_wielded()
 			and _handle(E, _it["hammer"]) != hammer, "loot: VR: a grip inside the open drawer takes the hammer into the hand")
+	# slice 2: let go inside the open drawer again: it goes back onto that drawer's floor, where the hand was
+	var spot_at := mid + out * -0.05
+	var held: ItemRef = _hands.holding("vr_r").get("item")
+	var d := _hands.drop_at(spot_at, held)
+	var shelf: int = d.get("shelf", -1)
+	_check.call(d.get("kind") == "surface" and d.get("square") == E and shelf >= 0,
+			"loot: VR: letting go in an open drawer puts it on that drawer's shelf (%s)" % [d])
+	_hands.set_hand("vr_r", Transform3D(Basis.IDENTITY, spot_at))
+	var op := _hands.release("vr_r", d)
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var back := _drawer_of(hammer)
+	var at := _mid(hammer)
+	_check.call(op == "drop" and _handle(E, _it["hammer"]) == hammer and sm.shelves.get(hammer, -1) == shelf
+			and back != null and back.id == dr.id and at.is_finite() and at.distance_to(spot_at) < 0.12,
+			"loot: VR: it's back in that drawer, drawn where the hand let go (%s, %.2f m off)" % [op, at.distance_to(spot_at)])
+	back.set_amount(0.0)
+	_check.call(_world.item_slot(hammer).is_empty(), "loot: VR: the drawer pushed shut hides it again")
+
+
+## An older DLL's CddaSim: no queue_action_at.
+class OldSim extends RefCounted:
+	func queue_action(_action: String) -> bool:
+		return true
+
+
+## Stands in for CddaSim with queue_action_at: keeps what reached it.
+class ActAtSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_action_at(action: String, square: Vector3i) -> bool:
+		sent.append([action, square])
+		return true
+
+
+## LiveSession.open_at (safes and every door, main.gd _on_door_wants): CDDA's open / close for exactly that square;
+## refused here, nothing sent, unless it is one of the eight squares around the player; an older DLL without
+## queue_action_at says so (can_act_at), so main.gd answers CDDA's "where?" prompt instead.
+func _test_open_at() -> void:
+	var ls := LiveSession.new()
+	var none := not ls.can_act_at() and not ls.open_at(true, E, P)
+	var sim := ActAtSim.new()
+	ls._sim = sim
+	var ok := ls.can_act_at() and ls.open_at(true, E, P) and ls.open_at(false, P + Vector3i(-1, 1, 0), P)
+	_check.call(none and ok and sim.sent == [["open", E], ["close", P + Vector3i(-1, 1, 0)]],
+			"loot: open_at: CDDA's open / close for exactly that square (%s)" % [sim.sent])
+	var far := Vector3i(1 << 30, 0, 0)
+	var bad: Array[bool] = [ls.open_at(true, P, P), ls.open_at(true, P + Vector3i(2, 0, 0), P),
+			ls.open_at(true, E + Vector3i(0, 0, 1), P), ls.open_at(true, far, far + Vector3i(-1, 0, 0))]
+	_check.call(not bad.has(true) and sim.sent.size() == 2,
+			"loot: open_at: the player's own square, two away, another level or out of range: nothing sent (%s)" % [bad])
+	ls._sim = OldSim.new()
+	_check.call(not ls.can_act_at() and not ls.open_at(true, E, P), "loot: open_at: an older DLL can't (main.gd asks the old way)")
+	ls._sim = null
+	ls.free()
+
+
+## Stands in for CddaSim's queue_item_action: keeps what reached it.
+class ItemSim extends RefCounted:
+	var sent: Array[Dictionary] = []
+
+	func queue_item_action(a: Dictionary) -> bool:
+		sent.append(a)
+		return true
+
+
+## Stands in for an ItemActions backend: keeps each drop_item call's arguments.
+class DropBackend extends RefCounted:
+	var calls: Array = []
+
+	func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+		calls.append([int(uid), int(type), pos, spot, shelf])
+		return true
+
+
+## L8 slice 2, the drop side of a shelf (the bridge's `shelf`, 0..15, kept with the spot): LiveSession sends it only
+## with a spot and refuses one out of range; ItemActions passes it on (no shelf without a spot); DropTarget takes a
+## well-formed shelf_at answer in reach (a container under the pointer still comes first).
+func _test_shelf_ops() -> void:
+	var ls := LiveSession.new()
+	var sim := ItemSim.new()
+	ls._sim = sim
+	var half := Vector2(0.5, 0.25)
+	var ok := ls.drop_item(5.0, 3.0, E, half, 2) and ls.drop_item(5.0, 3.0, E, Vector2(-1, -1), 2) \
+			and ls.place_item(5.0, 3.0, P, E, half, 90, false, 7, 15) and ls.spot_item(6.0, 4.0, P, half, 0, false, 8, 0) \
+			and ls.drop_item(5.0, 3.0, E, half)
+	var shelves := sim.sent.map(func(a: Dictionary) -> int: return a.get("shelf", -1))
+	_check.call(ok and shelves == [2, -1, 15, 0, -1], "loot: shelf: LiveSession sends it only with a spot (%s)" % [shelves])
+	var n := sim.sent.size()
+	var bad: Array[bool] = [ls.drop_item(5.0, 3.0, E, half, 16), ls.drop_item(5.0, 3.0, E, half, -2),
+			ls.place_item(5.0, 3.0, P, E, half, 0, false, 1, 16), ls.spot_item(5.0, 3.0, P, half, 0, false, 1, -5)]
+	_check.call(not bad.has(true) and sim.sent.size() == n, "loot: shelf: one outside 0..15 is refused, nothing sent (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+	var acts := ItemActions.new()
+	var be := DropBackend.new()
+	acts.backend = be
+	var item := func(u: int) -> ItemRef: return ItemRef.on_player(u, _it["rock"], 0, -1, 0, P)
+	ok = acts.drop(item.call(21), E, half, 3) and acts.drop(item.call(22), E, Vector2(-1, -1), 3) \
+			and not acts.drop(item.call(23), E, half, ItemActions.MAX_SHELF + 1)
+	_check.call(ok and be.calls.size() == 2 and be.calls[0][4] == 3 and be.calls[1][4] == -1,
+			"loot: shelf: ItemActions.drop passes it on, never without a spot (%s)" % [be.calls])
+	acts.free()
+	var reach := func(sq: Vector3i) -> bool: return GrabController.adjacent(sq - P) or sq == P
+	var held: ItemRef = item.call(24)
+	var shelf := {"square": E, "shelf": 1, "spot": Vector2(0.3, 1.4)}
+	var d := DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, shelf)
+	_check.call(d["kind"] == "surface" and d["square"] == E and d["shelf"] == 1 and d["spot"] == Vector2(0.3, DropTarget.SPOT_MAX),
+			"loot: shelf: DropTarget puts it on the shelf it's over, the spot clamped (%s)" % [d])
+	var odd: Array = [{"square": E, "shelf": 16, "spot": half}, {"square": E, "shelf": 1.0, "spot": half},
+			{"square": E, "shelf": 1, "spot": Vector2(NAN, 0)}, {"square": P + Vector3i(3, 0, 0), "shelf": 1, "spot": half}]
+	var none := odd.all(func(o: Dictionary) -> bool:
+		return DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, o)["shelf"] == -1)
+	_check.call(none, "loot: shelf: a malformed or out-of-reach shelf counts as none")

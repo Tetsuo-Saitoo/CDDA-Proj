@@ -181,7 +181,8 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 		if _same(uid, rest):
 			_drop(uid)
 			return false
-		return _send(uid, "spot", [float(uid), float(type), cdda, rest["spot"], rest["yaw"], rest["side"]], cdda, rest, now)
+		return _send(uid, "spot", [float(uid), float(type), cdda, rest["spot"], rest["yaw"], rest["side"]], cdda, rest, now,
+				int(rest.get("shelf", -1)))
 	var to := Vector3i(cdda.x + clampi(sq.x - cdda.x, -1, 1), cdda.y + clampi(sq.y - cdda.y, -1, 1), cdda.z)
 	if sq.z != cdda.z:   # it fell to (or lies on) another level: CDDA never moves an item down or up for free
 		_put_back(uid)
@@ -194,7 +195,7 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 	var last := to == sq   # the last step carries the pose; a step on the way has none
 	var spot: Vector2 = rest["spot"] if last else Vector2(-1, -1)
 	var args := [float(uid), float(type), cdda, to, spot, rest["yaw"] if last else 0, rest["side"] if last else false]
-	if not _send(uid, "place", args, to, rest if last else {}, now):
+	if not _send(uid, "place", args, to, rest if last else {}, now, int(rest.get("shelf", -1)) if last else -1):
 		return false
 	_placed_ms[uid] = now
 	_placed_turn[uid] = _turn()
@@ -202,13 +203,14 @@ func _step(uid: int, c: Vector3i, now: int) -> bool:
 
 
 ## Sends one op with a new tag. False when the backend can't or won't take it (a try used; too many: put back).
-func _send(uid: int, op: String, args: Array, to: Vector3i, pose: Dictionary, now: int) -> bool:
+## `shelf` (L8, 0..15): the furniture shelf it rests on, sent after the tag; -1 none (not sent).
+func _send(uid: int, op: String, args: Array, to: Vector3i, pose: Dictionary, now: int, shelf := -1) -> bool:
 	var method := StringName(op + "_item")
 	if backend == null or not is_instance_valid(backend) or not backend.has_method(method):
 		_drop(uid)   # no such op (the mock, an older bridge): nothing is told, the body stays as it lies
 		return false
 	_tag = _tag % MAX_TAG + 1
-	var ok: Variant = backend.callv(method, args + [_tag])
+	var ok: Variant = backend.callv(method, args + ([_tag, shelf] if shelf >= 0 else [_tag]))
 	if not (ok is bool and ok):
 		_retry_ms[uid] = now + RETRY_MS
 		_tried(uid)
@@ -232,7 +234,7 @@ func _done(f: Dictionary) -> void:
 	if not pose.is_empty():
 		if _told.size() >= MAX_TOLD and not _told.has(uid):
 			_told.clear()
-		_told[uid] = [f["to"], pose["spot"], pose["yaw"], pose["side"]]
+		_told[uid] = [f["to"], pose["spot"], pose["yaw"], pose["side"], int(pose.get("shelf", -1))]
 	if f["op"] == "spot":
 		_drop(uid)
 	else:
@@ -281,7 +283,8 @@ func _same(uid: int, rest: Dictionary) -> bool:
 	var t: Variant = _told.get(uid)
 	if t is Array:
 		var d := absi(wrapi(int(rest["yaw"]) - int(t[2]) + 180, 0, 360) - 180)
-		return t[0] == rest["square"] and spot.distance_to(t[1]) < SPOT_EPS and d <= YAW_EPS and t[3] == rest["side"]
+		return t[0] == rest["square"] and spot.distance_to(t[1]) < SPOT_EPS and d <= YAW_EPS and t[3] == rest["side"] \
+				and (t as Array).size() > 4 and t[4] == int(rest.get("shelf", -1))
 	return false
 
 
