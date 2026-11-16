@@ -493,6 +493,8 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
+	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	add_child(vr)

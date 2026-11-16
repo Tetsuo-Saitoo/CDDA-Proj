@@ -7,9 +7,10 @@ extends Node3D
 ## - Fire: the main trigger (before stairs and the pull) fires from the Muzzle pose (AimController.fire_from). With no
 ##   fire request showing, CDDA's own `fire` action goes out once and the shot follows when its request shows (within
 ##   FIRE_WAIT_S); a fire request the client can't fly is answered with plain FIRE at CDDA's cursor. `live_aim` gives
-##   the muzzle pose for each projectile of a burst. A buzz per shot, a stronger one for a kill; the model kicks
-##   (visual only). A trigger pull CDDA fired no round for (HitFeedback.misfired): the kick stops and a light buzz;
-##   the click itself is WeaponViewmodel's (it stays in the tree in VR).
+##   the muzzle pose for each projectile of a burst. A buzz per shot, a thump when it hits (HitFeedback.shot_confirmed),
+##   a strong one for a kill; the model kicks (visual only). A trigger pull CDDA fired no round for
+##   (HitFeedback.misfired): the kick stops and a light buzz; the click itself is WeaponViewmodel's (it stays in the
+##   tree in VR).
 ## - Magazine out: the off grip within MAG_OUT_M of MagWell while a magazine is inside unloads it into CDDA's off hand
 ##   (ItemActions.unload "off"); its copy rides in the off hand meanwhile, then the hand holds the magazine
 ##   (Hands.adopt; the grip let go before that: let go like any held item). Refused: it snaps back, CDDA's reason by
@@ -41,6 +42,8 @@ const SHOT_AMP := 0.6
 const SHOT_S := 0.05
 const KILL_AMP := 1.0
 const KILL_S := 0.15
+const HIT_AMP := 0.4         # a shot of the player's that hit (HitFeedback.shot_confirmed) ...
+const HIT_S := 0.08          # ... a softer, longer thump than the shot's
 const CLICK_AMP := 0.25       # a misfire's dry click
 const CLICK_S := 0.02
 const MAX_FAULTS := 16        # faults looked at (Snapshot's cap)
@@ -61,8 +64,8 @@ var aim: AimController:
 		if is_instance_valid(aim):
 			if aim.fired.is_connected(_on_fired):
 				aim.fired.disconnect(_on_fired)
-			if aim.hits != null and aim.hits.hit_confirmed.is_connected(_on_hit):
-				aim.hits.hit_confirmed.disconnect(_on_hit)
+			if aim.hits != null and aim.hits.shot_confirmed.is_connected(_on_hit):
+				aim.hits.shot_confirmed.disconnect(_on_hit)
 			if aim.hits != null and aim.hits.misfired.is_connected(_on_misfired):
 				aim.hits.misfired.disconnect(_on_misfired)
 			if aim.live_aim == Callable(live_pose):
@@ -71,7 +74,7 @@ var aim: AimController:
 		if a != null:
 			a.fired.connect(_on_fired)
 			if a.hits != null:
-				a.hits.hit_confirmed.connect(_on_hit)
+				a.hits.shot_confirmed.connect(_on_hit)
 				a.hits.misfired.connect(_on_misfired)
 			a.live_aim = live_pose
 ## The one-item unload / reload (main.gd's ItemActions).
@@ -101,6 +104,7 @@ var shown := false            # the model shows in the main hand
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
 var misfires := 0             # misfire clicks felt (tests)
+var hits := 0                 # shot hits felt (tests)
 var racks := 0                # full racks (tests)
 var _snap: Snapshot           # the snapshot last looked at, and its seq
 var _seq := -1
@@ -708,9 +712,13 @@ func _on_misfired(_jammed: bool) -> void:
 	rig.feel(rig.main_ctrl(), CLICK_AMP, CLICK_S)
 
 
+## The player's shot hit (HitFeedback.shot_confirmed: CDDA's damage, the player's projectile): while the gun shows
+## in the main hand, a thump there, a strong one for a kill. A melee hit never comes here.
 func _on_hit(_uid: int, _part: String, _amount: int, killed: bool) -> void:
-	if killed and shown and rig != null:
-		rig.feel(rig.main_ctrl(), KILL_AMP, KILL_S)
+	if not shown or rig == null:
+		return
+	hits += 1
+	rig.feel(rig.main_ctrl(), KILL_AMP if killed else HIT_AMP, KILL_S if killed else HIT_S)
 
 
 func _index(c: XRController3D) -> int:
