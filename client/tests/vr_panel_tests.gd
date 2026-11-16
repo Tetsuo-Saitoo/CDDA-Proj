@@ -381,7 +381,8 @@ func _test_report() -> void:
 	var dir := "user://vr_report_test"
 	var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
 	var path := VrReport.save(t, img, dir)
-	var saved := not path.is_empty() and FileAccess.get_file_as_string(path) == t 			and FileAccess.file_exists(path.get_basename() + ".png")
+	var saved := not path.is_empty() and FileAccess.get_file_as_string(path) == t \
+			and FileAccess.file_exists(path.get_basename() + ".png")
 	for k in VrReport.MAX_KEPT + 2:
 		VrReport.save("x", null, dir)
 	var files := DirAccess.get_files_at(dir)

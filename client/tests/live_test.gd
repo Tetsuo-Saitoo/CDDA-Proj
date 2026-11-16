@@ -81,7 +81,8 @@ func _run() -> void:
 			take.merged({"op": "put", "container": 6, "container_type": 3, "pocket": 256}, true),
 			take.merged({"op": "drop", "spot": Vector2(1.5, 0)}, true),
 			take.merged({"op": "drop", "spot": Vector2(NAN, 0)}, true)]
-	# place, spot and hold (item physics): `to` only and always with place, a pose only with a spot, a hand for hold.
+	# place, spot and hold (item physics): `to` only and always with place, a pose or shelf only with a spot, a hand
+	# for hold.
 	var place := {"op": "place", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "to": Vector3i(2, 2, 0)}
 	var spot := {"op": "spot", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "spot": Vector2(0.5, 0.5)}
 	var hold := {"op": "hold", "item": 5, "type": 3, "hand": "main"}
@@ -94,9 +95,18 @@ func _run() -> void:
 			spot.merged({"side": 1}, true), take.merged({"spot": Vector2(0.5, 0.5), "yaw": 90}, true),
 			{"op": "hold", "item": 5, "type": 3}, hold.merged({"hand": "pack"}, true),
 			hold.merged({"hand": "tail"}, true), hold.merged({"tag": 0}, true), hold.merged({"tag": 1 << 31}, true),
-			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true)])
+			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true),
+			place.merged({"shelf": 2}, true), spot.merged({"shelf": 16}, true), spot.merged({"shelf": -1}, true),
+			spot.merged({"shelf": 1.0}, true), take.merged({"spot": Vector2(0.5, 0.5), "shelf": 2}, true),
+			{"op": "consume", "item": 0, "type": 3}, {"op": "consume", "item": 5},
+			{"op": "consume", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)},
+			{"op": "consume", "item": 5, "type": 3, "pos": Vector3(1, 2, 0)},
+			take.merged({"container": 7}, true), take.merged({"container_type": 3}, true),
+			take.merged({"container": 7, "container_type": 0}, true),
+			take.merged({"container": 0, "container_type": 3}, true)])
 	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
 			"rejects malformed item actions")
+	_check(_sim.query_character() == 0, "query_character: nothing while no game runs")
 	_check_listing()
 
 	var why: String = _sim.start(data_dir, user_dir, WORLD)
@@ -153,6 +163,20 @@ func _run() -> void:
 	_check(not _sim.queue_action_at("", Vector3i.ZERO) and not _sim.queue_action_at("open", Vector3i(1 << 30, 0, 0))
 			and not _sim.queue_action_at("open", Vector3i(0, 0, 1000)) and _sim.get_queued_actions() == queued_before,
 			"queue_action_at: malformed calls refused")
+	# G4: the character sheet, answered by the main loop while it waits.
+	var cq: int = _sim.query_character()
+	var sheet: Variant = null
+	var cq_until := Time.get_ticks_msec() + TURN_TIMEOUT_MS
+	while cq > 0 and Time.get_ticks_msec() < cq_until:
+		var cq_text: String = _sim.take_query_result(cq)
+		if not cq_text.is_empty():
+			sheet = JSON.parse_string(cq_text)
+			break
+		await create_timer(0.05).timeout
+	_check(cq > 0 and sheet is Dictionary and sheet.get("ok") == true and int(sheet.get("id", 0)) == cq
+			and sheet.get("kind") == "character" and (sheet.get("stats", []) as Array).size() == 4
+			and (sheet.get("skills", []) as Array).size() > 0,
+			"query_character: the sheet arrives (query %d)" % cq)
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 

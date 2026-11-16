@@ -55,6 +55,8 @@ const ACTIONS := [
 	[&"roofs_toggle", "View", "roofs on / off", ["Y"]],
 	[&"frame_player", "View", "back to the player", ["Home"]],
 	[&"reload", "View", "reload the snapshot (mock)", ["F9"]],
+	[&"classic_view", "View", "CDDA's classic view of the map (debug overlay)", ["F3"]],
+	[&"character", "View", "character screen: stats, body, needs, mood, skills, traits (again or Esc: close)", ["P"]],
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike, left (off) hand", ["1"]],
 	[&"hand_main", "Act", "strike, right (main) hand", ["2"]],

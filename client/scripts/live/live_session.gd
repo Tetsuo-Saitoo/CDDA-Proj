@@ -21,6 +21,9 @@ signal cheats_changed(cheats: Dictionary)
 ## A recipe query (match_recipes) came back: RecipeMatches.parse's result for that container (`ok` false when the
 ## sim refused it: out of reach, not found, ...).
 signal recipes_matched(container_uid: int, result: Dictionary)
+## G4: a character query (query_character) came back: CharacterData.parse_result's Dictionary, still game data
+## (`ok` false: {error}; CharacterData.set_sheet reads it).
+signal character_sheet(sheet: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
@@ -56,6 +59,9 @@ var _cheats := {}
 ## Recipe queries: query id -> [container uid, msec asked]; results kept per container uid (the last one).
 var _queries := {}
 var _recipe_results := {}
+## The character query waiting for its result (0 none) and when it was asked (msec).
+var _char_query := 0
+var _char_asked := 0
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
 const MAX_KEPT_RESULTS := 32
@@ -477,6 +483,43 @@ func match_recipes(container: ItemRef, avatar_square := Vector3i.ZERO) -> int:
 	return id
 
 
+## G4: the character sheet (bridge query_character; read-only, the sim answers at its next request). Returns the
+## query id, 0 when refused (no game, an older DLL, one still waiting: the bridge takes one at a time).
+## character_sheet follows. A query unanswered for QUERY_TIMEOUT_MS may be replaced if the bridge takes a new one.
+func query_character() -> int:
+	if not _can("query_character") or (_char_query > 0 and Time.get_ticks_msec() - _char_asked < QUERY_TIMEOUT_MS):
+		return 0
+	var v: Variant = _sim.query_character()
+	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
+	if id < 1 or id > CharacterData.MAX_QUERY_ID:
+		return 0
+	_char_query = id
+	_char_asked = Time.get_ticks_msec()
+	return id
+
+
+func character_pending() -> bool:
+	return _char_query > 0
+
+
+func _poll_character() -> void:
+	if _char_query < 1:
+		return
+	if state != "running" or not _sim.has_method("take_query_result"):
+		_char_query = 0
+		return
+	var text: Variant = _sim.take_query_result(_char_query)
+	if not text is String or (text as String).is_empty():
+		return
+	var id := _char_query
+	_char_query = 0
+	var d := CharacterData.parse_result(text, id)
+	if d.is_empty():
+		push_warning("character query %d: unreadable result" % id)
+		return
+	character_sheet.emit(d)
+
+
 ## The last recipe result for container `uid` (as recipes_matched gave it), {} for none.
 func recipe_matches(uid: int) -> Dictionary:
 	return _recipe_results.get(uid, {})
@@ -514,6 +557,7 @@ func _make_sim() -> bool:
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
+	_char_query = 0
 	_push_cheats_allowed()
 	return true
 
@@ -535,6 +579,13 @@ func queue_action(action: String) -> bool:
 	return _sim != null and _sim.queue_action(action)
 
 
+## A main-loop action for one square (CddaSim.queue_action_at, contracts/bridge_api.md): `square` is absolute (map
+## squares, as the snapshot's positions). False when the bridge refuses it (out of range, a reserved action) or this
+## DLL has no queue_action_at; an action CDDA doesn't allow at that square isn't a false but a message event.
+func queue_action_at(action: String, square: Vector3i) -> bool:
+	return _sim != null and _sim.has_method("queue_action_at") and _sim.queue_action_at(action, square)
+
+
 ## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
 ## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
 ## Take from square `pos` into hand "pack", "main" or "off".
@@ -552,10 +603,15 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 
 
 ## Drop a carried item on square `pos`; `spot` (each 0..1 across the square) places it there, (-1, -1) none.
-func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1)) -> bool:
+## `shelf` (L8: 0..ItemActions.MAX_SHELF, -1 none) goes only with a spot; outside that range: false, nothing sent.
+func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+	if shelf < -1 or shelf > ItemActions.MAX_SHELF:
+		return false
 	var a := {"op": "drop", "item": int(uid), "type": int(type), "pos": pos}
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		a["spot"] = spot
+		if shelf >= 0:
+			a["shelf"] = shelf
 	return _sim != null and _sim.queue_item_action(a)
 
 
@@ -578,12 +634,17 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 
 
 ## Eat, drink or take carried (or held) `uid` with CDDA's consume rules and move costs, no menu: a container's
-## contents. CDDA's refusals come as messages. False when refused here (nothing sent): no game, a bad handle, or a
-## bridge without the op (it refuses an unknown op), so callers can fall back to CDDA's eat menu.
-func consume_item(uid: float, type: float) -> bool:
-	if _sim == null or not handle_ok(uid, type):
+## contents. `tag` 1..MAX_ITEM_TAG (0: none) comes back in its `item_result` event (done once CDDA's activity has
+## started; refused with CDDA's text, or "" when its message said why). False when refused here (nothing sent): no
+## game, a bad handle or tag, or a bridge without the op (it refuses an unknown op), so callers can fall back to
+## CDDA's eat menu.
+func consume_item(uid: float, type: float, tag := 0) -> bool:
+	if _sim == null or not handle_ok(uid, type) or tag < 0 or tag > MAX_ITEM_TAG:
 		return false
-	return bool(_sim.queue_item_action({"op": "consume", "item": int(uid), "type": int(type)}))
+	var a := {"op": "consume", "item": int(uid), "type": int(type)}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
 
 
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
@@ -622,16 +683,34 @@ func pour_into(uid: float, type: float, container: float, container_type: float,
 			"container": int(container), "container_type": int(container_type), "pocket": pocket})
 
 
+## L8: CDDA's own open (or close) of exactly the door, drawer or lid's furniture on `square`, one of the eight
+## squares around `player` on its level (queue_action_at: CDDA never takes another square it would pick by itself;
+## one it doesn't allow is CDDA's message, "There is nothing that can be opened nearby."). False when refused here
+## (no game, a bad square, not next to the player) or when this DLL has no queue_action_at (see can_act_at).
+func open_at(open: bool, square: Vector3i, player: Vector3i) -> bool:
+	if not can_act_at() or not ItemActions.ok_square(square) or not ItemActions.ok_square(player) \
+			or not GrabController.adjacent(square - player):
+		return false
+	return queue_action_at("open" if open else "close", square)
+
+
+## The bridge takes actions for one square (CddaSim.queue_action_at; older DLLs don't).
+func can_act_at() -> bool:
+	return _sim != null and _sim.has_method("queue_action_at")
+
+
 ## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
 ## square without a floor makes CDDA drop it). `spot` (each 0..1 across the square, clamped) with `yaw` (whole
 ## degrees 0..359, counter-clockwise from above, 0 = south) and `side` (lying on its side) is the pose it takes there;
-## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). CDDA answers with an `item_result` event
+## `spot` exactly (-1, -1) sends none (CDDA's own spot; a stored pose is cleared). `shelf` (L8: the furniture shelf
+## it lies on, 0..ItemActions.MAX_SHELF, -1 none) goes only with a spot. CDDA answers with an `item_result` event
 ## whose detail is `tag` (1..MAX_ITEM_TAG). False when refused here (nothing sent): no game, a bad handle, square,
-## spot, yaw or tag.
+## spot, yaw, tag or shelf.
 func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool,
-		tag: int) -> bool:
+		tag: int, shelf := -1) -> bool:
 	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not ItemActions.ok_square(to) or to.z != pos.z \
-			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite():
+			or maxi(absi(to.x - pos.x), absi(to.y - pos.y)) != 1 or not spot.is_finite() or shelf < -1 \
+			or shelf > ItemActions.MAX_SHELF:
 		return false
 	var a := {"op": "place", "item": int(uid), "type": int(type), "pos": pos, "to": to, "tag": tag}
 	if spot != Vector2(-1, -1):
@@ -640,17 +719,23 @@ func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vect
 		a["spot"] = _clamp_spot(spot)
 		a["yaw"] = yaw
 		a["side"] = side
+		if shelf >= 0:
+			a["shelf"] = shelf
 	return _sim.queue_item_action(a)
 
 
-## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's). False when refused
-## here (nothing sent), as place_item, or without a spot.
-func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+## E2 item physics: item `uid` stays on square `pos` and takes this pose there (as place_item's, `shelf` too). False
+## when refused here (nothing sent), as place_item, or without a spot.
+func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int,
+		shelf := -1) -> bool:
 	if _sim == null or not _item_op_ok(uid, type, pos, yaw, tag) or not spot.is_finite() or spot.x < 0.0 \
-			or spot.y < 0.0:
+			or spot.y < 0.0 or shelf < -1 or shelf > ItemActions.MAX_SHELF:
 		return false
-	return _sim.queue_item_action({"op": "spot", "item": int(uid), "type": int(type), "pos": pos,
-			"spot": _clamp_spot(spot), "yaw": yaw, "side": side, "tag": tag})
+	var a := {"op": "spot", "item": int(uid), "type": int(type), "pos": pos, "spot": _clamp_spot(spot), "yaw": yaw,
+			"side": side, "tag": tag}
+	if shelf >= 0:
+		a["shelf"] = shelf
+	return _sim.queue_item_action(a)
 
 
 ## A snapshot item handle (handle_ok), a square snapshots allow, yaw 0..359, tag 1..MAX_ITEM_TAG.
@@ -710,6 +795,7 @@ func _poll(delta: float) -> void:
 			held_changed.emit(held)
 	_poll_cheats()
 	_poll_queries()
+	_poll_character()
 	_poll_range(delta)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():

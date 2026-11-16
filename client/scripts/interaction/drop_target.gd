@@ -18,12 +18,16 @@ const SPOT_MAX := 0.999
 ## `hit`: a LookRay.cast() result; `under`: the item under the pointer or hand (null for none); `held`: what is
 ## let go; `in_reach(square) -> bool`. Returns {kind: "container" / "burner" / "surface" / "none", square,
 ## spot (Vector2 each 0..0.999 across the square, x east, y south; -1 none), container (ItemRef or null),
-## heat (Snapshot.heat_at of a burner square: source, tool, fire, charges, lit; {} none or unknown)}.
+## heat (Snapshot.heat_at of a burner square: source, tool, fire, charges, lit; {} none or unknown), shelf (L8:
+## the furniture shelf it goes on, 0..ItemActions.MAX_SHELF, -1 none)}.
 ## A burner is a square the snapshot says heats (a fire on the floor too, lit or not), else furniture in
-## HEAT_SOURCES.
+## HEAT_SOURCES. `shelf`: the caller's WorldView.shelf_at / shelf_on_ray answer ({square, shelf, spot}, {} none)
+## when it is what the pointer or hand is over (a shelf in an open cupboard, a drawer's floor): the item goes on
+## it, at its spot, unless a container under the pointer comes first; a malformed one counts as none.
 static func resolve(coords: CddaCoords, hit: Dictionary, under: ItemRef, held: ItemRef, tables: IdTables,
-		snap: Snapshot, in_reach: Callable) -> Dictionary:
-	var out := {"kind": "none", "square": Vector3i.ZERO, "spot": Vector2(-1, -1), "container": null, "heat": {}}
+		snap: Snapshot, in_reach: Callable, shelf := {}) -> Dictionary:
+	var out := {"kind": "none", "square": Vector3i.ZERO, "spot": Vector2(-1, -1), "container": null, "heat": {},
+			"shelf": -1}
 	if held == null:
 		return out
 	if under != null and under.uid > 0 and under.uid != held.uid and MockItems.is_container(under.type, tables) \
@@ -31,6 +35,13 @@ static func resolve(coords: CddaCoords, hit: Dictionary, under: ItemRef, held: I
 		out["kind"] = "container"
 		out["square"] = under.square
 		out["container"] = under
+		return out
+	if _shelf_ok(shelf) and _reach(in_reach, shelf["square"]):
+		var s: Vector2 = shelf["spot"]
+		out["kind"] = "surface"
+		out["square"] = shelf["square"]
+		out["spot"] = Vector2(clampf(s.x, 0.0, SPOT_MAX), clampf(s.y, 0.0, SPOT_MAX))
+		out["shelf"] = shelf["shelf"]
 		return out
 	var h: Variant = hit.get("hit")
 	var sq: Variant = hit.get("square")
@@ -70,6 +81,14 @@ static func furniture_id(p: Vector3i, snap: Snapshot, tables: IdTables) -> Strin
 			return d.id
 	var n: Variant = snap.furn_names.get(f, "")
 	return n if n is String else ""
+
+
+## A shelf_at / shelf_on_ray answer DropTarget takes: a square, a whole shelf 0..MAX_SHELF and a finite spot.
+static func _shelf_ok(s: Dictionary) -> bool:
+	var sh: Variant = s.get("shelf")
+	var sp: Variant = s.get("spot")
+	return s.get("square") is Vector3i and ItemActions.ok_square(s["square"]) and sh is int and (sh as int) >= 0 \
+			and (sh as int) <= ItemActions.MAX_SHELF and sp is Vector2 and (sp as Vector2).is_finite()
 
 
 ## Where `point` lies across square `sq`, each 0..SPOT_MAX (x east = +X, y south = +Z).

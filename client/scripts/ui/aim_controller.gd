@@ -52,6 +52,7 @@ const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's,
 const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon strikes 2 squares off)
 const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
 const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
+const AT_ACTION := "fp3d_attack_main_aim_at"   # the main hand's aimed strike at a square off the 8 ways
 const CALL_FAMILY := {"down": 2, "stun": 3, "disarm": 4}   # a swing answer's `action` -> the technique family
 const CALL_KEEP_MS := 5000        # a called technique's hit event counts as called this long after the answer
 const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
@@ -323,7 +324,8 @@ func melee_segment(a: Vector3, b: Vector3) -> Dictionary:
 ## The aimed hand action ("fp3d_attack_<hand>_aim_<DIR>") for a strike by hand along a -> b (melee_segment) from
 ## the player's square `me`; "" when `hand` isn't "main" or "off" or the segment meets no creature at most
 ## MELEE_SQUARES off along one of the 8 ways on this level (melee_aim cleared): a hand that touches nothing
-## strikes nothing.
+## strikes nothing. The main hand at a creature off the 8 ways (a knight's move): AT_ACTION, its square in
+## strike_square (the fork checks the weapon's reach).
 func strike_segment(hand: String, a: Vector3, b: Vector3, me: Vector3i) -> String:
 	melee_aim = {}
 	if hand != "main" and hand != "off":
@@ -333,6 +335,8 @@ func strike_segment(hand: String, a: Vector3, b: Vector3, me: Vector3i) -> Strin
 		return ""
 	var dir := strike_dir(me, aim["square"])
 	if dir == "":
+		if hand == "main" and strike_off_way(me, aim["square"]):
+			return AT_ACTION
 		melee_aim = {}
 		return ""
 	return "fp3d_attack_%s_aim_%s" % [hand, dir]
@@ -373,8 +377,8 @@ static func technique_call(zone: String) -> String:
 
 ## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
 ## ("fp3d_attack_<hand>_aim_<DIR>") at the creature under the crosshair through screen point `at` of `cam` when
-## it is at most MELEE_SQUARES off along one of the 8 ways on this level; else a plain strike the way you face
-## (`facing`, a direction name such as "LEFT").
+## it is at most MELEE_SQUARES off along one of the 8 ways on this level (the main hand off the 8 ways: AT_ACTION,
+## as strike_segment); else a plain strike the way you face (`facing`, a direction name such as "LEFT").
 func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me: Vector3i, facing: String) -> String:
 	var plain := "fp3d_attack_%s_%s" % [hand, facing]
 	melee_aim = {}
@@ -386,9 +390,28 @@ func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me:
 		return plain
 	var dir := strike_dir(me, aim["square"])
 	if dir == "":
+		if hand == "main" and strike_off_way(me, aim["square"]):
+			return AT_ACTION
 		melee_aim = {}
 		return plain
 	return "fp3d_attack_%s_aim_%s" % [hand, dir]
+
+
+## True for a square 1..MELEE_SQUARES off `me` on this level that no strike way reaches (strike_dir ""): a
+## knight's move, which only a reach weapon in the main hand strikes (AT_ACTION).
+static func strike_off_way(me: Vector3i, to: Vector3i) -> bool:
+	var d := to - me
+	var n := maxi(absi(d.x), absi(d.y))
+	return d.z == 0 and n >= 1 and n <= MELEE_SQUARES and strike_dir(me, to) == ""
+
+
+## The square a hand action goes to by queue_action_at: the kept melee aim's for AT_ACTION, else null. An
+## AT_ACTION with no square (null) isn't sent.
+func strike_square(act: String) -> Variant:
+	if act != AT_ACTION:
+		return null
+	var sq: Variant = melee_aim.get("square")
+	return sq if sq is Vector3i else null
 
 
 ## The direction name from square `me` to `to` when it lies 1..MELEE_SQUARES off along one of the 8 ways on the

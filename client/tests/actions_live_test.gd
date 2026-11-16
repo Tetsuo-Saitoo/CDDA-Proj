@@ -8,8 +8,8 @@ extends SceneTree
 ## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
 ## key opens the inventory. Then the screen HUD: body bars, needs, move line and message feed from the live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
-## puts it away.
-## Uses this run's own CDDA folder, never the player's saves.
+## puts it away. Then F3's classic view of the map around the player. Uses this run's own CDDA folder, never the
+## player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -99,6 +99,12 @@ func _run() -> void:
 		_cp.item_id.text = id
 		_cp.item_count.value = 1
 		_check(await _op(_cp.spawn_item, "Spawn " + id) == "", "spawned a %s at the feet" % id)
+	# the spawn pickers find types by name in this game's own tables
+	var zs := SpawnSearch.find(_cp.tables, "mtype", "zombie").map(func(f: Dictionary) -> String: return f["id"])
+	var gs := SpawnSearch.find(_cp.tables, "itype", "glock 19").map(func(f: Dictionary) -> String: return f["id"])
+	_check(zs.size() > 1 and zs[0] == "mon_zombie" and not gs.is_empty() and gs[0] == "glock_19",
+			"spawn search: \"zombie\" finds %d monster types, mon_zombie first; \"glock 19\" finds glock_19 first" % zs.size())
+	print("    zombie: %s; glock 19: %s" % [zs.slice(0, 6), gs.slice(0, 4)])
 	if _main.key_menu.visible:
 		_main.key_menu.close()
 	for k: Array in KEYS:
@@ -110,6 +116,10 @@ func _run() -> void:
 		await _rebind_live(&"cdda_inventory")
 		_hud_live()
 		await _hands_live()
+		await _consume_live()
+		_classic_live()
+		await _character_live()
+		await _compass_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -176,6 +186,94 @@ func _hud_live() -> void:
 			"HUD: CDDA's messages reach the feed, newest last (\"%s\")" % last)
 
 
+## F3 in the live game: the classic view shows CDDA's symbols around the player, @ in the middle; F3 hides it.
+func _classic_live() -> void:
+	var v := _main.classic
+	root.push_input(_key_of(&"classic_view"))
+	var lines := v.text().split("\n")
+	var mid := lines[ClassicView.RY].substr(ClassicView.RX, 1) if lines.size() > ClassicView.RY else ""
+	var drawn := 0
+	for l in lines:
+		drawn += l.length() - l.count(" ")
+	_check(v.visible and mid == "@" and drawn > 100, "F3: CDDA's classic view, @ in the middle, %d squares drawn" % drawn)
+	print("    " + "\n    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
+	root.push_input(_key_of(&"classic_view"))
+	_check(not v.visible, "F3 again hides it")
+
+
+## The compass in the live game: a zombie spawned two squares ahead (by name, through the Cheats page's picker; at
+## noon, monsters frozen) shows as a hostile marker near the middle of the strip, close by.
+func _compass_live() -> void:
+	var c := _main.compass
+	if not _live.range_info().get("ai_frozen", false):
+		_check(await _op(func() -> void: _cp.set_frozen(true), "Freeze") == "", "monsters frozen")
+	_cp.hour.value = 12
+	_check(await _op(_cp.set_time, "Time 12:00") == "", "time set to noon")
+	var hostiles := func() -> int: return c.blips.filter(func(b: Vector3) -> bool: return int(b.z) == Snapshot.Creature.HOSTILE).size()
+	var before: int = hostiles.call()
+	_cp.monster_id.text = "zombie"
+	_check(await _op(_cp.spawn_monster, "Spawn mon_zombie") == "", "a zombie spawned ahead (picked: %s)"
+			% (_cp.monster_pick.get_item_text(_cp.monster_pick.selected) if _cp.monster_pick.selected >= 0 else "none"))
+	var more := func() -> bool: return hostiles.call() > before
+	var seen := await _until(more, OP_TIMEOUT_MS, true)
+	var b: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)   # hostiles come first, nearest first
+	var at := Compass.strip_pos(b.x, c.heading_deg)
+	_check(seen and int(b.z) == Snapshot.Creature.HOSTILE and absf(at) < 0.3 and b.y < 4.0,
+			"compass: the zombie ahead is a hostile marker near the strip's middle (%.2f of half the strip, %.1f m away, heading %.0f)"
+			% [at, b.y, c.heading_deg])
+	if not _main.first_person:
+		print("  (compass turn not tried: not in first person)")
+		return
+	var fp := _main.fp
+	var yaw0 := fp.yaw
+	var h0 := c.heading_deg
+	fp.set_look(yaw0 - PI / 2.0, fp.pitch)   # a quarter turn right: the zombie is now to the left
+	await process_frame
+	await process_frame
+	var b2: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)
+	var at2 := Compass.strip_pos(b2.x, c.heading_deg)
+	_check(absf(wrapf(c.heading_deg - h0, -180.0, 180.0) - 90.0) < 1.0 and absf(at2 - (at - 1.0)) < 0.05,
+			"compass: a quarter turn right turns the heading 90 and moves the zombie to the strip's left end (%.2f)" % at2)
+	fp.set_look(yaw0, fp.pitch)
+
+
+## G4: P shows the character screen with the live game's body and needs; Esc closes it.
+func _character_live() -> void:
+	var v := _main.character
+	root.push_input(_key_of(&"character"))
+	var t := v.text()
+	var body: Dictionary = _main.character_data.card("body")
+	_check(v.visible and t.find("[Body]") >= 0 and t.find("[Needs]") >= 0 and (body.get("rows", []) as Array).size() >= 6,
+			"P: the character screen, %d body parts" % (body.get("rows", []) as Array).size())
+	var worn: Array = _main.character_data.card("worn").get("rows", [])
+	var parts: Array = _main.character_data.card("worn_parts").get("rows", [])
+	var covered := parts.filter(func(r: Dictionary) -> bool: return r["value"] != "bare").size()
+	_check(worn.size() >= 1 and parts.size() >= 6 and covered >= 3 and t.find("[Worn]") >= 0 and t.find("[Worn by body part]") >= 0,
+			"P: what the character wears (%d items) and the layers on %d body parts, %d covered" % [worn.size(), parts.size(), covered])
+	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
+	var at := t.find("[Worn]")
+	print("    " + "\n    ".join(t.substr(at if at >= 0 else 0).split("\n").slice(0, 14)))
+	# G4: the game's character sheet (bridge query_character), asked when the screen opens
+	if _live._sim.has_method("query_character"):
+		var cd := _main.character_data
+		var came: bool = await _until(func() -> bool: return cd.has_sheet(), ASK_TIMEOUT_MS, false)
+		var stats: Array = cd.card("stats").get("rows", [])
+		var skills: Array = cd.card("skills").get("rows", [])
+		_check(came and stats.size() == 5 and skills.size() >= 10 and cd.title != "Character" and not cd.subtitle.is_empty()
+				and cd.note.is_empty() and v.text().find("[Skills]") >= 0,
+				"P: the game's sheet: %s (%s), %d stats, %d skills, %d traits" % [cd.title, cd.subtitle, stats.size(),
+				skills.size(), (cd.card("traits").get("rows", []) as Array).size()])
+		print("    " + "\n    ".join(v.text().substr(maxi(0, v.text().find("[Stats]"))).split("\n").slice(0, 8)))
+	else:
+		print("    (this DLL has no query_character: the sheet's cards not checked)")
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	root.push_input(esc)
+	_check(not v.visible, "Esc closes it")
+
+
 ## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the
 ## list's filter, Enter): water when the kit's pours (else a knife), poured out by holding E; Shift+H puts it away.
 ## The hands (HudData.held, from the bridge's held state) follow each step.
@@ -218,6 +316,81 @@ func _hands_live() -> void:
 	var empty := func() -> bool: return _main.hud_data.held.get("off") == null
 	_check(await _until(empty, OP_TIMEOUT_MS, false), "Shift+H puts it away: the off hand is empty (%s)"
 			% [_main.hud_data.held.get("off")])
+
+
+## H, then the first enabled entry whose name has `want` (not frozen or sealed), typed into the list's filter and
+## Enter, as a player would; the off hand's ItemRef once it holds it, else null (the list closed).
+func _hold_off(want: String) -> ItemRef:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"hold_off"))
+	var asked := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ListRequestWidget
+	if not await _until(asked, ASK_TIMEOUT_MS, false):
+		return null
+	var w := _main.request_ui.widget as ListRequestWidget
+	var pick := ""
+	for it: Dictionary in w.items:
+		var n := str(it.get("plain", ""))
+		var ok: bool = it.get("enabled", false) and not n.contains("frozen") and not n.contains("sealed")
+		if pick.is_empty() and ok and n.to_lower().contains(want):
+			pick = n
+	if pick.is_empty():
+		root.push_input(_esc_key())
+		return null
+	w.set_filter(pick)
+	var enter := InputEventKey.new()
+	enter.keycode = KEY_ENTER
+	enter.physical_keycode = KEY_ENTER
+	enter.pressed = true
+	root.push_input(enter)
+	var in_off := func() -> bool: return _main.hud_data.held.get("off") is ItemRef
+	await _until(in_off, OP_TIMEOUT_MS, false)
+	return _main.hud_data.held.get("off") as ItemRef
+
+
+## Shift+E with water in the off hand drinks it with CDDA's consume rules, no menu (its own questions answered as a
+## player would); a held knife sent to consume anyway is refused with CDDA's words, and the player sees them.
+func _consume_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	var seen: Array = []
+	var on_done := func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op, ""])
+	var on_refused := func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why])
+	_main.item_actions.finished.connect(on_done)
+	_main.item_actions.refused.connect(on_refused)
+	var water := await _hold_off("water")
+	var food := _main._held_consumable()
+	_check(water != null and food != null and food.uid == water.uid, "Shift+E: held water counts as something to drink (%s)"
+			% [_main.hud_data.held.get("off")])
+	if food != null:
+		var msgs := _messages.size()
+		root.push_input(_key_of(&"cdda_eat"))
+		var over := func() -> bool: return not seen.is_empty() and _main._in_main_loop()
+		await _until(over, OP_TIMEOUT_MS, true)   # CDDA's own questions (not thirsty ...) answered YES
+		var said := " / ".join(_messages.slice(msgs)).left(200)
+		_check(not seen.is_empty() and seen[0][0] == "finished" and seen[0][2] == "consume",
+				"Shift+E drinks the held water, no menu (%s; said %s)" % [seen, said])
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"stow_off"))
+	await _until(func() -> bool: return _main.hud_data.held.get("off") == null, OP_TIMEOUT_MS, false)
+	var knife := await _hold_off("knife")
+	if knife == null:
+		_check(false, "consume refusal: a knife held in the off hand")
+	else:
+		seen.clear()
+		var msgs := _messages.size()
+		var feed := _main.hud_data.messages.size()
+		var sent := _main.item_actions.consume(knife)
+		await _until(func() -> bool: return not seen.is_empty(), OP_TIMEOUT_MS, true)
+		var why: String = seen[0][3] if not seen.is_empty() else ""
+		var shown := _main.hud_data.messages.slice(feed).any(func(m: Dictionary) -> bool: return m["text"] == why)
+		_check(sent and not seen.is_empty() and seen[0][0] == "refused" and not why.is_empty() and shown,
+				"consume refusal: a knife is refused with CDDA's words, in the feed (%s; said %s)"
+				% [seen, " / ".join(_messages.slice(msgs)).left(160)])
+		await _until(in_loop, ASK_TIMEOUT_MS, false)
+		root.push_input(_key_of(&"stow_off"))
+		await _until(func() -> bool: return _main.hud_data.held.get("off") == null, OP_TIMEOUT_MS, false)
+	_main.item_actions.finished.disconnect(on_done)
+	_main.item_actions.refused.disconnect(on_refused)
 
 
 ## Holding E with a liquid in the off hand pours it out on the square you face.
