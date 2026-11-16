@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — HUD warnings no longer lie over the developer status lines: they move just under them while they would overlap, else stay under the compass. Client tests pass.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
 - 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.
 - 2026-11-14 — Overnight (coordinator): merged and pushed, every Windows suite green each time: weather and mood in the snapshot, weather in the 3D world (sky, fog, rain, snow, lightning, sound, wet ground; `tests/render_check.gd` looks on the real GPU), mood line and tint, on-screen keyboard and menus on the VR panel, VR swing, melee techniques, weak points and muzzle flash, item ops for VR item physics, the weather cheat with its F1 picker. Open for the user: technique call balance (sure pick or extra weight).
