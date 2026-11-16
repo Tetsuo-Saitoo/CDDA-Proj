@@ -22,12 +22,14 @@ func run(root: Node, check: Callable) -> void:
 	_test_item_multi()
 	_test_popup()
 	_test_string()
+	_test_number()
 	_test_direction()
 	_test_target()
 	_test_hostile()
 	_test_chargen()
 	_test_main_menu()
 	_test_world_setup()
+	_test_game_over(root)
 	ui.free()
 	_test_hands_panel(root)
 
@@ -89,6 +91,9 @@ static func well_formed(a: Dictionary) -> bool:
 					return false
 			"entry":
 				if not v is int:
+					return false
+			"number":   # contracts/ui_requests.md: an int, never beyond the doubles' whole numbers
+				if not v is int or absi(v) > (1 << 53) - 1:
 					return false
 			"picks":
 				if not v is Array or (v as Array).size() > 4096:
@@ -377,7 +382,7 @@ func _test_popup() -> void:
 	_show(_req("popup", {"text": "You feel hungry.", "actions": PackedStringArray(["CONFIRM"]), "allow_cancel": false}))
 	_key(KEY_SPACE)
 	_expect({"id": 7, "action": "CONFIRM"}, "message popup: Space confirms")
-	_show(_req("number", {"title": "How many?"}))
+	_show(_req("not_a_kind", {"title": "How many?"}))
 	_check.call(ui.widget is PopupRequestWidget and (ui.widget as PopupRequestWidget).actions.is_empty(), "unknown kind: text only")
 	_key(KEY_ENTER)
 	_expect_none("unknown kind: Enter")
@@ -411,6 +416,59 @@ func _test_string() -> void:
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and (answers[0]["text"] as String).length() == 512,
 			"multi-byte text cut to 1024 bytes")
 	_test_text_keys()
+
+
+## `number` requests: the default in the field, Enter sends it as an int, Esc cancels; Up / Down and -1 / +1 step
+## within the range; a text that isn't a whole number in the range isn't sent and the line under the field says
+## so; the bridge's re-ask status is shown cleaned; a broken range is taken the right way round.
+func _test_number() -> void:
+	print("ui: number")
+	var req := _req("number", {"title": "How many?", "text": "Drop how many?", "min": 1, "max": 20, "default": 5})
+	_show(req)
+	var w := ui.widget as NumberRequestWidget
+	_check.call(w != null and w.edit.text == "5" and w.lo == 1 and w.hi == 20 and not w.problem.visible
+			and w.show_keys == ui.keyboard, "number: a NumberRequestWidget with the default and the range")
+	_key(KEY_UP)
+	_key(KEY_UP)
+	_key(KEY_DOWN)
+	_check.call(w.edit.text == "6" and answers.is_empty(), "number: Up / Down step it (%s)" % w.edit.text)
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 6}, "number: Enter sends it as an int")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	for bad: String in ["21", "0", "abc", "1.5", "", "- 3", "1e3", "12345678901234567"]:
+		w.edit.text = bad
+		_key(KEY_ENTER)
+	_check.call(answers.is_empty() and w.problem.visible and w.problem.text == "Enter a whole number from 1 to 20.",
+			"number: out of range or not a whole number isn't sent; it says why (%s)" % w.problem.text)
+	w.edit.text = " +20 "
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 20}, "number: a sign and spaces around are fine")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	w.edit.text = "x"
+	w.step(1)
+	w.step(100)
+	_check.call(w.edit.text == "20" and not w.problem.visible, "number: +1 from no number starts at the range, "
+			+ "stepping stops at max (%s)" % w.edit.text)
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "number: Esc cancels")
+	_show(_req("number", {"min": 50, "max": -50, "default": 9.5, "status": "<color_red>enter a whole</color>" + char(7) + " number"}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -50 and w.hi == 50 and w.edit.text == "0" and w.problem.visible
+			and w.problem.text == "enter a whole number", "number: a broken range turned round, a non-whole default "
+			+ "dropped, the status cleaned (%s)" % w.problem.text)
+	_show(_req("number", {"min": -1e300, "max": INF, "default": -(1 << 60)}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -NumberRequestWidget.LIMIT and w.hi == NumberRequestWidget.LIMIT
+			and w.edit.text == str(-NumberRequestWidget.LIMIT)
+			and NumberRequestWidget.range_text(-(1 << 31), (1 << 31) - 1) == "A whole number."
+			and NumberRequestWidget.range_text(1, 20) == "A whole number from 1 to 20.",
+			"number: huge or infinite limits held to the doubles' whole numbers; the range in words")
+	w.edit.text = str(NumberRequestWidget.LIMIT)
+	_key(KEY_ENTER)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["number"] == NumberRequestWidget.LIMIT,
+			"number: the largest whole number goes through")
 
 
 ## The on-screen keyboard under a text prompt: hidden on screen until the Keyboard button, shown from the start
@@ -955,6 +1013,32 @@ const WORLD_CATALOG := {
 	],
 	"default_mods": ["dda"],
 }
+
+
+## Back to the main menu after a game: what the menu says, and F1's "Save and quit to menu".
+func _test_game_over(root: Node) -> void:
+	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
+			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),
+			Main.game_over_text("failed", "boom"), Main.game_over_text("ended", "odd"),
+			Main.game_over_text("ended", "cancelled"), Main.game_over_text("failed", "character creation cancelled")]
+	_check.call(said == [["Game saved.", true], ["Your character died.", false], ["The game ended.", false],
+			["The game ended.", false], ["The game failed: boom", false], ["The game ended: odd", false],
+			["", false], ["", false]],
+			"game over: the menu's message per reason -> %s" % [said])
+	var long_text: String = Main.game_over_text("failed", "x".repeat(5000))[0]
+	_check.call(long_text.length() < 400, "game over: a long failure is cut (%d chars)" % long_text.length())
+	var m := KeyMenu.new()
+	root.add_child(m)
+	var fired := [0]
+	m.quit_to_menu.connect(func() -> void: fired[0] += 1)
+	var hidden_at_first := not m.quit_button.visible
+	m.show_quit_to_menu(true)
+	m.visible = true
+	m.quit_button.pressed.emit()
+	_check.call(hidden_at_first and m.quit_button.visible and fired[0] == 1 and not m.visible,
+			"F1: \"Save and quit to menu\" shows only for a live game, closes the menu and asks once (fired %d)"
+			% fired[0])
+	m.free()
 
 
 func _test_world_setup() -> void:

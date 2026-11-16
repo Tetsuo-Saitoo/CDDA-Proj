@@ -127,6 +127,11 @@ func _run() -> void:
 				and LiveSession.list_saves(_user_dir, WORLD) == saves,
 				"while it runs, a delete is refused here (%s) and by the bridge (%s)" % [here, bridge])
 
+	var second: Variant = await _second_game()
+	if second != true:   # null: a script error stopped it half way
+		_check(second == false and _failed > 0, "the second game's checks ran to the end")
+		_finish()
+		return
 	await _stop()
 	print("  second run: delete the character from the Load page")
 	var out := []
@@ -140,6 +145,71 @@ func _run() -> void:
 		print(chunk.strip_edges(false, true).indent("  | "))
 	_check(code == 0, "second run deletes the character through the menu (exit %d)" % code)
 	_finish()
+
+
+## Two games in a row in one process: F1's "Save and quit to menu" ends the game through CDDA's own save and quit, a
+## fresh Main takes over showing the menu with nothing of the first game left, and its Load page starts the same
+## character again, standing where it was saved. False when it can't go on.
+func _second_game() -> bool:
+	var pos1: Vector3i = _main.world.snapshot.player_pos
+	var old_main: Node = _main
+	var old_live: Node = _live
+	var replaced := []
+	_main.replaced.connect(func(m: Node3D) -> void: replaced.append(m))
+	var qb := _main.key_menu.quit_button
+	_check(qb != null and qb.visible, "F1 has \"Save and quit to menu\" in a live game")
+	if qb == null:
+		return false
+	_main.key_menu.open()
+	qb.pressed.emit()
+	_check(not _main.key_menu.visible, "the button closes F1")
+	var back := await _until(func() -> bool: return not replaced.is_empty(), OP_TIMEOUT_MS, false)
+	_check(back, "after CDDA's \"Save and quit?\" the game ends and the menu comes back (%s)"
+			% [old_live.get("state") if is_instance_valid(old_live) else "freed"])
+	if not back:
+		return false
+	_main = replaced[0] as Main
+	_live = _main.live
+	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
+	await process_frame
+	await process_frame
+	var menu := _main.main_menu
+	_check(replaced.size() == 1 and not is_instance_valid(old_main) and not is_instance_valid(old_live)
+			and _main.get_parent() == root,
+			"the old Main and its LiveSession are freed, the fresh one is in their place (%d handovers)" % replaced.size())
+	_check(menu != null and menu.message == "Game saved." and _live.state == "idle" and _main.world.snapshot == null
+			and _main.hud_data.messages.is_empty() and _main.character_data.cards.is_empty()
+			and not _main.key_menu.cheats_forced,
+			"the fresh Main shows the menu saying \"Game saved.\", with no game, map, messages, sheet or cheats (%s, %s)"
+			% [menu.message if menu != null else "no menu", _live.state])
+	var saves := LiveSession.list_saves(_user_dir, WORLD)
+	_check(saves.size() == 1, "the character is still listed after quitting (%s)" % [saves])
+	if menu == null or saves.size() != 1:
+		return false
+	menu.show_page("load")
+	_check(menu.select_world(WORLD), "the Load page has %s" % WORLD)
+	var load_button := _find_button(menu, "Load")
+	_check(load_button != null, "the Load page has the Load button")
+	if load_button == null:
+		return false
+	load_button.pressed.emit()
+	var t0 := Time.get_ticks_msec()
+	var up := await _until(func() -> bool: return _live.state == "running" and _main.world.snapshot != null,
+			BOOT_TIMEOUT_MS)
+	_check(up and _main.main_menu == null, "the second game runs (%.0f s, state %s %s)"
+			% [(Time.get_ticks_msec() - t0) / 1000.0, _live.state, _live.error])
+	if not up:
+		return false
+	var pos2: Vector3i = _main.world.snapshot.player_pos
+	_check(pos2 == pos1, "the character stands where it was saved (%s, saved at %s)" % [pos2, pos1])
+	_check(not _main.key_menu.cheats_forced and _live.cheats_allowed == _main.key_menu.cheats_allowed(),
+			"cheats as the settings say, not as game 1 forced them (%s)" % _live.cheats_allowed)
+	_check(replaced.size() == 1, "no second handover")
+	var t1 := Time.get_ticks_msec()   # a few seconds of play: nothing of game 1 may fire into game 2
+	await _until(func() -> bool: return Time.get_ticks_msec() - t1 > 3000, 10000)
+	_check(_live.state == "running" and _main.is_inside_tree() and replaced.size() == 1,
+			"the second game keeps running (%s %s)" % [_live.state, _live.error])
+	return true
 
 
 ## Run 2: the Load page's Delete button and its confirm. No game is started.
@@ -187,13 +257,13 @@ func _op(id: int) -> String:
 	return _done[id]
 
 
-## Waits (playing on) until `cond` holds; false on timeout or if the game stops.
-func _until(cond: Callable, timeout_ms: int) -> bool:
+## Waits (playing on) until `cond` holds; false on timeout or, with `end_stops`, if the game stops.
+func _until(cond: Callable, timeout_ms: int, end_stops := true) -> bool:
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	while Time.get_ticks_msec() < deadline:
 		if cond.call():
 			return true
-		if _live.state == "ended" or _live.state == "failed":
+		if end_stops and (_live.state == "ended" or _live.state == "failed"):
 			return false
 		_answer_prompt()
 		await create_timer(0.05).timeout

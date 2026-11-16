@@ -13,6 +13,7 @@ extends PanelContainer
 
 signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
+signal quit_to_menu   # "Save and quit to menu" pressed (main.gd: CDDA's save and quit)
 
 const SLOTS := 2
 const PAD_SLOTS := 2
@@ -46,6 +47,8 @@ const FEED_TIPS := {
 var cheat_page: CheatPanel    # set by add_cheat_page
 var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
 var cheats_button: Button
+## "Save and quit to menu": shown with show_quit_to_menu (a live game); closes the menu and emits quit_to_menu.
+var quit_button: Button
 ## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
 var cheats_forced := false:
 	set(v):
@@ -125,12 +128,24 @@ func _init() -> void:
 	cheats_button.visible = false
 	cheats_button.pressed.connect(func() -> void: show_cheats(not showing_cheats()))
 	bar.add_child(cheats_button)
+	quit_button = Button.new()
+	quit_button.text = "Save and quit to menu"
+	quit_button.focus_mode = Control.FOCUS_NONE
+	quit_button.visible = false
+	quit_button.pressed.connect(func() -> void:
+		close()
+		quit_to_menu.emit())
+	bar.add_child(quit_button)
 	for t: String in ["Reset all", "Close"]:
 		var b := Button.new()
 		b.text = t
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(reset_all if t == "Reset all" else close)
 		bar.add_child(b)
+
+
+func show_quit_to_menu(on: bool) -> void:
+	quit_button.visible = on
 
 
 ## Adds the HUD row under the title: compass opacity 0..100 %.

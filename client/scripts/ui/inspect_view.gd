@@ -54,6 +54,17 @@ var mouse_hook := Callable()
 var cols: Array[Dictionary] = []
 ## The status line: the last refusal or local "can't".
 var status := ""
+## G2: what the character carries against what they can carry (CharacterData.carry, from the game's character
+## sheet), as two bars in the top line; hidden while the sheet doesn't say.
+var character: CharacterData:
+	set(v):
+		if character != null and character.changed.is_connected(_show_carry):
+			character.changed.disconnect(_show_carry)
+		character = v
+		if character != null:
+			character.changed.connect(_show_carry)
+		_show_carry()
+var _carry_box: HBoxContainer
 ## The rows picked to act on together: uid -> itype.
 var selection := {}
 
@@ -134,6 +145,11 @@ func _init(h: Hands, a: ItemActions) -> void:
 	_head = _label("", Color(1.0, 0.85, 0.3))
 	_head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(_head)
+	_carry_box = HBoxContainer.new()
+	_carry_box.name = "Carry"
+	_carry_box.add_theme_constant_override("separation", 8)
+	_carry_box.visible = false
+	top.add_child(_carry_box)
 	close_button = _bar_button("Close", close, "Close (Tab)", top)   # for a pointer alone (the VR panel)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -243,6 +259,38 @@ func _process(_delta: float) -> void:
 		rebuild()
 	if _batch_total > 0:
 		_run_batch()
+
+
+## [[text, how full 0..1+], ...] for the top line: weight, then volume, each when the sheet has it.
+static func carry_parts(c: Dictionary) -> Array:
+	var out := []
+	for k: Array in [["weight_g", "weight_max_g", "weight"], ["volume_ml", "volume_max_ml", "volume"]]:
+		var cur := int(c.get(k[0], -1))
+		var cap := int(c.get(k[1], -1))
+		if cur < 0 or cap <= 0:
+			continue
+		var t := (InventoryModel.weight_text(cur) + " of " + InventoryModel.weight_text(cap) if k[2] == "weight"
+				else InventoryModel.volume_text(cur) + " of " + InventoryModel.volume_text(cap))
+		out.append([t, float(cur) / float(cap)])
+	return out
+
+
+func _show_carry() -> void:
+	if _carry_box == null:
+		return
+	for c in _carry_box.get_children():
+		_carry_box.remove_child(c)
+		c.queue_free()
+	var parts := carry_parts(character.carry) if character != null else []
+	_carry_box.visible = not parts.is_empty()
+	for p: Array in parts:
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 1)
+		v.custom_minimum_size.x = 130
+		v.add_child(_label(p[0], DIM))
+		v.add_child(_fill_bar(p[1]))
+		_carry_box.add_child(v)
+	_carry_box.tooltip_text = "What you carry, from the game. Past the weight limit you are slowed and tire faster."
 
 
 ## Builds the columns again from the newest snapshot (now).
@@ -989,7 +1037,17 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	for g: Dictionary in col["groups"]:
 		var gs := _slot({"kind": "group", "column": id, "key": g["key"]})
 		var head := "%s   %s" % [g["title"], _totals(g)] if not (g["rows"] as Array).is_empty() else str(g["title"])
-		gs.add_child(_label(head, DIM))
+		var full := InventoryModel.fill(g)
+		if full < 0.0:
+			gs.add_child(_label(head, DIM))
+		else:   # a worn container's pocket: how full it is, as a thin bar under the heading
+			var hv := VBoxContainer.new()
+			hv.add_theme_constant_override("separation", 1)
+			hv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			hv.add_child(_label(head, DIM))
+			hv.add_child(_fill_bar(full))
+			gs.add_child(hv)
+			gs.tooltip_text = _fill_tip(g)
 		rows.add_child(gs)
 		_group_slots[_gkey(id, g["key"])] = gs
 		if (g["rows"] as Array).is_empty():
@@ -999,6 +1057,37 @@ func _column_ui(col: Dictionary) -> InspectSlot:
 	if int(col["cut"]) > 0:
 		rows.add_child(_label("... and %d more" % int(col["cut"]), DIM))
 	return slot
+
+
+## A pocket's fill bar: 0..1 of its width, red when full.
+static func _fill_bar(full: float) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.name = "Fill"
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.step = 0.0
+	bar.value = clampf(full, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 4)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE   # drops land on the group's slot under it
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = BAD if full >= 1.0 else Color(0.45, 0.7, 0.45)
+	bar.add_theme_stylebox_override("fill", fg)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.2, 0.2, 0.24)
+	bar.add_theme_stylebox_override("background", bg)
+	return bar
+
+
+## "About 0.75 L of 1.00 L, 1.20 kg of 2.00 kg used."
+static func _fill_tip(g: Dictionary) -> String:
+	var parts := PackedStringArray()
+	if int(g["max_ml"]) > 0:
+		parts.append("%s of %s" % [InventoryModel.volume_text(g["used_ml"]), InventoryModel.volume_text(g["max_ml"])])
+	if int(g["max_g"]) > 0:
+		parts.append("%s of %s" % [InventoryModel.weight_text(g["weight_g"]), InventoryModel.weight_text(g["max_g"])])
+	return ("About %s used. Counted from item types: a stack counts as one item, so this can read low."
+			% ", ".join(parts))
 
 
 func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:

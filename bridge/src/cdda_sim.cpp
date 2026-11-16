@@ -87,6 +87,11 @@ Dictionary request_dict( const fp3d::ui_request &r )
     d["actions"] = actions;
     d["allow_cancel"] = r.allow_cancel;
     d["max_len"] = r.max_len;
+    if( r.kind == fp3d::request_kind::number ) {
+        d["min"] = r.number_min;
+        d["max"] = r.number_max;
+        d["default"] = r.number_default;
+    }
     d["mode"] = to_godot( r.mode );
     d["status"] = to_godot( r.status );
     d["origin"] = to_vec( r.origin );
@@ -383,6 +388,13 @@ bool CddaSim::answer( const Dictionary &d )
     if( d.has( "text" ) ) {
         // The sim caps it again by request kind (only chargen takes the larger cap).
         a.text = fp3d::sanitize_text( to_std( v ), fp3d::max_answer_json );
+    }
+    if( !field( d, "number", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "number" ) ) {
+        // Any int64: the sim checks it against the request's range and asks again when it's outside.
+        a.number = static_cast<int64_t>( v );
     }
     if( !field( d, "picks", Variant::ARRAY, v ) ) {
         return false;

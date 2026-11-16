@@ -60,6 +60,7 @@ func _run() -> void:
 		return
 	_main = (load("res://scenes/main.tscn") as PackedScene).instantiate() as Main
 	_main.cdda_user_dir = TestDir.global("cdda-actions")
+	_bind_debug_key(TestDir.path("cdda-actions"))
 	root.add_child(_main)
 	await process_frame
 	_main.key_menu.save_path = TestDir.path("keys.json")   # a key set in F1 here never reaches the player's file
@@ -120,6 +121,7 @@ func _run() -> void:
 		_classic_live()
 		await _character_live()
 		await _compass_live()
+		await _number_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -263,6 +265,10 @@ func _character_live() -> void:
 				and cd.note.is_empty() and v.text().find("[Skills]") >= 0,
 				"P: the game's sheet: %s (%s), %d stats, %d skills, %d traits" % [cd.title, cd.subtitle, stats.size(),
 				skills.size(), (cd.card("traits").get("rows", []) as Array).size()])
+		var carry := cd.carry
+		_check(carry["weight_g"] >= 0 and carry["weight_max_g"] > 0 and carry["volume_ml"] >= 0
+				and carry["volume_max_ml"] > 0 and v.text().find("[Carrying]") >= 0,
+				"P: what the character carries and can carry, from the sheet (%s)" % [carry])
 		print("    " + "\n    ".join(v.text().substr(maxi(0, v.text().find("[Stats]"))).split("\n").slice(0, 8)))
 	else:
 		print("    (this DLL has no query_character: the sheet's cards not checked)")
@@ -272,6 +278,13 @@ func _character_live() -> void:
 	esc.pressed = true
 	root.push_input(esc)
 	_check(not v.visible, "Esc closes it")
+	if _main.character_data.carry["weight_max_g"] > 0:   # G2: the Tab view's top line shows the same numbers
+		root.push_input(_key_of(&"inspect"))
+		var box := _main.inspect.find_child("Carry", true, false) as Control
+		_check(_main.inspect.visible and box != null and box.visible and box.get_child_count() == 2,
+				"Tab: carried weight and volume bars in the top line")
+		root.push_input(esc)
+		_check(not _main.inspect.visible, "Esc closes the Tab view")
 
 
 ## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the
@@ -413,6 +426,93 @@ func _pour_live() -> void:
 
 ## Presses `action`'s key (`ev`, else its first binding) in the main loop; CDDA's answer must show (and be the
 ## `want` kind, when set), and Esc must bring the game back to its main loop.
+## A number prompt in the live game, through the request UI: the debug menu's "Set hunger to?" (lead-bridge's path:
+## Player..., Edit player/NPC, You, Set needs, Hunger). The field holds a number; a text that isn't one isn't sent;
+## 100 typed and Enter sets it, and the snapshot's hunger follows. Skipped on a bridge without `number` requests.
+func _number_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	if not _live.queue_action("debug"):
+		print("    (the debug action was refused: number prompt not checked)")
+		return
+	for want: String in ["Player", "Edit player/NPC", "You", "Set needs", "Hunger"]:
+		var entry := [-1]
+		var offered := func() -> bool:
+			var r := _live.request   # CDDA may first ask whether to go on (achievements get disabled): yes
+			if r.get("kind", "") == "popup" and "YES" in r.get("actions", []) and int(r.get("id", 0)) != _answered:
+				_answered = int(r["id"])
+				_live.answer({"id": _answered, "action": "YES"})
+			entry[0] = _entry_starting(want)
+			return entry[0] >= 0
+		if not await _until(offered, ASK_TIMEOUT_MS, false):
+			var labels := (_live.request.get("entries", []) as Array).map(func(e: Variant) -> String:
+				return "%s%s" % [str(e.get("label", "")) if e is Dictionary else "?",
+						"" if e is Dictionary and e.get("enabled", false) else " (off)"])
+			_check(false, "debug menu: \"%s...\" offered (now: %s %s %s)" % [want, _live.request.get("kind", "none"),
+					_live.request.get("title", ""), labels])
+			await _until(in_loop, OP_TIMEOUT_MS, true)
+			return
+		_live.answer({"id": int(_live.request["id"]), "entry": entry[0]})
+	var asked := func() -> bool: return _live.request.get("kind", "") in ["number", "string"]
+	if not await _until(asked, ASK_TIMEOUT_MS, false) or _live.request["kind"] == "string":
+		print("    (no number request: this bridge has none; prompt was %s)" % _live.request.get("kind", "none"))
+		await _until(in_loop, OP_TIMEOUT_MS, true)
+		return
+	var shown := func() -> bool: return _main.request_ui.widget is NumberRequestWidget
+	await _until(shown, ASK_TIMEOUT_MS, false)
+	var w := _main.request_ui.widget as NumberRequestWidget
+	var id := int(_live.request["id"])
+	_check(w != null and NumberRequestWidget.parse(w.edit.text, w.lo, w.hi) != null,
+			"debug \"Set hunger to?\": a number field holding CDDA's value (%s, %d..%d)"
+			% [w.edit.text if w != null else "-", w.lo if w != null else 0, w.hi if w != null else 0])
+	if w == null:
+		return
+	var enter := InputEventKey.new()
+	enter.keycode = KEY_ENTER
+	enter.physical_keycode = KEY_ENTER
+	enter.pressed = true
+	w.edit.text = "lots"
+	root.push_input(enter)
+	await process_frame
+	_check(int(_live.request.get("id", 0)) == id and w.problem.visible and not w.done,
+			"a text that isn't a number isn't sent (%s)" % w.problem.text)
+	w.edit.text = "100"
+	root.push_input(enter)
+	var gone := func() -> bool: return int(_live.request.get("id", 0)) != id
+	_check(await _until(gone, OP_TIMEOUT_MS, false), "100 typed and Enter: the number request is answered")
+	var set_to := func() -> bool:
+		return in_loop.call() and int(_main.hud_data.needs["hunger"].get("value", -1)) == 100
+	var ok := await _until(set_to, OP_TIMEOUT_MS, true)
+	_check(ok, "100 typed and Enter: CDDA sets hunger to it (now %s)" % _main.hud_data.needs["hunger"].get("value"))
+	await _until(in_loop, OP_TIMEOUT_MS, true)
+
+
+## The id of the shown menu's first enabled entry whose label starts with `prefix`, -1 when none.
+func _entry_starting(prefix: String) -> int:
+	var req := _live.request
+	if req.get("kind", "") != "menu":
+		return -1
+	for e: Variant in req.get("entries", []):
+		if e is Dictionary and e.get("enabled", false) and CddaText.plain(str(e.get("label", ""))).strip_edges() \
+				.begins_with(prefix):
+			return int(e.get("id", -1))
+	return -1
+
+
+## CDDA lists its whole debug menu only when the "debug" action has a key (it has none by default): binds one in
+## this run's own CDDA user folder (config/keybindings.json), never the player's.
+func _bind_debug_key(user_path: String) -> void:
+	var config := user_path.path_join("config")
+	DirAccess.make_dir_recursive_absolute(config)
+	var f := FileAccess.open(config.path_join("keybindings.json"), FileAccess.WRITE)
+	if f == null:
+		_check(false, "can write the test's CDDA keybindings")
+		return
+	f.store_string(JSON.stringify([{"type": "keybinding", "id": "debug", "category": "DEFAULTMODE", "version": 2,
+			"bindings": [{"input_method": "keyboard_char", "key": "~"}]}]))
+	f.close()
+
+
 func _try_key(action: StringName, want: String, ev: InputEventKey = null) -> void:
 	if ev == null:
 		ev = _key_of(action)
