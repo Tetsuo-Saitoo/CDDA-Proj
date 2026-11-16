@@ -29,7 +29,8 @@ const NEEDS := ["stamina", "hunger", "thirst", "sleepiness", "pain"]
 const NO_SHEET := "Stats, skills, proficiencies, traits and bionics come with the game's character data, which this game doesn't send yet."
 const WAITING := "Asking the game for stats, skills, proficiencies, traits and bionics..."
 const FAILED := "The game couldn't send the character data (%s)."
-const TRUNCATED := "Some descriptions were too long to send and are left out."
+## `truncated`: the bridge emptied descriptions and, for a huge sheet, cut entries off the ends of the lists.
+const TRUNCATED := "The character data was too big to send whole: some descriptions or list entries are left out."
 ## A query result's errors (contracts/bridge_api.md "Character queries"); anything else reads as "internal".
 const ERRORS := ["internal", "too large"]
 const MAX_RESULT_BYTES := 72 << 10   # the bridge caps a result at 64 KB
