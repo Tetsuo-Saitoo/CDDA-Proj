@@ -47,6 +47,7 @@ All methods are non-blocking except `stop()`. Everything is polled; there are no
 | `give_test_kit()` | `bool` | Gives the character the test loadout at the main loop's next request: a big backpack worn, a loaded Glock 19, Remington 870 and SCAR-L with spare magazines and ammo, machete, combat knife, crowbar, hammer, screwdrivers, multitool, lighter, flashlight, pot, bandages, 4 MREs, 3 bottles of water; what doesn't fit lands at its feet. False while cheats aren't allowed or no game runs. |
 | `use_stairs(pos, dir)` | `bool` | Use the stairs at absolute square `pos` (Vector3i): `dir` 1 up, -1 down. The player must stand on that square or next to it on the same level; from next to it they step onto it first (CDDA's step), then CDDA's own stairs move (its costs, prompts and messages). Refused with a message, nothing done: too far, another level, no stairs that way there, a creature on the square, riding (except a mech) or inside a vehicle. Out-of-range `pos` (z outside -10..10) or another `dir` → `false`, nothing queued; also false when the queue is full. Shares the action queue. |
 | `match_recipes(container)` | `int` | L9: asks what a container's contents can become and how long, without blocking (see "Recipe queries" below). `container`: `uid` + `type` (the handle and itype index from the snapshot, ints) and `pos` (Vector3i, the square it lies on; the avatar's square also finds carried containers). Returns the query id (≥ 1), or 0 when refused: a missing key, a wrong type or anything out of range (uid 1..2^53−1, type ≥ 1), 8 queries pending already, or no game running. |
+| `query_character()` | `int` | G4: asks for the character screen's data, without blocking (see "Character queries" below); the result comes through `take_query_result`. Returns the query id (≥ 1), or 0 when refused: a character query still pending (one at a time), 8 queries pending already, or no game running. |
 | `take_query_result(id)` | `String` | The query's result as JSON (once; a second call gives ""), "" while it is pending or for an unknown id. Results wait until taken; beyond 16 the oldest is dropped. Each ≤ 64 KB. |
 | `get_save_status()` | `Dictionary` | `pending` (asked, not finished), `done` (saves finished since start, skipped ones too), `ok` (the last one). The message log also gets "Game saved." or "The game could not be saved." |
 
@@ -94,6 +95,26 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   tools there and required proficiencies; low skill does **not** block it, as in CDDA, where it only adds a
   failure chance). Order: `can_start` first, then the recipes using the most of the contents' kinds, then the
   largest batch, then by id. At most 32 matches.
+- Character queries (G4, `cdda/src/fp3d/snapshot.h`): run like recipe queries (same timing, read-only,
+  results through `take_query_result`). All text is game data: color tags, line breaks and control characters
+  removed; names ≤ 60 columns, descriptions ≤ 400 columns; ids are printable ASCII ≤ 64 bytes (entries with others
+  are left out). Result: `{"id", "ok": true, "kind": "character", "name", "profession", "age", "height_cm",
+  "stats": [{"id": "str"|"dex"|"int"|"per", "cur", "base"}], "speed": {"cur", "move_cost", "modifiers": [{"name",
+  "value", "percent", "move_cost"}]}, "encumbrance": [{"enc", "layer", "warmth"}], "skills": [{"id", "name",
+  "level", "knowledge", "progress", "knowledge_progress", "description"}], "proficiencies": {"known": [{"id",
+  "name", "description"}], "learning": [{"id", "name", "percent", "description"}]}, "traits": [{"id", "name",
+  "rating", "mutation", "description"}], "bionics": [{"id", "name", "active", "description"}], "power": {"cur_kj",
+  "max_kj"}, "effect_descriptions": {effect id: text}, "truncated"}`. Details: speed modifiers as CDDA's speed tab
+  lists them (effects by speed name, other speed bonuses, then move cost changes with `move_cost` true; `percent`
+  true for a percentage), at most 32. Encumbrance: one per snapshot `body_parts` entry, same order; `enc` is
+  clothing, `layer` the layering penalty (CDDA shows "enc+layer"), `warmth` CDDA's warmth number. Skills: every
+  skill CDDA's skills tab lists, in its order, at most 64; `level` practical, `knowledge` theory, `progress` and
+  `knowledge_progress` 0..100 (%). Proficiencies: at most 64 each; `percent` 0..99. Traits: CDDA's order, hidden
+  ones left out, at most 128; `rating` 1 good / −1 bad / 0 neutral (CDDA's point cost), `mutation` false for a
+  starting trait. Bionics: one entry per installed bionic, at most 64; power in whole kJ. Effects: the ones the
+  snapshot lists (each id once, at most 64). Over 64 KB, descriptions are emptied from the end (effects first, then
+  bionics, traits, proficiencies, skills), the lists stay whole and `truncated` is true. Refused: `{"id", "ok":
+  false, "kind": "character", "error"}` with `internal` or `too large` (shouldn't happen).
 - Boot takes ~30 s (data load, new game). The first snapshot arrives with the first request.
 - Saving: `save_game()`, then watch `get_save_status().done` go up. Or queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process
