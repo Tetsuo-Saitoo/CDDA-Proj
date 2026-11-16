@@ -22,6 +22,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_item_multi()
 	_test_popup()
 	_test_string()
+	_test_number()
 	_test_direction()
 	_test_target()
 	_test_hostile()
@@ -90,6 +91,9 @@ static func well_formed(a: Dictionary) -> bool:
 					return false
 			"entry":
 				if not v is int:
+					return false
+			"number":   # contracts/ui_requests.md: an int, never beyond the doubles' whole numbers
+				if not v is int or absi(v) > (1 << 53) - 1:
 					return false
 			"picks":
 				if not v is Array or (v as Array).size() > 4096:
@@ -378,7 +382,7 @@ func _test_popup() -> void:
 	_show(_req("popup", {"text": "You feel hungry.", "actions": PackedStringArray(["CONFIRM"]), "allow_cancel": false}))
 	_key(KEY_SPACE)
 	_expect({"id": 7, "action": "CONFIRM"}, "message popup: Space confirms")
-	_show(_req("number", {"title": "How many?"}))
+	_show(_req("not_a_kind", {"title": "How many?"}))
 	_check.call(ui.widget is PopupRequestWidget and (ui.widget as PopupRequestWidget).actions.is_empty(), "unknown kind: text only")
 	_key(KEY_ENTER)
 	_expect_none("unknown kind: Enter")
@@ -412,6 +416,59 @@ func _test_string() -> void:
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and (answers[0]["text"] as String).length() == 512,
 			"multi-byte text cut to 1024 bytes")
 	_test_text_keys()
+
+
+## `number` requests: the default in the field, Enter sends it as an int, Esc cancels; Up / Down and -1 / +1 step
+## within the range; a text that isn't a whole number in the range isn't sent and the line under the field says
+## so; the bridge's re-ask status is shown cleaned; a broken range is taken the right way round.
+func _test_number() -> void:
+	print("ui: number")
+	var req := _req("number", {"title": "How many?", "text": "Drop how many?", "min": 1, "max": 20, "default": 5})
+	_show(req)
+	var w := ui.widget as NumberRequestWidget
+	_check.call(w != null and w.edit.text == "5" and w.lo == 1 and w.hi == 20 and not w.problem.visible
+			and w.show_keys == ui.keyboard, "number: a NumberRequestWidget with the default and the range")
+	_key(KEY_UP)
+	_key(KEY_UP)
+	_key(KEY_DOWN)
+	_check.call(w.edit.text == "6" and answers.is_empty(), "number: Up / Down step it (%s)" % w.edit.text)
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 6}, "number: Enter sends it as an int")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	for bad: String in ["21", "0", "abc", "1.5", "", "- 3", "1e3", "12345678901234567"]:
+		w.edit.text = bad
+		_key(KEY_ENTER)
+	_check.call(answers.is_empty() and w.problem.visible and w.problem.text == "Enter a whole number from 1 to 20.",
+			"number: out of range or not a whole number isn't sent; it says why (%s)" % w.problem.text)
+	w.edit.text = " +20 "
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 20}, "number: a sign and spaces around are fine")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	w.edit.text = "x"
+	w.step(1)
+	w.step(100)
+	_check.call(w.edit.text == "20" and not w.problem.visible, "number: +1 from no number starts at the range, "
+			+ "stepping stops at max (%s)" % w.edit.text)
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "number: Esc cancels")
+	_show(_req("number", {"min": 50, "max": -50, "default": 9.5, "status": "<color_red>enter a whole</color>" + char(7) + " number"}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -50 and w.hi == 50 and w.edit.text == "0" and w.problem.visible
+			and w.problem.text == "enter a whole number", "number: a broken range turned round, a non-whole default "
+			+ "dropped, the status cleaned (%s)" % w.problem.text)
+	_show(_req("number", {"min": -1e300, "max": INF, "default": -(1 << 60)}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -NumberRequestWidget.LIMIT and w.hi == NumberRequestWidget.LIMIT
+			and w.edit.text == str(-NumberRequestWidget.LIMIT)
+			and NumberRequestWidget.range_text(-(1 << 31), (1 << 31) - 1) == "A whole number."
+			and NumberRequestWidget.range_text(1, 20) == "A whole number from 1 to 20.",
+			"number: huge or infinite limits held to the doubles' whole numbers; the range in words")
+	w.edit.text = str(NumberRequestWidget.LIMIT)
+	_key(KEY_ENTER)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["number"] == NumberRequestWidget.LIMIT,
+			"number: the largest whole number goes through")
 
 
 ## The on-screen keyboard under a text prompt: hidden on screen until the Keyboard button, shown from the start

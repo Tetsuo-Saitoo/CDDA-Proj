@@ -2,7 +2,7 @@ class_name RequestUI
 extends Control
 ## Block E3: the generic renderer for CDDA's UI requests (contracts/ui_requests.md; fields in
 ## contracts/bridge_api.md). show_request() builds one widget for the request's kind (menu, item_select,
-## item_multi, key: ListRequestWidget; popup and "press any key": PopupRequestWidget; string, direction,
+## item_multi, key: ListRequestWidget; popup and "press any key": PopupRequestWidget; string, number, direction,
 ## target) and emits `answered` once with an answer Dictionary for LiveSession.answer(). Mouse and keyboard:
 ## keys reach the widget in _input, before the game's own keys (main.gd's _unhandled_input); keys a widget
 ## doesn't use fall through (WASD still flies the camera). Native UIs (block G) can later take over kinds.
@@ -131,6 +131,8 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 			return PopupRequestWidget.new() if RequestWidget.actions_of(req).is_empty() else ListRequestWidget.new()
 		"string":
 			return StringRequestWidget.new()
+		"number":
+			return NumberRequestWidget.new()
 		"direction":
 			return DirectionRequestWidget.new()
 		"target":

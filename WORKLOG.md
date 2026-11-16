@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Number prompts (how many to drop, and the like) get their own field: type a number or step it with Up / Down or -1 / +1, kept within the game's range. Client tests pass; live check waits for the bridge side.
 - 2026-11-16 — Inventory and character screen show what you carry against what you can carry (weight and volume, from the game), with bars in the Tab view. Checked live; client tests pass.
 - 2026-11-16 — Cancelling character creation now just goes back to the main menu, without a red error. Checked live with death and abandon too; client tests pass.
 - 2026-11-16 — Inventory (Tab view): each worn bag's pocket shows how full it is as a thin bar, red when full. Client tests pass.
