@@ -81,6 +81,12 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	_check.call(chair > 0 and rock > 0 and on_furn == ClassicView.glyph(tables.def_at("furn", chair).symbol)
 			and on_item == ClassicView.glyph(tables.def_at("itype", rock).symbol) and ch.call(q2) == "%",
 			"classic view: an item over furniture over terrain; a corpse alone is %% (%s %s %s)" % [on_furn, on_item, ch.call(q2)])
+	# one pass indexes each submap's piles once; both piles still show
+	var pass_rows := ClassicView.cells(snap, tables, p)
+	var r5: Array = pass_rows[ClassicView.RY - 5]
+	_check.call(r5[ClassicView.RX - 1][0] == on_item and r5[ClassicView.RX + 1][0] == "%",
+			"classic view: a whole pass shows each pile from the per-submap index (%s %s)"
+			% [r5[ClassicView.RX - 1][0], r5[ClassicView.RX + 1][0]])
 	# the panel: hidden at first, built when shown, its text one line per row
 	var v := ClassicView.new()
 	v.show_world(snap, tables)

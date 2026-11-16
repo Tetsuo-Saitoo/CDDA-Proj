@@ -954,8 +954,7 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 		where += ", %d level%s %s" % [absi(d.z), "" if absi(d.z) == 1 else "s", "up" if d.z > 0 else "down"]
 	var lines := PackedStringArray(["look: %s, %s" % [r["what"], where]])
 	lines.append_array(look_ray.describe(sq))
-	look_panel.text = "
-".join(lines)
+	look_panel.text = "\n".join(lines)
 	_look_end = r["point"]
 	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)

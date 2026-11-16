@@ -67,16 +67,18 @@ static func cells(snap: Snapshot, t: IdTables, centre: Vector3i, rx := RX, ry :=
 		return out
 	rx = clampi(rx, 0, RX)
 	ry = clampi(ry, 0, RY)
+	var piles := {}   # per-submap pile index, built once for this pass
 	for dy in range(-ry, ry + 1):
 		var row: Array = []
 		for dx in range(-rx, rx + 1):
-			row.append(cell(snap, t, centre + Vector3i(dx, dy, 0)))
+			row.append(cell(snap, t, centre + Vector3i(dx, dy, 0), piles))
 		out.append(row)
 	return out
 
 
 ## One square as CDDA's ASCII view draws it: [char, Color]; [" ", ...] when never seen or not in the snapshot.
-static func cell(snap: Snapshot, t: IdTables, p: Vector3i) -> Array:
+## `piles` caches each submap's pile index; pass the same dict for every square of one pass.
+static func cell(snap: Snapshot, t: IdTables, p: Vector3i, piles: Dictionary = {}) -> Array:
 	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(p))
 	if sm == null:
 		return [" ", PLAYER]
@@ -85,13 +87,13 @@ static func cell(snap: Snapshot, t: IdTables, p: Vector3i) -> Array:
 	var vis: int = sm.vis[i] if i < sm.vis.size() else 2
 	if vis == 0:
 		return [" ", PLAYER]
-	var out: Array = _what(snap, t, sm, i, p, vis)
+	var out: Array = _what(snap, t, sm, i, p, vis, piles)
 	if vis == 1:
 		out[1] = (out[1] as Color).darkened(DIM)
 	return out
 
 
-static func _what(snap: Snapshot, t: IdTables, sm: Snapshot.Submap, i: int, p: Vector3i, vis: int) -> Array:
+static func _what(snap: Snapshot, t: IdTables, sm: Snapshot.Submap, i: int, p: Vector3i, vis: int, piles: Dictionary) -> Array:
 	if p == snap.player_pos:
 		return ["@", PLAYER]
 	if vis >= 2:
@@ -101,7 +103,7 @@ static func _what(snap: Snapshot, t: IdTables, sm: Snapshot.Submap, i: int, p: V
 				return _def(t.def_at("mtype", c.type))
 			var npc := {Snapshot.Creature.HOSTILE: "c_red", Snapshot.Creature.FRIENDLY: "c_light_green"}
 			return ["@", CddaPalette.fg(npc.get(c.attitude, "c_white"))]
-	var it := _pile_top(sm, i)
+	var it := _pile_top(sm, i, piles)
 	if it[0] != 0:
 		return _def(t.def_at("itype", it[0]))
 	if it[1] != 0:   # a corpse alone: CDDA's %, in the creature's colour
@@ -128,12 +130,16 @@ static func _what(snap: Snapshot, t: IdTables, sm: Snapshot.Submap, i: int, p: V
 
 
 ## [itype of the pile's top item, mtype of its largest corpse] on tile `i`, zeros when none.
-static func _pile_top(sm: Snapshot.Submap, i: int) -> Array:
-	var p := sm.items
-	for k in range(0, p.size() - Snapshot.PILE_STRIDE + 1, Snapshot.PILE_STRIDE):
-		if p[k] == i:
-			return [p[k + 2], p[k + Snapshot.PILE_CORPSE]]
-	return [0, 0]
+## The submap's piles are indexed by tile on first use and kept in `piles` (first entry per tile wins).
+static func _pile_top(sm: Snapshot.Submap, i: int, piles: Dictionary) -> Array:
+	if not piles.has(sm):
+		var idx := {}
+		var p := sm.items
+		for k in range(0, p.size() - Snapshot.PILE_STRIDE + 1, Snapshot.PILE_STRIDE):
+			if not idx.has(int(p[k])):
+				idx[int(p[k])] = [p[k + 2], p[k + Snapshot.PILE_CORPSE]]
+		piles[sm] = idx
+	return (piles[sm] as Dictionary).get(i, [0, 0])
 
 
 static func _ter_def(snap: Snapshot, t: IdTables, p: Vector3i) -> IdTables.Def:

@@ -181,15 +181,13 @@ func _hud_live() -> void:
 func _classic_live() -> void:
 	var v := _main.classic
 	root.push_input(_key_of(&"classic_view"))
-	var lines := v.text().split("
-")
+	var lines := v.text().split("\n")
 	var mid := lines[ClassicView.RY].substr(ClassicView.RX, 1) if lines.size() > ClassicView.RY else ""
 	var drawn := 0
 	for l in lines:
 		drawn += l.length() - l.count(" ")
 	_check(v.visible and mid == "@" and drawn > 100, "F3: CDDA's classic view, @ in the middle, %d squares drawn" % drawn)
-	print("    " + "
-    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
+	print("    " + "\n    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
 	root.push_input(_key_of(&"classic_view"))
 	_check(not v.visible, "F3 again hides it")
 
