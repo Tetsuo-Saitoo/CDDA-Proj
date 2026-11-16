@@ -3,7 +3,7 @@ extends Node3D
 ## Fields on the ground: CDDA's fields (snapshot `fields`, seen tiles only) of the liquid and solid kinds drawn
 ## as splats (blood, bile, acid, slime, sap, sludge, webs, churned earth) and chunks (gibs, rubble), sized by
 ## intensity, blood and gibs coloured by what bled (flesh, plant, insect, invertebrate). Fire, smoke and gas
-## are FieldView's. Rebuilt per snapshot; at most MAX_SPLATS instances per kind. Deterministic per square, so a
+## are FieldView's. Rebuilt per snapshot and when the cutaway moves; at most MAX_SPLATS instances per kind. Deterministic per square, so a
 ## rebuild doesn't move anything.
 
 const MAX_SPLATS := 2048
@@ -28,9 +28,10 @@ const KINDS := {
 	"fd_rubble": ["chunks", Color(0.5, 0.48, 0.45)],
 }
 
-var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden; main.gd sets WorldView.things_z_max()
+var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
 var _layers := {}     # field id -> MultiMeshInstance3D
 var _count := 0
+var _world: WorldView = null   # the world last applied (refresh follows its cutaway)
 
 
 func _init() -> void:
@@ -43,6 +44,7 @@ func count() -> int:
 
 
 func apply(snap: Snapshot, world: WorldView) -> void:
+	_world = world
 	var by_kind := {}   # field id -> Array of Transform3D
 	_count = 0
 	if world.tables != null:
@@ -76,6 +78,20 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		for i in xs.size():
 			mi.multimesh.set_instance_transform(i, xs[i])
 		_count += xs.size()
+
+## Each frame: a cutaway change (WorldView.things_z_max) redraws at once, not on the next snapshot.
+func _process(_delta: float) -> void:
+	refresh()
+
+
+## Follows the cutaway of the world last applied: redraws its snapshot when things_z_max() moved.
+func refresh() -> void:
+	if _world == null or not is_instance_valid(_world) or _world.snapshot == null:
+		return
+	var z := _world.things_z_max()
+	if z != view_z_max:
+		view_z_max = z
+		apply(_world.snapshot, _world)
 
 
 func shift(d: Vector3) -> void:

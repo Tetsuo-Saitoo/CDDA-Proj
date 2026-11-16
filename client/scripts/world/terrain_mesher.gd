@@ -45,6 +45,9 @@ const GROUND := "ground"
 const CEILING := Color(0.82, 0.81, 0.78)
 const CEILING_SHARE := 0.75
 const WET_ROUGHNESS := 0.35
+const SNOW_SHADER := preload("res://shaders/snow_cover.gdshader")
+const SNOW_PERIOD := 512   # squares: the snow's patches repeat this often (the shader's PERIOD)
+static var _snow: ShaderMaterial   # the snow pass over the ground (snow_ground), made on first use
 const WET_SPECULAR := 0.8
 const WET_TINT := Color(0.72, 0.74, 0.78)
 static var _materials := {}
@@ -775,6 +778,24 @@ static func wet_ground(wet: float) -> void:
 	m.roughness = lerpf(0.9, WET_ROUGHNESS, w)
 	m.metallic_specular = lerpf(0.5, WET_SPECULAR, w)
 	m.albedo_color = Color.WHITE.lerp(WET_TINT, w)
+
+
+## How much of the open ground and roofs lies under snow, 0 bare .. 1 covered: a pass over the ground material
+## (shaders/snow_cover.gdshader: white on what faces up, in patches that grow with `cover`), none at 0. `origin_ms`:
+## the bubble's origin, so the patches stay put on the map when it shifts. Main thread.
+static func snow_ground(cover: float, origin_ms: Vector3i) -> void:
+	var m := material(GROUND)
+	var c := clampf(cover, 0.0, 1.0) if is_finite(cover) else 0.0
+	if c <= 0.0:
+		m.next_pass = null
+		return
+	if _snow == null:
+		_snow = ShaderMaterial.new()
+		_snow.shader = SNOW_SHADER
+		_snow.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the ground
+	_snow.set_shader_parameter(&"cover", c)
+	_snow.set_shader_parameter(&"origin_m", Vector2(posmod(origin_ms.x, SNOW_PERIOD), posmod(origin_ms.y, SNOW_PERIOD)) * CddaCoords.TILE_M)
+	m.next_pass = _snow
 
 
 ## The shared material `name` ("solid", "ground" or "glass"), made on first use by whichever thread asks first: the meshing
