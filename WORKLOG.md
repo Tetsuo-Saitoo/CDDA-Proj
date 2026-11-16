@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Joined furniture models (C3, lead-world): a registry entry can name `joins` pieces (ends, middle, an L's corner); a run of counters draws each tile's piece, turned to meet its neighbours; a missing piece draws the plain model. Schema and docs updated. Client tests pass.
 - 2026-11-15 — Item poses drawn (lead-world): placed items lie at their spot turned as their body lay (the snapshot's `poses`, lead-vr's convention), on their side resting on the surface; no pose, as before. Indoor fog: under a roof the fog now starts past the roofed room in sight (long halls stay clear), not at 8 m. Client tests pass.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
 - 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.
