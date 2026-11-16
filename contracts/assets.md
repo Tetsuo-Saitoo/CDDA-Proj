@@ -23,7 +23,7 @@ Schema: [schema/fp3d_model.schema.json](schema/fp3d_model.schema.json). Mods can
 | `placeholder` | Props (furniture, traps, items): a procedural low-poly shape the client builds while there is no model (`chair`, `table`, `counter`, `shelf`, `bed`, `fridge`, `item_book`, ...; the list is `NAMES` in `client/scripts/world/prop_shapes.gd`) |
 | `material` | Material name from `assets/materials/` (for now the palette names in `client/scripts/world/palette.gd`). Colours meshers and placeholders, and tints the entry's model (see Models) |
 | `scale`, `offset`, `random_yaw` | Placement inside the tile (offset in metres, before sub-tile jitter) |
-| `joins` | Furniture with a `model` only: models for joined tiles, by piece (`end_left`, `end_right`, `middle`, `corner`; see Placement). Any piece left out draws `model` |
+| `joins` | Furniture with a `model` only: models for joined tiles, by piece (`end_left`, `end_right`, `middle`, `corner`, `tee`, `cross`; see Placement). Any piece left out draws `model` |
 | `states` | Other CDDA ids that are the same object in another state (shares rig/animations) |
 | `anim_set` | Monsters/NPCs: animation set name (`humanoid`, `quadruped`, `insect`, `blob`, …) |
 
@@ -85,10 +85,10 @@ and the back to a wall; ties go by a hash of the piece. Runs past 12 tiles and b
 Placeholder shapes draw joined tiles as one piece. A model is one per tile; with `joins` a joined tile draws
 the piece for how it joins, as seen from its front (model +X is its right): `end_left` joins the run on its
 right only (the left end of a run), `end_right` on its left only, `middle` on both sides, `corner` on its
-right and its front (an L's corner; the client turns it so those two sides meet the neighbours). A tile joined in front or behind (a
-block laid out with one facing) takes an end or the middle turned a quarter. A lone tile, a T or a
-cross draws `model`, and so does a piece that is left out
-or doesn't load. `random_yaw` turns a prop freely (hash of the square, so it never changes between
+right and its front (an L's corner), `tee` on both sides and its front (where a run branches), `cross` on
+all four sides; the client turns each so its joining sides meet the neighbours. A tile joined in front or
+behind (a block laid out with one facing) takes an end or the middle turned a quarter. A lone tile draws
+`model`, and so does a piece that is left out or doesn't load. `random_yaw` turns a prop freely (hash of the square, so it never changes between
 rebuilds) and never joins.
 Item piles show up to 8 items (the snapshot's top 4 by volume, then small clutter) on 4 × 4 sub-tile slots
 picked by a hash of the square, sized by volume (models keep their real size), on the surfaces of the tile's

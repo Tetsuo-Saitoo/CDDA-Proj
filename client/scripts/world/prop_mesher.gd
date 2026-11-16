@@ -459,8 +459,8 @@ static func _facing_of(xf: Transform3D) -> int:
 
 
 ## The model a furniture tile draws and its transform, [Model, Transform3D]: one of the prop's `joins` pieces
-## when its links (shape-local bits, _links) make it an end, the middle or the corner of joined tiles and the
-## prop has that piece, else its own model (null for a placeholder) at xf * MODEL_TURN.
+## when its links (shape-local bits, _links) make it an end, the middle, a corner, a T or a cross of joined
+## tiles and the prop has that piece, else its own model (null for a placeholder) at xf * MODEL_TURN.
 static func drawn_model(prop: PropCatalog.Prop, links: int, xf: Transform3D) -> Array:
 	var j := join_of(links)
 	if prop.model != null and prop.joins.has(j[0]):
@@ -471,8 +471,9 @@ static func drawn_model(prop: PropCatalog.Prop, links: int, xf: Transform3D) -> 
 ## The `joins` piece (contracts/assets.md) for a tile with these links (shape-local bits: 1 front, 2 its left
 ## seen from the front, 4 back, 8 its right) and the quarter turns (counter-clockwise seen from above) it
 ## takes in model space: an end joins the run on one side, the middle on both, the corner on its right and
-## its front. A tile joined in front or behind (a block laid out with one facing: tables, model-only props)
-## takes an end or the middle turned a quarter, its front sideways. ["", 0] for none: alone, a T or a cross.
+## its front, the tee on both sides and its front, the cross on all four. A tile joined in front or behind (a
+## block laid out with one facing: tables, model-only props) takes an end or the middle turned a quarter, its
+## front sideways. ["", 0] for none: alone.
 static func join_of(links: int) -> Array:
 	match links:
 		8:
@@ -495,6 +496,16 @@ static func join_of(links: int) -> Array:
 			return ["corner", 2]
 		3:
 			return ["corner", 3]
+		11:
+			return ["tee", 0]
+		13:
+			return ["tee", 1]
+		14:
+			return ["tee", 2]
+		7:
+			return ["tee", 3]
+		15:
+			return ["cross", 0]
 	return ["", 0]
 
 
