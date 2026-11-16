@@ -192,6 +192,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_request" ), &CddaSim::get_request );
     ClassDB::bind_method( D_METHOD( "answer", "answer" ), &CddaSim::answer );
     ClassDB::bind_method( D_METHOD( "queue_action", "action" ), &CddaSim::queue_action );
+    ClassDB::bind_method( D_METHOD( "queue_action_at", "action", "square" ), &CddaSim::queue_action_at );
     ClassDB::bind_method( D_METHOD( "queue_item_action", "action" ), &CddaSim::queue_item_action );
     ClassDB::bind_method( D_METHOD( "use_stairs", "pos", "dir" ), &CddaSim::use_stairs );
     ClassDB::bind_method( D_METHOD( "clear_actions" ), &CddaSim::clear_actions );
@@ -488,6 +489,13 @@ bool CddaSim::queue_action( const String &action )
 {
     const std::string s = fp3d::sanitize_text( to_std( action ), max_action_bytes );
     return !s.empty() && fp3d::queue_action( s );
+}
+
+// The fork checks the square's range here and, when the action runs, that CDDA allows it (next to the player).
+bool CddaSim::queue_action_at( const String &action, const Vector3i &square )
+{
+    const std::string s = fp3d::sanitize_text( to_std( action ), max_action_bytes );
+    return !s.empty() && fp3d::queue_action_at( s, fp3d::ui_point{ square.x, square.y, square.z } );
 }
 
 // One item, no menus (fp3d/item_hands.h, contracts/bridge_api.md). Every key is checked for type and range; a
