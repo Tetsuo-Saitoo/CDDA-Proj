@@ -18,18 +18,23 @@ const LAMP := Color(1.0, 0.8, 0.55)
 const FIRE := Color(1.0, 0.58, 0.28)
 const SHADER := preload("res://shaders/world_light.gdshader")
 const SHADOW_LAMPS := 4   # default shadow_lamps: shadows cost a render of the casters near each lamp that changed
+const VR_SHADOW_LAMPS := 0   # default vr_shadow_lamps: off in VR until their cost at 90 fps is measured
 
 ## Off: no darkening and no lamps (--no-light).
 var enabled := true:
 	set(v):
 		enabled = v
 		_update_visible()
-## How many of the lamps (the nearest to the player first) cast shadows, 0..LightMap.MAX_SOURCES.
+## How many of the lamps (the nearest to the player first) cast shadows, 0..LightMap.MAX_SOURCES; in VR (the
+## viewport uses XR) at most vr_shadow_lamps of them.
 var shadow_lamps := SHADOW_LAMPS:
 	set(v):
 		shadow_lamps = clampi(v, 0, LightMap.MAX_SOURCES)
-		for i in _lights.size():
-			_lights[i].shadow_enabled = i < shadow_lamps
+		_place_shadows()
+var vr_shadow_lamps := VR_SHADOW_LAMPS:
+	set(v):
+		vr_shadow_lamps = clampi(v, 0, LightMap.MAX_SOURCES)
+		_place_shadows()
 ## Lowest multiplier for world pixels (not the sky).
 var min_brightness := 0.0:
 	set(v):
@@ -81,7 +86,7 @@ func _init() -> void:
 	for i in LightMap.MAX_SOURCES:
 		var l := OmniLight3D.new()
 		l.name = "lamp_%d" % i
-		l.shadow_enabled = i < shadow_lamps   # sources come nearest first (LightMap)
+		l.shadow_enabled = i < shadow_lamps   # sources come nearest first (LightMap); _place_shadows
 		l.omni_shadow_mode = OmniLight3D.SHADOW_DUAL_PARABOLOID   # two renders, not six
 		l.light_specular = 0.25
 		l.omni_attenuation = 1.5
@@ -106,6 +111,7 @@ func apply(map: LightMap, coords: CddaCoords) -> void:
 	_mat.set_shader_parameter("levels", map.levels)
 	_mat.set_shader_parameter("sky_color", _vec(map.sky))
 	_mat.set_shader_parameter("outside_color", _vec(map.outside))
+	_place_shadows()
 	sources_shown = 0
 	for i in _lights.size():
 		var l := _lights[i]
@@ -120,6 +126,18 @@ func apply(map: LightMap, coords: CddaCoords) -> void:
 		l.light_energy = LightMap.light_energy(s.luminance)
 		sources_shown += 1
 	_update_visible()
+
+
+## Lamps with shadows for these settings: shadow_lamps, at most vr_shadow_lamps in VR.
+static func shadows_for(lamps: int, vr_lamps: int, xr: bool) -> int:
+	return mini(lamps, vr_lamps) if xr else lamps
+
+
+func _place_shadows() -> void:
+	var xr := is_inside_tree() and get_viewport().use_xr
+	var n := shadows_for(shadow_lamps, vr_shadow_lamps, xr)
+	for i in _lights.size():
+		_lights[i].shadow_enabled = i < n
 
 
 ## The OmniLights in use (shown or not), for tests.
