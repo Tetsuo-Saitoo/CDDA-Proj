@@ -209,7 +209,9 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 		if not _fire_flown(t, line[0], line[1]):
 			if TargetRequestWidget.is_attack_mode(t.mode):
 				fired.emit()
-				shot_went.emit()   # plain FIRE: no shot request will tell
+				# plain FIRE: no shot request will tell, so kick now; a misfire on this rare fallback
+				# (no gun def, nothing flown) still clicks after it
+				shot_went.emit()
 				shot_aim = {}   # a new trigger pull replaces the kept aim
 			t.fire()
 	else:
@@ -450,11 +452,11 @@ func on_request(req: Dictionary) -> Dictionary:
 		return _swing_answer(req)
 	if kind != "shot":
 		return {}
-	shot_went.emit()   # CDDA fired this round (a misfire asks nothing)
 	var id: Variant = RequestWidget.id_value(req.get("id"))
 	if id == null or id <= 0:
 		push_warning("aim: shot request without a usable id")
 		return {}
+	shot_went.emit()   # CDDA fired this round (a misfire asks nothing)
 	var cancel := fallback_answer(id)
 	if shot_aim.is_empty() or Time.get_ticks_msec() - int(shot_aim.get("time", 0)) > AIM_KEEP_MS:
 		return cancel

@@ -1490,8 +1490,9 @@ func _test_misfires(root: Node, aim: AimController, tables: IdTables) -> void:
 	aim.on_request({"kind": "target", "mode": "fire"})
 	var none_yet: int = went[0]
 	aim.on_request({"kind": "shot", "id": 7, "shot_error": 0.0, "shot_angle": 0.0})
-	aim.on_request({"kind": "shot"})   # a bad id: the round still went off
-	_check.call(none_yet == 0 and went[0] == 2, "misfire: shot_went for each shot request only (%d, %d)" % [none_yet, went[0]])
+	aim.on_request({"kind": "shot"})   # a bad id: ignored, no kick
+	aim.on_request({"kind": "shot", "id": -3})
+	_check.call(none_yet == 0 and went[0] == 1, "misfire: shot_went for each usable shot request only (%d, %d)" % [none_yet, went[0]])
 	aim.shot_went.disconnect(count_went)
 
 	var hf := aim.hits
