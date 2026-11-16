@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Hurt tint (combat lead, client, PLAN F3): the view's edges go dark red when the player is hit and stay faintly red while bleeding; smooth, no flashes; F1 "Hurt tint" box turns it off (aim_tests). Not seen on screen; flat screen only.
 - 2026-11-15 — Reach weapons strike a knight's move off (combat lead, fork fp3d-combat + client): keys and the VR swing send `fp3d_attack_main_aim_at` with the creature's square (queue_action_at); the fork checks reach, level and self. LiveSession.queue_action_at added (lead-ui OK). Not played.
 - 2026-11-15 — Events test (combat lead, fork fp3d-combat): the forced-technique check compares CDDA's translated name, not the English one.
 - 2026-11-15 — Suppressed guns don't flash (combat lead, fork fp3d-combat + client): the snapshot's wielded gun says `suppressed` when a gunmod (an integral one too) lowers its report; the viewmodel then only recoils (snapshot_test, aim_tests). Not seen on screen.
