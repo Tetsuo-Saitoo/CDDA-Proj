@@ -96,6 +96,7 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 - `surface_1`, …: flat planes where items lie, such as shelves, a drawer's floor or a table top. The plane's
   size is the usable area, and the game hides it. Items on the tile are spread over these planes in turn
   (item 1 on surface_1, item 2 on surface_2, ...); without any, they lie on the placeholder's surfaces.
+  An item put on a surface by hand stays on it: the surfaces in N order are the furniture's shelves 0..15.
 
 **Doors, drawers and lids that open (furniture)**
 

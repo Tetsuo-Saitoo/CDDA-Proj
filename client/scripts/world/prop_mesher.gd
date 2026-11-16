@@ -110,6 +110,12 @@ class Result:
 	## key on a rebuild makes a new part), and what lies on its surfaces, in pivot space: items_mesh (ArrayMesh
 	## or null), items_models (Model -> [Transform3D]), items_glyphs ([position, symbol, colour]).
 	var parts: Array = []
+	## The surfaces items can be put on, per furniture square (absolute) that has any, numbered (the shelf number,
+	## 0..Snapshot.MAX_SHELF, is the index): [rest (Transform3D, submap-local: the surface's frame, its top at
+	## y 0, as drawn at rest), rect (Rect2 in that frame's x, z), part (id of the door, drawer or lid it moves
+	## with, "" none), j (its index in that part's `surfaces`, -1 none), gates (ids of the doors and lids it lies
+	## behind, as item_slots), shut (true: behind doors that are drawn shut, never seen)]. See shelves_of.
+	var shelves := {}
 
 
 ## Items not to draw (uid -> true), e.g. one held in a hand: no shape, no slot, not counted as clutter.
@@ -173,6 +179,9 @@ func build(sm_pos: Vector3i) -> Result:
 				if roof or not _add_parts(p, i, prop, drawn[0], drawn[1], md, r):
 					_emit(b, md, prop, xf, links, r, rng, drawn)
 			r.furniture += 1
+			var sh := shelves_of(sm, base, i, tile_xf, r)
+			if not sh.is_empty():
+				r.shelves[p] = sh
 		if t != 0:
 			var prop := _cat.trap(t)
 			rng.seed = _hash(p) ^ 0x5bd1e995
@@ -620,23 +629,10 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	var out := []
 	var i := pile[0]
 	var count := pile[1]
-	var furn: PropCatalog.Prop = _cat.furniture(sm.furn[i]) if sm.furn[i] != 0 else null
-	var info := PropShapes.info(furn.shape) if furn != null else PropShapes.FLOOR_INFO
-	var drawn: Array = _drawn.get(base + Vector3i(i % SEEX, i / SEEX, 0), [])   # a join piece: its surfaces
-	var planes: Array = []
-	if not drawn.is_empty():
-		planes = (drawn[0] as ModelLibrary.Model).surfaces
-	elif furn != null and furn.model != null:
-		planes = furn.model.surfaces
-	if count <= 0 or (planes.is_empty() and info.get("hide", false)):
+	var surf := _surface(sm, base, i, tile_xf) if count > 0 else null
+	if surf == null:
 		return out
-	var surf := Surface.new()
-	surf.heights = info.get("surfaces", [0.0])
-	surf.rect = info.get("rect", PropShapes.FLOOR_INFO["rect"])
-	surf.planes = planes
-	var full: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
-	surf.on = Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
-	surf.model_xf = drawn[1] if not drawn.is_empty() else full * MODEL_TURN
+	var planes := surf.planes
 	var h := _hash(base + Vector3i(i % SEEX, i / SEEX, 0))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = h
@@ -664,6 +660,7 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 		var spot := Vector2(-1, -1)
 		var yaw := -1
 		var side := false
+		var shelf := -1
 		if k < n:
 			var hd: Array = handles[k]
 			uid = hd[0]
@@ -675,9 +672,11 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 			if hd.size() > 5 and hd[4] >= 0:
 				yaw = hd[4]
 				side = hd[5] != 0
+			if hd.size() > 6:
+				shelf = hd[6]
 		rng.seed = hash([h, uid] if uid != 0 else [h, -1 - k])   # an item keeps its turn when others leave
 		var slot := (start + k * step) % (SUB * SUB)
-		var sk := k % surf.count()
+		var sk := shelf if shelf >= 0 and shelf < surf.count() else k % surf.count()   # put on a shelf: there
 		var uv := surf.spot_uv(sk, spot) if spot.x >= 0.0 else \
 				Vector2((slot % SUB + 0.5) / SUB, (slot / SUB + 0.5) / SUB) + jitter[slot]
 		var size := _cat.item(itype).scale if itype != 0 else ITEM_CLUTTER_M
@@ -724,6 +723,68 @@ func _inside_closed(sm: Snapshot.Submap, base: Vector3i, i: int) -> bool:
 	return m != null and not m.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
 
 
+## Where items on square `i` can lie (pile_transforms): the drawn model's surface_N planes (a join piece's, a
+## PropBoxes container's), else the placeholder's heights and rect, else the floor's; null when they are hidden
+## inside a closed placeholder.
+func _surface(sm: Snapshot.Submap, base: Vector3i, i: int, tile_xf: Dictionary) -> Surface:
+	var furn: PropCatalog.Prop = _cat.furniture(sm.furn[i]) if sm.furn[i] != 0 else null
+	var info := PropShapes.info(furn.shape) if furn != null else PropShapes.FLOOR_INFO
+	var drawn: Array = _drawn.get(base + Vector3i(i % SEEX, i / SEEX, 0), [])   # a join piece: its surfaces
+	var planes: Array = []
+	if not drawn.is_empty():
+		planes = (drawn[0] as ModelLibrary.Model).surfaces
+	elif furn != null and furn.model != null:
+		planes = furn.model.surfaces
+	if planes.is_empty() and info.get("hide", false):
+		return null
+	var surf := Surface.new()
+	surf.heights = info.get("surfaces", [0.0])
+	surf.rect = info.get("rect", PropShapes.FLOOR_INFO["rect"])
+	surf.planes = planes
+	var full: Transform3D = tile_xf.get(i, _tile_xf(i, sm))
+	surf.on = Transform3D(full.basis.orthonormalized(), full.origin)   # items keep their own size
+	surf.model_xf = drawn[1] if not drawn.is_empty() else full * MODEL_TURN
+	return surf
+
+
+## Result.shelves of furniture square `i` (after its parts were made): its surfaces numbered as pile_transforms
+## lays items on them, the drawn model's surface_N planes in N order (some ride a drawer or door), else its
+## placeholder's surface heights lowest first, at most Snapshot.MAX_SHELF + 1; none for furniture without
+## surfaces of its own (items lie on the floor around it) or with its contents hidden.
+func shelves_of(sm: Snapshot.Submap, base: Vector3i, i: int, tile_xf: Dictionary, r: Result) -> Array:
+	var out := []
+	if sm.furn[i] == 0:
+		return out
+	var surf := _surface(sm, base, i, tile_xf)
+	if surf == null or (surf.planes.is_empty() and not PropShapes.info(_cat.furniture(sm.furn[i]).shape).has("surfaces")):
+		return out
+	var tp: Array = _tile_parts.get(i, [])
+	var behind := _inside_closed(sm, base, i)
+	var gates := _gates(i, r) if behind else PackedStringArray()
+	for k in mini(surf.count(), Snapshot.MAX_SHELF + 1):
+		var rest: Transform3D
+		var rect: Rect2
+		if surf.planes.is_empty():
+			rest = Transform3D(surf.on.basis, surf.on * Vector3(0, float(surf.heights[k]), 0))
+			rect = Rect2(surf.rect[0], surf.rect[1], surf.rect[2] - surf.rect[0], surf.rect[3] - surf.rect[1])
+		else:
+			var s: Array = surf.planes[k]
+			rest = surf.model_xf * (s[0] as Transform3D) * Transform3D(Basis.IDENTITY, Vector3(0, s[2], 0))
+			rect = s[1]
+		var part := ""
+		var j := -1
+		var pi := _part_on(i, k, r)
+		if pi >= 0:
+			part = r.parts[pi]["id"]
+			var m: ModelLibrary.Model = tp[0]
+			j = 0
+			for q in k:
+				if m.surface_mover[q] == m.surface_mover[k]:
+					j += 1
+		out.append([rest, rect.abs(), part, j, gates, pi < 0 and behind and gates.is_empty()])
+	return out
+
+
 ## [transform, itype, uid, size_m, centre, height, plane] of an item drawn at `xf` (scaled by `size`) on model
 ## surface `plane` (-1: not on a model's).
 func _placed(xf: Transform3D, itype: int, uid: int, size: float, plane := -1) -> Array:
@@ -747,8 +808,8 @@ static func _item_box(prop: PropCatalog.Prop, itype: int) -> AABB:
 	return ITEM_BOX.get(prop.shape if itype != 0 else "item_small", ITEM_BOX_OTHER)
 
 
-## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y, yaw, side], ...] in the snapshot's
-## order; yaw -1 (side 0) for an item without a pose.
+## The tiles' handles of a submap: tile -> [[uid, itype, spot_x, spot_y, yaw, side, shelf], ...] in the
+## snapshot's order; yaw -1 (side 0) for an item without a pose, shelf -1 for one not put on a shelf.
 static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 	var out := {}
 	var hs := sm.handles
@@ -757,7 +818,8 @@ static func handles_by_tile(sm: Snapshot.Submap) -> Dictionary:
 		if not out.has(t):
 			out[t] = []
 		var pose: Vector2i = sm.poses.get(hs[k + 1], NO_POSE)
-		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4]), pose.x, pose.y])
+		(out[t] as Array).append([hs[k + 1], int(hs[k + 2]), int(hs[k + 3]), int(hs[k + 4]), pose.x, pose.y,
+				int(sm.shelves.get(hs[k + 1], -1))])
 	return out
 
 
