@@ -131,8 +131,8 @@ func throw(item: ItemRef, square: Vector3i) -> bool:
 
 
 ## Moves a carried, unworn `item` into hand "main" (CDDA's wield) or "off" (held in the off hand): the hand change
-## of Hands.hand_over. Backend method hold_item(uid, type, hand) (MockItems has it; the bridge has no such op yet, so
-## a live backend without it refuses here and nothing is sent).
+## of Hands.hand_over. Backend method hold_item(uid, type, hand) (MockItems and LiveSession have it; a backend
+## without it refuses here and nothing is sent).
 func hold(item: ItemRef, hand: String) -> bool:
 	if not _ok_ref(item) or not item.carried or item.flags & Snapshot.CARRIED_WORN or not (hand in ["main", "off"]):
 		return false
@@ -383,7 +383,7 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			return Where.STILL   # also one unit thrown off a stack: QUIET_OK
 		"hold":   # in the hand asked for now
 			if row < 0:
-				return Where.UNKNOWN if full else Where.MOVED
+				return Where.UNKNOWN   # gone from the list: not a hand change (it times out)
 			var flag := Snapshot.CARRIED_WIELDED if e["target"] == "main" else Snapshot.CARRIED_OFFHAND
 			return Where.MOVED if (snap.carried[row * Snapshot.CARRIED_STRIDE + 4] & flag) != 0 else Where.STILL
 		"pour":

@@ -58,8 +58,66 @@ class FakeBackend:
 		calls.append(["pour_into", uid, type, container, container_type, pocket])
 		return ok
 
+	func hold_item(uid: float, type: float, hand: String) -> bool:
+		calls.append(["hold", uid, type, hand])
+		return ok
+
 	func queued_actions() -> int:
 		return queued
+
+
+## hold (a hand change): finished when the carried row shows the hand asked for; a row gone from the list is no
+## hand change: it waits and times out.
+func _test_hold() -> void:
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	var now := [1000]
+	a.clock = func() -> int: return now[0]
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	a.on_snapshot(_snap(5, [], [[31, 8, 0, -1, 0], [32, 8, 0, -1, 0]]))
+	var sent: bool = a.hold(ItemRef.on_player(31, 8, 0, -1, 0, SQ), "off") and b.calls[-1] == ["hold", 31.0, 8.0, "off"]
+	a.on_snapshot(_snap(6, [], [[31, 8, 0, -1, OFFHAND], [32, 8, 0, -1, 0]]))
+	_check.call(sent and seen == [["finished", 31, "hold"]] and not a.hold(ItemRef.on_player(33, 8, 0, -1, 0, SQ), "teeth")
+			and not a.hold(ItemRef.on_player(33, 8, 0, -1, WORN, SQ), "main") and not a.hold(ItemRef.on_square(34, 8, SQ), "main"),
+			"item actions: hold finishes when the row shows that hand; bad hands, worn and lying items refused here")
+	a.hold(ItemRef.on_player(32, 8, 0, -1, 0, SQ), "main")
+	a.on_snapshot(_snap(7, [], [[31, 8, 0, -1, OFFHAND]]))
+	a.on_snapshot(_snap(8, [], [[31, 8, 0, -1, OFFHAND]]))
+	var waits := seen.size() == 1 and a.pending(32) == "hold"
+	now[0] = 6000
+	a.check_timeouts()
+	_check.call(waits and seen[-1] == ["refused", 32, "hold", ItemActions.NO_ANSWER] and a.pending_count() == 0,
+			"item actions: a held item gone from the carried list is no hand change: it times out (%s)" % [seen[-1]])
+	a.free()
+	# LiveSession.hold_item: the bridge's "hold" op, checked here first
+	var ls := LiveSession.new()
+	var off := ls.hold_item(31.0, 8.0, "main")
+	var sim := QueueSim.new()
+	ls._sim = sim
+	var ok := ls.hold_item(31.0, 8.0, "off")
+	var bad := [[31.0, 8.0, "pack"], [31.0, 8.0, "MAIN"], [31.0, 8.0, ""], [0.0, 8.0, "main"], [1.5, 8.0, "main"],
+		[NAN, 8.0, "main"], [INF, 8.0, "main"], [float(Snapshot.MAX_UID), 8.0, "main"], [31.0, 0.0, "main"],
+		[31.0, 8.5, "main"], [31.0, float(Snapshot.MAX_ID + 1), "main"], [-31.0, 8.0, "main"]]
+	var none := bad.all(func(c: Array) -> bool: return not ls.hold_item(c[0], c[1], c[2]))
+	sim.accept = false
+	var full := ls.hold_item(32.0, 8.0, "main")
+	_check.call(not off and ok and none and not full and sim.sent == [{"op": "hold", "item": 31, "type": 8, "hand": "off"},
+			{"op": "hold", "item": 32, "type": 8, "hand": "main"}],
+			"live session: hold_item sends the bridge's hold op; other hands and bad handles aren't sent (%s)" % [sim.sent])
+	ls.free()
+
+
+## A stand-in for CddaSim's queue_item_action: records what it is given, queues while `accept`.
+class QueueSim extends RefCounted:
+	var sent: Array = []
+	var accept := true
+
+	func queue_item_action(d: Dictionary) -> bool:
+		sent.append(d)
+		return accept
 
 
 func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
@@ -73,6 +131,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_content_ops()
 	_test_throw_pour()
 	_test_pour_hold()
+	_test_hold()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)

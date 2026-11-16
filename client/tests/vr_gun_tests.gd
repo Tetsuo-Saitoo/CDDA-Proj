@@ -503,6 +503,19 @@ func _test_rack() -> void:
 			"vr gun: a rack the game can't take now says so")
 	_accept = true
 	g.actions = acts
+	# CDDA refuses the clear a rack asked for: its reason by the racking hand, and the next rack may ask again
+	b = _rig.buzzes.duplicate()
+	g._clearing = g.jam
+	g._clear_left = 5.0
+	var other := ItemRef.on_player(g.gun.uid + 77, g.gun.type, 0, -1, 0, P) if g.gun != null else null
+	g._on_refused(other, "clear", "not this one")
+	var kept := g._clearing == g.jam and _rig.buzzes == b
+	g._on_refused(g.gun, "clear", "You can't fix that here.")
+	_check.call(g.gun != null and kept and g._clearing == "" and g._clear_left == 0.0 and _rig.buzzes[0] == b[0] + 1
+			and _rig.notes[0].visible and _rig.notes[0].text == "You can't fix that here.",
+			"vr gun: CDDA refuses to clear the jam: its reason by the racking hand, the next rack asks again")
+	g._on_refused(g.gun, "clear", "again")
+	_check.call(_rig.notes[0].text == "You can't fix that here.", "vr gun: a clear refusal nobody asked for says nothing")
 	_snap.player_gun["faults"] = []
 	_captured()
 	_frame()

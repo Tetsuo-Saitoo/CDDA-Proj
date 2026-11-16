@@ -13,6 +13,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_static()
 	_test_settings()
 	_test_content(tables)
+	_test_state_lines(tables)
 	_test_rig(root, tables)
 
 
@@ -126,6 +127,80 @@ func _test_content(tables: IdTables) -> void:
 	_check.call(VrHud.shown(hud.warn_labels).is_empty() and VrHud.shown(hud.msg_labels).is_empty()
 			and torso.color == VrHud.NO_DATA and not h.changed.is_connected(hud._on_changed),
 			"vr hud: data taken away: empty again, no longer listening")
+	hud.free()
+
+
+func _effect(id: String, text: String, rating: int, part := 0) -> Dictionary:
+	return {"id": id, "name": text, "body_part": part, "intensity": 1, "rating": rating, "seconds_left": -1}
+
+
+## The move line, the mood line and the effects: HudData's own lines; bad effects first, the rest counted; odd
+## entries skipped; nothing when the data doesn't say.
+func _test_state_lines(tables: IdTables) -> void:
+	var hud := VrHud.new()
+	var h := HudData.new()
+	hud.data = h
+	_check.call(VrHud.shown(hud.effect_labels).is_empty() and not hud.move_label.visible and not hud.mood_label.visible,
+			"vr hud: no effects, move or mood known: those lines stay empty")
+	var s := Snapshot.new()
+	var fx: Array[Dictionary] = [_effect("took_xanax", "Calm", Snapshot.EFFECT_GOOD), _effect("stunned", "Stunned", Snapshot.EFFECT_BAD),
+			_effect("bleed", "Bleeding", Snapshot.EFFECT_BAD), _effect("hurt", "Hurt", Snapshot.EFFECT_BAD, tables.body_parts.find("arm_l"))]
+	s.player_effects = fx
+	s.player_move_mode = 3
+	s.player_stamina = 5
+	s.player_stamina_max = 100
+	var before := hud._dirty
+	hud._dirty = false
+	h.update(s, tables)
+	var lines := VrHud.shown(hud.effect_labels)
+	_check.call(lines == PackedStringArray(["Stunned", "Hurt (left arm)", "Calm"]) and hud._dirty
+			and hud.effect_labels[0].get_theme_color("font_color") == HudData.level_color(HudData.HURT)
+			and hud.effect_labels[2].get_theme_color("font_color") == HudData.level_color(HudData.OK),
+			"vr hud: the effects, bad ones first, coloured; bleeding stays on the doll (%s)" % [lines])
+	_check.call(hud.move_label.visible and hud.move_label.text == VrHud.fit("Running (stamina 5%)", VrHud.STATE_CHARS)
+			and hud.move_label.get_theme_color("font_color") == HudData.level_color(HudData.BAD) and (before or true),
+			"vr hud: the move line, coloured by stamina while running (%s)" % hud.move_label.text)
+	var many: Array[Dictionary] = []
+	for i in 9:
+		many.append(_effect("e%d" % i, "Effect %d" % i, Snapshot.EFFECT_BAD if i == 8 else Snapshot.EFFECT_NEUTRAL))
+	s.player_effects = many
+	h.update(s, tables)
+	lines = VrHud.shown(hud.effect_labels)
+	_check.call(lines.size() == VrHud.EFFECT_LINES and lines[0] == "Effect 8" and lines[1] == "Effect 0"
+			and lines[VrHud.EFFECT_LINES - 1] == "+4 more", "vr hud: more effects than lines: the last line counts the rest (%s)" % [lines])
+	# Odd entries from another writer: skipped or clamped, never an error.
+	var odd: Array[Dictionary] = [{"text": 5}, {}, {"text": "z".repeat(200), "level": 1e9}, {"text": "ok", "level": "x"}]
+	h.effects = odd
+	h.move = {"text": 7}
+	h.changed.emit(PackedStringArray(["effects", "move"]))
+	lines = VrHud.shown(hud.effect_labels)
+	_check.call(lines.size() == 2 and lines[0].length() == VrHud.EFFECT_CHARS and lines[1] == "ok" and not hud.move_label.visible,
+			"vr hud: odd effect and move entries skipped, long text bounded (%s)" % [lines])
+	# The mood line: read duck-typed (HudData gets it from lead-ui): a text, or {text, level}.
+	_check.call(VrHud._line_of({"text": "Content", "level": HudData.OK}) == ["Content", HudData.OK]
+			and VrHud._line_of("x") == [] and VrHud._line_of({"text": ""}) == [] and VrHud._line_of(null) == []
+			and (VrHud._line_of({"text": "m".repeat(500)})[0] as String).length() == VrHud.MAX_MOOD,
+			"vr hud: a state line is {text, level}; anything else is no line")
+	var mood := {"value": -20, "word": "Unhappy", "level": HudData.HURT, "text": "Mood: Unhappy (Wet -12, Cold -8, +2 more)",
+			"reasons": [{"name": "Wet", "value": -12}, {"name": "Cold", "value": -8}], "cue": -0.4}
+	_check.call(VrHud.mood_text(mood) == ["Unhappy (Wet)", HudData.HURT]
+			and VrHud.mood_text({"word": "Content", "level": HudData.OK, "reasons": []}) == ["Content", HudData.OK]
+			and VrHud.mood_text({"word": "Sad", "reasons": [7, {"name": 5}]}) == ["Sad", HudData.UNKNOWN]
+			and VrHud.mood_text({"text": "Mood: fine", "level": HudData.OK}) == ["Mood: fine", HudData.OK]
+			and VrHud.mood_text("Calm") == ["Calm", HudData.UNKNOWN] and VrHud.mood_text({}) == []
+			and VrHud.mood_text(null) == [] and VrHud.mood_text(5) == [],
+			"vr hud: the mood line is the mood's word and its strongest reason; odd moods give no line")
+	if "mood" in h:
+		h.set("mood", mood)
+		h.changed.emit(PackedStringArray(["mood"]))
+		_check.call(hud.mood_label.visible and hud.mood_label.text == "Unhappy (Wet)"
+				and hud.mood_label.get_theme_color("font_color") == HudData.level_color(HudData.HURT),
+				"vr hud: the mood line shows HudData's mood")
+	else:
+		_check.call(hud.mood_line().is_empty() and not hud.mood_label.visible, "vr hud: HudData has no mood yet: no mood line")
+	hud.data = null
+	_check.call(VrHud.shown(hud.effect_labels).is_empty() and not hud.move_label.visible and not hud.mood_label.visible,
+			"vr hud: data taken away: the state lines are empty again")
 	hud.free()
 
 

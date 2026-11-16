@@ -66,6 +66,7 @@ class CddaSim : public godot::RefCounted
         bool set_cheat( const godot::String &name, bool on );
         void set_cheats_allowed( bool on );
         godot::Dictionary get_cheats() const;
+        godot::Array get_weather_types() const;
         bool give_test_kit();
         // The test range (contracts/bridge_api.md "Test range").
         godot::String start_test_range( const godot::String &data_dir, const godot::String &user_dir );
@@ -80,6 +81,7 @@ class CddaSim : public godot::RefCounted
         godot::Dictionary get_range_info() const;
         // The teleport cheat, in any game while cheats are allowed (contracts/bridge_api.md "Cheats").
         int64_t cheat_teleport( const godot::Vector3i &pos );
+        int64_t cheat_set_weather( const godot::String &id, double wind );
 
         int64_t match_recipes( const godot::Dictionary &container );
         godot::String take_query_result( int64_t id );

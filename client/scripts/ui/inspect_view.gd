@@ -39,6 +39,7 @@ const TICK_ON := "[x]"
 const TICK_OFF := "[ ]"
 const ROW_H := 32.0              # rows, [ ] boxes and bar buttons: tall enough for a VR laser pointer (lead-vr)
 const MAX_BATCH := 256           # items one drag moves, and the most that can be selected
+const MARQUEE_MIN_PX := 4.0      # a press on empty space that moves less is a click (selects none)
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
 const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
@@ -65,6 +66,7 @@ var _bar: HBoxContainer   # what to do with the selection
 var _bar_drop: Button
 var _into_box: HBoxContainer
 var _bar_unload: Button
+var close_button: Button
 var _bar_stop: Button
 var _bar_clear: Button
 var _batch_op := "move"  # "move" (to _batch_target) or "unload"
@@ -81,6 +83,15 @@ var _click_uid := -1     # a plain press on a selected row: only it stays select
 var _paint := false      # a [ ] box was pressed and the button is still down
 var _paint_on := false   # what the rows a drag passes become
 var _paint_uid := -1     # the row the drag is on
+var _row_press := false  # the press being handled was on an item row (row_input ran first): no box select
+var _marquee := false    # a box select from empty space is going on
+var _marquee_from := Vector2.ZERO   # where it started (global canvas position)
+var _marquee_base := {}  # what was selected when it started with Ctrl (else nothing)
+var _marquee_add := false
+var _marquee_moved := false
+var _marquee_box: Panel  # the box drawn while it goes on
+var _menu: PopupMenu     # the right-click menu: the selection bar's actions
+var _menu_buttons: Array[Button] = []
 var _rows_by_uid := {}   # uid -> row of `cols`
 var _batch: Array = []   # {inspect_uid, type} still to move, in order
 var _batch_target := {}
@@ -118,8 +129,12 @@ func _init(h: Hands, a: ItemActions) -> void:
 	add_child(panel)
 	var v := VBoxContainer.new()
 	panel.add_child(v)
+	var top := HBoxContainer.new()
+	v.add_child(top)
 	_head = _label("", Color(1.0, 0.85, 0.3))
-	v.add_child(_head)
+	_head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(_head)
+	close_button = _bar_button("Close", close, "Close (Tab)", top)   # for a pointer alone (the VR panel)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED   # each column scrolls on its own
@@ -142,6 +157,17 @@ func _init(h: Hands, a: ItemActions) -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status.visible = false
 	v.add_child(_status)
+	_marquee_box = Panel.new()
+	_marquee_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_marquee_box.visible = false
+	var ms := _style(Color(BOX, 0.12), 0)
+	ms.border_color = BOX
+	ms.set_border_width_all(1)
+	_marquee_box.add_theme_stylebox_override("panel", ms)
+	add_child(_marquee_box)
+	_menu = PopupMenu.new()
+	_menu.id_pressed.connect(menu_pick)
+	add_child(_menu)
 	if a != null:
 		a.changed.connect(refresh)
 		a.refused.connect(_on_action_refused)
@@ -168,12 +194,15 @@ func close() -> void:
 	if not visible:
 		return
 	visible = false
+	_marquee = false
+	_marquee_box.visible = false
+	_menu.hide()
 	_mouse(_prev_mouse)
 	closed.emit()
 
 
-## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc clears the selection, or closes it
-## when there is none. True when used.
+## Tab (the `inspect` action) opens the view (when `allowed`) or closes it; Esc or a ui_cancel action clears the
+## selection, or closes it when there is none; Ctrl+A selects all (select_all). True when used.
 func handle_key(event: InputEvent, allowed := true) -> bool:
 	if InputActions.pressed(event, &"inspect"):
 		if visible:
@@ -184,7 +213,13 @@ func handle_key(event: InputEvent, allowed := true) -> bool:
 			return true
 		return false
 	var k := event as InputEventKey
-	if visible and k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE:
+	if visible and k != null and k.pressed and not k.echo and (k.ctrl_pressed or k.meta_pressed) \
+			and (k.physical_keycode == KEY_A or k.keycode == KEY_A):
+		select_all()
+		return true
+	var esc := k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE
+	var cancel := event is InputEventAction and event.is_pressed() and (event as InputEventAction).action == &"ui_cancel"
+	if visible and (esc or cancel):   # (ui_cancel: the VR panel's B / Y)
 		if selection.is_empty():
 			close()
 		else:
@@ -266,13 +301,25 @@ func tick_box(uid: int) -> Label:
 
 ## A mouse event on item row `r` (InspectSlot). A left press: Ctrl+click adds or removes the row, Shift+click selects
 ## the rows of its column from the last clicked one, a click selects only it; on a row already selected that waits
-## for the button to come up without a drag (dragging takes the selection along).
+## for the button to come up without a drag (dragging takes the selection along). A right press opens the menu of
+## what to do with the selection (the row alone when it wasn't selected).
 func row_input(r: Dictionary, event: InputEvent) -> void:
 	var mb := event as InputEventMouseButton
-	if mb == null or mb.button_index != MOUSE_BUTTON_LEFT:
+	if mb == null:
 		return
+	if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+		_row_press = true   # (only the left button: a wheel turn here never reaches the view to clear it)
 	var uid: int = r.get("uid", -1)
 	if not _row_col.has(uid):
+		return
+	if mb.button_index == MOUSE_BUTTON_RIGHT:
+		if mb.pressed:
+			if not selection.has(uid):
+				select_only(uid)
+			var s: InspectSlot = _row_slots.get(uid)
+			show_menu(s.get_screen_transform() * mb.position if s != null and s.is_inside_tree() else mb.global_position)
+		return
+	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if not mb.pressed:
 		if uid == _click_uid:
@@ -329,6 +376,120 @@ func paint_at(point: Vector2) -> void:
 			_paint_uid = uid
 			_show_selection()
 			return
+
+
+## A mouse event that reached the view itself: every one does (the slots pass them on), after the row it was on
+## handled it. A left press on empty space starts a box select; moving draws it; letting go ends it.
+func _gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null:
+		var on_row := _row_press
+		_row_press = false
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if not mb.pressed:
+			marquee_end()
+		elif not on_row:
+			marquee_begin(get_global_transform() * mb.position, mb.ctrl_pressed or mb.meta_pressed)
+		return
+	var mm := event as InputEventMouseMotion
+	if mm != null and _marquee:
+		if (mm.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
+			marquee_end()   # the button came up outside the view
+		else:
+			marquee_to(get_global_transform() * mm.position)
+
+
+## A box select starts at `point` (global canvas position), from empty space. `add` (Ctrl): what is selected stays.
+func marquee_begin(point: Vector2, add := false) -> void:
+	_marquee = true
+	_marquee_from = point
+	_marquee_add = add
+	_marquee_moved = false
+	_marquee_base = selection.duplicate() if add else {}
+
+
+## The box now reaches `point`: the rows it touches (the part of each in sight in its column) are the selection,
+## with what was kept at the start. Nothing until it has moved MARQUEE_MIN_PX.
+func marquee_to(point: Vector2) -> void:
+	if not _marquee or not point.is_finite():
+		return
+	var box := Rect2(_marquee_from, point - _marquee_from).abs()
+	if not _marquee_moved and maxf(box.size.x, box.size.y) < MARQUEE_MIN_PX:
+		return
+	_marquee_moved = true
+	selection = _marquee_base.duplicate()
+	for col_id: String in _col_uids:
+		var sc: Control = _col_scroll.get(col_id)
+		for uid: int in _col_uids[col_id]:   # listing order: the cap keeps the first ones
+			var s: InspectSlot = _row_slots.get(uid)
+			if s == null or sc == null or not s.is_visible_in_tree():
+				continue
+			var seen := s.get_global_rect().intersection(sc.get_global_rect())
+			if seen.has_area() and seen.intersects(box):
+				_put(uid, true)
+	_show_selection()
+	var inv := get_global_transform().affine_inverse()
+	_marquee_box.position = inv * box.position
+	_marquee_box.size = inv.basis_xform(box.size)
+	_marquee_box.visible = true
+
+
+## The button came up: the box goes. A press that never moved was a click on empty space: it selects none
+## (unless Ctrl was held).
+func marquee_end() -> void:
+	if not _marquee:
+		return
+	_marquee = false
+	_marquee_box.visible = false
+	if not _marquee_moved and not _marquee_add and not selection.is_empty():
+		clear_selection()
+
+
+## Ctrl+A: every row of the column the last clicked row is in; when those all are selected already (or no row was
+## clicked), every row shown. At most MAX_BATCH, in listing order.
+func select_all() -> void:
+	var list: Array = _col_uids.get(_row_col.get(_anchor, ""), [])
+	if list.is_empty() or list.all(func(u: int) -> bool: return selection.has(u)):
+		list = []
+		for id: String in _col_uids:
+			list.append_array(_col_uids[id])
+	for u: int in list:
+		_put(u, true)
+	_show_selection()
+
+
+## The selection bar's buttons that apply now, in order: what the right-click menu lists. None without a selection.
+func menu_buttons() -> Array[Button]:
+	var out: Array[Button] = []
+	if selection.is_empty():
+		return out
+	out.append(_bar_drop)
+	for b in _into_box.get_children():
+		if b is Button:
+			out.append(b)
+	out.append(_bar_unload)
+	out.append(_bar_clear)
+	return out
+
+
+## Opens the right-click menu at `screen_at` (screen position): the bar's actions for the selection.
+func show_menu(screen_at: Vector2) -> void:
+	_menu_buttons = menu_buttons()
+	_menu.clear()
+	for i in _menu_buttons.size():
+		_menu.add_item(_menu_buttons[i].text, i)
+	if _menu_buttons.is_empty() or not is_inside_tree() or not screen_at.is_finite():
+		return
+	_menu.position = Vector2i(screen_at)
+	_menu.popup()
+
+
+## Entry `id` of the right-click menu was picked: its bar button's action (nothing if the bar changed since).
+func menu_pick(id: int) -> void:
+	if id >= 0 and id < _menu_buttons.size() and is_instance_valid(_menu_buttons[id]) \
+			and not _menu_buttons[id].is_queued_for_deletion():
+		_menu_buttons[id].pressed.emit()
 
 
 ## Only row `uid` is selected.
@@ -776,11 +937,11 @@ func _update_head() -> void:
 		text = "%s %d of %d...   " % ["Unloading" if _batch_op == "unload" else "Moving", _batch_total - _batch.size(),
 				_batch_total]
 	if selection.is_empty():
-		text += ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: drag over "
-				+ "the [ ] boxes, Ctrl+click, Shift+click.   %s or Esc closes") % keys
+		text += ("Inventory: drag an item onto a column, a pocket, a square or a container. Several: Ctrl+click, "
+				+ "Shift+click, Ctrl+A, drag over the [ ] boxes or a box from empty space.   %s or Esc closes") % keys
 	else:
-		text += ("Inventory: %d selected: drag one of them to move them all, or pick below.   Esc clears the "
-				+ "selection, %s closes") % [selection.size(), keys]
+		text += ("Inventory: %d selected: drag one of them to move them all, pick below or right-click.   Esc "
+				+ "clears the selection, %s closes") % [selection.size(), keys]
 	_head.text = text
 	var some := not selection.is_empty()
 	for b: Control in [_bar_drop, _into_box, _bar_unload, _bar_clear]:

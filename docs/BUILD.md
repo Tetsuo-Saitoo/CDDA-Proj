@@ -124,7 +124,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    --vr-speed= --vr-turn= --vr-snap= --vr-turn-speed= --vr-vignette= --vr-blink=on|off --vr-swap-sticks=on|off
    --vr-layout=auto|quest|vive --vr-hands=auto|buttons|boxes`. Every 10 s frame times go to the
    console and to `vr_perf.log` in Godot's user folder (Windows `%APPDATA%\Godot\app_userdata\CDDA-3D\`,
-   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; numbers and the GPU name only; testers can send it). Controller bindings: `client/openxr_action_map.tres` (Godot's defaults plus Vive, Index and WMR profiles from `tools/vr/add_controller_profiles.gd`).
+   Linux `~/.local/share/godot/app_userdata/CDDA-3D/`; frame numbers, the GPU, the OpenXR runtime, each controller's profile and the VR settings changed from the defaults, height included; testers can send it). The VR menu's last row, "Report a bug", saves a short report and a picture of the view in `bug_reports/` there (the newest 20 are kept; see `docs/playtests/`). Controller bindings: `client/openxr_action_map.tres` (Godot's defaults plus Vive, Index and WMR profiles from `tools/vr/add_controller_profiles.gd`).
    The console also logs the live game's state, its prompts and the VR session's states.
    Without a headset or runtime the normal view starts and the HUD says why. A live game's prompts still show
    only on the desktop window (L4 brings them into VR).

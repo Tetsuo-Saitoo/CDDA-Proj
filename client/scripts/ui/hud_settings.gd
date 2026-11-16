@@ -14,7 +14,8 @@ var compass_opacity := DEFAULT_COMPASS_OPACITY
 var debug_cheats := false
 ## The mood's screen tint (MoodCue). On unless turned off; anything but a real bool in the file leaves it on.
 var mood_cues := true
-## The lightning flash (WeatherView.flash_enabled). On unless turned off, like the mood tint.
+## Bright flashes: lightning (WeatherView.flash_enabled) and the first-person muzzle flash (the viewmodel's
+## `flashes`). On unless turned off, like the mood tint. Saved as [weather] flash (its first use).
 var weather_flash := true
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.

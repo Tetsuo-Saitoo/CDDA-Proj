@@ -52,7 +52,7 @@ struct light_view     { uint8 tile; uint8 luminance; uint8 kind; };
     // 2 a field (fire and other glowing fields). Ties keep tile order.
 struct item_pile_view { uint8 tile; uint16 count; uint32 top[4]; uint32 corpse; uint16 corpse_state;    // itype indices, largest volume first; corpse = mtype of the largest body (0 none); corpse_state bits: 1 bled, 2 field dressed, 4 dressing failed, 8 skinned, 16 quartered, 32 pulped, 64 gibbed
                         std::vector<item_handle_view> handles; };   // the first 32 items, CDDA's stack order
-struct item_handle_view { uint64 uid; uint32 type; int16 spot_x, spot_y; };   // uid 1..2^53-1 (bridge_api.md "Single items"); type = itype index; spot = where it was placed, permille of the square (x east, y south), -1 none
+struct item_handle_view { uint64 uid; uint32 type; int16 spot_x, spot_y; int16 yaw; bool side; };   // uid 1..2^53-1 (bridge_api.md "Single items"); type = itype index; spot = where it was placed, permille of the square (x east, y south), -1 none; yaw/side = how it lies there (whole degrees 0..359, -1 no pose; JSON `poses`); a changed spot or pose bumps detail_revision
 struct field_view     { uint8 tile; uint32 type; uint8 intensity; uint16 age_turns; };   // type = CDDA int id
 struct heat_view      { uint8 tile; uint8 source; uint32 tool; uint8 fire; int32 charges; bool lit; };
     // A square that gives heat to CDDA's crafting (L9, cdda/src/fp3d/cooking.h). source: 0 a fire alone (fd_fire, or
@@ -189,7 +189,7 @@ temperature, map memory contents (the client keeps what it last saw on remembere
 
 `fp3d-headless <out.json> [z_below] [z_above]` writes a snapshot of a town with the same field names, submaps
 limited to the z range, arrays as plain lists, items as `[tile, count, [top4]]` or `[tile, count, [top4], corpse_mtype, corpse_state]`,
-item handles as a per-submap `handles` list of `[tile, uid, type, spot_x, spot_y]`, carried items as the player's
+item handles as a per-submap `handles` list of `[tile, uid, type, spot_x, spot_y]` (always five numbers), how placed items lie as a per-submap `poses` list of `[uid, yaw, side]` (only items with a stored pose: yaw whole degrees 0..359, side 0 or 1; the uid is one of that submap's handles; older bridges send no `poses`), carried items as the player's
 `items` list of `[uid, type, parent, pocket, flags]` (both optional; the client checks ranges, caps, distinct uids
 and that a container comes before its contents), fields as
 `[tile, type, intensity, age]`, heat as a per-submap `heat` list of `[tile, source, tool, fire, charges, lit]` (lit 0/1), cookware as a per-submap `cookware` list of objects `{"tile", "uid", "type", "contents": [[uid, type, count], ...], "craft_result", "craft_recipe", "craft_progress"}` (craft fields always present: 0 / "" / 0 when none), lights as a per-submap `lights` list of `[tile, luminance, kind]` (always present, may be empty; cap 16). The client checks ranges and caps (32 heat, 16 cookware per submap, 16 contents), and that each cookware tile has a heat entry. Vehicle parts as `[mount_x, mount_y, vpart, hp_frac, state]`, plus

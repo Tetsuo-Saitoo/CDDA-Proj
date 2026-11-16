@@ -46,6 +46,12 @@ func handle_input(_event: InputEvent) -> bool:
 	return false
 
 
+## The same event as it came, before RequestUI turns pad buttons and ui_* actions into keys: for a widget that
+## reads the pad itself (the on-screen keyboard). True if used; handle_input then doesn't get it.
+func handle_raw(_event: InputEvent) -> bool:
+	return false
+
+
 ## Sends cancel if the request allows it; true if it did.
 func cancel() -> bool:
 	if not allow_cancel:

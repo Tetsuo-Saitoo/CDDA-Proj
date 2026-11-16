@@ -160,7 +160,7 @@ func is_showing() -> bool:
 ## A key or mouse event for the widget (a pad button or ui_* action as its key, as_key); true if used. _input
 ## calls it; tests call it directly.
 func handle_input(event: InputEvent) -> bool:
-	return is_showing() and event != null and widget.handle_input(as_key(event))
+	return is_showing() and event != null and (widget.handle_raw(event) or widget.handle_input(as_key(event)))
 
 
 ## `event` as the widgets read it: a pressed ui_* InputEventAction (ACTION_KEYS) or pad button (PAD_KEYS)

@@ -68,6 +68,21 @@ func run(root: Node, check: Callable) -> void:
 	_check.call(setting_key and x_ignored and menu._capture.is_empty() and menu.visible,
 			"key menu pad: a key slot set from the pad ignores pad buttons, B backs out of it")
 	menu.close()
+	# without keys (the VR panel): ui_cancel backs out of a capture, then closes; other actions pass
+	menu.open()
+	var cancel := InputEventAction.new()
+	cancel.action = &"ui_cancel"
+	cancel.pressed = true
+	var up := InputEventAction.new()
+	up.action = &"ui_up"
+	up.pressed = true
+	var released := InputEventAction.new()
+	released.action = &"ui_cancel"
+	menu._capture = [&"cdda_examine", 0]
+	var passed := not menu.take(up) and not menu.take(released)
+	var backed := menu.take(cancel) and menu._capture.is_empty() and menu.visible
+	_check.call(passed and backed and menu.take(cancel) and not menu.visible,
+			"keys menu: ui_cancel backs out of a capture, then closes the menu")
 	menu.free()
 	InputActions.reset_all()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
