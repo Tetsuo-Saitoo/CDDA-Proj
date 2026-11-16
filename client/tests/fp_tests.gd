@@ -19,6 +19,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_actions()
 	_test_look(world)
 	_test_walk(world)
+	_test_invert_y(world)
 	_test_follow(world)
 	_test_octants(world)
 	_test_compass()
@@ -96,6 +97,29 @@ func _find_west_free(world: WorldView, w: VrWalk, kind: int) -> Variant:
 			if w.can_stand(p - Vector3i(1, 0, 0)):
 				return p
 	return null
+
+
+## G7: invert_y turns one mouse move's pitch the other way, on the first-person and the fly camera; yaw stays.
+func _test_invert_y(world: WorldView) -> void:
+	var fp := FirstPersonCamera.new(world)
+	var fly := FlyCamera.new()
+	var got := []
+	for on: bool in [false, true]:
+		fp.set_look(0.0, 0.0)
+		fp.invert_y = on
+		fp.look(Vector2(10, 20))   # right and down
+		fly.invert_y = on
+		fly.look(Vector2.ZERO)   # the rotation now shows its pitch
+		var fly_from := fly.rotation
+		fly.look(Vector2(10, 20))
+		got.append([fp.pitch, fp.yaw, fly.rotation.x - fly_from.x, fly.rotation.y - fly_from.y])
+	var plain: Array = got[0]
+	var inv: Array = got[1]
+	_check.call(plain[0] < 0.0 and is_equal_approx(inv[0], -plain[0]) and is_equal_approx(inv[1], plain[1])
+			and plain[2] < 0.0 and is_equal_approx(inv[2], -plain[2]) and is_equal_approx(inv[3], plain[3]),
+			"fp: invert_y pitches a mouse move the other way, yaw unchanged (first person %s, fly %s)" % [got[0], got[1]])
+	fp.free()
+	fly.free()
 
 
 func _test_walk(world: WorldView) -> void:

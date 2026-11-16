@@ -193,6 +193,11 @@ func _ready() -> void:
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	var tray := ItemTray.new()   # L8: the mouse's tray (`loot_tray`); VR has its own (VrRig.tray)
+	tray.world = world
+	tray.hands = hands
+	add_child(tray)
+	grab.tray = tray
 	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
 	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
 	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
@@ -726,6 +731,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.options_requested.connect(func() -> void: open_ui("keys"))
 	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
@@ -1374,6 +1380,43 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
+const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
+
+
+## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
+func _apply_options() -> void:
+	var o := hud_settings
+	for c: Camera3D in [fp, view_cam, camera]:
+		if c != null:
+			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
+	if fp != null:
+		fp.sensitivity = speed
+		fp.invert_y = o.invert_y
+	if camera != null:
+		camera.sensitivity = speed
+		camera.invert_y = o.invert_y
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if o.vsync else DisplayServer.VSYNC_DISABLED)
+	var full := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN,
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+	if full != o.fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if o.fullscreen
+				else DisplayServer.WINDOW_MODE_WINDOWED)
+
+
+## G7: the menus' and the HUD's size (the window's content scale; the 3D view keeps its pixels), at start and when
+## the F1 menu closes, not while its slider moves (the menu would move under the mouse). Not with the headset (its
+## panels are their own viewports), for a screenshot or headless.
+func _apply_ui_scale() -> void:
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_window().content_scale_factor = HudSettings.clamp_to(hud_settings.ui_scale, HudSettings.UI_SCALES, 1.0)
+
+
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1403,7 +1446,10 @@ func _setup_hud() -> void:
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
+	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
+	_apply_options()
+	_apply_ui_scale()
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1447,8 +1493,10 @@ func _setup_hud() -> void:
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
+		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
-			viewmodel.flashes = hud_settings.weather_flash)
+			viewmodel.flashes = hud_settings.weather_flash
+		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
@@ -1462,6 +1510,7 @@ func _open_key_menu() -> void:
 
 
 func _on_key_menu_closed() -> void:
+	_apply_ui_scale()
 	if vr == null:
 		_set_view(view_mode)   # cameras take their input again
 
@@ -1524,7 +1573,8 @@ func _demo_tick() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
+	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible \
+			or grab.tray_open()   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	if vr == null and view_mode == "top" and fp.z != _top_z:   # top-down: the cut follows the player's level
 		_top_z = fp.z
@@ -1541,6 +1591,8 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	grab.update_tray(get_viewport().get_camera_3d(), _pointer(), vr != null or key_menu.visible or inspect.visible
+			or character.visible or request_ui.visible or main_menu != null)
 	if typing or vr != null or (live != null and not _in_main_loop()):
 		pour.cancel()   # a menu or prompt took the keys: its release won't come here
 	elif pour.update(Time.get_ticks_msec()) == "refused":
@@ -1640,6 +1692,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
+	if vr == null and grab.tray_event(event, get_viewport().get_camera_3d(), _pointer(), _can_inspect()):
+		return   # L8: the tray opens on the bag or pile pointed at; while open it takes the clicks, Esc closes it
 	if inspect.handle_key(event, _can_inspect()):
 		return
 	if character.handle_key(event, _can_open_character()):

@@ -26,7 +26,10 @@ var z := 0
 var follow := false
 var yaw := 0.0
 var pitch := 0.0
+## Mouse look: `sensitivity` in radians per pixel, `invert_y` turns the up-down motion the other way; with `fov`
+## (Camera3D's) they are the G7 options main sets from hud.cfg (HudSettings).
 var sensitivity := 0.003
+var invert_y := false
 var target := Vector3.ZERO   # follow: where the eyes are headed
 var _has_target := false
 
@@ -56,7 +59,7 @@ func set_look(new_yaw: float, new_pitch: float) -> void:
 
 ## Mouse motion in pixels.
 func look(rel: Vector2) -> void:
-	set_look(yaw - rel.x * sensitivity, pitch - rel.y * sensitivity)
+	set_look(yaw - rel.x * sensitivity, pitch - rel.y * sensitivity * (-1.0 if invert_y else 1.0))
 
 
 ## Forward and right along the ground for the current yaw.

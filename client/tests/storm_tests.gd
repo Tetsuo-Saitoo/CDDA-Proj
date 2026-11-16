@@ -3,8 +3,8 @@ extends RefCounted
 ## the flash's curve, what it lights and that it ends; its safety limits: one pulse, a floor between flashes, none
 ## in fast-forward or asleep, the player's setting), thunder after it, and the weather's sound (the four noise
 ## clips, what is heard outdoors, under a roof, in snow and in wind, the glides, and that nothing runs in still,
-## dry weather), and the wet ground (open-sky terrain and roofs have their own material; it soaks in rain and dries
-## in game time). Headless can't render or be heard: how it looks and sounds is checked on screen.
+## dry weather), the wet ground (open-sky terrain and roofs have their own material; it soaks in rain and dries
+## in game time), puddles and snow lying on the ground. Headless can't render or be heard: how it looks and sounds is checked on screen.
 
 var _check: Callable
 
@@ -24,12 +24,17 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_sound(root)
 	_test_wet_mesh(root, data, tables)
 	_test_soak(root)
+	_test_snow_cover(root)
+	_test_puddles(root)
 
 
-func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0, asleep := false) -> Snapshot:
+func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0, asleep := false,
+		temp: Variant = null) -> Snapshot:
 	var env := {"sun_alt_deg": 45.0, "sun_az_deg": 0.0, "ambient_light": 100, "precip": w[0], "precip_kind": w[1],
 			"sight_penalty": w[2], "light_modifier": w[3], "sun_multiplier": w[4], "weather_sound": w[5],
 			"sheltered": sheltered, "wind_speed": wind, "wind_dir_deg": 0.0}
+	if temp != null:
+		env["temperature_c"] = temp
 	if wind_here >= 0.0:
 		env["wind_at_player"] = wind_here
 	return Snapshot.from_data({"contract_version": 0, "turn": turn, "seq": 1, "bubble_origin": [0, 0, 0],
@@ -404,8 +409,77 @@ func _test_wet_mesh(root: Node, data: Variant, tables: IdTables) -> void:
 	TerrainMesher.wet_ground(-3.0)
 	_check.call(is_equal_approx(ground.roughness, 0.9) and ground.albedo_color == Color.WHITE
 			and is_equal_approx(ground.metallic_specular, 0.5), "wet: and dry again as it was")
+	_check_puddles(snap, w, open_sm, open, mixed_sm, mixed)
 	root.remove_child(w)
 	w.free()
+
+
+## Puddles lie only on open-ground floor squares, one in a few, each inside its square, flat and facing up, with
+## what the shader needs (offset from the centre, rim, the level it starts at); the same each build. The world's
+## puddle meshes follow puddle_ground and cast no shadow.
+func _check_puddles(snap: Snapshot, w: WorldView, open_sm: Vector3i, open: TerrainMesher.Result, mixed_sm: Vector3i,
+		mixed: TerrainMesher.Result) -> void:
+	var per := 3 * TerrainMesher.PUDDLE_SIDES
+	var counts: Array[int] = []
+	var bad: Array[String] = []
+	for pair: Array in [[open_sm, open], [mixed_sm, mixed]]:
+		var sm: Snapshot.Submap = snap.submaps[pair[0]]
+		var r: TerrainMesher.Result = pair[1]
+		var count := 0
+		if r.puddles != null:
+			var arrays := r.puddles.surface_get_arrays(0)
+			var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var c: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+			var uv: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+			if r.puddles.get_surface_count() != 1 or r.puddles.surface_get_material(0) != TerrainMesher.puddle_material() \
+					or v.size() % per != 0 or uv.size() != v.size():
+				bad.append("layout")
+				v = PackedVector3Array()
+			for k in range(0, v.size(), per):
+				count += 1
+				var mid := v[k]
+				var lx := floori(mid.x)
+				var ly := floori(mid.z)
+				var i := ly * CddaCoords.SEEX + lx
+				if sm.flags[i] & Snapshot.FLAG_ROOF or w.catalog.style_for(sm.ter[i]).kind != TerrainCatalog.Kind.FLOOR:
+					bad.append("square %d,%d" % [lx, ly])
+				var start := c[k].a
+				if start < TerrainMesher.PUDDLE_FIRST - 0.01 or start > TerrainMesher.PUDDLE_LAST + 0.01:
+					bad.append("start %.2f" % start)
+				for j in range(k, k + per):
+					var off := v[j] - mid
+					var centre := (j - k) % 3 == 0
+					if v[j].x <= lx or v[j].x >= lx + 1 or v[j].z <= ly or v[j].z >= ly + 1 \
+							or not is_equal_approx(v[j].y, TerrainMesher.PUDDLE_Y) or n[j].y < 0.999 \
+							or uv[j].distance_to(Vector2(off.x, off.z)) > 1e-4 or absf(c[j].a - start) > 0.01 \
+							or c[j].r != (0.0 if centre else 1.0) or (centre and off.length() > 1e-5):
+						bad.append("vertex %d" % j)
+						break
+				for t in range(k, k + per, 3):
+					if (v[t + 1] - v[t]).cross(v[t + 2] - v[t]).dot(Vector3.UP) >= 0.0:
+						bad.append("winding %d" % t)
+						break
+		counts.append(count)
+	var again := TerrainMesher.new(snap, w.catalog).build(open_sm)
+	var same: bool = open.puddles != null and again.puddles != null \
+			and again.puddles.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] == open.puddles.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	_check.call(bad.is_empty() and counts[0] >= 5 and counts[0] <= 72 and same, "puddles: on a few open-ground floor squares "
+			+ "(%d of 144 here, %d by the building), none under a roof, each inside its square; the same each build %s" %
+			[counts[0], counts[1], bad.slice(0, 4)])
+	TerrainMesher.puddle_ground(1.0, null)
+	w._build(open_sm, open, snap)
+	var node: Node3D = w._nodes.get(open_sm)
+	var mi: MeshInstance3D = (node.get_node_or_null("puddles") as MeshInstance3D) if node != null else null
+	var shown := mi != null and mi.visible and mi.mesh == open.puddles and mi.is_in_group(TerrainMesher.PUDDLE_GROUP) \
+			and mi.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	TerrainMesher.puddle_ground(TerrainMesher.PUDDLE_FIRST, w.get_tree())
+	var hidden := mi != null and not mi.visible and not TerrainMesher.puddles_shown
+	TerrainMesher.puddle_ground(NAN, w.get_tree())
+	var junk := float(TerrainMesher.puddle_material().get_shader_parameter(&"level")) == 0.0
+	_check.call(shown and hidden and junk, "puddles: a submap's puddle mesh is shown while puddles fill, hidden up to the first "
+			+ "one's level; it casts no shadow")
+	TerrainMesher.puddle_ground(0.0, null)
 
 
 func _test_soak(root: Node) -> void:
@@ -437,3 +511,118 @@ func _test_soak(root: Node) -> void:
 	root.remove_child(view)
 	view.free()
 	TerrainMesher.wet_ground(0.0)
+
+
+## Snow lying on the ground: the air's temperature is read; snow covers the ground while it falls (heavier faster),
+## stays at or below freezing, melts when warmer (faster the warmer) and in rain; a game loaded in snow starts
+## covered; MINIMAL quality shows none; the snow pass follows the bubble's origin and leaves when it is gone.
+func _test_snow_cover(root: Node) -> void:
+	var t := func(w: Array, turn: int, temp: Variant) -> Snapshot: return _snap(w, false, 0.0, -1.0, turn, 0, false, temp)
+	var cold: Snapshot = t.call(SNOWING, 1, -5.5)
+	_check.call(cold.is_valid() and is_equal_approx(cold.temperature_c, -5.5) and is_nan(_snap(CLEAR).temperature_c)
+			and not (t.call(CLEAR, 1, 150.0) as Snapshot).is_valid() and not (t.call(CLEAR, 1, "cold") as Snapshot).is_valid(),
+			"snow: the air's temperature is read; none sent is unknown; out of range or not a number fails the snapshot")
+	var ground := TerrainMesher.material(TerrainMesher.GROUND)
+	var view := WeatherView.new()
+	root.add_child(view)
+	view.blend_s = 0.0
+	var coords := CddaCoords.new()
+	var at := func(w: Array, turn: int, temp: Variant) -> void: view.apply(t.call(w, turn, temp), coords, true)
+	at.call(CLEAR, 1000, -5.0)
+	var bare := view.snow_cover == 0.0 and ground.next_pass == null
+	at.call(SNOWING, 1900, -5.0)
+	var snow_pass := ground.next_pass as ShaderMaterial
+	var half: bool = is_equal_approx(view.snow_cover, 0.5) and snow_pass != null and snow_pass.shader == TerrainMesher.SNOW_SHADER \
+			and is_equal_approx(float(snow_pass.get_shader_parameter(&"cover")), 0.5) and snow_pass.render_priority == WorldLighting.UNDER_PRIORITY
+	at.call(CLEAR, 5500, -5.0)
+	var frozen := is_equal_approx(view.snow_cover, 0.5)
+	at.call(CLEAR, 5500 + 1800, 4.0)
+	var melting := is_equal_approx(view.snow_cover, 0.25)
+	at.call(CLEAR, 5500 + 2700, 8.0)
+	var gone := view.snow_cover == 0.0 and ground.next_pass == null
+	_check.call(bare and half and frozen and melting and gone, "snow: half covered after 15 minutes of heavy snow, kept in the frost, "
+			+ "melting at 4 C, gone faster at 8 C (%.2f)" % view.snow_cover)
+	at.call(SNOWING, 9000, -1.0)
+	at.call(SNOWING, 9000 + 3600, -1.0)
+	var full := view.snow_cover == 1.0
+	at.call(RAIN, 9000 + 3600 + 900, 0.0)
+	var rained := is_equal_approx(view.snow_cover, 0.5)
+	at.call(DRIZZLE, 9000 + 3600 + 1800, null)   # no temperature: melts slowly, as at MELT_UNKNOWN_C
+	var unknown := view.snow_cover < 0.5 - 900.0 * (1.0 / 3.0) / WeatherView.RAIN_MELT_S \
+			and view.snow_cover > 0.5 - 900.0 / WeatherView.RAIN_MELT_S
+	_check.call(full and rained and unknown, "snow: at most covered; rain melts it; no temperature melts it as a little above freezing")
+	at.call(SNOWING, 50, -3.0)   # another game, loaded in snow
+	var loaded := view.snow_cover == 1.0 and ground.next_pass != null
+	view.quality = WeatherView.MINIMAL
+	var minimal := ground.next_pass == null
+	view.quality = WeatherView.HIGH
+	coords.origin_ms = Vector3i(600, -3, 0)
+	at.call(SNOWING, 60, -3.0)
+	var pass2 := ground.next_pass as ShaderMaterial
+	var moved: bool = pass2 != null and pass2.get_shader_parameter(&"origin_m") == Vector2(88, 509)
+	_check.call(loaded and minimal and moved, "snow: a game loaded in snow starts covered; none at minimal quality; the patches "
+			+ "follow the bubble's origin")
+	var code := TerrainMesher.SNOW_SHADER.code
+	_check.call(code.contains("uniform float cover") and code.contains("origin_m") and code.contains("NORMAL")
+			and code.contains("const float PERIOD = %d.0" % TerrainMesher.SNOW_PERIOD), "snow: the shader lies on what faces up, "
+			+ "its patches repeat at SNOW_PERIOD")
+	root.remove_child(view)
+	view.free()
+	_check.call(ground.next_pass == null, "snow: the shared ground material is bare again when the view goes")
+	TerrainMesher.snow_ground(0.0, Vector3i.ZERO)
+
+
+## Puddles fill in rain more slowly than the ground wets and dry more slowly; a game loaded in rain starts with them as
+## full as the rain is heavy; snow hides them as it covers the ground; none at MINIMAL quality; the puddle meshes are
+## hidden while none shows and when the view goes.
+func _test_puddles(root: Node) -> void:
+	var view := WeatherView.new()
+	root.add_child(view)
+	view.blend_s = 0.0
+	var pool := MeshInstance3D.new()
+	root.add_child(pool)
+	pool.add_to_group(TerrainMesher.PUDDLE_GROUP)
+	pool.visible = TerrainMesher.puddles_shown   # as WorldView makes them
+	_pool_at(view, CLEAR, 1000)
+	var dry := view.puddles == 0.0 and not pool.visible and not TerrainMesher.puddles_shown
+	_pool_at(view, RAIN, 1090)
+	var early := is_equal_approx(view.puddles, 0.1) and view.wet > 0.7 and not pool.visible
+	var level := _pool_at(view, RAIN, 1450)
+	var filling := is_equal_approx(view.puddles, 0.5) and is_equal_approx(level, 0.5) and pool.visible
+	_pool_at(view, RAIN, 3000)
+	var full := view.puddles == 1.0
+	level = _pool_at(view, CLEAR, 3000 + 3600)
+	var outlast := view.wet == 0.0 and is_equal_approx(view.puddles, 0.5) and is_equal_approx(level, 0.5) and pool.visible
+	_pool_at(view, CLEAR, 3000 + 7200)
+	var gone := view.puddles == 0.0 and not pool.visible
+	_check.call(dry and early and filling and full and outlast and gone, "puddles: they start once the ground is wet, fill in 15 "
+			+ "minutes of heavy rain, outlast the wet ground and dry up in 2 hours %s" % [[dry, early, filling, full, outlast, gone]])
+	level = _pool_at(view, DRIZZLE, 50)   # another game, loaded in a drizzle
+	var drizzle := is_equal_approx(view.puddles, view.target.precip) and view.puddles < 0.5 and pool.visible
+	_pool_at(view, RAIN, 10)
+	var heavy := view.puddles == 1.0
+	view.quality = WeatherView.MINIMAL
+	var minimal := not pool.visible and float(TerrainMesher.puddle_material().get_shader_parameter(&"level")) == 0.0
+	view.quality = WeatherView.HIGH
+	var back := pool.visible
+	_check.call(drizzle and heavy and minimal and back, "puddles: a game loaded in rain starts with puddles as full as it is heavy; "
+			+ "none at minimal quality")
+	level = _pool_at(view, SNOWING, 10 + 900)
+	var hid := is_equal_approx(view.snow_cover, 0.5) and is_equal_approx(view.puddles, 1.0 - 900.0 / WeatherView.PUDDLE_DRY_S) \
+			and is_equal_approx(level, view.puddles * 0.5)
+	root.remove_child(view)
+	view.free()
+	var left := not pool.visible and not TerrainMesher.puddles_shown \
+			and float(TerrainMesher.puddle_material().get_shader_parameter(&"level")) == 0.0
+	var code := TerrainMesher.PUDDLE_SHADER.code
+	_check.call(hid and left and code.contains("uniform float level") and code.contains("COLOR.a") and code.contains("UV"),
+			"puddles: snow hides them as it covers the ground; none left when the view goes (%.2f)" % level)
+	root.remove_child(pool)
+	pool.free()
+	TerrainMesher.puddle_ground(0.0, null)
+
+
+## Shows a snapshot's weather at `turn`; the puddles' level as shown.
+func _pool_at(view: WeatherView, w: Array, turn: int) -> float:
+	view.apply(_snap(w, false, 0.0, -1.0, turn), null, true)
+	return float(TerrainMesher.puddle_material().get_shader_parameter(&"level"))

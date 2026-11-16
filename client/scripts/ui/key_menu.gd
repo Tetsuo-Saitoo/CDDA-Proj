@@ -8,7 +8,8 @@ extends PanelContainer
 ## X swaps in the Cheats page (when it may show), where the D-pad, stick and A work its controls (CheatPanel.pad_*;
 ## the VR stick's ui_* actions too).
 ## With add_hud_settings() it also has the HUD row (compass opacity slider, the debug-cheats switch), saved in
-## user://hud.cfg. With add_cheat_page() a "Cheats" button swaps the key list for the CheatPanel; it shows only
+## user://hud.cfg, and the G7 options rows (look speed, field of view, 3D resolution, fullscreen, vsync; main applies
+## them on hud_changed). With add_cheat_page() a "Cheats" button swaps the key list for the CheatPanel; it shows only
 ## while cheats are allowed (the debug switch, or cheats_forced by --test / --cheats).
 
 signal closed
@@ -37,6 +38,16 @@ var hurt_check: CheckBox
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
+## G7 options (HudSettings look_speed, invert_y, fov, render_scale, ui_scale, fullscreen, vsync, weather_quality).
+var look_slider: HSlider
+var invert_check: CheckBox
+var ui_slider: HSlider
+var weather_pick: OptionButton
+var fov_slider: HSlider
+var scale_slider: HSlider
+var fullscreen_check: CheckBox
+var vsync_check: CheckBox
+var _option_values := {}   # option key -> the Label after its slider
 const FEED_TIPS := {
 	"good": "Good things that happen to you: healing, learning, a good find.",
 	"bad": "Bad or mixed things that happen to you: hits, pain, a skill getting rusty.",
@@ -213,7 +224,101 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		feed_row.add_child(c)
 	_box.add_child(feed_row)
 	_box.move_child(feed_row, 2)
+	var opt_row := HBoxContainer.new()
+	var ol := Label.new()
+	ol.text = "Look speed"
+	opt_row.add_child(ol)
+	look_slider = _option_slider(opt_row, HudSettings.LOOK_SPEEDS, 0.05, settings.look_speed, &"look_speed")
+	look_slider.tooltip_text = "How far the view turns for a mouse move."
+	invert_check = _option_check(opt_row, "Invert Y", "Moving the mouse up looks down.", &"invert_y",
+			settings.invert_y)
+	var vl := Label.new()
+	vl.text = "Field of view"
+	opt_row.add_child(vl)
+	fov_slider = _option_slider(opt_row, HudSettings.FOVS, 1.0, settings.fov, &"fov")
+	fov_slider.tooltip_text = "How wide the view is, in degrees across the screen's height."
+	_box.add_child(opt_row)
+	_box.move_child(opt_row, 3)
+	var disp_row := HBoxContainer.new()
+	var sl := Label.new()
+	sl.text = "3D resolution"
+	disp_row.add_child(sl)
+	scale_slider = _option_slider(disp_row, HudSettings.RENDER_SCALES, 0.05, settings.render_scale, &"render_scale")
+	scale_slider.tooltip_text = "Lower draws the world with fewer pixels: faster, softer. The menus stay sharp."
+	var ul := Label.new()
+	ul.text = "Menu size"
+	disp_row.add_child(ul)
+	ui_slider = _option_slider(disp_row, HudSettings.UI_SCALES, 0.05, settings.ui_scale, &"ui_scale")
+	ui_slider.tooltip_text = "The size of the menus and the HUD. Applies when this menu closes."
+	fullscreen_check = _option_check(disp_row, "Fullscreen", "Fills the screen (off: a window).", &"fullscreen",
+			settings.fullscreen)
+	vsync_check = _option_check(disp_row, "Vsync", "Waits for the screen: no tearing. Off can be faster but tears.",
+			&"vsync", settings.vsync)
+	var wl := Label.new()
+	wl.text = "Weather"
+	disp_row.add_child(wl)
+	weather_pick = OptionButton.new()
+	for n: String in WeatherView.QUALITY_NAMES:   # index = WeatherView.MINIMAL, LOW, HIGH
+		weather_pick.add_item(n.capitalize())
+	weather_pick.tooltip_text = ("How much rain, snow and cloud is drawn. Low and Minimal are lighter on the GPU; the "
+			+ "darker light, the fog and the sound stay.")
+	weather_pick.focus_mode = Control.FOCUS_NONE
+	weather_pick.select(clampi(settings.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
+	weather_pick.item_selected.connect(func(i: int) -> void: set_option(&"weather_quality", i))
+	disp_row.add_child(weather_pick)
+	_box.add_child(disp_row)
+	_box.move_child(disp_row, 4)
 	_show_compass_value()
+	_show_options()
+
+
+func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
+	var s := HSlider.new()
+	s.min_value = limits.x
+	s.max_value = limits.y
+	s.step = step
+	s.custom_minimum_size = Vector2(110, 0)
+	s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	s.focus_mode = Control.FOCUS_NONE   # keys stay with the menu
+	s.value = value
+	s.value_changed.connect(func(v: float) -> void: set_option(key, v))
+	row.add_child(s)
+	var l := Label.new()
+	l.custom_minimum_size = Vector2(48, 0)
+	row.add_child(l)
+	_option_values[key] = l
+	return s
+
+
+func _option_check(row: HBoxContainer, text: String, tip: String, key: StringName, on: bool) -> CheckBox:
+	var c := CheckBox.new()
+	c.text = text
+	c.tooltip_text = tip
+	c.focus_mode = Control.FOCUS_NONE
+	c.button_pressed = on
+	c.toggled.connect(func(v: bool) -> void: set_option(key, v))
+	row.add_child(c)
+	return c
+
+
+## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
+func set_option(key: StringName, v: Variant) -> void:
+	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
+			&"weather_quality"]:
+		return
+	hud.set(key, v)
+	_show_options()
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Option not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _show_options() -> void:
+	_option_values[&"look_speed"].text = "x%.2f" % hud.look_speed
+	_option_values[&"fov"].text = "%d%s" % [roundi(hud.fov), char(0xb0)]
+	_option_values[&"render_scale"].text = "%d %%" % roundi(hud.render_scale * 100.0)
+	_option_values[&"ui_scale"].text = "%d %%" % roundi(hud.ui_scale * 100.0)
 
 
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
@@ -329,6 +434,15 @@ func open() -> void:
 	if compass_slider != null:
 		compass_slider.set_value_no_signal(hud.compass_opacity)
 		_show_compass_value()
+		look_slider.set_value_no_signal(hud.look_speed)
+		invert_check.set_pressed_no_signal(hud.invert_y)
+		fov_slider.set_value_no_signal(hud.fov)
+		scale_slider.set_value_no_signal(hud.render_scale)
+		ui_slider.set_value_no_signal(hud.ui_scale)
+		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
+		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
+		vsync_check.set_pressed_no_signal(hud.vsync)
+		_show_options()
 	if debug_check != null:
 		debug_check.set_pressed_no_signal(hud.debug_cheats)
 	if cheats_button != null:

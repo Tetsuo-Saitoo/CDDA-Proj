@@ -28,10 +28,36 @@ const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnin
 ## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
 ## of group names (anything but known names ignored).
 var feed_hidden := PackedStringArray()
+## G7 options (flat screen; the headset has its own, VrSettings): the mouse look speed (times the cameras' own),
+## inverted up-down look, the field of view in degrees, the 3D render scale, fullscreen, vsync and the size of the
+## menus and HUD (the window's content scale). Saved as [look] speed, invert, fov and [display] scale, fullscreen,
+## vsync, ui_scale; numbers out of range are clamped, anything else leaves the default.
+const LOOK_SPEEDS := Vector2(0.25, 4.0)
+const FOVS := Vector2(60.0, 110.0)
+const RENDER_SCALES := Vector2(0.5, 1.0)
+const UI_SCALES := Vector2(0.75, 2.0)
+const DEFAULT_FOV := 75.0   # Camera3D's own
+var look_speed := 1.0
+var invert_y := false
+var fov := DEFAULT_FOV
+var render_scale := 1.0
+var fullscreen := false
+var vsync := true
+var ui_scale := 1.0
+## lead-world's weather detail (WeatherView.quality: MINIMAL, LOW, HIGH), flat screen and headset alike. Saved as
+## [weather] quality; anything but a whole number leaves HIGH, a number out of range is clamped.
+var weather_quality := WeatherView.HIGH
 
 
 static func clamp_opacity(v: float) -> float:
 	return clampf(v, MIN_COMPASS_OPACITY, 1.0) if is_finite(v) else DEFAULT_COMPASS_OPACITY
+
+
+## `v` as a number within `limits` (x..y), or `fallback` when it isn't a finite number.
+static func clamp_to(v: Variant, limits: Vector2, fallback: float) -> float:
+	if not (v is float or v is int) or not is_finite(float(v)):
+		return fallback
+	return clampf(float(v), limits.x, limits.y)
 
 
 ## The known FEED_GROUPS names in `v` (an Array or PackedStringArray), each once, in FEED_GROUPS order; anything
@@ -75,6 +101,18 @@ func load_file(path := FILE) -> String:
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
+	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
+	var iy: Variant = cfg.get_value("look", "invert", false)
+	invert_y = iy if iy is bool else false
+	fov = clamp_to(cfg.get_value("look", "fov", DEFAULT_FOV), FOVS, DEFAULT_FOV)
+	render_scale = clamp_to(cfg.get_value("display", "scale", 1.0), RENDER_SCALES, 1.0)
+	var fs: Variant = cfg.get_value("display", "fullscreen", false)
+	fullscreen = fs if fs is bool else false
+	var vs: Variant = cfg.get_value("display", "vsync", true)
+	vsync = vs if vs is bool else true
+	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
+	var wq: Variant = cfg.get_value("weather", "quality", WeatherView.HIGH)
+	weather_quality = clampi(wq, WeatherView.MINIMAL, WeatherView.HIGH) if wq is int else WeatherView.HIGH
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -93,4 +131,12 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
+	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
+	cfg.set_value("look", "invert", invert_y)
+	cfg.set_value("look", "fov", roundf(clamp_to(fov, FOVS, DEFAULT_FOV)))
+	cfg.set_value("display", "scale", snappedf(clamp_to(render_scale, RENDER_SCALES, 1.0), 0.01))
+	cfg.set_value("display", "fullscreen", fullscreen)
+	cfg.set_value("display", "vsync", vsync)
+	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
+	cfg.set_value("weather", "quality", clampi(weather_quality, WeatherView.MINIMAL, WeatherView.HIGH))
 	return cfg.save(path)

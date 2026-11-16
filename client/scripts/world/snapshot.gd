@@ -176,6 +176,7 @@ var weather_light := 0.0         # env.light_modifier: 0 clear, -45 a thundersto
 var weather_sun := 1.0           # env.sun_multiplier: 1 clear, 0.01 a storm
 var weather_sheltered := false   # env.sheltered: rain and snow don't reach the player
 var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEATHER_SOUND_THUNDER in a thunderstorm)
+var temperature_c := NAN         # env.temperature_c: the air on the player's square, -100..100; NAN when not sent
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
 var _container_sm := {} # container uid -> the submap whose `inside` / `inside_more` lists it
@@ -681,6 +682,8 @@ func _read_env(v: Variant) -> void:
 		weather_sheltered = _flag(e["sheltered"], "env.sheltered")
 	if e.has("weather_sound"):
 		weather_sound = _int(e["weather_sound"], 0, 255, "env.weather_sound")
+	if e.has("temperature_c"):
+		temperature_c = _float(e["temperature_c"], -100.0, 100.0, "env.temperature_c")
 
 
 func _read_ids(v: Variant) -> void:

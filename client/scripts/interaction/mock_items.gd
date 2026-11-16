@@ -85,17 +85,24 @@ func seed() -> int:
 
 
 ## Take from a pile handle on `pos` (in reach) into the pack (the first worn container, else on the body),
-## the main hand (refused while it holds something) or the off hand.
-func take_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
+## the main hand (refused while it holds something) or the off hand. L8: with `container` + `container_type` (both
+## or neither), out of that container lying on `pos`, as the snapshot's `inside` lists it (one level).
+func take_item(uid: float, type: float, pos: Vector3i, hand := "pack", container := -1.0,
+		container_type := -1.0) -> bool:
 	var u := _uid(uid)
 	var t := _type(type)
 	if snap == null or u <= 0 or t <= 0 or not _pos_ok(pos) or not (hand in ItemActions.HANDS):
+		return false
+	var inner := container != -1.0 or container_type != -1.0
+	var cu := _uid(container) if inner else 0
+	var ct := _type(container_type) if inner else 0
+	if inner and (cu <= 0 or ct <= 0 or cu == u):
 		return false
 	if not _in_reach(pos):
 		return _refuse("You can't reach that from here.")
 	var sm := _submap(pos)
 	var tile := ItemActions.tile_of(pos)
-	var h := ItemActions.handle_index(sm, tile, u, t)
+	var h := _inside_index(sm, tile, u, t, cu, ct) if inner else ItemActions.handle_index(sm, tile, u, t)
 	if h < 0:
 		return _refuse("That isn't there any more.")
 	if snap.carried.size() / CS >= Snapshot.MAX_CARRIED:
@@ -120,12 +127,31 @@ func take_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
 			parent = snap.carried[bag * CS]
 			pocket = 0
 			at = _subtree_end(bag)
-	_remove_handle(sm, tile, h)
+	if inner:
+		var list: Array = sm.inside[cu]
+		list.remove_at(h)
+		if list.is_empty():
+			sm.inside.erase(cu)
+	else:
+		_remove_handle(sm, tile, h)
 	_insert_rows(at, PackedInt64Array([u, t, parent, pocket, flags]))
 	if hand == "main":
 		snap.player_wielded = t
 	_touch(sm)
 	return _captured()
+
+
+## Index of item u (type t) in `sm.inside` of container cu (type ct) lying on `tile`; -1 when the container isn't
+## lying there or doesn't hold it.
+static func _inside_index(sm: Snapshot.Submap, tile: int, u: int, t: int, cu: int, ct: int) -> int:
+	if ItemActions.handle_index(sm, tile, cu, ct) < 0:
+		return -1
+	var list: Array = sm.inside.get(cu, [])
+	for i in list.size():
+		var r: Array = list[i]
+		if r[0] == u and r[1] == t:
+			return i
+	return -1
 
 
 ## Put a carried item into a container: a carried one, else the one lying on `pos` (in reach).
