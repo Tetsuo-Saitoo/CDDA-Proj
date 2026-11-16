@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Big piles and lying containers (L8 slices 3-4, world side, lead-world, for lead-vr's tray): the snapshot's `more`, `inside` and `inside_more` are read; a pile next to the player lists up to 256 items and still draws 32; `Snapshot.handles_at`, `more_at`, `inside_of`, `inside_more_of`. Client tests pass.
 - 2026-11-16 — An L of kitchen counters no longer shows a corner cabinet's doors in a gap inside the other arm: the corner tile's body runs on into it, with no doors (lead-world, placeholder shape). Client tests pass.
 - 2026-11-16 — Items stay on the shelf they were put on (L8 slice 2, world side, lead-world, for lead-vr): the snapshot's `shelves` are read, such an item is drawn on that shelf or drawer, and `WorldView.shelf_at` tells a drop which shelf and spot lie under a hand or pointer. Client tests pass.
 - 2026-11-15 — Events test (combat lead, fork fp3d-combat): the forced-technique check compares CDDA's translated name, not the English one.
