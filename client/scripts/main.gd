@@ -227,7 +227,8 @@ func _ready() -> void:
 	viewmodel = WeaponViewmodel.new()
 	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
 	fp.add_child(viewmodel)
-	aim.fired.connect(viewmodel.kick)
+	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
+	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
 	_set_view(start_view(_args, hud_settings.view))
 	_boot_log("client set up")
 	if _args.has("live"):
@@ -1413,6 +1414,7 @@ func _process(_delta: float) -> void:
 	hud.text = "\n".join(lines)
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
+	hud_view.avoid(Rect2(hud.global_position, hud.get_combined_minimum_size()) if hud.visible else Rect2())
 
 
 ## The view's key line, from the current bindings.
