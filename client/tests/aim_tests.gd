@@ -586,7 +586,7 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 		same = same and P.profile_for(k, "") == old[k]
 	var ev2 := ExplosionView.new(world)
 	root.add_child(ev2)
-	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 2, "text": "blast", "detail": 0, "path": []}])
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 2, "text": "blast", "detail": 0, "path": [me]}])
 	var x: Dictionary = ev2._live[0]
 	var lit0 := (x["light"] as OmniLight3D).light_energy
 	var fire_on := (x["fire"] as Node3D).visible
@@ -595,7 +595,9 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	var kb := 0.3 / 0.9
 	var curves := (is_equal_approx((x["light"] as OmniLight3D).light_energy, 6.0 * (1.0 - kb * 2.0))
 			and is_equal_approx((x["fire"] as Node3D).scale.x, 2.0 * ease(kb * 2.5, 0.4))
-			and (x["smoke"] as Node3D).visible and is_equal_approx((x["smoke"] as Node3D).scale.x, 2.0 * (0.4 + kb)))
+			and (x["smoke"] as Node3D).visible and is_equal_approx((x["smoke"] as Node3D).scale.x, 2.0 * (0.4 + kb))
+			and is_equal_approx(((x["glow"] as MultiMeshInstance3D).material_override as StandardMaterial3D).albedo_color.a,
+				0.35))
 	_check.call(same and lit0 == 6.0 and fire_on and shook and curves,
 			"explosions: the older kinds look as before (profiles; a blast's light, fireball and smoke)")
 
@@ -629,6 +631,38 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 			and buzz.data.size() == int(ExplosionView.SOUND_RATE * 0.6) * 2 and ev2.sound_for("emp", 9.0) == buzz
 			and ev2.sound_for("resonance", 8.0).data.size() > buzz.data.size(),
 			"explosions: resonance shakes a little; pulses buzz or hum, each sound made once")
+	# Spells: the area glows in the damage type's colour, fading in and out; other or overlong ids are violet.
+	var hp := P.profile_for("spell:heat", "")
+	var odd_sp := P.profile_for("spell:" + "x".repeat(300), "")
+	_check.call(hp["kind"] == "spell" and not hp["ball"] and not hp["ring"] and hp["light"] == P.SPELL_COLOURS["heat"]
+			and odd_sp["fire"] == P.KINDS["spell"]["fire"] and P.profile_for("spell:", "")["kind"] == "spell",
+			"explosions: a spell's colour by damage type, violet for others")
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 1, "text": "spell:cold", "detail": 0,
+			"path": [me, me + Vector3i(1, 0, 0), me + Vector3i(0, 1, 0), "x", me + Vector3i(999, 0, 0)]}])
+	var sp: Dictionary = ev2._live.back()
+	var g := sp["glow"] as MultiMeshInstance3D
+	var gmat: StandardMaterial3D = g.material_override as StandardMaterial3D if g != null else null
+	var dark := (gmat != null and gmat.albedo_color.a == 0.0 and g.multimesh.instance_count == 3
+			and sp["ring"] == null and not (sp["fire"] as Node3D).visible)
+	ev2.tick(0.35)
+	var lit := gmat != null and is_equal_approx(gmat.albedo_color.a, 0.35) and is_equal_approx(gmat.albedo_color.b, 1.0)
+	ev2.tick(0.4)
+	_check.call(dark and lit and not ev2._live.has(sp) and ev2.flash_strength() == 0.0,
+			"explosions: a spell's squares glow in, out and end (no ring, fireball or flash)")
+	var many: Array = []
+	many.resize(5000)
+	many.fill(me)
+	var near_ok := (ExplosionView.near_squares([me, "x", me + Vector3i(999, 0, 0), Vector3(1, 2, 3),
+			me + Vector3i(60, -60, 1)], me).size() == 2 and ExplosionView.near_squares("junk", me).is_empty()
+			and ExplosionView.near_squares(many, me).size() == ExplosionView.MAX_AREA
+			and ExplosionView.near_squares([Vector3i(2147483647, 0, 0)], Vector3i(-2147483647, 0, 0)).is_empty())
+	for i in 6:
+		ev2.on_events([{"kind": "explosion", "pos": me, "amount": 0, "text": "spell:acid", "detail": 0, "path": [me]}])
+	var spells_capped := ev2.spell_count() == ExplosionView.MAX_SPELLS
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 1, "text": "blast", "detail": 0, "path": []}])
+	_check.call(near_ok and spells_capped and ev2.live_count() == ExplosionView.MAX_SPELLS + 2,
+			"explosions: only nearby squares glow (first %d looked at); at most %d spells at once, blasts still start"
+			% [ExplosionView.MAX_AREA, ExplosionView.MAX_SPELLS])
 	ev2.flash_rect.free()
 	ev2.free()
 

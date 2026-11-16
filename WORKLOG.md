@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Spell area effects (combat lead, fork fp3d-combat + client): a spell's area sends an `explosion` event "spell:<damage type>" over its squares; ExplosionView makes them glow in the damage type's colour and fade (no ring, fireball or flash), at most 4 at once, only squares near the centre (events_test, aim_tests). Not seen on screen.
 - 2026-11-16 — EMP, scrambler and resonance pulses (combat lead, fork fp3d-combat + client): EMP and scrambler grenades, EMP ammo, the EMP bionic and resonance cascades send `explosion` events (emp, scrambler, resonance), one per blast; ExplosionView draws a fading coloured ring and a soft light, no fireball, smoke or flash; older blasts unchanged (events_test, aim_tests). Not seen on screen.
 - 2026-11-16 — Message feed filter (G1): the F1 menu's "Messages shown" boxes hide or show CDDA's message groups (good, bad, warnings, info, other), saved in hud.cfg. Client tests pass; not seen on screen.
 - 2026-11-16 — Hurt tint (combat lead, client, PLAN F3): the view's edges go dark red when the player is hit and stay faintly red while bleeding; smooth, no flashes; F1 "Hurt tint" box turns it off (aim_tests). Not seen on screen; flat screen only.
