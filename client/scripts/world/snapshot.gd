@@ -7,7 +7,8 @@ extends RefCounted
 ## Fields the client doesn't use yet (vehicles) are ignored, not trusted; whoever
 ## starts using them adds their checks here. A submap without `trap`, `items` or `lights` has none.
 ## `env.ambient_light` and per-submap `lights` ([[tile, luminance, kind], ...], block C6) are optional
-## until the bridge sends them.
+## until the bridge sends them. So are per-submap `more` (how many items a cut-short pile list left out),
+## `inside` and `inside_more` (what is in the containers lying next to the player, block L8).
 
 const CONTRACT_VERSION := 0
 const TILES := 144
@@ -40,6 +41,11 @@ const CORPSE_PULPED := 32
 const CORPSE_GIBBED := 64
 const HANDLE_STRIDE := 5                  # handles: tile, uid, itype, spot x, spot y (permille, -1 none)
 const MAX_HANDLES_PER_TILE := 32
+const MAX_HANDLES_NEAR := 256             # ... on the player's square and the 8 around it (same level): a big pile's tray
+const MAX_HANDLES_PER_SUBMAP := TILES * MAX_HANDLES_PER_TILE + 9 * (MAX_HANDLES_NEAR - MAX_HANDLES_PER_TILE)
+const MAX_INSIDE_PER_CONTAINER := 64      # inside: what is in a container lying next to the player, one level
+const MAX_INSIDE_PER_SUBMAP := 256
+const MAX_MORE := 0x7FFFFFFF              # more, inside_more: how many items the bridge left out of a list
 const CARRIED_STRIDE := 5                 # carried: uid, itype, parent uid (0 on the body), pocket, flags
 const MAX_CARRIED := 256
 const MAX_POCKET := 255
@@ -98,6 +104,9 @@ class Submap:
 	var handles: PackedInt64Array # HANDLE_STRIDE ints per item a client can point at (seen tiles only)
 	var poses := {}               # uid -> Vector2i(yaw whole degrees 0..359, side 0 / 1): how a placed item lies
 	var shelves := {}             # uid -> shelf 0..MAX_SHELF: the furniture surface it was put on (PropMesher numbers them)
+	var more := {}                # tile -> how many items of its pile have no handle (the bridge cut the list short)
+	var inside := {}              # container uid -> [[uid, itype, pocket], ...]: what is in a container lying next to the player
+	var inside_more := {}         # container uid -> how many more are in it than `inside` lists
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -169,6 +178,7 @@ var weather_sheltered := false   # env.sheltered: rain and snow don't reach the 
 var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEATHER_SOUND_THUNDER in a thunderstorm)
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
+var _container_sm := {} # container uid -> the submap whose `inside` / `inside_more` lists it
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
 var trap_names := {}    # int -> String
@@ -246,6 +256,7 @@ static func from_data(data: Variant) -> Snapshot:
 	snap._read(data)
 	if not snap.is_valid():
 		snap.submaps.clear()
+		snap._container_sm.clear()
 		snap.ter_names.clear()
 		snap.furn_names.clear()
 		snap.trap_names.clear()
@@ -582,6 +593,49 @@ func cookware_at(p: Vector3i) -> Array:
 	return out
 
 
+## Whether tile `tile` of submap `pos` is the player's square or one of the 8 around it, on the same level.
+func near_player(pos: Vector3i, tile: int) -> bool:
+	var sq := CddaCoords.sm_to_ms(pos) + Vector3i(tile % CddaCoords.SEEX, tile / CddaCoords.SEEX, 0)
+	return sq.z == player_pos.z and absi(sq.x - player_pos.x) <= 1 and absi(sq.y - player_pos.y) <= 1
+
+
+## The uids of the items lying on square `sq` that have handles, in CDDA's order (a pile's first
+## MAX_HANDLES_NEAR next to the player, its first MAX_HANDLES_PER_TILE elsewhere); [] for none.
+func handles_at(sq: Vector3i) -> Array:
+	var out := []
+	var sm: Submap = submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return out
+	var l := CddaCoords.ms_to_local(sq)
+	var tile := l.y * CddaCoords.SEEX + l.x
+	for k in range(0, sm.handles.size() - HANDLE_STRIDE + 1, HANDLE_STRIDE):
+		if sm.handles[k] == tile:
+			out.append(sm.handles[k + 1])
+	return out
+
+
+## How many items of the pile on square `sq` have no handle (the bridge cut its list short); 0 for none.
+func more_at(sq: Vector3i) -> int:
+	var sm: Submap = submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return 0
+	var l := CddaCoords.ms_to_local(sq)
+	return sm.more.get(l.y * CddaCoords.SEEX + l.x, 0)
+
+
+## What is in container `container_uid` lying next to the player, one level (the snapshot's `inside`):
+## [[uid, itype, pocket], ...] in the bridge's order; [] when nothing is listed.
+func inside_of(container_uid: int) -> Array:
+	var sm: Submap = submaps.get(_container_sm.get(container_uid, Vector3i.MAX))
+	return (sm.inside.get(container_uid, []) as Array).duplicate(true) if sm != null else []
+
+
+## How many more items are in that container than inside_of lists; 0 for none.
+func inside_more_of(container_uid: int) -> int:
+	var sm: Submap = submaps.get(_container_sm.get(container_uid, Vector3i.MAX))
+	return sm.inside_more.get(container_uid, 0) if sm != null else 0
+
+
 ## The creature (not the player) standing on square p, or null.
 func creature_at(p: Vector3i) -> Creature:
 	if _creature_at.is_empty():
@@ -676,9 +730,12 @@ func _read_submaps(v: Variant) -> void:
 		sm.trap = _ids(s["trap"], what + ".trap") if s.has("trap") else _zeros()
 		sm.items = _piles(s.get("items"), what + ".items")
 		sm.fields = _fields(s.get("fields"), what + ".fields")
-		sm.handles = _handles(s.get("handles"), what + ".handles")
+		sm.handles = _handles(s.get("handles"), sm.pos, what + ".handles")
 		sm.poses = _poses(s.get("poses"), sm.handles, what + ".poses")
 		sm.shelves = _shelves(s.get("shelves"), sm.handles, what + ".shelves")
+		sm.more = _more(s.get("more"), what + ".more")
+		sm.inside = _inside(s.get("inside"), sm, what + ".inside")
+		sm.inside_more = _inside_more(s.get("inside_more"), sm, what + ".inside_more")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -690,6 +747,10 @@ func _read_submaps(v: Variant) -> void:
 		if not is_valid():
 			return
 		submaps[sm.pos] = sm
+		for c: int in sm.inside:
+			_container_sm[c] = sm.pos
+		for c: int in sm.inside_more:
+			_container_sm[c] = sm.pos
 
 
 ## Integer in [lo, hi]; JSON gives every number as a float, so integral floats are accepted.
@@ -808,13 +869,14 @@ func _piles(v: Variant, what: String) -> PackedInt32Array:
 	return out
 
 
-## [[tile, uid, type, spot_x, spot_y], ...]: at most MAX_HANDLES_PER_TILE per tile, distinct uids.
-func _handles(v: Variant, what: String) -> PackedInt64Array:
+## [[tile, uid, type, spot_x, spot_y], ...] of submap `pos`: at most MAX_HANDLES_PER_TILE per tile
+## (MAX_HANDLES_NEAR on the player's square and the 8 around it), distinct uids.
+func _handles(v: Variant, pos: Vector3i, what: String) -> PackedInt64Array:
 	var out := PackedInt64Array()
 	if v == null or not is_valid():
 		return out
-	if not v is Array or (v as Array).size() > TILES * MAX_HANDLES_PER_TILE:
-		_fail("%s: expected a list of at most %d handles" % [what, TILES * MAX_HANDLES_PER_TILE])
+	if not v is Array or (v as Array).size() > MAX_HANDLES_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d handles" % [what, MAX_HANDLES_PER_SUBMAP])
 		return out
 	var per_tile := {}
 	var uids := {}
@@ -832,8 +894,9 @@ func _handles(v: Variant, what: String) -> PackedInt64Array:
 		out.append(_int(h[3], -1, 999, w + ".spot_x"))
 		out.append(_int(h[4], -1, 999, w + ".spot_y"))
 		per_tile[tile] = per_tile.get(tile, 0) + 1
-		if is_valid() and (per_tile[tile] > MAX_HANDLES_PER_TILE or uids.has(uid)):
-			_fail("%s: more than %d on tile %d, or uid %d twice" % [w, MAX_HANDLES_PER_TILE, tile, uid])
+		var cap := MAX_HANDLES_NEAR if near_player(pos, tile) else MAX_HANDLES_PER_TILE
+		if is_valid() and (per_tile[tile] > cap or uids.has(uid)):
+			_fail("%s: more than %d on tile %d, or uid %d twice" % [w, cap, tile, uid])
 		uids[uid] = true
 		if not is_valid():
 			return out
@@ -896,6 +959,103 @@ func _shelves(v: Variant, handles: PackedInt64Array, what: String) -> Dictionary
 		if not is_valid():
 			return out
 		out[uid] = shelf
+	return out
+
+
+## [[tile, n], ...]: how many items of a tile's pile have no handle, where the bridge cut its list short (older
+## bridges send none); distinct tiles, n 1..MAX_MORE.
+func _more(v: Variant, what: String) -> Dictionary:
+	var out := {}
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > TILES:
+		_fail("%s: expected a list of at most %d [tile, n]" % [what, TILES])
+		return out
+	for i in (v as Array).size():
+		var e: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not e is Array or (e as Array).size() != 2:
+			_fail(w + ": expected [tile, n]")
+			return out
+		var tile := _int(e[0], 0, TILES - 1, w + ".tile")
+		var n := _int(e[1], 1, MAX_MORE, w + ".n")
+		if is_valid() and out.has(tile):
+			_fail("%s: tile %d comes twice" % [w, tile])
+		if not is_valid():
+			return out
+		out[tile] = n
+	return out
+
+
+## Handle uid -> tile, of one submap's handles.
+static func _handle_tiles(handles: PackedInt64Array) -> Dictionary:
+	var out := {}
+	for k in range(0, handles.size() - HANDLE_STRIDE + 1, HANDLE_STRIDE):
+		out[handles[k + 1]] = int(handles[k])
+	return out
+
+
+## [[container_uid, uid, type, pocket], ...]: what is in the containers lying on the player's square and the 8
+## around it, one level (older bridges send none). Each container is one of the submap's handles on such a
+## square; at most MAX_INSIDE_PER_CONTAINER in one and MAX_INSIDE_PER_SUBMAP in all; uids distinct and none
+## of them a handle (they don't lie on the ground); pocket 0..MAX_POCKET (the item-action index, as carried).
+func _inside(v: Variant, sm: Submap, what: String) -> Dictionary:
+	var out := {}
+	if v == null or not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_INSIDE_PER_SUBMAP:
+		_fail("%s: expected a list of at most %d items" % [what, MAX_INSIDE_PER_SUBMAP])
+		return out
+	var tiles := _handle_tiles(sm.handles)
+	var uids := {}
+	for i in (v as Array).size():
+		var e: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not e is Array or (e as Array).size() != 4:
+			_fail(w + ": expected [container_uid, uid, type, pocket]")
+			return out
+		var c := _int(e[0], 1, MAX_UID - 1, w + ".container_uid")
+		var uid := _int(e[1], 1, MAX_UID - 1, w + ".uid")
+		var type := _int(e[2], 1, MAX_ID, w + ".type")
+		var pocket := _int(e[3], 0, MAX_POCKET, w + ".pocket")
+		if is_valid() and (not tiles.has(c) or not near_player(sm.pos, tiles[c])):
+			_fail("%s: container %d is not a handle next to the player" % [w, c])
+		elif is_valid() and (uids.has(uid) or tiles.has(uid)):
+			_fail("%s: uid %d comes twice, or lies on the ground" % [w, uid])
+		elif is_valid() and (out.get(c, []) as Array).size() >= MAX_INSIDE_PER_CONTAINER:
+			_fail("%s: more than %d in container %d" % [w, MAX_INSIDE_PER_CONTAINER, c])
+		if not is_valid():
+			return out
+		uids[uid] = true
+		if not out.has(c):
+			out[c] = []
+		(out[c] as Array).append([uid, type, pocket])
+	return out
+
+
+## [[container_uid, n], ...]: how many more are in a container than `inside` lists (older bridges send none);
+## each container one of the submap's handles next to the player, at most once; n 1..MAX_MORE.
+func _inside_more(v: Variant, sm: Submap, what: String) -> Dictionary:
+	var out := {}
+	if v == null or not is_valid():
+		return out
+	var tiles := _handle_tiles(sm.handles)
+	if not v is Array or (v as Array).size() > tiles.size():
+		_fail("%s: expected a list of at most %d [container_uid, n] (one per handle)" % [what, tiles.size()])
+		return out
+	for i in (v as Array).size():
+		var e: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not e is Array or (e as Array).size() != 2:
+			_fail(w + ": expected [container_uid, n]")
+			return out
+		var c := _int(e[0], 1, MAX_UID - 1, w + ".container_uid")
+		var n := _int(e[1], 1, MAX_MORE, w + ".n")
+		if is_valid() and (not tiles.has(c) or not near_player(sm.pos, tiles[c]) or out.has(c)):
+			_fail("%s: container %d is not a handle next to the player, or comes twice" % [w, c])
+		if not is_valid():
+			return out
+		out[c] = n
 	return out
 
 

@@ -38,6 +38,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_picker(world)
 	_test_carried(world)
 	_test_shelves(world, data, _root)
+	_test_trays(world, data)
 	_test_no_snapshot()
 	world.free()
 
@@ -57,6 +58,11 @@ func _it(id: String) -> int:
 ## The mock's first submap rewritten (floor; a table, a dresser, a wall; piles with or without handles) and
 ## its second as it is; the player stands at 3,4 carrying a backpack with a book in it and a hammer.
 func _scene(data: Variant, with_handles: bool, poses: Variant = null, shelves: Variant = null) -> Snapshot:
+	return Snapshot.from_data(_scene_data(data, with_handles, poses, shelves))
+
+
+## _scene's JSON data.
+func _scene_data(data: Variant, with_handles: bool, poses: Variant = null, shelves: Variant = null) -> Dictionary:
 	var d: Dictionary = (data as Dictionary).duplicate()
 	var src: Array = d["submaps"]
 	var sm: Dictionary = (src[0] as Dictionary).duplicate(true)
@@ -92,7 +98,7 @@ func _scene(data: Variant, with_handles: bool, poses: Variant = null, shelves: V
 		sm["poses"] = poses
 	if shelves != null:
 		sm["shelves"] = shelves
-	return Snapshot.from_data(d)
+	return d
 
 
 func _build(world: WorldView, snap: Snapshot, hidden := {}) -> PropMesher.Result:
@@ -372,6 +378,75 @@ func _test_carried(world: WorldView) -> void:
 	_check.call(b11 != null and b11.carried and b202 != null and not b202.carried and b202.square == _sq(AT_FLOOR)
 			and b202.spot.is_equal_approx(Vector2(0.8, 0.5)) and b202.is_drawn() and b301 != null and not b301.is_drawn()
 			and pk.by_uid(999) == null, "items: by uid, carried or on the ground (drawn or not)")
+
+
+## Block L8 slices 3-4: a pile next to the player (AT_FLOOR) lists up to MAX_HANDLES_NEAR handles (handles_at,
+## more_at) and still draws its first MAX_HANDLES_PER_TILE; the containers lying there list what is in them
+## (inside_of, inside_more_of), which isn't drawn; bad lists fail the snapshot.
+func _test_trays(world: WorldView, data: Variant) -> void:
+	var rock := _it("rock")
+	var beans := _it("can_beans")
+	# The scene with `near` more rocks on AT_FLOOR (3 handles already), `far` more on AT_TABLE (2), and `extra` keys.
+	var big := func(near: int, far: int, extra: Dictionary) -> Dictionary:
+		var d := _scene_data(data, true)
+		var sm: Dictionary = d["submaps"][0]
+		var hs: Array = sm["handles"]
+		for k in near:
+			hs.append([_at(AT_FLOOR), 1001 + k, rock, -1, -1])
+		for k in far:
+			hs.append([_at(AT_TABLE), 2001 + k, rock, -1, -1])
+		for p: Array in sm["items"]:
+			if p[0] == _at(AT_FLOOR):
+				p[1] = 300
+		for key: String in extra:
+			sm[key] = extra[key]
+		return d
+	var sq := _sq(AT_FLOOR)
+	var snap := Snapshot.from_data(big.call(253, 30, {"more": [[_at(AT_FLOOR), 44]],
+			"inside": [[203, 601, beans, 0], [203, 602, rock, 1]], "inside_more": [[203, 5]]}))
+	var uids := snap.handles_at(sq)
+	_check.call(snap.is_valid() and uids.size() == Snapshot.MAX_HANDLES_NEAR and uids[0] == 201 and uids[3] == 1001
+			and uids[255] == 1253 and snap.handles_at(_sq(AT_TABLE)).size() == Snapshot.MAX_HANDLES_PER_TILE
+			and snap.more_at(sq) == 44 and snap.more_at(_sq(AT_TABLE)) == 0 and snap.handles_at(_sq(Vector2i(0, 0))) == [],
+			"trays: a pile next to the player lists 256 handles in order, one elsewhere 32, and how many more " + snap.error)
+	_check.call(snap.inside_of(203) == [[601, beans, 0], [602, rock, 1]] and snap.inside_more_of(203) == 5
+			and snap.inside_of(201) == [] and snap.inside_of(999) == [] and snap.inside_more_of(999) == 0,
+			"trays: what is in a bag lying next to the player, and how many more")
+	if snap.is_valid():
+		var r := _build(world, snap)
+		var drawn := _slots(r, AT_FLOOR).map(func(e: Array) -> int: return e[0])
+		var inside := r.item_slots.filter(func(e: Array) -> bool: return e[0] == 601 or e[0] == 602)
+		_check.call(drawn.size() == Snapshot.MAX_HANDLES_PER_TILE and drawn.has(201) and drawn.has(1029)
+				and not drawn.has(1030) and inside.is_empty(),
+				"trays: the big pile still draws its first 32 items, nothing in the bag is drawn %d" % drawn.size())
+	var bad := {
+		"33 on a square away from the player": big.call(0, 31, {}),
+		"257 next to the player": big.call(254, 0, {}),
+		"more: a tile twice": big.call(0, 0, {"more": [[1, 2], [1, 3]]}),
+		"more: none left out": big.call(0, 0, {"more": [[1, 0]]}),
+		"more: not [tile, n]": big.call(0, 0, {"more": [[1]]}),
+		"more: not a list": big.call(0, 0, {"more": {}}),
+		"inside: a container not lying here": big.call(0, 0, {"inside": [[999, 601, beans, 0]]}),
+		"inside: a container away from the player": big.call(0, 0, {"inside": [[101, 601, beans, 0]]}),
+		"inside: an item twice": big.call(0, 0, {"inside": [[203, 601, beans, 0], [202, 601, beans, 0]]}),
+		"inside: an item lying on the ground": big.call(0, 0, {"inside": [[203, 201, rock, 0]]}),
+		"inside: pocket 256": big.call(0, 0, {"inside": [[203, 601, beans, 256]]}),
+		"inside: type 0": big.call(0, 0, {"inside": [[203, 601, 0, 0]]}),
+		"inside: not [container, uid, type, pocket]": big.call(0, 0, {"inside": [[203, 601, beans]]}),
+		"inside: 65 in one bag": big.call(0, 0, {"inside": range(65).map(func(k: int) -> Array: return [203, 601 + k, beans, 0])}),
+		"inside: 257 in a submap": big.call(10, 0, {"inside": range(257).map(func(k: int) -> Array: return [1001 + k % 5, 5001 + k, beans, 0])}),
+		"inside_more: a container not lying here": big.call(0, 0, {"inside_more": [[999, 1]]}),
+		"inside_more: a container away from the player": big.call(0, 0, {"inside_more": [[101, 1]]}),
+		"inside_more: a container twice": big.call(0, 0, {"inside_more": [[203, 1], [203, 2]]}),
+		"inside_more: none left out": big.call(0, 0, {"inside_more": [[203, 0]]}),
+	}
+	var passed := []
+	for k: String in bad:
+		if Snapshot.from_data(bad[k]).is_valid():
+			passed.append(k)
+	var full: Dictionary = big.call(10, 0, {"inside": range(256).map(func(k: int) -> Array: return [1001 + k % 5, 5001 + k, beans, 0])})
+	_check.call(passed.is_empty() and Snapshot.from_data(full).is_valid() and Snapshot.from_data(big.call(0, 30, {})).is_valid(),
+			"trays: bad lists fail the snapshot, full ones don't %s" % [passed])
 
 
 func _test_no_snapshot() -> void:
