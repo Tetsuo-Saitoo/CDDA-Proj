@@ -481,8 +481,9 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	var said := p.status.text
 	p.monster_id.text = "bad id!"
 	p.spawn_monster()
-	_check.call(sim.calls.size() == n and said.begins_with("No item type") and p.status.text.begins_with("Monster ids"),
-			"range page: unknown item ids and bad monster ids aren't sent")
+	_check.call(sim.calls.size() == n and said.begins_with("No item type") and p.status.text.begins_with("No monster type")
+			and not p.item_pick.visible and not p.monster_pick.visible,
+			"range page: unknown item ids and bad monster ids aren't sent, no picker shown")
 	p.on_range_done(1, "")
 	var ok_text := p.status.text
 	p.on_range_done(5, "You can't wait now.")
@@ -490,6 +491,8 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 			"range page: results show in the status line, zones by name (%s)" % ok_text)
 	p.on_range_done(12345, "")
 	_check.call(p.status.text.ends_with("You can't wait now."), "range page: results of other ops ignored")
+	_test_search()
+	_test_pickers(p, sim, tables)
 	# Typing in an id field: the menu lets the keys through, Esc still closes.
 	m.open()
 	m.show_cheats(true)
@@ -509,3 +512,75 @@ func _test_panel(root: Node, tables: IdTables) -> void:
 	_check.call(not p.range_box.visible, "range page: hidden when the game ends")
 	ls.free()
 	m.free()
+
+
+static func _def(id: String, n: String) -> IdTables.Def:
+	var d := IdTables.Def.new()
+	d.id = id
+	d.name = n
+	return d
+
+
+## Small id tables for the spawn search: knives and pistols, zombies, a hostile name and an id the bridge refuses.
+static func _search_tables() -> IdTables:
+	var t := IdTables.new()
+	for p: Array in [["null", "none"], ["glock_19", "Glock 19"], ["glock_17", "Glock 17"], ["knife_hunting", "hunting knife"],
+			["knife_combat", "<color_red>combat knife</color>"], ["pocket_knife", "pocket knife"], ["knife", "knife"]]:
+		t.itype.append(_def(p[0], p[1]))
+	for i in 200:
+		t.itype.append(_def("rag_%d" % i, "zombie rag %d" % i))
+	for p: Array in [["mon_null", ""], ["mon_pseudo_dormant_zombie", "zombie"], ["mon_zow", "zombie"], ["mon_zombie", "zombie"],
+			["mon_zombie_dog", "zombie dog"], ["bad id!", "zombie king"]]:
+		t.mtype.append(_def(p[0], p[1]))
+	return t
+
+
+func _test_search() -> void:
+	var t := _search_tables()
+	var knives: Array = _ids(t, "knife")
+	_check.call(knives == ["knife", "knife_combat", "pocket_knife", "knife_hunting"],
+			"spawn search: the exact id first, then names with a word starting so, shorter first (%s)" % [knives])
+	_check.call(_ids(t, "GLOCK") == ["glock_17", "glock_19"] and _ids(t, "glock 19") == ["glock_19"] and _ids(t, "hunt knife") == ["knife_hunting"]
+			and _ids(t, "knife_c") == ["knife_combat"] and _ids(t, "  ").is_empty() and _ids(t, "null").is_empty()
+			and _ids(t, "knife", "ter").is_empty() and SpawnSearch.find(null, "itype", "knife").is_empty(),
+			"spawn search: case ignored, every word must match, ids too; nothing for blanks, CDDA's null type, other tables")
+	var c: Array[Dictionary] = SpawnSearch.find(t, "itype", "combat")
+	_check.call(c.size() == 1 and c[0]["text"] == "combat knife (knife_combat)" and c[0]["index"] == 4
+			and _ids(t, "zombie").size() == SpawnSearch.MAX_RESULTS and _ids(t, "zombie", "itype", 0).size() == 1
+			and _ids(t, "zombie", "itype", 999).size() == SpawnSearch.MAX_RESULTS and _ids(t, "x".repeat(500)).is_empty(),
+			"spawn search: names cleaned of colour tags, results capped, the limit clamped")
+	var zs := _ids(t, "zombie", "mtype")
+	_check.call(zs == ["mon_zombie", "mon_pseudo_dormant_zombie", "mon_zow", "mon_zombie_dog", "bad id!"],
+			"spawn search: of types named alike, the one whose id says it too and is shortest first (%s)" % [zs])
+
+
+func _test_pickers(p: CheatPanel, sim: FakeSim, real: IdTables) -> void:
+	var t := _search_tables()
+	p.tables = null
+	p.item_id.text = "knife"
+	p.search("itype")
+	var none_yet := not p.item_pick.visible
+	p.tables = t
+	p.spawn_item()   # the tables came after the typing: the search runs again
+	var first: Array = sim.calls[-1]
+	p.item_pick.select(2)
+	p.item_count.value = 2
+	p.spawn_item()   # same text: the choice in the picker stays
+	var chosen: Array = sim.calls[-1]
+	_check.call(none_yet and p.item_pick.visible and p.item_pick.item_count == 4 and p.item_pick.get_item_text(0) == "knife (knife)"
+			and first == ["item", 6, 5, Vector3i(10, 20, 0)]
+			and chosen == ["item", 5, 2, Vector3i(10, 20, 0)],
+			"spawn picker: a name finds item types, the best picked; another pick is spawned (%s %s)" % [first, chosen])
+	p.monster_id.text = "zombie"
+	p.spawn_monster()
+	_check.call(p.monster_pick.item_count == 4 and sim.calls[-1] == ["monster", "mon_zombie", Vector3i(10, 18, 0)],
+			"spawn picker: monsters by name; a type whose id the bridge refuses isn't offered")
+	p.item_id.text = ""
+	p.monster_id.text = ""
+	p.search("itype")
+	p.search("mtype")
+	p.tables = real
+
+
+static func _ids(t: IdTables, q: String, table := "itype", n := SpawnSearch.MAX_RESULTS) -> Array:
+	return SpawnSearch.find(t, table, q, n).map(func(f: Dictionary) -> String: return f["id"])

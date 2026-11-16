@@ -99,6 +99,12 @@ func _run() -> void:
 		_cp.item_id.text = id
 		_cp.item_count.value = 1
 		_check(await _op(_cp.spawn_item, "Spawn " + id) == "", "spawned a %s at the feet" % id)
+	# the spawn pickers find types by name in this game's own tables
+	var zs := SpawnSearch.find(_cp.tables, "mtype", "zombie").map(func(f: Dictionary) -> String: return f["id"])
+	var gs := SpawnSearch.find(_cp.tables, "itype", "glock 19").map(func(f: Dictionary) -> String: return f["id"])
+	_check(zs.size() > 1 and zs[0] == "mon_zombie" and not gs.is_empty() and gs[0] == "glock_19",
+			"spawn search: \"zombie\" finds %d monster types, mon_zombie first; \"glock 19\" finds glock_19 first" % zs.size())
+	print("    zombie: %s; glock 19: %s" % [zs.slice(0, 6), gs.slice(0, 4)])
 	if _main.key_menu.visible:
 		_main.key_menu.close()
 	for k: Array in KEYS:
@@ -112,6 +118,7 @@ func _run() -> void:
 		await _hands_live()
 		_classic_live()
 		_character_live()
+		await _compass_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -193,6 +200,42 @@ func _classic_live() -> void:
 	_check(not v.visible, "F3 again hides it")
 
 
+## The compass in the live game: a zombie spawned two squares ahead (by name, through the Cheats page's picker; at
+## noon, monsters frozen) shows as a hostile marker near the middle of the strip, close by.
+func _compass_live() -> void:
+	var c := _main.compass
+	if not _live.range_info().get("ai_frozen", false):
+		_check(await _op(func() -> void: _cp.set_frozen(true), "Freeze") == "", "monsters frozen")
+	_cp.hour.value = 12
+	_check(await _op(_cp.set_time, "Time 12:00") == "", "time set to noon")
+	var hostiles := func() -> int: return c.blips.filter(func(b: Vector3) -> bool: return int(b.z) == Snapshot.Creature.HOSTILE).size()
+	var before: int = hostiles.call()
+	_cp.monster_id.text = "zombie"
+	_check(await _op(_cp.spawn_monster, "Spawn mon_zombie") == "", "a zombie spawned ahead (picked: %s)"
+			% (_cp.monster_pick.get_item_text(_cp.monster_pick.selected) if _cp.monster_pick.selected >= 0 else "none"))
+	var more := func() -> bool: return hostiles.call() > before
+	var seen := await _until(more, OP_TIMEOUT_MS, true)
+	var b: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)   # hostiles come first, nearest first
+	var at := Compass.strip_pos(b.x, c.heading_deg)
+	_check(seen and int(b.z) == Snapshot.Creature.HOSTILE and absf(at) < 0.3 and b.y < 4.0,
+			"compass: the zombie ahead is a hostile marker near the strip's middle (%.2f of half the strip, %.1f m away, heading %.0f)"
+			% [at, b.y, c.heading_deg])
+	if not _main.first_person:
+		print("  (compass turn not tried: not in first person)")
+		return
+	var fp := _main.fp
+	var yaw0 := fp.yaw
+	var h0 := c.heading_deg
+	fp.set_look(yaw0 - PI / 2.0, fp.pitch)   # a quarter turn right: the zombie is now to the left
+	await process_frame
+	await process_frame
+	var b2: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)
+	var at2 := Compass.strip_pos(b2.x, c.heading_deg)
+	_check(absf(wrapf(c.heading_deg - h0, -180.0, 180.0) - 90.0) < 1.0 and absf(at2 - (at - 1.0)) < 0.05,
+			"compass: a quarter turn right turns the heading 90 and moves the zombie to the strip's left end (%.2f)" % at2)
+	fp.set_look(yaw0, fp.pitch)
+
+
 ## G4: P shows the character screen with the live game's body and needs; Esc closes it.
 func _character_live() -> void:
 	var v := _main.character
@@ -201,7 +244,14 @@ func _character_live() -> void:
 	var body: Dictionary = _main.character_data.card("body")
 	_check(v.visible and t.find("[Body]") >= 0 and t.find("[Needs]") >= 0 and (body.get("rows", []) as Array).size() >= 6,
 			"P: the character screen, %d body parts" % (body.get("rows", []) as Array).size())
+	var worn: Array = _main.character_data.card("worn").get("rows", [])
+	var parts: Array = _main.character_data.card("worn_parts").get("rows", [])
+	var covered := parts.filter(func(r: Dictionary) -> bool: return r["value"] != "bare").size()
+	_check(worn.size() >= 1 and parts.size() >= 6 and covered >= 3 and t.find("[Worn]") >= 0 and t.find("[Worn by body part]") >= 0,
+			"P: what the character wears (%d items) and the layers on %d body parts, %d covered" % [worn.size(), parts.size(), covered])
 	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
+	var at := t.find("[Worn]")
+	print("    " + "\n    ".join(t.substr(at if at >= 0 else 0).split("\n").slice(0, 14)))
 	var esc := InputEventKey.new()
 	esc.keycode = KEY_ESCAPE
 	esc.physical_keycode = KEY_ESCAPE

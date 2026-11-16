@@ -25,6 +25,9 @@
 - 2026-11-16 — ThreadSanitizer run of the fork tests clean in WSL (QA lead): the TSan preset keeps GCC 13's flow-based warnings non-fatal; fork f46b331 makes faults::all_of_type give the stored list; fork 15bacde stretches the tests' waits and time limits in a TSan build (`fp3d::slow_build`). The CI run on main is next.
 - 2026-11-15 — Live test: item physics passes over an item CDDA won't move by hand (a drink's liquid, frozen water) and places the next carried one (5a18178).
 - 2026-11-15 — Range test checks the weather cheat (QA lead, fork fp3d-qa ba1a727): a lightning storm and a wind hold over turns in a range game at 20 C, a flash arrives as an event, and an empty id gives back the range's clear sky and still air.
+- 2026-11-16 — Character screen shows what you wear: each item with its layer and damage, and the layers on each body part. Client tests and the live check pass.
+- 2026-11-16 — Compass live check: a zombie spawned ahead shows as a hostile marker in the strip's middle and moves to its end when the view turns. Live test passes.
+- 2026-11-16 — Spawn pickers: the F1 Cheats page finds items and monsters by name (SpawnSearch, shared with VR); type "zombie" or "glock" and pick. Client tests and the live check pass.
 - 2026-11-16 — G4 character screen, first cut: P shows body, needs, mood and effects as cards; stats, skills, traits and bionics fill in when the bridge's character query lands. Client tests and the live check pass.
 - 2026-11-15 — G8 classic overlay: F3 shows CDDA's ASCII view of the snapshot around the player (id-table symbols and colours, joined walls) for parity checks. Client tests and the live check pass.
 - 2026-11-15 — Shift+E eats or drinks what a hand holds (client side of lead-bridge's coming consume op); falls back to CDDA's eat menu. Client tests pass.

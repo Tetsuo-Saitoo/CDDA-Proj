@@ -1,7 +1,8 @@
 class_name CharacterData
 extends RefCounted
 ## G4: what the character screen shows, worked out once for every view (the screen's CharacterView; the VR panel
-## shows that same view). Two sources: HudData (body, needs, mood, effects: already cleaned there) and the
+## shows that same view). Sources: HudData (body, needs, mood, effects: already cleaned there), the snapshot's
+## worn items (G2's paper doll: each item with its layer and damage, and the layers on each body part) and the
 ## bridge's character sheet (`set_sheet`: name, stats, speed, encumbrance, skills, proficiencies, traits, bionics
 ## and descriptions). The sheet is game data: only the fields below are read, numbers are clamped, text is
 ## cleaned (no colour tags, no control characters, capped) and lists are capped. Nothing here draws.
@@ -19,6 +20,10 @@ const STATS := {
 	"int": ["Intelligence", "How fast you read and learn skills, and success at crafting and first aid."],
 	"per": ["Perception", "Ranged accuracy, noticing traps and things far away, and spotting lies."],
 }
+## CDDA's layer names by layer_level (item::layer_to_string), inner to outer.
+const LAYERS := ["Personal aura", "Close to skin", "Normal", "Waist", "Outer", "Strapped", "Outer aura"]
+## A worn item's damage_level 0..5 as words (CDDA's own words depend on the material).
+const DAMAGE := ["undamaged", "slightly damaged", "damaged", "very damaged", "badly damaged", "nearly destroyed"]
 ## Needs shown on the Needs card, in HudData.NEEDS order (morale has its own card).
 const NEEDS := ["stamina", "hunger", "thirst", "sleepiness", "pain"]
 const NO_SHEET := "Stats, skills, proficiencies, traits and bionics come with the game's character data, which this game doesn't send yet."
@@ -34,12 +39,17 @@ var note := NO_SHEET
 var cards: Array[Dictionary] = []
 
 var _hud: HudData
+var _snap: Snapshot
+var _tables: IdTables
 var _sheet := {}
 
 
-## A new snapshot is shown (HudData.update ran): the body, needs, mood and effects cards follow it.
-func update(hud: HudData) -> void:
+## A new snapshot is shown (HudData.update ran): the body, needs, mood and effects cards follow it, and the worn
+## cards follow `snap` (its worn items, named by `tables`).
+func update(hud: HudData, snap: Snapshot = null, tables: IdTables = null) -> void:
 	_hud = hud
+	_snap = snap
+	_tables = tables
 	_build()
 
 
@@ -69,6 +79,9 @@ func _build() -> void:
 		_add("needs", "Needs", _needs_rows())
 		_add("mood", "Mood", _mood_rows())
 		_add("effects", "Effects", _effect_rows())
+	if _snap != null:
+		_add("worn", "Worn", _worn_rows())
+		_add("worn_parts", "Worn by body part", _worn_part_rows())
 	_add("skills", "Skills", _skill_rows())
 	_add("proficiencies", "Proficiencies", _proficiency_rows())
 	_add("traits", "Traits and mutations", _trait_rows())
@@ -189,6 +202,65 @@ func _effect_rows() -> Array[Dictionary]:
 		var tip := HudData.clean(tips.get(e["id"]), MAX_TIP) if tips is Dictionary else ""
 		out.append(row(e["text"], "", e["level"], tip))
 	return out
+
+
+## What the player wears, inner to outer (the snapshot's order): its name, its layer, coloured by damage.
+func _worn_rows() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for w: Snapshot.Worn in _snap.player_worn:
+		var parts := PackedStringArray()
+		for p in w.covers:
+			parts.append(_part(p))
+		var dmg := clampi(w.damage, 0, DAMAGE.size() - 1)
+		var tip := "%s. Covers %s." % [first_upper(DAMAGE[dmg]), ", ".join(parts) if not parts.is_empty() else "nothing"]
+		out.append(row(_item_name(w.type), _layer(w.layer), _damage_level(dmg), tip))
+	return out
+
+
+## The paper doll as rows: each body part the snapshot lists, then any other part something covers, with how many
+## layers are on it ("bare" for none) and, as the tooltip, the items on it inner to outer.
+func _worn_part_rows() -> Array[Dictionary]:
+	var order: Array[int] = []
+	for b in _snap.player_parts:
+		if not order.has(b.id):
+			order.append(b.id)
+	var on := {}   # part index -> item names, inner to outer (an Array: a packed one would be copied out of the dict)
+	for w: Snapshot.Worn in _snap.player_worn:
+		for p in w.covers:
+			if not order.has(p):
+				order.append(p)
+			if not on.has(p):
+				on[p] = []
+			(on[p] as Array).append(_item_name(w.type))
+	var out: Array[Dictionary] = []
+	for p in order:
+		var items: Array = on.get(p, [])
+		var value := "bare" if items.is_empty() else ("1 layer" if items.size() == 1 else "%d layers" % items.size())
+		out.append(row(first_upper(_part(p)), value, HudData.UNKNOWN, ", ".join(PackedStringArray(items))))
+	return out
+
+
+func _item_name(type: int) -> String:
+	var d: IdTables.Def = _tables.def_at("itype", type) if _tables != null else null
+	var n := HudData.clean(d.name, MAX_LABEL) if d != null else ""
+	if n.is_empty() and d != null:
+		n = HudData.clean(d.id, MAX_LABEL)
+	return n if not n.is_empty() else "item type %d" % type
+
+
+func _part(index: int) -> String:
+	var id := HudData.clean(_tables.body_part_name(index), MAX_LABEL) if _tables != null else ""
+	return HudData.part_name(id) if not id.is_empty() else "part %d" % index
+
+
+static func _layer(level: int) -> String:
+	return LAYERS[level] if level >= 0 and level < LAYERS.size() else "Layer %d" % level
+
+
+static func _damage_level(dmg: int) -> int:
+	if dmg >= 4:
+		return HudData.BAD
+	return HudData.HURT if dmg >= 2 else HudData.UNKNOWN
 
 
 func _skill_rows() -> Array[Dictionary]:
