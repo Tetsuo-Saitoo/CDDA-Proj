@@ -85,6 +85,7 @@ class CddaSim : public godot::RefCounted
         int64_t cheat_set_weather( const godot::String &id, double wind );
 
         int64_t match_recipes( const godot::Dictionary &container );
+        int64_t query_character();
         godot::String take_query_result( int64_t id );
 };
 

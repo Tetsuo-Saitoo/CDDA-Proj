@@ -229,12 +229,13 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "cheat_set_weather", "id", "wind" ), &CddaSim::cheat_set_weather );
     ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
+    ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
 void CddaSim::stop_session()
 {
-    fp3d_session::stop();
+    fp3d_session::unload();
 }
 
 String CddaSim::start( const String &data_dir, const String &user_dir, const String &world )
@@ -823,6 +824,16 @@ int64_t CddaSim::match_recipes( const Dictionary &d )
     }
     const fp3d::item_ref ref{ static_cast<uint64_t>( uid ), static_cast<uint32_t>( type ) };
     return static_cast<int64_t>( fp3d::post_recipe_query( ref, fp3d::ui_point{ pos.x, pos.y, pos.z } ) );
+}
+
+// G4: the character screen's data (fp3d/snapshot.h, contracts/bridge_api.md "Character queries"). One at a
+// time; the bridge refuses a second while one is pending.
+int64_t CddaSim::query_character()
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    return static_cast<int64_t>( fp3d::post_character_query() );
 }
 
 String CddaSim::take_query_result( int64_t id )
