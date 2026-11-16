@@ -126,7 +126,7 @@ var z_max := CddaCoords.Z_MAX_DEFAULT
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
-var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds}, {} for none
+var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed}, {} for none
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
@@ -411,7 +411,8 @@ static func plain_text(v: Variant, cap: int) -> String:
 	return "".join(out).left(cap).strip_edges()
 
 
-## player.wielded_gun: {type (itype index), dirt (0..10000, -1 absent), faults (fault ids), rounds (-1 absent)}.
+## player.wielded_gun: {type (itype index), dirt (0..10000, -1 absent), faults (fault ids), rounds (-1 absent),
+## suppressed (a gunmod quiets it; only a JSON true counts)}.
 func _read_gun(v: Variant) -> Dictionary:
 	const MAX_FAULTS := 16
 	const MAX_FAULT_LEN := 64
@@ -425,6 +426,7 @@ func _read_gun(v: Variant) -> Dictionary:
 		"type": _int(d.get("type", 0), 0, MAX_ID, "player.wielded_gun.type"),
 		"dirt": _int(d["dirt"], 0, 10000, "player.wielded_gun.dirt") if d.has("dirt") else -1,
 		"rounds": _int(d["rounds"], 0, 100000, "player.wielded_gun.rounds") if d.has("rounds") else -1,
+		"suppressed": d.get("suppressed") is bool and d["suppressed"],
 	}
 	var f: Variant = d.get("faults", [])
 	if not f is Array or (f as Array).size() > MAX_FAULTS:

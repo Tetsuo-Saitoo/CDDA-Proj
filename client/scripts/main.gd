@@ -1120,6 +1120,7 @@ func _update_aim() -> void:
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
+	viewmodel.suppressed = world.snapshot != null and world.snapshot.player_gun.get("suppressed", false) == true
 
 
 func _in_main_loop() -> bool:
