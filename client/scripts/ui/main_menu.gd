@@ -268,11 +268,10 @@ func ask_delete() -> bool:
 static func delete_text(p: Dictionary) -> String:
 	var save := shown(p.get("save", ""))
 	var world := shown(p.get("world", ""))
-	var t := "Delete the character %s from the world %s?
-Their save is deleted for good: this can't be undone." % [save, world]
+	var t := "Delete the character %s from the world %s?\nTheir save is deleted for good: this can't be undone." \
+			% [save, world]
 	if p.get("last", false):
-		t += "
-%s is the last character in %s, so the world and its map are deleted too." % [save, world]
+		t += "\n%s is the last character in %s, so the world and its map are deleted too." % [save, world]
 	return t
 
 
