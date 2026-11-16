@@ -263,6 +263,10 @@ func _character_live() -> void:
 				and cd.note.is_empty() and v.text().find("[Skills]") >= 0,
 				"P: the game's sheet: %s (%s), %d stats, %d skills, %d traits" % [cd.title, cd.subtitle, stats.size(),
 				skills.size(), (cd.card("traits").get("rows", []) as Array).size()])
+		var carry := cd.carry
+		_check(carry["weight_g"] >= 0 and carry["weight_max_g"] > 0 and carry["volume_ml"] >= 0
+				and carry["volume_max_ml"] > 0 and v.text().find("[Carrying]") >= 0,
+				"P: what the character carries and can carry, from the sheet (%s)" % [carry])
 		print("    " + "\n    ".join(v.text().substr(maxi(0, v.text().find("[Stats]"))).split("\n").slice(0, 8)))
 	else:
 		print("    (this DLL has no query_character: the sheet's cards not checked)")
@@ -272,6 +276,13 @@ func _character_live() -> void:
 	esc.pressed = true
 	root.push_input(esc)
 	_check(not v.visible, "Esc closes it")
+	if _main.character_data.carry["weight_max_g"] > 0:   # G2: the Tab view's top line shows the same numbers
+		root.push_input(_key_of(&"inspect"))
+		var box := _main.inspect.find_child("Carry", true, false) as Control
+		_check(_main.inspect.visible and box != null and box.visible and box.get_child_count() == 2,
+				"Tab: carried weight and volume bars in the top line")
+		root.push_input(esc)
+		_check(not _main.inspect.visible, "Esc closes the Tab view")
 
 
 ## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the

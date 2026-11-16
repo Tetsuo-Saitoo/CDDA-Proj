@@ -57,6 +57,38 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_worn(snap, tables, hud)
 	_test_query(snap, tables, hud)
 	_test_rebuild(snap, tables, hud)
+	_test_carry(snap, tables, hud)
+
+
+## G2: the sheet's carried weight and volume and their limits: read as whole numbers (bad ones unknown, huge ones
+## clamped), a Carrying card in kg and L with its level (90 % warns, over the limit is bad), the Tab view's bars.
+func _test_carry(snap: Snapshot, tables: IdTables, hud: HudData) -> void:
+	var cd := CharacterData.new()
+	cd.update(hud, snap, tables)
+	var sheet := _sheet()
+	_check.call(cd.carry.values() == [-1, -1, -1, -1] and cd.card("carry").is_empty(),
+			"carrying: no sheet, nothing known, no card")
+	sheet.merge({"weight_g": 1290, "weight_max_g": 49000.0, "volume_ml": 250, "volume_max_ml": 35510}, true)
+	cd.set_sheet(sheet)
+	var rows: Array = cd.card("carry")["rows"]
+	_check.call(cd.carry == {"weight_g": 1290, "weight_max_g": 49000, "volume_ml": 250, "volume_max_ml": 35510}
+			and rows.size() == 2 and rows[0]["value"] == "1.29 kg of 49.00 kg" and rows[1]["value"] == "250 ml of 35.51 L"
+			and rows[0]["level"] == HudData.OK, "carrying: the sheet's numbers on a Carrying card (%s, %s)"
+			% [rows[0]["value"], rows[1]["value"]])
+	sheet.merge({"weight_g": 50000, "weight_max_g": 49000, "volume_ml": 32000, "volume_max_ml": 35510}, true)
+	cd.set_sheet(sheet)
+	rows = cd.card("carry")["rows"]
+	_check.call(rows[0]["level"] == HudData.BAD and rows[1]["level"] == HudData.HURT,
+			"carrying: over the weight limit is bad, 90 % of the room warns")
+	sheet.merge({"weight_g": "lots", "weight_max_g": 1e30, "volume_ml": -5, "volume_max_ml": INF}, true)
+	cd.set_sheet(sheet)
+	_check.call(cd.carry == {"weight_g": -1, "weight_max_g": CharacterData.MAX_CARRY, "volume_ml": 0, "volume_max_ml": -1}
+			and cd.card("carry").is_empty(), "carrying: text and infinity unknown, huge clamped, negative to 0; "
+			+ "no row without both numbers (%s)" % [cd.carry])
+	var parts := InspectView.carry_parts({"weight_g": 1290, "weight_max_g": 49000, "volume_ml": 250, "volume_max_ml": 0})
+	_check.call(parts.size() == 1 and parts[0][0] == "1.29 kg of 49.00 kg" and is_equal_approx(parts[0][1], 1290.0 / 49000.0)
+			and InspectView.carry_parts(cd.carry).is_empty() and InspectView.carry_parts({}).is_empty(),
+			"carrying: the Tab view's top line has a bar for each number the sheet has (%s)" % [parts])
 
 
 ## A new turn or the same sheet again changes nothing on screen (no `changed`, no new cards); a changed skill

@@ -58,6 +58,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_bar()
 	_test_pending()
 	_test_toggle()
+	_test_carry()
 	_view.free()
 	_hands.free()
 	_actions.free()
@@ -797,3 +798,17 @@ func _test_toggle() -> void:
 	_view.close_button.pressed.emit()
 	_check.call(closed_ignores and by_action and not _view.visible and _view.close_button.text == "Close",
 			"inspect: ui_cancel and the Close button close it without a keyboard")
+
+
+## G2: the top line's carried weight and volume bars follow the character sheet (CharacterData.carry).
+func _test_carry() -> void:
+	var cd := CharacterData.new()
+	_view.character = cd
+	var box := _view.find_child("Carry", true, false) as HBoxContainer
+	var hidden_at_first := box != null and not box.visible
+	cd.set_sheet({"ok": true, "weight_g": 1290, "weight_max_g": 49000, "volume_ml": 250, "volume_max_ml": 35510})
+	_check.call(hidden_at_first and box.visible and box.get_child_count() == 2,
+			"inspect: the carried weight and volume bars show once the sheet has them")
+	_view.character = null
+	_check.call(not box.visible and cd.changed.get_connections().is_empty(),
+			"inspect: no character data, no bars, nothing left connected")

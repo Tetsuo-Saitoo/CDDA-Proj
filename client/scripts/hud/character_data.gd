@@ -35,6 +35,8 @@ const TRUNCATED := "The character data was too big to send whole: some descripti
 const ERRORS := ["internal", "too large"]
 const MAX_RESULT_BYTES := 72 << 10   # the bridge caps a result at 64 KB
 const MAX_QUERY_ID := (1 << 53) - 1
+const MAX_CARRY := (1 << 31) - 1   # the bridge clamps to 0..INT32_MAX
+const CARRY_KEYS := ["weight_g", "weight_max_g", "volume_ml", "volume_max_ml"]
 
 ## The screen's heading: the character's name, or "Character" without a sheet.
 var title := "Character"
@@ -45,6 +47,9 @@ var note := NO_SHEET
 ## The cards in display order, empty ones left out: {id, title, rows: [{label, value, level (HudData.OK ...),
 ## tip}]}. Rows are at most MAX_ROWS per card.
 var cards: Array[Dictionary] = []
+## What the character carries and can carry, as CDDA's inventory screen counts it (the sheet's weight_g,
+## weight_max_g, volume_ml, volume_max_ml); -1 each when the sheet doesn't say. The Tab view shows it too.
+var carry := {"weight_g": -1, "weight_max_g": -1, "volume_ml": -1, "volume_max_ml": -1}
 ## Bumped with each `changed`: views skip a rebuild when they have shown this revision already.
 var revision := 0
 
@@ -115,11 +120,16 @@ func card(id: String) -> Dictionary:
 ## Works the cards out again; `changed` only when something shown differs (each new turn calls this while most of
 ## the screen stays the same).
 func _build() -> void:
-	var was := [title, subtitle, note, cards]
+	var was := [title, subtitle, note, cards, carry]
 	var fresh: Array[Dictionary] = []
 	cards = fresh
+	carry = {}
+	for k: String in CARRY_KEYS:
+		var v: Variant = _sheet.get(k)
+		carry[k] = _int(v, 0, MAX_CARRY) if v is int or (v is float and is_finite(v)) else -1
 	_heading()
 	_add("stats", "Stats", _stats_rows())
+	_add("carry", "Carrying", _carry_rows())
 	if _hud != null:
 		_add("body", "Body", _body_rows())
 		_add("needs", "Needs", _needs_rows())
@@ -133,7 +143,7 @@ func _build() -> void:
 	_add("traits", "Traits and mutations", _trait_rows())
 	_add("bionics", "Bionics", _bionic_rows())
 	_add("speed", "Speed", _speed_rows())
-	if [title, subtitle, note, cards] == was:
+	if [title, subtitle, note, cards, carry] == was:
 		return
 	revision += 1
 	changed.emit()
@@ -189,6 +199,26 @@ func _stats_rows() -> Array[Dictionary]:
 		out.append(row("Speed", str(cur), HudData.HURT if cur < 100 else HudData.UNKNOWN,
 				"Moves per turn; 100 is normal. The Speed card lists what changes it."))
 	return out
+
+
+func _carry_rows() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if carry["weight_g"] >= 0 and carry["weight_max_g"] > 0:
+		out.append(row("Weight", "%s of %s" % [InventoryModel.weight_text(carry["weight_g"]),
+				InventoryModel.weight_text(carry["weight_max_g"])], carry_level(carry["weight_g"], carry["weight_max_g"]),
+				"What you carry, and how much before it slows you down and tires you faster."))
+	if carry["volume_ml"] >= 0 and carry["volume_max_ml"] > 0:
+		out.append(row("Volume", "%s of %s" % [InventoryModel.volume_text(carry["volume_ml"]),
+				InventoryModel.volume_text(carry["volume_max_ml"])], carry_level(carry["volume_ml"], carry["volume_max_ml"]),
+				"Room used in what you wear and carry, and all the room there is."))
+	return out
+
+
+## OK below 90 % of `cap`, HURT from there, BAD over it.
+static func carry_level(cur: int, cap: int) -> int:
+	if cur > cap:
+		return HudData.BAD
+	return HudData.HURT if cur * 10 >= cap * 9 else HudData.OK
 
 
 func _speed_rows() -> Array[Dictionary]:
