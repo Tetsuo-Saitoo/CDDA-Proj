@@ -577,6 +577,15 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 	return bool(_sim.queue_item_action({"op": "hold", "item": int(uid), "type": int(type), "hand": hand}))
 
 
+## Eat, drink or take carried (or held) `uid` with CDDA's consume rules and move costs, no menu: a container's
+## contents. CDDA's refusals come as messages. False when refused here (nothing sent): no game, a bad handle, or a
+## bridge without the op (it refuses an unknown op), so callers can fall back to CDDA's eat menu.
+func consume_item(uid: float, type: float) -> bool:
+	if _sim == null or not handle_ok(uid, type):
+		return false
+	return bool(_sim.queue_item_action({"op": "consume", "item": int(uid), "type": int(type)}))
+
+
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
 static func handle_ok(uid: float, type: float) -> bool:
 	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \
