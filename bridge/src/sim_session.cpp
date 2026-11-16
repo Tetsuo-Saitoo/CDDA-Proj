@@ -277,6 +277,17 @@ void teardown()
 
 // One game, boot to end, on the game thread. The paths are set for every game (start_impl keeps them the first
 // game's), CDDA's log is opened once.
+// After a start that never ran: the world it made, if any (only that one, only in the save folder, never one with a
+// character saved: fp3d::remove_new_world). Game thread.
+void drop_new_world()
+{
+    try {
+        fp3d::remove_new_world();
+    } catch( const std::exception & ) {
+    } catch( const fp3d::shutdown_signal & ) {
+    }
+}
+
 void play_game()
 {
     static bool log_up = false;
@@ -300,7 +311,7 @@ void play_game()
                 if( boot_chargen ) {
                     fp3d::note_boot_step( "Character creation" );
                     if( !fp3d::run_chargen() ) {
-                        throw std::runtime_error( "character creation cancelled" );
+                        throw fp3d::start_cancelled();
                     }
                 } else {
                     get_avatar().create( character_type::NOW );
@@ -338,7 +349,17 @@ void play_game()
             finish( state::ended, g->uquit == QUIT_DIED || g->uquit == QUIT_WATCH ? "the character died" :
                     g->uquit == QUIT_SAVED ? "saved and quit" : "the game ended" );
         }
+    } catch( const fp3d::start_cancelled & ) {
+        // The client cancelled the world setup or the character creation: an ending, not a failure. A world this
+        // start made goes with it.
+        drop_new_world();
+        finish( state::ended, "cancelled" );
     } catch( const fp3d::shutdown_signal & ) {
+        // Stopped before the game ran (closing the program during the world setup or the character creation): as a
+        // cancel, the world this start made goes too.
+        if( cur_state.load() == static_cast<int>( state::booting ) ) {
+            drop_new_world();
+        }
         finish( state::stopped, "" );
     } catch( const std::exception &e ) {
         finish( state::failed, with_last_cdda_error( e.what() ) );
@@ -348,6 +369,8 @@ void play_game()
         fp3d::end_game();
     } catch( const std::exception &e ) {
         set_error( std::string( "end of game: " ) + e.what() );
+    } catch( const fp3d::shutdown_signal & ) {
+        // a polling loop in CDDA's cleanup saw the shutdown above: nothing left to unwind
     }
 }
 
