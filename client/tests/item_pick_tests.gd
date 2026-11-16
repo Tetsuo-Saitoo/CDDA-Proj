@@ -181,7 +181,16 @@ func _test_shelves(world: WorldView, data: Variant, root: Node) -> void:
 			"shelves: put at the middle of the square (spot 500, 500) it lies at that surface's middle")
 	var node_xf := Transform3D(Basis.IDENTITY, world.coords.sm_to_world(_pos))
 	var local := Vector3(rect.position.x + rect.size.x * 0.3, 0.05, rect.position.y + rect.size.y * 0.7)
-	var hit := world.shelf_at(node_xf * (rest * local))
+	_check.call(world.shelf_at(node_xf * (rest * local)).is_empty(),
+			"shelves: a drawer shut is no shelf (a drop over the dresser doesn't land inside it)")
+	var g: Grabbable = world.parts.get(want)
+	_check.call(g != null, "shelves: the drawer is a part")
+	if g == null:
+		root.remove_child(world)
+		return
+	g.set_amount(g.max_amount)
+	var top := g.surface_global(list[2][3])
+	var hit := world.shelf_at(top * local)
 	var surf := PropMesher.Surface.new()
 	surf.planes = [[rest, rect, 0.0]]
 	var spot: Vector2 = hit.get("spot", Vector2(-1, -1))
@@ -189,18 +198,26 @@ func _test_shelves(world: WorldView, data: Variant, root: Node) -> void:
 	var drawn := surf.at(0, uv.x, uv.y)
 	_check.call(hit.get("square") == sq and hit.get("shelf") == 2
 			and drawn.distance_to(rest * Vector3(local.x, 0.0, local.z)) < 0.01,
-			"shelves: shelf_at finds shelf 2 under a point over it, and its spot draws an item right there " + str(hit))
-	var g: Grabbable = world.parts.get(want)
-	if g != null:
-		g.set_amount(g.max_amount)
-		var open := world.shelf_at(g.surface_global(list[2][3]) * local)
-		_check.call(open.get("shelf") == 2 and (open.get("spot", Vector2.ZERO) as Vector2).distance_to(spot) < 0.01,
-				"shelves: in the drawer pulled out, the same shelf and spot")
-		g.set_amount(0.0)
+			"shelves: shelf_at finds shelf 2 in the drawer pulled out (a hand %.2f m over its floor), and its spot "
+			% local.y + "draws an item right there " + str(hit))
+	var on := top * Vector3(local.x, 0.0, local.z)
+	var ray := world.shelf_on_ray(on + Vector3(0.05, 1.2, 0.1), (on - (on + Vector3(0.05, 1.2, 0.1))), 3.0)
+	_check.call(ray.get("shelf") == 2 and ray.get("square") == sq and (ray.get("point", Vector3.INF) as Vector3).distance_to(on) < 0.01
+			and (ray.get("spot", Vector2.ZERO) as Vector2).distance_to(spot) < 0.01,
+			"shelves: a ray coming down into the open drawer meets shelf 2 at the same spot " + str(ray))
+	_check.call(world.shelf_on_ray(on - Vector3(0, 0.3, 0), Vector3.UP, 3.0).is_empty()
+			and world.shelf_on_ray(on + Vector3(0, 1.2, 0), Vector3.DOWN, 1.0).is_empty()
+			and world.shelf_on_ray(on + Vector3(0, 1.2, 0), Vector3.ZERO, 3.0).is_empty(),
+			"shelves: no shelf for a ray from below, one too short or one with no direction")
+	g.set_amount(0.0)
 	var table := world.coords.ms_center_to_world(_sq(AT_TABLE)) + Vector3(0, 0.82, 0)
 	var on_table := world.shelf_at(table)
 	_check.call(on_table.get("shelf") == 0 and (on_table.get("spot", Vector2.ZERO) as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.01,
 			"shelves: over a placeholder table, its top is shelf 0 " + str(on_table))
+	var slant := world.shelf_on_ray(table + Vector3(-1.5, 1.0, 0.0), Vector3(1.5, -1.0 - 0.05, 0.0), 5.0)
+	_check.call(slant.get("shelf") == 0 and slant.get("square") == _sq(AT_TABLE)
+			and (slant.get("point", Vector3.INF) as Vector3).distance_to(table - Vector3(0, 0.05, 0)) < 0.02,
+			"shelves: a slanting ray meets the table top " + str(slant))
 	_check.call(world.shelf_at(table + Vector3(0, 1.0, 0)).is_empty()
 			and world.shelf_at(world.coords.ms_center_to_world(_sq(AT_FLOOR)) + Vector3(0, 0.05, 0)).is_empty()
 			and world.shelf_at(Vector3(NAN, 0, 0)).is_empty(),
