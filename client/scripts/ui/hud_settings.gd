@@ -29,12 +29,13 @@ const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnin
 ## of group names (anything but known names ignored).
 var feed_hidden := PackedStringArray()
 ## G7 options (flat screen; the headset has its own, VrSettings): the mouse look speed (times the cameras' own),
-## inverted up-down look, the field of view in degrees, the 3D render scale, fullscreen and vsync. Saved as [look]
-## speed, invert, fov and [display] scale, fullscreen, vsync; numbers out of range are clamped, anything else
-## leaves the default.
+## inverted up-down look, the field of view in degrees, the 3D render scale, fullscreen, vsync and the size of the
+## menus and HUD (the window's content scale). Saved as [look] speed, invert, fov and [display] scale, fullscreen,
+## vsync, ui_scale; numbers out of range are clamped, anything else leaves the default.
 const LOOK_SPEEDS := Vector2(0.25, 4.0)
 const FOVS := Vector2(60.0, 110.0)
 const RENDER_SCALES := Vector2(0.5, 1.0)
+const UI_SCALES := Vector2(0.75, 2.0)
 const DEFAULT_FOV := 75.0   # Camera3D's own
 var look_speed := 1.0
 var invert_y := false
@@ -42,6 +43,7 @@ var fov := DEFAULT_FOV
 var render_scale := 1.0
 var fullscreen := false
 var vsync := true
+var ui_scale := 1.0
 
 
 static func clamp_opacity(v: float) -> float:
@@ -105,6 +107,7 @@ func load_file(path := FILE) -> String:
 	fullscreen = fs if fs is bool else false
 	var vs: Variant = cfg.get_value("display", "vsync", true)
 	vsync = vs if vs is bool else true
+	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -129,4 +132,5 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("display", "scale", snappedf(clamp_to(render_scale, RENDER_SCALES, 1.0), 0.01))
 	cfg.set_value("display", "fullscreen", fullscreen)
 	cfg.set_value("display", "vsync", vsync)
+	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
 	return cfg.save(path)

@@ -1403,6 +1403,15 @@ func _apply_options() -> void:
 				else DisplayServer.WINDOW_MODE_WINDOWED)
 
 
+## G7: the menus' and the HUD's size (the window's content scale; the 3D view keeps its pixels), at start and when
+## the F1 menu closes, not while its slider moves (the menu would move under the mouse). Not with the headset (its
+## panels are their own viewports), for a screenshot or headless.
+func _apply_ui_scale() -> void:
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_window().content_scale_factor = HudSettings.clamp_to(hud_settings.ui_scale, HudSettings.UI_SCALES, 1.0)
+
+
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1434,6 +1443,7 @@ func _setup_hud() -> void:
 	weather.flash_enabled = hud_settings.weather_flash
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
 	_apply_options()
+	_apply_ui_scale()
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1493,6 +1503,7 @@ func _open_key_menu() -> void:
 
 
 func _on_key_menu_closed() -> void:
+	_apply_ui_scale()
 	if vr == null:
 		_set_view(view_mode)   # cameras take their input again
 

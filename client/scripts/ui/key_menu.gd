@@ -38,9 +38,10 @@ var hurt_check: CheckBox
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
-## G7 options (HudSettings look_speed, invert_y, fov, render_scale, fullscreen, vsync).
+## G7 options (HudSettings look_speed, invert_y, fov, render_scale, ui_scale, fullscreen, vsync).
 var look_slider: HSlider
 var invert_check: CheckBox
+var ui_slider: HSlider
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -235,17 +236,25 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	opt_row.add_child(vl)
 	fov_slider = _option_slider(opt_row, HudSettings.FOVS, 1.0, settings.fov, &"fov")
 	fov_slider.tooltip_text = "How wide the view is, in degrees across the screen's height."
-	var sl := Label.new()
-	sl.text = "3D resolution"
-	opt_row.add_child(sl)
-	scale_slider = _option_slider(opt_row, HudSettings.RENDER_SCALES, 0.05, settings.render_scale, &"render_scale")
-	scale_slider.tooltip_text = "Lower draws the world with fewer pixels: faster, softer. The menus stay sharp."
-	fullscreen_check = _option_check(opt_row, "Fullscreen", "Fills the screen (off: a window).", &"fullscreen",
-			settings.fullscreen)
-	vsync_check = _option_check(opt_row, "Vsync", "Waits for the screen: no tearing. Off can be faster but tears.",
-			&"vsync", settings.vsync)
 	_box.add_child(opt_row)
 	_box.move_child(opt_row, 3)
+	var disp_row := HBoxContainer.new()
+	var sl := Label.new()
+	sl.text = "3D resolution"
+	disp_row.add_child(sl)
+	scale_slider = _option_slider(disp_row, HudSettings.RENDER_SCALES, 0.05, settings.render_scale, &"render_scale")
+	scale_slider.tooltip_text = "Lower draws the world with fewer pixels: faster, softer. The menus stay sharp."
+	var ul := Label.new()
+	ul.text = "Menu size"
+	disp_row.add_child(ul)
+	ui_slider = _option_slider(disp_row, HudSettings.UI_SCALES, 0.05, settings.ui_scale, &"ui_scale")
+	ui_slider.tooltip_text = "The size of the menus and the HUD. Applies when this menu closes."
+	fullscreen_check = _option_check(disp_row, "Fullscreen", "Fills the screen (off: a window).", &"fullscreen",
+			settings.fullscreen)
+	vsync_check = _option_check(disp_row, "Vsync", "Waits for the screen: no tearing. Off can be faster but tears.",
+			&"vsync", settings.vsync)
+	_box.add_child(disp_row)
+	_box.move_child(disp_row, 4)
 	_show_compass_value()
 	_show_options()
 
@@ -281,7 +290,7 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
-	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"fullscreen", &"vsync"]:
+	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync"]:
 		return
 	hud.set(key, v)
 	_show_options()
@@ -295,6 +304,7 @@ func _show_options() -> void:
 	_option_values[&"look_speed"].text = "x%.2f" % hud.look_speed
 	_option_values[&"fov"].text = "%d%s" % [roundi(hud.fov), char(0xb0)]
 	_option_values[&"render_scale"].text = "%d %%" % roundi(hud.render_scale * 100.0)
+	_option_values[&"ui_scale"].text = "%d %%" % roundi(hud.ui_scale * 100.0)
 
 
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
@@ -414,6 +424,7 @@ func open() -> void:
 		invert_check.set_pressed_no_signal(hud.invert_y)
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
+		ui_slider.set_value_no_signal(hud.ui_scale)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()
