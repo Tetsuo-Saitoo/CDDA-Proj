@@ -67,6 +67,8 @@ var inspect: InspectView          # Tab: hands, worn containers and the ground i
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
+var character_data := CharacterData.new()   # the character screen's cards (G4), for screen and VR
+var character: CharacterView      # P: the character screen
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -332,6 +334,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
+	character_data.update(hud_data)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -511,7 +514,8 @@ func _start_vr() -> void:
 	# Each is a direct child of the panel's root (the panel shows while one of them is visible), drawn larger.
 	var panel := panel_root(vr)
 	if panel != null:
-		menus_to_panel(panel, [inspect, key_menu, main_menu.get_parent() if main_menu != null else null], PANEL_UI_SCALE)
+		menus_to_panel(panel, [inspect, character, key_menu, main_menu.get_parent() if main_menu != null else null],
+				PANEL_UI_SCALE)
 		request_ui.reparent(panel, false)
 		if inspect.get_parent() == panel:   # prompts draw over the Tab view, under the F1 menu
 			panel.move_child(request_ui, inspect.get_index() + 1)
@@ -546,6 +550,10 @@ func open_ui(which: String) -> bool:
 			if not inspect.visible and _can_inspect():
 				inspect.open()
 			return inspect.visible
+		"character":
+			if not character.visible and _can_open_character():
+				character.open()
+			return character.visible
 	return false
 
 
@@ -1164,6 +1172,12 @@ func _use_tap() -> void:
 
 
 ## Tab opens the inspect view: first person or VR, in the main loop, no prompt, menu or held item in the way.
+## The character screen may open: a world is shown, no menu or CDDA prompt is up.
+func _can_open_character() -> bool:
+	return world.snapshot != null and main_menu == null and not request_ui.visible and not key_menu.visible \
+			and not inspect.visible
+
+
 func _can_inspect() -> bool:
 	return (_fp_active() or vr != null) and world.snapshot != null and main_menu == null and not request_ui.visible \
 			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
@@ -1281,6 +1295,9 @@ func _setup_hud() -> void:
 	layer.add_child(hud_view)
 	classic = ClassicView.new()
 	layer.add_child(classic)
+	character = CharacterView.new()
+	character.data = character_data
+	layer.add_child(character)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
@@ -1488,13 +1505,15 @@ static func _keys(actions: Array) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible or inspect.visible:
-		return   # the inspect view takes Tab / Esc itself (InspectView._input)
+	if key_menu.visible or inspect.visible or character.visible:
+		return   # the inspect view and the character screen take their keys themselves (their _input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
 	if inspect.handle_key(event, _can_inspect()):
+		return
+	if character.handle_key(event, _can_open_character()):
 		return
 	if InputActions.pressed(event, &"classic_view"):
 		classic.toggle()

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — G4 character screen, first cut: P shows body, needs, mood and effects as cards; stats, skills, traits and bionics fill in when the bridge's character query lands. Client tests and the live check pass.
 - 2026-11-15 — G8 classic overlay: F3 shows CDDA's ASCII view of the snapshot around the player (id-table symbols and colours, joined walls) for parity checks. Client tests and the live check pass.
 - 2026-11-15 — Shift+E eats or drinks what a hand holds (client side of lead-bridge's coming consume op); falls back to CDDA's eat menu. Client tests pass.
 - 2026-11-15 — Off hand tried in a live game, headless: `actions_live_test` holds the kit's water with H, pours it out by holding E and puts the bottle away with Shift+H. Drinking from it and the too-heavy check asked of lead-bridge. L8: no contents list (PLAN.md: by hand, no lists), agreed with lead-vr.

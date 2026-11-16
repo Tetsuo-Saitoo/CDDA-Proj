@@ -111,6 +111,7 @@ func _run() -> void:
 		_hud_live()
 		await _hands_live()
 		_classic_live()
+		_character_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -190,6 +191,23 @@ func _classic_live() -> void:
 	print("    " + "\n    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
 	root.push_input(_key_of(&"classic_view"))
 	_check(not v.visible, "F3 again hides it")
+
+
+## G4: P shows the character screen with the live game's body and needs; Esc closes it.
+func _character_live() -> void:
+	var v := _main.character
+	root.push_input(_key_of(&"character"))
+	var t := v.text()
+	var body: Dictionary = _main.character_data.card("body")
+	_check(v.visible and t.find("[Body]") >= 0 and t.find("[Needs]") >= 0 and (body.get("rows", []) as Array).size() >= 6,
+			"P: the character screen, %d body parts" % (body.get("rows", []) as Array).size())
+	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	root.push_input(esc)
+	_check(not v.visible, "Esc closes it")
 
 
 ## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the
