@@ -588,10 +588,18 @@ func queue_action_at(action: String, square: Vector3i) -> bool:
 
 ## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
 ## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
-## Take from square `pos` into hand "pack", "main" or "off".
-func take_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
-	return _sim != null and _sim.queue_item_action({"op": "take", "item": int(uid), "type": int(type),
-			"pos": pos, "hand": hand})
+## Take from square `pos` into hand "pack", "main" or "off". L8: `container` + `container_type` (a handle_ok pair,
+## not the item itself; both -1 = none, the request as before) name the lying container on `pos` that holds the
+## item directly (one level). Only one of them, or a bad one: false, nothing sent.
+func take_item(uid: float, type: float, pos: Vector3i, hand := "pack", container := -1.0,
+		container_type := -1.0) -> bool:
+	var a := {"op": "take", "item": int(uid), "type": int(type), "pos": pos, "hand": hand}
+	if container != -1.0 or container_type != -1.0:
+		if not handle_ok(container, container_type) or container == uid:
+			return false
+		a["container"] = int(container)
+		a["container_type"] = int(container_type)
+	return _sim != null and _sim.queue_item_action(a)
 
 
 ## Put a carried item into a container: a carried one (worn, held), else the one on square `pos`;

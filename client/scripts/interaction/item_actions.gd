@@ -68,12 +68,35 @@ var _seq := 0   # seq of the newest snapshot seen
 var _snap: Snapshot   # the newest snapshot seen (unload / reload compare against it)
 
 
-## Takes `item` (lying on its square) into hand "pack", "main" or "off". False when refused here (nothing sent).
+## Takes `item` (lying on its square) into hand "pack", "main" or "off". L8: an item whose `parent` is set lies in
+## that container on the same square (one level); the container is taken only from the item's own parent, and only
+## while the newest snapshot lists it lying there (its itype from there). False when refused here (nothing sent).
 func take(item: ItemRef, hand := "pack") -> bool:
 	if not _ok_ref(item) or item.carried or not (hand in HANDS) or not ok_square(item.square):
 		return false
-	return _send("take", item, hand, Vector2(-1, -1), "take_item",
-			[float(item.uid), float(item.type), item.square, hand])
+	var args: Array = [float(item.uid), float(item.type), item.square, hand]
+	if item.parent != 0:
+		var ct := lying_type(_snap, item.parent, item.square)
+		if item.parent == item.uid or ct <= 0:
+			return false
+		args.append_array([float(item.parent), float(ct)])   # only then: a backend without containers takes 4 args
+	return _send("take", item, hand, Vector2(-1, -1), "take_item", args)
+
+
+## L8: the itype of item `uid` lying on square `sq` as `snap`'s handles list it; 0 when it isn't listed there (or
+## no snapshot).
+static func lying_type(snap: Snapshot, uid: int, sq: Vector3i) -> int:
+	if snap == null or uid <= 0 or not ok_square(sq):
+		return 0
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return 0
+	var tile := tile_of(sq)
+	var h := sm.handles
+	for i in range(0, h.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		if h[i] == tile and h[i + 1] == uid:
+			return int(h[i + 2])
+	return 0
 
 
 ## Puts a carried `item` into `container` (carried, or lying in reach); `pocket` -1 = CDDA's pick.
