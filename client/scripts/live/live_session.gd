@@ -634,12 +634,17 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 
 
 ## Eat, drink or take carried (or held) `uid` with CDDA's consume rules and move costs, no menu: a container's
-## contents. CDDA's refusals come as messages. False when refused here (nothing sent): no game, a bad handle, or a
-## bridge without the op (it refuses an unknown op), so callers can fall back to CDDA's eat menu.
-func consume_item(uid: float, type: float) -> bool:
-	if _sim == null or not handle_ok(uid, type):
+## contents. `tag` 1..MAX_ITEM_TAG (0: none) comes back in its `item_result` event (done once CDDA's activity has
+## started; refused with CDDA's text, or "" when its message said why). False when refused here (nothing sent): no
+## game, a bad handle or tag, or a bridge without the op (it refuses an unknown op), so callers can fall back to
+## CDDA's eat menu.
+func consume_item(uid: float, type: float, tag := 0) -> bool:
+	if _sim == null or not handle_ok(uid, type) or tag < 0 or tag > MAX_ITEM_TAG:
 		return false
-	return bool(_sim.queue_item_action({"op": "consume", "item": int(uid), "type": int(type)}))
+	var a := {"op": "consume", "item": int(uid), "type": int(type)}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
 
 
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.

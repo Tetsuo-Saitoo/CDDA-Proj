@@ -62,8 +62,11 @@ class FakeBackend:
 		calls.append(["hold", uid, type, hand])
 		return ok
 
-	func consume_item(uid: float, type: float) -> bool:
+	var tags: Array = []   # consume_item's tags, in order
+
+	func consume_item(uid: float, type: float, tag := 0) -> bool:
 		calls.append(["consume", uid, type])
+		tags.append(tag)
 		return ok
 
 	func queued_actions() -> int:
@@ -142,23 +145,51 @@ func _test_consume() -> void:
 	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
 	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
 	a.on_snapshot(snap)
-	var sent: bool = a.consume(ItemRef.on_player(41, 1, 0, -1, OFFHAND, SQ)) and b.calls[-1] == ["consume", 41.0, 1.0]
+	var sent: bool = a.consume(ItemRef.on_player(41, 1, 0, -1, OFFHAND, SQ)) and b.calls[-1] == ["consume", 41.0, 1.0] \
+			and b.tags[-1] == ItemActions.TAG_BASE
 	var lying := not a.consume(ItemRef.on_square(51, 1, SQ)) and b.calls.size() == 1
 	a.on_snapshot(_snap(6, [], rows.slice(1)))   # the apple: eaten whole
 	_check.call(sent and lying and seen == [["finished", 41, "consume"]],
-			"item actions: consume sends the held item, refuses a lying one here, finishes when it is gone (%s)" % [seen])
+			"item actions: consume sends the held item with a tag, refuses a lying one here, finishes when it is gone (%s)"
+			% [seen])
+	var result := func(tag: Variant, amount: Variant, text: Variant) -> Dictionary:
+		return {"kind": "item_result", "detail": tag, "amount": amount, "text": text}
 	a.consume(ItemRef.on_player(42, 2, 0, -1, WIELDED, SQ))   # a sip of the bottle: nothing the snapshot shows
+	var t42: int = b.tags[-1]
 	a.on_snapshot(_snap(7, [], rows.slice(1)))
 	a.on_snapshot(_snap(8, [], rows.slice(1)))
-	var waited := seen.size() == 1 and a.pending(42) == "consume"
-	now[0] = 6100
-	a.check_timeouts()
-	var quiet: bool = seen.size() == 2 and seen[-1] == ["finished", 42, "consume"]
+	a.on_events([result.call(3, 1, ""), result.call(str(t42), 1, ""), result.call(NAN, 1, ""), result.call(t42 + 0.5, 1, ""),
+			result.call(t42, "1", ""), {"kind": "item_result", "detail": t42}, result.call(t42 + 1, 1, "")])
+	var waited := seen.size() == 1 and a.pending(42) == "consume" and t42 == ItemActions.TAG_BASE + 1
+	a.on_events([result.call(float(t42), 1, "")])
+	var sipped: bool = seen.size() == 2 and seen[-1] == ["finished", 42, "consume"]
 	a.consume(ItemRef.on_player(50, 5, 0, -1, 0, SQ))
-	a.on_events([{"kind": "message", "text": "You're full.", "type": ItemActions.M_INFO}])
-	a.on_snapshot(_snap(9, [], rows.slice(1)))
-	_check.call(waited and quiet and seen[-1] == ["refused", 50, "consume", "You're full."],
-			"item actions: a sip that doesn't show finishes at the timeout; CDDA's message refuses (%s)" % [seen])
+	a.on_events([result.call(b.tags[-1], 0, "You're full.")])
+	var full: bool = seen[-1] == ["refused", 50, "consume", "You're full."]
+	a.consume(ItemRef.on_player(46, 2, 0, -1, 0, SQ))
+	a.on_events([{"kind": "message", "text": "You feel sick.", "type": 1}, result.call(b.tags[-1], 0, "")])
+	var said: bool = seen[-1] == ["refused", 46, "consume", "You feel sick."]
+	a.consume(ItemRef.on_player(47, 6, 0, -1, 0, SQ))
+	a.on_events([result.call(b.tags[-1], 0, 7)])   # the player said no: no text, no message
+	_check.call(waited and sipped and full and said and seen[-1] == ["refused", 47, "consume", ItemActions.NOT_DONE],
+			"item actions: consume is judged by its tagged item_result (others and junk ignored): done, CDDA's text, its message, not done (%s)"
+			% [seen])
+	var asking := [true]
+	a.asking = func() -> bool: return asking[0]
+	a.consume(ItemRef.on_player(49, 3, 48, 0, 0, SQ))
+	now[0] += 60000
+	a.check_timeouts()   # CDDA asks the player: no timeout
+	asking[0] = false
+	a.check_timeouts()   # answered just now: its clock started again
+	var kept := a.pending(49) == "consume"
+	now[0] += ItemActions.TIMEOUT_MS
+	b.queued = 1
+	a.check_timeouts()   # still in the bridge's queue
+	var queued := a.pending(49) == "consume"
+	b.queued = 0
+	a.check_timeouts()
+	_check.call(kept and queued and seen[-1] == ["refused", 49, "consume", ItemActions.NO_ANSWER],
+			"item actions: a consume waits while CDDA asks the player and while queued, then times out (%s)" % [seen])
 	a.free()
 	var ls := LiveSession.new()
 	var off := ls.consume_item(41.0, 1.0)
@@ -166,11 +197,13 @@ func _test_consume() -> void:
 	ls._sim = sim
 	var ok := ls.consume_item(41.0, 1.0)
 	var none := not ls.consume_item(0.0, 1.0) and not ls.consume_item(41.5, 1.0) and not ls.consume_item(NAN, 1.0) \
-			and not ls.consume_item(41.0, 0.0)
+			and not ls.consume_item(41.0, 0.0) and not ls.consume_item(41.0, 1.0, -1) \
+			and not ls.consume_item(41.0, 1.0, LiveSession.MAX_ITEM_TAG + 1)
+	var tagged := ls.consume_item(41.0, 1.0, ItemActions.TAG_BASE)
 	sim.accept = false   # a bridge without the op (or a full queue): false, Shift+E falls back to CDDA's eat menu
 	var old := ls.consume_item(42.0, 2.0)
-	_check.call(not off and ok and none and not old and sim.sent == [{"op": "consume", "item": 41, "type": 1},
-			{"op": "consume", "item": 42, "type": 2}],
+	_check.call(not off and ok and none and tagged and not old and sim.sent == [{"op": "consume", "item": 41, "type": 1},
+			{"op": "consume", "item": 41, "type": 1, "tag": ItemActions.TAG_BASE}, {"op": "consume", "item": 42, "type": 2}],
 			"live session: consume_item sends the bridge's consume op; bad handles aren't sent (%s)" % [sim.sent])
 	ls.free()
 
