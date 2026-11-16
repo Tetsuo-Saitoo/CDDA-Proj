@@ -33,9 +33,11 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	world.set_id_tables(tables)
 	world.apply_snapshot(snap)
 	_test_mesher(world, snap, _scene(data, false))
+	_test_poses(world, data, snap)
 	_test_hidden(world, data)
 	_test_picker(world)
 	_test_carried(world)
+	_test_shelves(world, data, _root)
 	_test_no_snapshot()
 	world.free()
 
@@ -54,7 +56,7 @@ func _it(id: String) -> int:
 
 ## The mock's first submap rewritten (floor; a table, a dresser, a wall; piles with or without handles) and
 ## its second as it is; the player stands at 3,4 carrying a backpack with a book in it and a hammer.
-func _scene(data: Variant, with_handles: bool) -> Snapshot:
+func _scene(data: Variant, with_handles: bool, poses: Variant = null, shelves: Variant = null) -> Snapshot:
 	var d: Dictionary = (data as Dictionary).duplicate()
 	var src: Array = d["submaps"]
 	var sm: Dictionary = (src[0] as Dictionary).duplicate(true)
@@ -86,6 +88,10 @@ func _scene(data: Variant, with_handles: bool) -> Snapshot:
 	for k in 20:
 		hs.append([_at(AT_STACK), 501 + k, rock, -1, -1])
 	sm["handles"] = hs if with_handles else []
+	if poses != null:
+		sm["poses"] = poses
+	if shelves != null:
+		sm["shelves"] = shelves
 	return Snapshot.from_data(d)
 
 
@@ -101,10 +107,128 @@ func _slots(r: PropMesher.Result, v: Vector2i) -> Array:
 	return r.item_slots.filter(func(e: Array) -> bool: return e[2] == _at(v))
 
 
+## Placed items lie as their body lay (the snapshot's `poses`); the rest as before; bad poses are refused.
+func _test_poses(world: WorldView, data: Variant, plain: Snapshot) -> void:
+	var snap := _scene(data, true, [[201, 90, 0], [202, 0, 1]])
+	_check.call(snap.is_valid() and (snap.submaps[_pos] as Snapshot.Submap).poses == {201: Vector2i(90, 0), 202: Vector2i(0, 1)},
+			"poses: read per submap " + snap.error)
+	if not snap.is_valid():
+		return
+	var was := _slots(_build(world, plain), AT_FLOOR)
+	var now := _slots(_build(world, snap), AT_FLOOR)
+	var xf := func(slots: Array, uid: int) -> Transform3D:
+		for e: Array in slots:
+			if e[0] == uid:
+				return e[3]
+		return Transform3D()
+	var a: Transform3D = xf.call(now, 201)
+	_check.call((a.basis * Vector3.BACK).normalized().is_equal_approx(Vector3.RIGHT)
+			and (a.basis * Vector3.UP).normalized().is_equal_approx(Vector3.UP) and a.origin.is_equal_approx((xf.call(was, 201) as Transform3D).origin),
+			"poses: yaw 90 turns the item's +Z from south to east, on the same spot")
+	var b: Transform3D = xf.call(now, 202)
+	var beans := world.props.item(_it("can_beans"))
+	var low := (b * PropMesher._item_box(beans, _it("can_beans"))).position.y
+	_check.call((b.basis * Vector3.UP).normalized().is_equal_approx(Vector3.BACK) and absf(low) < 0.001 and b.origin.y > 0.0,
+			"poses: on its side its top points south and it rests on the floor (lowest %.4f)" % low)
+	_check.call(str(xf.call(now, 203)) == str(xf.call(was, 203)), "poses: an item without a pose lies as before")
+	_check.call(PropMesher.pose_basis(0, false) == Basis.IDENTITY
+			and (PropMesher.pose_basis(270, true) * Vector3.UP).is_equal_approx(Vector3.LEFT), "poses: the basis follows the convention")
+	for bad: Array in [[[201, 360, 0]], [[201, -1, 0]], [[201, 0, 2]], [[999, 0, 0]], [[201, 0, 0], [201, 5, 0]],
+			[[201, 0]], [[201, 0.5, 0]], range(29).map(func(i: int) -> Array: return [201, 0, 0])]:
+		_check.call(not _scene(data, true, bad).is_valid(), "poses: refused " + str(bad).left(40))
+	_check.call(not _scene(data, true, {}).is_valid() and not _scene(data, false, [[201, 0, 0]]).is_valid(),
+			"poses: refused when not a list, or with no handles")
+
+
+## L8 slice 2: the snapshot's `shelves` (bounded like poses), an item put on a shelf drawn there (riding its
+## drawer), and WorldView.shelf_at finding the shelf and spot under a point that draws an item there.
+func _test_shelves(world: WorldView, data: Variant, root: Node) -> void:
+	var snap := _scene(data, true, null, [[302, 2], [101, 0]])
+	_check.call(snap.is_valid() and (snap.submaps[_pos] as Snapshot.Submap).shelves == {302: 2, 101: 0},
+			"shelves: read per submap " + snap.error)
+	if not snap.is_valid():
+		return
+	for bad: Array in [[[302, 16]], [[302, -1]], [[999, 0]], [[302, 0], [302, 1]], [[302]], [[302, 0.5]],
+			range(29).map(func(i: int) -> Array: return [302, 0])]:
+		_check.call(not _scene(data, true, null, bad).is_valid(), "shelves: refused " + str(bad).left(40))
+	_check.call(not _scene(data, true, null, {}).is_valid() and not _scene(data, false, null, [[302, 0]]).is_valid()
+			and (_scene(data, true).submaps[_pos] as Snapshot.Submap).shelves.is_empty(),
+			"shelves: refused when not a list or with no handles; none from an older bridge")
+	var m := PropBoxes.model_of(world.props.furniture(_tables.index_of("furn", "f_dresser")))
+	var sq := _sq(AT_DRESSER)
+	var mi := m.surface_mover[2] if m != null and m.surfaces.size() > 2 else -1
+	var want := "%d_%d_%d/%s" % [sq.x, sq.y, sq.z, m.movers[mi].name] if mi >= 0 else ""
+	var r := _build(world, snap)
+	var ride := func(res: PropMesher.Result, uid: int) -> Variant:
+		for e: Array in res.item_slots:
+			if e[0] == uid:
+				return e
+		return []
+	var e302: Array = ride.call(r, 302)
+	var list: Array = r.shelves.get(sq, [])
+	_check.call(want != "" and e302.size() > 6 and e302[6] == want and list.size() == m.surfaces.size()
+			and list[2][2] == want and r.shelves.has(_sq(AT_TABLE)) and not r.shelves.has(_sq(AT_FLOOR)),
+			"shelves: a book put on shelf 2 of a dresser rides that surface's drawer (%s); the dresser has %d shelves"
+			% [e302[6] if e302.size() > 6 else "?", list.size()])
+	if list.size() < 3 or want == "":
+		return
+	root.add_child(world)   # shelf_at reads where the submap and its drawers are now
+	world.apply_snapshot(snap)
+	var rest: Transform3D = list[2][0]
+	var rect: Rect2 = list[2][1]
+	var mid := rest * Vector3(rect.get_center().x, 0.0, rect.get_center().y)   # submap-local, the drawer shut
+	_check.call((e302[3] as Transform3D).origin.distance_to(mid) < 0.01,
+			"shelves: put at the middle of the square (spot 500, 500) it lies at that surface's middle")
+	var node_xf := Transform3D(Basis.IDENTITY, world.coords.sm_to_world(_pos))
+	var local := Vector3(rect.position.x + rect.size.x * 0.3, 0.05, rect.position.y + rect.size.y * 0.7)
+	_check.call(world.shelf_at(node_xf * (rest * local)).is_empty(),
+			"shelves: a drawer shut is no shelf (a drop over the dresser doesn't land inside it)")
+	var g: Grabbable = world.parts.get(want)
+	_check.call(g != null, "shelves: the drawer is a part")
+	if g == null:
+		root.remove_child(world)
+		return
+	g.set_amount(g.max_amount)
+	var top := g.surface_global(list[2][3])
+	var hit := world.shelf_at(top * local)
+	var surf := PropMesher.Surface.new()
+	surf.planes = [[rest, rect, 0.0]]
+	var spot: Vector2 = hit.get("spot", Vector2(-1, -1))
+	var uv := surf.spot_uv(0, spot)
+	var drawn := surf.at(0, uv.x, uv.y)
+	_check.call(hit.get("square") == sq and hit.get("shelf") == 2
+			and drawn.distance_to(rest * Vector3(local.x, 0.0, local.z)) < 0.01,
+			"shelves: shelf_at finds shelf 2 in the drawer pulled out (a hand %.2f m over its floor), and its spot "
+			% local.y + "draws an item right there " + str(hit))
+	var on := top * Vector3(local.x, 0.0, local.z)
+	var ray := world.shelf_on_ray(on + Vector3(0.05, 1.2, 0.1), (on - (on + Vector3(0.05, 1.2, 0.1))), 3.0)
+	_check.call(ray.get("shelf") == 2 and ray.get("square") == sq and (ray.get("point", Vector3.INF) as Vector3).distance_to(on) < 0.01
+			and (ray.get("spot", Vector2.ZERO) as Vector2).distance_to(spot) < 0.01,
+			"shelves: a ray coming down into the open drawer meets shelf 2 at the same spot " + str(ray))
+	_check.call(world.shelf_on_ray(on - Vector3(0, 0.3, 0), Vector3.UP, 3.0).is_empty()
+			and world.shelf_on_ray(on + Vector3(0, 1.2, 0), Vector3.DOWN, 1.0).is_empty()
+			and world.shelf_on_ray(on + Vector3(0, 1.2, 0), Vector3.ZERO, 3.0).is_empty(),
+			"shelves: no shelf for a ray from below, one too short or one with no direction")
+	g.set_amount(0.0)
+	var table := world.coords.ms_center_to_world(_sq(AT_TABLE)) + Vector3(0, 0.82, 0)
+	var on_table := world.shelf_at(table)
+	_check.call(on_table.get("shelf") == 0 and (on_table.get("spot", Vector2.ZERO) as Vector2).distance_to(Vector2(0.5, 0.5)) < 0.01,
+			"shelves: over a placeholder table, its top is shelf 0 " + str(on_table))
+	var slant := world.shelf_on_ray(table + Vector3(-1.5, 1.0, 0.0), Vector3(1.5, -1.0 - 0.05, 0.0), 5.0)
+	_check.call(slant.get("shelf") == 0 and slant.get("square") == _sq(AT_TABLE)
+			and (slant.get("point", Vector3.INF) as Vector3).distance_to(table - Vector3(0, 0.05, 0)) < 0.02,
+			"shelves: a slanting ray meets the table top " + str(slant))
+	_check.call(world.shelf_at(table + Vector3(0, 1.0, 0)).is_empty()
+			and world.shelf_at(world.coords.ms_center_to_world(_sq(AT_FLOOR)) + Vector3(0, 0.05, 0)).is_empty()
+			and world.shelf_at(Vector3(NAN, 0, 0)).is_empty(),
+			"shelves: none in mid-air, on the bare floor or at a broken point")
+	root.remove_child(world)
+
+
 func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 	var r := _build(world, snap)
 	var on_floor := _slots(r, AT_FLOOR)
-	_check.call(r.items == 2 + 5 + 20 + 1 and on_floor.map(func(e: Array) -> int: return e[0]) == [201, 202, 203]
+	_check.call(r.items == 2 + 5 + 2 + 20 + 1 and on_floor.map(func(e: Array) -> int: return e[0]) == [201, 202, 203]
 			and on_floor.map(func(e: Array) -> int: return e[1]) == [_it("rock"), _it("can_beans"), _it("backpack")],
 			"items: one per handle, in order, with its itype; clutter for the rest (%d shown)" % r.items)
 	var rect: Array = PropShapes.FLOOR_INFO["rect"]
@@ -118,7 +242,8 @@ func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 			+ Vector3((tr[2] - tr[0]) * (0.25 - 0.5), 0.0, (tr[3] - tr[1]) * (0.75 - 0.5))
 	_check.call(table.model == null and table.shape == "table" and o102.distance_to(want_t) < 0.001,
 			"items: a spot on a table: on its top, toward that side of the square (%s)" % o102)
-	_check.call(_slots(r, AT_DRESSER).is_empty(), "items: handles in a closed dresser get no slot")
+	_check.call(_slots(r, AT_DRESSER).size() == 2 and _slots(r, AT_DRESSER).all(func(e: Array) -> bool: return (e[6] as String).contains("/drawer_")),
+			"items: handles in a dresser ride its drawers (pointable while one is open)")
 	_check.call(str(_build(world, snap).item_slots) == str(r.item_slots), "items: placement is deterministic")
 	var st := _slots(r, AT_STACK)
 	var spread := st.size() == 20
@@ -134,7 +259,7 @@ func _test_mesher(world: WorldView, snap: Snapshot, bare: Snapshot) -> void:
 				and hi.origin.y > lo.origin.y + 0.005 and (st[16][5] as Vector3).y > (st[0][5] as Vector3).y,
 				"items: the 17th and later lie on top of the first ones")
 	var rb := _build(world, bare)
-	_check.call(rb.item_slots.is_empty() and rb.items == 2 + 5 + 8 + 1, "items: piles without handles draw as before (%d)" % rb.items)
+	_check.call(rb.item_slots.is_empty() and rb.items == 2 + 5 + 2 + 8 + 1, "items: piles without handles draw as before (%d)" % rb.items)
 	var rh := _build(world, snap, {201: true})
 	_check.call(rh.items == r.items - 1 and not rh.item_slots.any(func(e: Array) -> bool: return e[0] == 201),
 			"items: a hidden item is neither drawn, slotted nor clutter")

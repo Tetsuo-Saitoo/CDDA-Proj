@@ -281,6 +281,30 @@ func _test_view(root: Node) -> void:
 			"weather: going indoors clears the room over %.1f s (%.1f m after 0.3 s)" %
 			[WeatherView.INDOOR_CLEAR_S, part])
 	view.blend_s = 0.0
+	# A long hall under a roof stays clear to its far end (the player at 66,66; roofed squares 64..91 on row 66).
+	var hall := _snap(roofed)
+	for sx in range(5, 9):
+		var sm := Snapshot.Submap.new()
+		sm.pos = Vector3i(sx, 5, 0)
+		sm.flags.resize(144)
+		sm.vis.resize(144)
+		sm.vis.fill(2)
+		for lx in 12:
+			if sx * 12 + lx >= 64 and sx * 12 + lx <= 91:
+				sm.flags[6 * 12 + lx] = Snapshot.FLAG_ROOF
+		hall.submaps[sm.pos] = sm
+	view.apply(hall, coords, true)
+	_check.call(is_equal_approx(WeatherView.room_reach_m(hall), 26.0) and is_equal_approx(env.fog_depth_begin, 26.0),
+			"weather: a long hall is clear to its far end (fog from %.1f m)" % env.fog_depth_begin)
+	(hall.submaps[Vector3i(5, 5, 0)] as Snapshot.Submap).vis[6 * 12 + 6] = 1
+	_check.call(WeatherView.room_reach_m(hall) == 0.0, "weather: no room followed from a square not in sight")
+	# The view follows the room again only on leaving it or after ROOM_TURNS turns, not on every step.
+	view.apply(hall, coords, true)
+	var kept := env.fog_depth_begin
+	hall.turn += WeatherView.ROOM_TURNS
+	view.apply(hall, coords, true)
+	_check.call(is_equal_approx(kept, 26.0) and is_equal_approx(env.fog_depth_begin, WeatherView.INDOOR_CLEAR_M),
+			"weather: the room is kept while the player stays in it, followed again %d turns on" % WeatherView.ROOM_TURNS)
 	view.apply(fog_snap, coords, true)
 	var day_fog := env.fog_light_color
 	# The light pass is told where the fog is (seen on screen: unseen squares far off were black strips in the mist).

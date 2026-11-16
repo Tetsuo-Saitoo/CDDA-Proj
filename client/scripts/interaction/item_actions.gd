@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold, consume) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -30,25 +30,40 @@ const MAX_EVENTS := 4096           # the bridge's event queue
 const M_INFO := 4                  # CDDA's game_message_type m_info: every refusal of the bridge's item actions
 const HANDS := ["pack", "main", "off"]
 const SPOT_MAX := 0.999
+const MAX_SHELF := Snapshot.MAX_SHELF   # L8: a furniture shelf (WorldView.shelf_at's numbering); the bridge keeps 0..15
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
+const NOT_DONE := "Not done."
+## Ops sent with a `tag` and judged by the bridge's `item_result` for it (contracts/events.md): done, or refused
+## with its text (or the last message since, or NOT_DONE when the player said no to CDDA's question). The
+## snapshot can still finish one early (the item gone), never refuse it; a sip of a bottle doesn't show there.
+const TAGGED_OPS := ["consume"]
+const MAX_TAG := 2147483647
+## Tags from here up: ItemPlacer counts its own from 1 on the same event stream.
+const TAG_BASE := 1 << 30
 ## Ops judged by the carried rows around the item (see above).
-const CONTENT_OPS := ["unload", "reload", "pour"]
+const CONTENT_OPS := ["unload", "reload", "pour", "consume"]
 ## Ops whose result the snapshot may not show (rounds topped up, one unit of a stack thrown, a partial pour, a jam
-## still being cleared): no message after two looks is no refusal.
-const QUIET_OK := ["unload", "reload", "throw", "pour", "clear"]
+## still being cleared, a sip of a bottle): no message after two looks is no refusal.
+const QUIET_OK := ["unload", "reload", "throw", "pour", "clear", "consume"]
+## Id-table itype categories of what CDDA eats, drinks or takes (comestibles; drinks are "food", pills "drugs").
+const CONSUME_CATEGORIES := ["food", "drugs"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
 ## Anything with take_item / put_item / drop_item / unload_item / reload_item / clear_item / throw_item / pour_item /
-## pour_into / hold_item (-> bool; a missing one refuses that op here) and queued_actions()
+## pour_into / hold_item / consume_item (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
 var clock := Callable()
+## () -> bool: CDDA is asking the player something (a popup, a list); a TAGGED_OPS op waits for its answer without
+## timing out meanwhile (its clock starts again after). Not set: never asking.
+var asking := Callable()
 
-## uid -> {op, item (ItemRef copy), target, spot, sent_ms, seq, messages, info, looks, before}
+## uid -> {op, item (ItemRef copy), target, spot, sent_ms, seq, messages, info, looks, before, tag (TAGGED_OPS)}
 var _pending := {}
+var _tag := 0   # the last tag sent, TAG_BASE..MAX_TAG (0: none yet)
 var _seq := 0   # seq of the newest snapshot seen
 var _snap: Snapshot   # the newest snapshot seen (unload / reload compare against it)
 
@@ -71,15 +86,20 @@ func put(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 
 
 ## Drops a carried `item` on `square`; `spot` (each 0..1 across the square, x east, y south) places it there,
-## (-1, -1) none.
-func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1)) -> bool:
-	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y):
+## (-1, -1) none. `shelf` (0..MAX_SHELF, -1 none; L8) is the furniture shelf it goes on, kept only with a spot.
+func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y) \
+			or shelf < -1 or shelf > MAX_SHELF:
 		return false
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		spot = Vector2(clampf(spot.x, 0.0, SPOT_MAX), clampf(spot.y, 0.0, SPOT_MAX))
 	else:
 		spot = Vector2(-1, -1)
-	return _send("drop", item, square, spot, "drop_item", [float(item.uid), float(item.type), square, spot])
+		shelf = -1
+	var args: Array = [float(item.uid), float(item.type), square, spot]
+	if shelf >= 0:
+		args.append(shelf)   # only then: a backend without shelves takes the call as before
+	return _send("drop", item, square, spot, "drop_item", args)
 
 
 ## Unloads `item` (carried, or lying in reach on its square): a gun gives its magazine whole, a magazine its
@@ -161,7 +181,41 @@ func pour_into(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 			[float(item.uid), float(item.type), float(container.uid), float(container.type), pocket])
 
 
-## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour"), "" when none.
+## Eats, drinks or takes a carried `item` (a container: what is inside it) with CDDA's consume rules, no menu.
+## Backend method consume_item(uid, type, tag) (LiveSession has it; a bridge without the op refuses there, and so
+## here); judged by its item_result (TAGGED_OPS).
+func consume(item: ItemRef) -> bool:
+	if not _ok_ref(item) or not item.carried:
+		return false
+	return _send("consume", item, null, Vector2(-1, -1), "consume_item", [float(item.uid), float(item.type)])
+
+
+## True when carried `item` is something to eat, drink or take (CONSUME_CATEGORIES), or holds one: its contents
+## are the carried rows under it in `snap` (depth first). A gun, a fuel can or an empty bottle is not.
+static func consumable(item: ItemRef, snap: Snapshot, tables: IdTables) -> bool:
+	if item == null or tables == null:
+		return false
+	if _eats(item.type, tables):
+		return true
+	if snap == null:
+		return false
+	var c := snap.carried
+	var inside := {item.uid: true}
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if inside.has(c[i + 2]) and c[i] != item.uid:
+			inside[c[i]] = true
+			if _eats(int(c[i + 1]), tables):
+				return true
+	return false
+
+
+static func _eats(t: int, tables: IdTables) -> bool:
+	var d := tables.def_at("itype", t)
+	return d != null and d.category in CONSUME_CATEGORIES
+
+
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour", "consume"), ""
+## when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -215,6 +269,8 @@ func on_snapshot(snap: Snapshot) -> void:
 			Where.MOVED:
 				done.append([e, ""])
 			Where.STILL:
+				if e.has("tag"):
+					continue   # its item_result decides
 				e["looks"] += 1
 				e["seq"] = snap.seq   # a second look needs a newer snapshot
 				if not (e["info"] as String).is_empty() or (e["looks"] >= 2 and not (e["op"] in QUIET_OK)):
@@ -226,8 +282,14 @@ func on_snapshot(snap: Snapshot) -> void:
 func on_events(events: Array) -> void:
 	if _pending.is_empty():
 		return
+	var done: Array = []
 	for i in mini(events.size(), MAX_EVENTS):
 		var ev: Variant = events[i]
+		if ev is Dictionary and (ev as Dictionary).get("kind") == "item_result":
+			var r := _tagged_result(ev)
+			if not r.is_empty():
+				done.append(r)
+			continue
 		if not ev is Dictionary or (ev as Dictionary).get("kind") != "message":
 			continue
 		var t: Variant = (ev as Dictionary).get("text")
@@ -246,16 +308,50 @@ func on_events(events: Array) -> void:
 				kept.pop_front()
 			if info:
 				e["info"] = text
+	_resolve(done)
 
 
-## Refuses what got no judgement within TIMEOUT_MS. Called each frame.
+## An item_result event for a TAGGED_OPS op in flight: [entry, reason ("" done)]; [] for any other tag or junk.
+func _tagged_result(ev: Dictionary) -> Array:
+	var tag: Variant = ev.get("detail")
+	var amount: Variant = ev.get("amount")
+	if not (tag is int or tag is float) or not (amount is int or amount is float) or not is_finite(float(tag)) \
+			or not is_finite(float(amount)):
+		return []
+	var t := int(tag)
+	if t < TAG_BASE or t > MAX_TAG or float(t) != float(tag):
+		return []
+	for uid: int in _pending:
+		var e: Dictionary = _pending[uid]
+		if e.get("tag", 0) != t:
+			continue
+		if int(amount) == 1:
+			return [e, ""]
+		var why := _clean(ev.get("text")) if ev.get("text") is String else ""
+		if why.is_empty():   # CDDA said why in a message, or the player said no to its question
+			var kept: Array = e["messages"]
+			why = kept.back() if not kept.is_empty() else NOT_DONE
+		return [e, why]
+	return []
+
+
+## Refuses what got no judgement within TIMEOUT_MS. Called each frame. A TAGGED_OPS op isn't timed while CDDA asks
+## the player something (`asking`), and only once the bridge's queue is empty (an action dropped from it is never
+## answered).
 func check_timeouts() -> void:
 	if _pending.is_empty():
 		return
 	var now := _now()
 	var done: Array = []
+	var asked: bool = asking.is_valid() and asking.call() == true
 	for uid: int in _pending:
 		var e: Dictionary = _pending[uid]
+		if e.has("tag"):
+			if asked:
+				e["sent_ms"] = now   # its clock starts again once the question is answered
+			elif now - int(e["sent_ms"]) >= TIMEOUT_MS and _queued() == 0:
+				done.append([e, NO_ANSWER])
+			continue
 		if now - int(e["sent_ms"]) >= TIMEOUT_MS:
 			var quiet: bool = (e["info"] as String).is_empty()
 			if e["op"] in QUIET_OK and quiet and e["looks"] >= 2:
@@ -324,9 +420,14 @@ func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: St
 		e["before"] = contents_sig(_snap, item, target if target is ItemRef else null)
 	elif op == "clear":
 		e["before"] = gun_faults(_snap, item)
+	var call_args := args
+	if op in TAGGED_OPS:
+		_tag = TAG_BASE + (maxi(_tag - TAG_BASE, -1) + 1) % (MAX_TAG - TAG_BASE + 1)
+		e["tag"] = _tag
+		call_args = args + [_tag]
 	# Recorded before the call: a backend that answers inside the call (MockItems) has it judged right there.
 	_pending[item.uid] = e
-	var ok: Variant = backend.callv(method, args)
+	var ok: Variant = backend.callv(method, call_args)
 	if not (ok is bool and ok):
 		if is_same(_pending.get(item.uid), e):
 			_pending.erase(item.uid)
@@ -391,6 +492,10 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 				return Where.UNKNOWN if full else Where.MOVED
 			var into: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, into) != e["before"] else Where.STILL
+		"consume":   # eaten whole (gone), or what was inside it changed; a sip may not show (QUIET_OK)
+			if row < 0:
+				return Where.UNKNOWN if full else Where.MOVED
+			return Where.MOVED if contents_sig(snap, item) != e["before"] else Where.STILL
 		"clear":   # the faults changed while it is still the wielded gun: cleared
 			var now: Variant = gun_faults(snap, item)
 			if not now is Array:

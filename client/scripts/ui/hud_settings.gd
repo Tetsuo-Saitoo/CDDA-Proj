@@ -14,6 +14,8 @@ var compass_opacity := DEFAULT_COMPASS_OPACITY
 var debug_cheats := false
 ## The mood's screen tint (MoodCue). On unless turned off; anything but a real bool in the file leaves it on.
 var mood_cues := true
+## F3: the hurt tint at the view's edges (HurtCue). On unless turned off, like the mood tint. Saved as [hurt] cues.
+var hurt_cues := true
 ## Bright flashes: lightning (WeatherView.flash_enabled) and the first-person muzzle flash (the viewmodel's
 ## `flashes`). On unless turned off, like the mood tint. Saved as [weather] flash (its first use).
 var weather_flash := true
@@ -21,10 +23,28 @@ var weather_flash := true
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
 var view := "first"
+## G1: the message feed's filter groups (HudData.message_group), in the F1 menu's order, with their labels.
+const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnings", "info": "Info", "other": "Other"}
+## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
+## of group names (anything but known names ignored).
+var feed_hidden := PackedStringArray()
 
 
 static func clamp_opacity(v: float) -> float:
 	return clampf(v, MIN_COMPASS_OPACITY, 1.0) if is_finite(v) else DEFAULT_COMPASS_OPACITY
+
+
+## The known FEED_GROUPS names in `v` (an Array or PackedStringArray), each once, in FEED_GROUPS order; anything
+## else gives none.
+static func feed_groups_from(v: Variant) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not (v is Array or v is PackedStringArray):
+		return out
+	var given: Array = Array(v).slice(0, 64)
+	for g: String in FEED_GROUPS:
+		if given.has(g):
+			out.append(g)
+	return out
 
 
 ## Reads the file; returns "" or why it was ignored (missing is not an error).
@@ -48,14 +68,19 @@ func load_file(path := FILE) -> String:
 	debug_cheats = d if d is bool else false
 	var mc: Variant = cfg.get_value("mood", "cues", true)
 	mood_cues = mc if mc is bool else true
+	var hc: Variant = cfg.get_value("hurt", "cues", true)
+	hurt_cues = hc if hc is bool else true
 	var wf: Variant = cfg.get_value("weather", "flash", true)
 	weather_flash = wf if wf is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
+	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
-		return "" if d is bool else "%s: debug cheats is not true or false" % path
+		if not (d is bool):
+			return "%s: debug cheats is not true or false" % path
+		return "" if hc is bool else "%s: hurt tint is not true or false" % path
 	return "%s: compass opacity is not a number" % path
 
 
@@ -64,6 +89,8 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)
 	cfg.set_value("mood", "cues", mood_cues)
+	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
+	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	return cfg.save(path)

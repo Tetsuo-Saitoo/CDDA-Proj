@@ -9,7 +9,10 @@ extends Node3D
 ## Picking is LookRay's ray from the camera (creatures as their figures, walls, floors); in the shoulder and top
 ## views it starts in front of the player and bullets fly from the eyes (`view`). Answers go through
 ## TargetRequestWidget (pos + FIRE etc.), so CDDA still checks range, line of fire and ammo.
-## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera; `fired` kicks it.
+## The weapon viewmodel (WeaponViewmodel) lives on the first-person camera. `fired` is the trigger pull (VR
+## haptics); `shot_went` kicks the viewmodel and flashes its muzzle when CDDA really fired a round: each shot
+## request (it comes only for a round that went off), or at once for a plain FIRE, which gets no shot requests.
+## A misfire never sends it: HitFeedback.misfired clicks instead (main.gd).
 ## Guns (fire mode with a wielded gun): the client flies the bullet (BulletPhysics: speed, drag, drop, sights
 ## zeroed at 25 m) from the eye along the crosshair / clicked point against the creature figures' body parts
 ## and the map, and answers FIRE with that exact outcome plus `fly: true` (`shot`), keeping the aim (origin,
@@ -35,6 +38,8 @@ extends Node3D
 ## lasts only until its own swing's attack event (hit or miss), so a later strike never shows as called.
 
 signal fired
+## A round went off (see above): recoil and muzzle flash.
+signal shot_went
 
 const MARKER_COLOR := Color(1.0, 0.2, 0.15)
 const AIM_KEEP_MS := 60000        # a kept aim answers shot requests this long after the trigger pull
@@ -47,6 +52,7 @@ const MAX_PELLETS := 32           # a shot request's `pellets` and its answer's,
 const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon strikes 2 squares off)
 const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
 const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
+const AT_ACTION := "fp3d_attack_main_aim_at"   # the main hand's aimed strike at a square off the 8 ways
 const CALL_FAMILY := {"down": 2, "stun": 3, "disarm": 4}   # a swing answer's `action` -> the technique family
 const CALL_KEEP_MS := 5000        # a called technique's hit event counts as called this long after the answer
 const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
@@ -204,6 +210,9 @@ func on_fire(cam: Camera3D, mouse: Vector2, captured: bool) -> bool:
 		if not _fire_flown(t, line[0], line[1]):
 			if TargetRequestWidget.is_attack_mode(t.mode):
 				fired.emit()
+				# plain FIRE: no shot request will tell, so kick now; a misfire on this rare fallback
+				# (no gun def, nothing flown) still clicks after it
+				shot_went.emit()
 				shot_aim = {}   # a new trigger pull replaces the kept aim
 			t.fire()
 	else:
@@ -315,7 +324,8 @@ func melee_segment(a: Vector3, b: Vector3) -> Dictionary:
 ## The aimed hand action ("fp3d_attack_<hand>_aim_<DIR>") for a strike by hand along a -> b (melee_segment) from
 ## the player's square `me`; "" when `hand` isn't "main" or "off" or the segment meets no creature at most
 ## MELEE_SQUARES off along one of the 8 ways on this level (melee_aim cleared): a hand that touches nothing
-## strikes nothing.
+## strikes nothing. The main hand at a creature off the 8 ways (a knight's move): AT_ACTION, its square in
+## strike_square (the fork checks the weapon's reach).
 func strike_segment(hand: String, a: Vector3, b: Vector3, me: Vector3i) -> String:
 	melee_aim = {}
 	if hand != "main" and hand != "off":
@@ -325,6 +335,8 @@ func strike_segment(hand: String, a: Vector3, b: Vector3, me: Vector3i) -> Strin
 		return ""
 	var dir := strike_dir(me, aim["square"])
 	if dir == "":
+		if hand == "main" and strike_off_way(me, aim["square"]):
+			return AT_ACTION
 		melee_aim = {}
 		return ""
 	return "fp3d_attack_%s_aim_%s" % [hand, dir]
@@ -365,8 +377,8 @@ static func technique_call(zone: String) -> String:
 
 ## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
 ## ("fp3d_attack_<hand>_aim_<DIR>") at the creature under the crosshair through screen point `at` of `cam` when
-## it is at most MELEE_SQUARES off along one of the 8 ways on this level; else a plain strike the way you face
-## (`facing`, a direction name such as "LEFT").
+## it is at most MELEE_SQUARES off along one of the 8 ways on this level (the main hand off the 8 ways: AT_ACTION,
+## as strike_segment); else a plain strike the way you face (`facing`, a direction name such as "LEFT").
 func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me: Vector3i, facing: String) -> String:
 	var plain := "fp3d_attack_%s_%s" % [hand, facing]
 	melee_aim = {}
@@ -378,9 +390,28 @@ func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me:
 		return plain
 	var dir := strike_dir(me, aim["square"])
 	if dir == "":
+		if hand == "main" and strike_off_way(me, aim["square"]):
+			return AT_ACTION
 		melee_aim = {}
 		return plain
 	return "fp3d_attack_%s_aim_%s" % [hand, dir]
+
+
+## True for a square 1..MELEE_SQUARES off `me` on this level that no strike way reaches (strike_dir ""): a
+## knight's move, which only a reach weapon in the main hand strikes (AT_ACTION).
+static func strike_off_way(me: Vector3i, to: Vector3i) -> bool:
+	var d := to - me
+	var n := maxi(absi(d.x), absi(d.y))
+	return d.z == 0 and n >= 1 and n <= MELEE_SQUARES and strike_dir(me, to) == ""
+
+
+## The square a hand action goes to by queue_action_at: the kept melee aim's for AT_ACTION, else null. An
+## AT_ACTION with no square (null) isn't sent.
+func strike_square(act: String) -> Variant:
+	if act != AT_ACTION:
+		return null
+	var sq: Variant = melee_aim.get("square")
+	return sq if sq is Vector3i else null
 
 
 ## The direction name from square `me` to `to` when it lies 1..MELEE_SQUARES off along one of the 8 ways on the
@@ -448,6 +479,7 @@ func on_request(req: Dictionary) -> Dictionary:
 	if id == null or id <= 0:
 		push_warning("aim: shot request without a usable id")
 		return {}
+	shot_went.emit()   # CDDA fired this round (a misfire asks nothing)
 	var cancel := fallback_answer(id)
 	if shot_aim.is_empty() or Time.get_ticks_msec() - int(shot_aim.get("time", 0)) > AIM_KEEP_MS:
 		return cancel

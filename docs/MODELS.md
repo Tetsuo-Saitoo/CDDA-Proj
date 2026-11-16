@@ -24,6 +24,10 @@ owner before making many models, and keep one style across a set.
   centred on the 1 m × 1 m tile.
 - **Footprint:** CDDA furniture is one tile each, so a model fits inside 1 m × 1 m. Longer things, such as a
   row of counters, are several tiles with one model each, made so neighbours line up.
+  - Joined pieces (optional, registry `joins`): besides the lone model, a counter can have an `end_left`
+    (the run goes on to its right, +X), an `end_right` (it goes on to its left), a `middle` (both sides) and
+    a `corner` (it goes on to its right and toward you, the front, +Z: the corner of an L). Same tile, same
+    front; the game picks and turns them. Anything left out uses the lone model.
 - **Terrain:** one tile, 1 m × 1 m, and 3 m high for walls (one storey). The game turns terrain models
   itself:
   - Walls, windows and fences: the wall runs left to right in Front view (along X). The front is one face
@@ -47,7 +51,7 @@ owner before making many models, and keep one style across a set.
 
 - One material per model if possible, two at most.
 - PBR metallic-roughness: base colour, normal, and occlusion-roughness-metallic packed in one texture.
-- Transparency only for glass and liquids.
+- Transparency only for glass and liquids (alpha blend; it darkens with the world at night like the rest).
 - No LODs needed for now (models are loaded at run time, so Godot doesn't make LODs; the budgets keep
   that fine).
 
@@ -92,6 +96,7 @@ Blender) and "up" means Blender Z, unless it says otherwise.
 - `surface_1`, …: flat planes where items lie, such as shelves, a drawer's floor or a table top. The plane's
   size is the usable area, and the game hides it. Items on the tile are spread over these planes in turn
   (item 1 on surface_1, item 2 on surface_2, ...); without any, they lie on the placeholder's surfaces.
+  An item put on a surface by hand stays on it: the surfaces in N order are the furniture's shelves 0..15.
 
 **Doors, drawers and lids that open (furniture)**
 

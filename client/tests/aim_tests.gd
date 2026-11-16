@@ -96,6 +96,9 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_grime(root, tables)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
+	_test_misfires(root, aim, tables)
+	_test_queue_at()
+	_test_hurt_cue(root, aim)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -566,6 +569,103 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	ev.flash_rect.free()
 	ev.free()
 
+	# The older kinds look as before (pulses only add keys): the same profiles, and a blast's light, fireball and
+	# smoke follow the same curves.
+	var old := {
+		"blast": {"fire": Color(1.0, 0.55, 0.15), "smoke": Color(0.25, 0.24, 0.22), "light": Color(1.0, 0.6, 0.25),
+				"time": 0.9, "size": 1.0, "ring": false, "flash": 0.0, "kind": "blast", "smoke_scale": 1.0},
+		"fire_blast": {"fire": Color(1.0, 0.4, 0.05), "smoke": Color(0.2, 0.17, 0.15), "light": Color(1.0, 0.45, 0.1),
+				"time": 1.4, "size": 1.2, "ring": false, "flash": 0.0, "kind": "fire_blast", "smoke_scale": 1.0},
+		"flashbang": {"fire": Color(1.0, 1.0, 0.95), "smoke": Color(0.75, 0.75, 0.75), "light": Color(1.0, 1.0, 1.0),
+				"time": 0.5, "size": 0.35, "ring": false, "flash": 1.0, "kind": "flashbang", "smoke_scale": 1.0},
+		"shockwave": {"fire": Color(0.8, 0.85, 1.0, 0.5), "smoke": Color(0.5, 0.5, 0.5), "light": Color(0.7, 0.8, 1.0),
+				"time": 0.7, "size": 1.0, "ring": true, "flash": 0.0, "kind": "shockwave", "smoke_scale": 1.0},
+	}
+	var same := true
+	for k: String in old:
+		same = same and P.profile_for(k, "") == old[k]
+	var ev2 := ExplosionView.new(world)
+	root.add_child(ev2)
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 2, "text": "blast", "detail": 0, "path": [me]}])
+	var x: Dictionary = ev2._live[0]
+	var lit0 := (x["light"] as OmniLight3D).light_energy
+	var fire_on := (x["fire"] as Node3D).visible
+	var shook := ev2.shake_strength() > 0.0
+	ev2.tick(0.3)
+	var kb := 0.3 / 0.9
+	var curves := (is_equal_approx((x["light"] as OmniLight3D).light_energy, 6.0 * (1.0 - kb * 2.0))
+			and is_equal_approx((x["fire"] as Node3D).scale.x, 2.0 * ease(kb * 2.5, 0.4))
+			and (x["smoke"] as Node3D).visible and is_equal_approx((x["smoke"] as Node3D).scale.x, 2.0 * (0.4 + kb))
+			and is_equal_approx(((x["glow"] as MultiMeshInstance3D).material_override as StandardMaterial3D).albedo_color.a,
+				0.35))
+	_check.call(same and lit0 == 6.0 and fire_on and shook and curves,
+			"explosions: the older kinds look as before (profiles; a blast's light, fireball and smoke)")
+
+	# Pulses: EMP and scrambler a fading ring and a light that rises and falls, no fireball, smoke, flash or shake;
+	# radius 0 still a square-wide ring, a huge radius clamped; resonance shakes a little.
+	var ep := P.profile_for("emp", "rocket_emp")
+	_check.call(not ep["ball"] and ep["fire"] == P.KINDS["emp"]["fire"] and ep["size"] == 1.0 and ep["flash"] == 0.0,
+			"explosions: an EMP is a pulse; its item doesn't change it")
+	ev2.tick(5.0)
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 0, "text": "emp", "detail": 0, "path": []},
+			{"kind": "explosion", "pos": me, "amount": 999, "text": "scrambler", "detail": 0, "path": []}])
+	var e: Dictionary = ev2._live[0] if ev2.live_count() == 2 else {}
+	var sc: Dictionary = ev2._live[1] if ev2.live_count() == 2 else {}
+	var calm := (not e.is_empty() and not (e["fire"] as Node3D).visible
+			and (e["light"] as OmniLight3D).light_energy == 0.0 and ev2.flash_strength() == 0.0
+			and ev2.shake_strength() == 0.0 and is_equal_approx(e["r"], 1.0)
+			and is_equal_approx(sc["r"], float(ExplosionView.MAX_RADIUS)))
+	ev2.tick(0.05)
+	calm = calm and (e["light"] as OmniLight3D).light_energy < 0.5
+	ev2.tick(0.35)
+	var ring := e["ring"] as MeshInstance3D
+	var mid := (is_equal_approx((e["light"] as OmniLight3D).light_energy, 2.0) and is_equal_approx(ring.scale.x, 0.5)
+			and (ring.material_override as StandardMaterial3D).albedo_color.a < 0.3 and ring.visible
+			and not (e["smoke"] as Node3D).visible)
+	ev2.tick(0.5)
+	_check.call(calm and mid and ev2.live_count() == 0,
+			"explosions: EMP and scrambler pulse smoothly (ring, light up and down), no fireball, flash or shake")
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 8, "text": "resonance", "detail": 0, "path": []}])
+	var buzz := ev2.sound_for("emp", 1.0)
+	_check.call(ev2.shake_strength() > 0.0 and ev2.shake_strength() <= 0.41 and ev2.flash_strength() == 0.0
+			and buzz.data.size() == int(ExplosionView.SOUND_RATE * 0.6) * 2 and ev2.sound_for("emp", 9.0) == buzz
+			and ev2.sound_for("resonance", 8.0).data.size() > buzz.data.size(),
+			"explosions: resonance shakes a little; pulses buzz or hum, each sound made once")
+	# Spells: the area glows in the damage type's colour, fading in and out; other or overlong ids are violet.
+	var hp := P.profile_for("spell:heat", "")
+	var odd_sp := P.profile_for("spell:" + "x".repeat(300), "")
+	_check.call(hp["kind"] == "spell" and not hp["ball"] and not hp["ring"] and hp["light"] == P.SPELL_COLOURS["heat"]
+			and odd_sp["fire"] == P.KINDS["spell"]["fire"] and P.profile_for("spell:", "")["kind"] == "spell",
+			"explosions: a spell's colour by damage type, violet for others")
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 1, "text": "spell:cold", "detail": 0,
+			"path": [me, me + Vector3i(1, 0, 0), me + Vector3i(0, 1, 0), "x", me + Vector3i(999, 0, 0)]}])
+	var sp: Dictionary = ev2._live.back()
+	var g := sp["glow"] as MultiMeshInstance3D
+	var gmat: StandardMaterial3D = g.material_override as StandardMaterial3D if g != null else null
+	var dark := (gmat != null and gmat.albedo_color.a == 0.0 and g.multimesh.instance_count == 3
+			and sp["ring"] == null and not (sp["fire"] as Node3D).visible)
+	ev2.tick(0.35)
+	var lit := gmat != null and is_equal_approx(gmat.albedo_color.a, 0.35) and is_equal_approx(gmat.albedo_color.b, 1.0)
+	ev2.tick(0.4)
+	_check.call(dark and lit and not ev2._live.has(sp) and ev2.flash_strength() == 0.0,
+			"explosions: a spell's squares glow in, out and end (no ring, fireball or flash)")
+	var many: Array = []
+	many.resize(5000)
+	many.fill(me)
+	var near_ok := (ExplosionView.near_squares([me, "x", me + Vector3i(999, 0, 0), Vector3(1, 2, 3),
+			me + Vector3i(60, -60, 1)], me).size() == 2 and ExplosionView.near_squares("junk", me).is_empty()
+			and ExplosionView.near_squares(many, me).size() == ExplosionView.MAX_AREA
+			and ExplosionView.near_squares([Vector3i(2147483647, 0, 0)], Vector3i(-2147483647, 0, 0)).is_empty())
+	for i in 6:
+		ev2.on_events([{"kind": "explosion", "pos": me, "amount": 0, "text": "spell:acid", "detail": 0, "path": [me]}])
+	var spells_capped := ev2.spell_count() == ExplosionView.MAX_SPELLS
+	ev2.on_events([{"kind": "explosion", "pos": me, "amount": 1, "text": "blast", "detail": 0, "path": []}])
+	_check.call(near_ok and spells_capped and ev2.live_count() == ExplosionView.MAX_SPELLS + 2,
+			"explosions: only nearby squares glow (first %d looked at); at most %d spells at once, blasts still start"
+			% [ExplosionView.MAX_AREA, ExplosionView.MAX_SPELLS])
+	ev2.flash_rect.free()
+	ev2.free()
+
 
 ## C9 views: over the shoulder the pick still finds what's under the crosshair but the bullet leaves the eyes;
 ## top-down (the screen centre is the player) mouse-look aiming follows the facing, a click picks what's under the
@@ -739,11 +839,22 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 			"melee: a strike by hand is the aimed action and answers the swing request (%s, %s)" % [act, by_hand])
 	_check.call(seg.get("want") == "stun" and kept.get("want") == "stun" and by_hand.get("action") == "stun",
 			"melee: a strike by hand keeps the family its zone calls and sends it (%s, %s)" % [kept, by_hand])
-	var off_way := aim.strike_segment("main", near, tip, zp + Vector3i(2, 1, 0)) == "" and aim.melee_aim.is_empty()
+	var knight_sq := zp + Vector3i(2, 1, 0)   # the zombie a knight's move off: the main hand strikes at its square
+	var knight := aim.strike_segment("main", near, tip, knight_sq)
+	_check.call(knight == S.AT_ACTION and aim.strike_square(knight) == zp and aim.melee_aim.get("uid") == ZUID
+			and aim.strike_square("fp3d_attack_main_aim_LEFT") == null,
+			"melee: by hand a knight's move off, the main hand strikes at the square (%s, %s)" % [knight, aim.melee_aim])
+	_check.call(S.strike_off_way(me, me + Vector3i(2, 1, 0)) and S.strike_off_way(me, me + Vector3i(-1, 2, 0))
+			and not S.strike_off_way(me, me + Vector3i(2, 0, 0)) and not S.strike_off_way(me, me + Vector3i(1, 1, 0))
+			and not S.strike_off_way(me, me + Vector3i(3, 1, 0)) and not S.strike_off_way(me, me + Vector3i(2, 1, 1))
+			and not S.strike_off_way(me, me), "melee: off-way squares (a knight's move within 2, this level)")
+	aim.melee_aim = {}
+	var off_way := aim.strike_segment("off", near, tip, knight_sq) == "" and aim.melee_aim.is_empty() \
+			and aim.strike_square(S.AT_ACTION) == null
 	var bad_hand := aim.strike_segment("left", near, tip, beside) == "" and aim.strike_segment("", near, tip, beside) == "" \
 			and aim.melee_aim.is_empty()
 	var miss := aim.strike_segment("main", near, near + dir * 0.3, beside) == "" and aim.melee_aim.is_empty()
-	_check.call(off_way and bad_hand and miss, "melee: by hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
+	_check.call(off_way and bad_hand and miss, "melee: the off hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
 			% [[off_way, bad_hand, miss]])
 	# techniques: the zone a strike lands on calls a family, sent as the swing answer's `action`
 	var calls := {"head": "stun", "eye": "stun", "leg_l": "down", "leg_r": "down", "leg": "down", "arm_l": "disarm",
@@ -1476,6 +1587,55 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	_check.call(dark and rebuilt and pistol_on and not vm.flashing() and vm._flash == null,
 			"muzzle flash: none with flashes off (and one showing goes), a new gun gets its own, a knife has none")
+	vm.set_item(pistol, tables)
+	vm._process(1.0)
+	vm.suppressed = true
+	vm.kick()
+	vm._process(0.001)
+	var hushed := not vm.flashing() and not vm.lit() and vm.rotation.x > 0.0
+	vm.suppressed = false
+	vm._process(1.0)
+	vm.kick()
+	_check.call(hushed and vm.flashing(), "muzzle flash: none from a suppressed gun (it still recoils), back without one")
+	vm.free()
+
+
+## Misfires: the viewmodel kicks and flashes only for a round CDDA fired (shot_went: each shot request, never a
+## target request); the player's `misfire` event clicks instead (HitFeedback.misfired, jammed for detail
+## 2), anyone else's or a malformed one does nothing; a click neither kicks nor flashes.
+func _test_misfires(root: Node, aim: AimController, tables: IdTables) -> void:
+	var went := [0]
+	var count_went := func() -> void: went[0] += 1
+	aim.shot_went.connect(count_went)
+	aim.on_request({"kind": "target", "mode": "fire"})
+	var none_yet: int = went[0]
+	aim.on_request({"kind": "shot", "id": 7, "shot_error": 0.0, "shot_angle": 0.0})
+	aim.on_request({"kind": "shot"})   # a bad id: ignored, no kick
+	aim.on_request({"kind": "shot", "id": -3})
+	_check.call(none_yet == 0 and went[0] == 1, "misfire: shot_went for each usable shot request only (%d, %d)" % [none_yet, went[0]])
+	aim.shot_went.disconnect(count_went)
+
+	var hf := aim.hits
+	var me := hf.player_uid()
+	var got: Array = []
+	var on_misfire := func(jammed: bool) -> void: got.append(jammed)
+	hf.misfired.connect(on_misfire)
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	vm.set_item(tables.index_of("itype", "glock_19"), tables)
+	hf.misfired.connect(vm.click)
+	hf.on_events([{"kind": "misfire", "uid": me, "detail": 1}, {"kind": "misfire", "uid": me, "detail": 2},
+			{"kind": "misfire", "uid": me + 5, "detail": 1}, {"kind": "misfire", "uid": "x", "detail": 1},
+			{"kind": "misfire"}, {"kind": "misfire", "uid": me, "detail": 9.5}])
+	var quiet := not vm.flashing() and not vm.lit() and vm._kick == 0.0
+	var snd := WeaponViewmodel.click_stream()
+	var player := vm.get_node_or_null("Click") as AudioStreamPlayer
+	_check.call(got == [false, true, false] and vm.clicks == 3 and quiet and player != null
+			and snd.data.size() == int(WeaponViewmodel.CLICK_RATE * WeaponViewmodel.CLICK_S) * 2
+			and WeaponViewmodel.click_stream() == snd,
+			"misfire: the player's misfire events click (jammed for detail 2), no kick, no flash; others nothing (%s)" % [got])
+	hf.misfired.disconnect(on_misfire)
+	hf.misfired.disconnect(vm.click)
 	vm.free()
 
 
@@ -1488,11 +1648,17 @@ func _test_gun_state(d: Dictionary, tables: IdTables) -> void:
 		return Snapshot.from_data(dd)
 	var good: Snapshot = snap_with.call({"type": gi, "dirt": 4200, "faults": ["fault_gun_dirt", "fault_gun_blackpowder"], "rounds": 12})
 	_check.call(good.is_valid() and good.player_gun == {"type": gi, "dirt": 4200, "rounds": 12,
-			"faults": ["fault_gun_dirt", "fault_gun_blackpowder"]} and good.player_gun["faults"] is Array,
+			"faults": ["fault_gun_dirt", "fault_gun_blackpowder"], "suppressed": false} and good.player_gun["faults"] is Array,
 			"gun state: a wielded gun's type, dirt, faults and rounds parse (%s %s)" % [good.error, good.player_gun])
 	var bare: Snapshot = snap_with.call({"type": gi})
-	_check.call(bare.is_valid() and bare.player_gun == {"type": gi, "dirt": -1, "rounds": -1, "faults": []},
+	_check.call(bare.is_valid() and bare.player_gun == {"type": gi, "dirt": -1, "rounds": -1, "faults": [], "suppressed": false},
 			"gun state: no dirt / rounds give -1, no faults none (%s)" % [bare.player_gun])
+	var quiet := []
+	for v: Variant in [true, false, "true", 1, 1.0, [true], {}, null]:
+		var q: Snapshot = snap_with.call({"type": gi, "suppressed": v})
+		quiet.append(q.player_gun.get("suppressed") if q.is_valid() else "invalid")
+	_check.call(quiet == [true, false, false, false, false, false, false, false],
+			"gun state: suppressed only for a JSON true, anything else is false (%s)" % [quiet])
 	dd["player"].erase("wielded_gun")
 	var none := Snapshot.from_data(dd)
 	var null_gun: Snapshot = snap_with.call(null)
@@ -1520,3 +1686,111 @@ static func _strings(n: int) -> Array:
 	for i in n:
 		out.append("fault_%d" % i)
 	return out
+
+
+## Stands in for CddaSim with queue_action_at: keeps what reached it.
+class AtSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_action_at(action: String, square: Vector3i) -> bool:
+		sent.append([action, square])
+		return true
+
+
+## LiveSession.queue_action_at: reaches the sim with its square; false without a game or on a DLL without it.
+func _test_queue_at() -> void:
+	var ls := LiveSession.new()
+	var sq := Vector3i(195, 384, 0)
+	var no_game := not ls.queue_action_at(AimController.AT_ACTION, sq)
+	ls._sim = RefCounted.new()   # an older DLL: no queue_action_at
+	var old_dll := not ls.queue_action_at(AimController.AT_ACTION, sq)
+	var sim := AtSim.new()
+	ls._sim = sim
+	var ok := ls.queue_action_at(AimController.AT_ACTION, sq)
+	_check.call(no_game and old_dll and ok and sim.sent == [[AimController.AT_ACTION, sq]],
+			"melee: LiveSession.queue_action_at reaches the sim with its square; none without a game or the method (%s)"
+			% [sim.sent])
+	ls._sim = null
+	ls.free()
+
+
+## F3: the player's damage events reach HurtCue (others' and junk don't); it rises smoothly, fades out, holds up
+## (no blinking) under fast hits, keeps a faint floor while a body part bleeds, and stays dark when off.
+func _test_hurt_cue(root: Node, aim: AimController) -> void:
+	var hf := aim.hits
+	var me := hf.player_uid()
+	var got: Array = []
+	var on_hurt := func(a: int) -> void: got.append(a)
+	hf.player_hurt.connect(on_hurt)
+	hf.on_events([{"kind": "damage", "uid": me, "amount": 12, "other": 5}, {"kind": "damage", "uid": me + 1, "amount": 9},
+			{"kind": "damage", "uid": me, "amount": 0}, {"kind": "damage", "uid": me, "amount": "7"},
+			{"kind": "damage", "uid": me, "amount": -3}, {"kind": "death", "uid": me}, {"kind": "damage", "amount": 4},
+			{"kind": "damage", "uid": float(me), "amount": 3.0}])
+	hf.player_hurt.disconnect(on_hurt)
+	_check.call(got == [12, 3], "hurt: only the player's damage with an amount reaches the cue (%s)" % [got])
+
+	var cue := HurtCue.new()
+	cue.world = aim.world
+	root.add_child(cue)
+	var parts: Array[Snapshot.BodyPart] = aim.world.snapshot.player_parts.duplicate()
+	aim.world.snapshot.player_parts.clear()   # nobody bleeding
+	cue.hurt(10)
+	cue.step(0.05)
+	var rising := cue.shown > 0.0 and cue.shown < cue.peak and cue.visible
+	var up := cue.shown
+	for i in 6:
+		cue.step(0.05)
+		up = maxf(up, cue.shown)
+	for i in 40:
+		cue.step(0.1)
+	var gone := cue.shown == 0.0 and not cue.visible
+	_check.call(rising and up > 0.3 and gone, "hurt: a hit rises over a few frames and fades out (%.2f)" % up)
+	var lows: Array[float] = []
+	for f in 90:   # 3 s of hits 10 times a second, at 60 frames a second
+		if f % 6 == 0:
+			cue.hurt(3)
+		cue.step(1.0 / 60.0)
+		if f >= 30:   # settled after half a second
+			lows.append(cue.shown)
+	var held: bool = lows.min() > 0.3 and lows.max() - lows.min() < 0.25
+	var cap := HurtCue.MAX_ALPHA + 1e-6   # Color is float32
+	var top := HurtCue.tint_for(1.0).a <= cap and HurtCue.tint_for(5.0).a <= cap \
+			and HurtCue.tint_for(0.0).a == 0.0 and HurtCue.tint_for(NAN).a == 0.0
+	_check.call(held and top, "hurt: fast hits hold it up without blinking, the tint stays under %.2f (%.2f..%.2f)"
+			% [HurtCue.MAX_ALPHA, lows.min(), lows.max()])
+	var b := Snapshot.BodyPart.new()
+	b.bleed = 2
+	aim.world.snapshot.player_parts.append(b)
+	for i in 40:
+		cue.step(0.1)
+	var floor_ok := is_equal_approx(cue.shown, HurtCue.BLEED_LEVEL) and cue.visible
+	cue.enabled = false
+	cue.hurt(30)
+	for i in 10:
+		cue.step(0.1)
+	var off_ok := cue.shown < HurtCue.BLEED_LEVEL and cue.peak == 0.0
+	for i in 10:
+		cue.step(0.1)
+	off_ok = off_ok and cue.shown == 0.0 and not cue.visible
+	_check.call(floor_ok and off_ok, "hurt: bleeding keeps a faint steady edge; off, hits do nothing and it fades out")
+	aim.world.snapshot.player_parts.assign(parts)
+	cue.free()
+	var path := preload("res://tests/test_dir.gd").path("hud_hurt.cfg")
+	var hs := HudSettings.new()
+	var m := KeyMenu.new()
+	m.add_hud_settings(hs, path)
+	var was_on := hs.hurt_cues and m.hurt_check.button_pressed and m.hurt_check.text == "Hurt tint"
+	m.hurt_check.button_pressed = false
+	var back := HudSettings.new()
+	var why := back.load_file(path)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hurt]
+cues=\"no\"
+")
+	f.close()
+	var odd := HudSettings.new()
+	var odd_why := odd.load_file(path)
+	_check.call(was_on and not hs.hurt_cues and not back.hurt_cues and back.mood_cues and why == ""
+			and odd.hurt_cues and odd_why.contains("hurt tint"),
+			"hurt: on by default; the F1 box turns it off and saves it; a non-bool in the file leaves it on, with a warning")
+	m.free()

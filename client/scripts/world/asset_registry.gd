@@ -18,6 +18,8 @@ const MAX_IDS_PER_ENTRY := 256
 const MAX_STR := 128
 ## Steps 2 of the chain: looks_like links followed at most.
 const MAX_CHAIN := 16
+## Pieces a furniture model can name for joined tiles (`joins`, contracts/assets.md "Placement").
+const JOINS := ["end_left", "end_right", "middle", "corner"]
 const KINDS := ["terrain", "furniture", "trap", "field", "item", "monster", "vehicle_part"]
 const MESHERS := ["floor", "wall", "window", "door", "fence", "stairs_up", "stairs_down", "ramp",
 		"water", "roof", "open_air"]
@@ -35,6 +37,7 @@ class Entry:
 	var scale := 1.0
 	var offset := Vector3.ZERO
 	var random_yaw := false
+	var joins := {}   # JOINS name -> model path (furniture with a model only)
 
 
 ## Where the chain landed: the entry (null at the glyph step), the step and the id it was found under.
@@ -64,6 +67,18 @@ func all_warnings() -> PackedStringArray:
 ## model and material, ModelLibrary.get_tinted); null when it has none or it doesn't load.
 func model_of(e: Entry) -> ModelLibrary.Model:
 	return null if e == null or e.model.is_empty() else models.get_tinted(e.model, e.material)
+
+
+## The entry's join pieces (JOINS name -> Model, tinted like its model), leaving out those that don't load.
+func joins_of(e: Entry) -> Dictionary:
+	var out := {}
+	if e == null:
+		return out
+	for k: String in e.joins:
+		var m := models.get_tinted(e.joins[k], e.material)
+		if m != null:
+			out[k] = m
+	return out
 
 
 ## Whether the entry's model loads (no tinted variant is made for asking).
@@ -200,8 +215,15 @@ func _entry(d: Dictionary) -> Entry:
 	for s: String in [e.placeholder, e.material]:
 		if s.length() > MAX_STR or not _is_word(s):
 			return null
-	if e.model.length() > 200 or e.model.contains("..") or (not e.model.is_empty() and not e.model.ends_with(".glb")):
+	if not e.model.is_empty() and not _model_path_ok(e.model):
 		return null
+	var j: Variant = d.get("joins", {})
+	if not j is Dictionary or (not (j as Dictionary).is_empty() and (e.kind != "furniture" or e.model.is_empty())):
+		return null
+	for k: Variant in j:
+		if not k in JOINS or not _model_path_ok(_str(j[k])):
+			return null
+		e.joins[k] = j[k]
 	if e.model.is_empty() and e.mesher.is_empty() and e.placeholder.is_empty():
 		return null
 	var sc: Variant = d.get("scale", 1.0)
@@ -221,6 +243,11 @@ func _entry(d: Dictionary) -> Entry:
 		return null
 	e.random_yaw = ry
 	return e
+
+
+## A `model` path as the registry takes it (ModelLibrary checks it again when it loads).
+static func _model_path_ok(s: String) -> bool:
+	return not s.is_empty() and s.length() <= 200 and not s.contains("..") and s.ends_with(".glb")
 
 
 static func _str(v: Variant) -> String:

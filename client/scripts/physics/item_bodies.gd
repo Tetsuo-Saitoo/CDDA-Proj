@@ -311,7 +311,9 @@ func forget(uid: int) -> bool:
 
 
 ## Where item `uid`'s body lies now: {square, spot (each 0..SPOT_MAX, x east, y south), yaw (whole degrees 0..359),
-## side (it lies on its side)}, {} without a body. The pose a static copy needs to look the same is
+## side (it lies on its side), shelf (L8: the furniture shelf it rests on, WorldView.shelf_at; -1 none: then square
+## and spot are the furniture's and the shelf's, also for an open drawer reaching over the next square)}, {} without
+## a body. The pose a static copy needs to look the same is
 ## Basis(UP, yaw) * (side: a quarter turn about X): yaw is the heading (atan2(x, z)) of the item's own +Z when it
 ## stands, of its own +Y (its top) when it lies on its side.
 func rest_of(uid: int) -> Dictionary:
@@ -327,7 +329,18 @@ func rest_of(uid: int) -> Dictionary:
 	var side := absf(rot.y.y) < SIDE_DOT
 	var v := rot.y if side else rot.z
 	var yaw := wrapi(roundi(rad_to_deg(atan2(v.x, v.z))), 0, 360) if Vector2(v.x, v.z).length() > 0.01 else 0
-	return {"square": sq, "spot": Vector2(clampf(f.x, 0.0, SPOT_MAX), clampf(f.z, 0.0, SPOT_MAX)), "yaw": yaw, "side": side}
+	var out := {"square": sq, "spot": Vector2(clampf(f.x, 0.0, SPOT_MAX), clampf(f.z, 0.0, SPOT_MAX)), "yaw": yaw,
+			"side": side, "shelf": -1}
+	var s := world.shelf_at(p)
+	var ss: Variant = s.get("square")
+	var sh: Variant = s.get("shelf")
+	var sp: Variant = s.get("spot")
+	if ss is Vector3i and (ss as Vector3i).z == sq.z and sh is int and (sh as int) >= 0 and (sh as int) <= Snapshot.MAX_SHELF \
+			and sp is Vector2 and (sp as Vector2).is_finite():
+		out["square"] = ss
+		out["spot"] = (sp as Vector2).clamp(Vector2.ZERO, Vector2(SPOT_MAX, SPOT_MAX))
+		out["shelf"] = sh
+	return out
 
 
 ## The itype of item `uid`'s body, 0 without one.

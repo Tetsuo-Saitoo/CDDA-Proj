@@ -738,12 +738,129 @@ func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size(),
 			"models": r.model_props, "parts": r.parts.size()}
 	b["props"] = drawn
+	b["shelves"] = r.shelves
 	if not drawn and not b.get("terrain", false):
 		_free_node(pos)   # nothing left to draw: open sky keeps no node
 	_set_slots(pos, r.item_slots)
 
 
 ## Replaces the item slots of submap `pos` (PropMesher.Result.item_slots).
+const SHELF_ABOVE := 0.35   # m: how far over a surface a point (a hand, a dropped item) still puts things on it
+const SHELF_BELOW := 0.05   # m: and under its top (a ray hitting its edge)
+const SHELF_EDGE := 0.03    # m: past its sides
+const SPOT_MAX := 0.999     # spots are 0..0.999 across a square (DropTarget's)
+const SHELF_RAY_MAX := 32.0  # m: shelf_on_ray looks no further
+const SHELF_RAY_STEP := 0.5  # m: its samples along the ray (each with the squares around it)
+const SHELF_LOOK: Array[Vector2i] = [Vector2i(0, 0), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]
+
+
+## The furniture surface under world point `point` that a dropped item would be put on (a VR hand letting go,
+## a body coming to rest): {square (Vector3i), shelf (0..Snapshot.MAX_SHELF, PropMesher.shelves_of's
+## numbering), spot (Vector2, each 0..0.999 across the square, x east, y south: the spot that draws the item
+## right under the point, PropMesher's spot)}; {} when the point isn't over one (the floor, mid-air, furniture
+## without surfaces of its own). Only shown surfaces count (_shelves_shown): a drawer open, a shelf behind doors
+## with one open. A drawer or door counts where it is now; of surfaces stacked under the point (up to
+## SHELF_ABOVE over them), the nearest one below it.
+func shelf_at(point: Vector3) -> Dictionary:
+	if not point.is_finite() or coords == null:
+		return {}
+	var sq0 := coords.world_to_ms(point)
+	var sqs: Array[Vector3i] = []
+	for d: Vector2i in SHELF_LOOK:   # an open drawer or door reaches over the next square
+		sqs.append(sq0 + Vector3i(d.x, d.y, 0))
+	var best := {}
+	var best_y := INF
+	for c: Array in _shelves_shown(sqs):
+		var l := (c[2] as Transform3D).affine_inverse() * point
+		var rect: Rect2 = c[3]
+		if l.y < -SHELF_BELOW or l.y > SHELF_ABOVE or l.y >= best_y \
+				or l.x < rect.position.x - SHELF_EDGE or l.x > rect.end.x + SHELF_EDGE \
+				or l.z < rect.position.y - SHELF_EDGE or l.z > rect.end.y + SHELF_EDGE:
+			continue
+		best_y = l.y
+		best = {"square": c[0], "shelf": c[1], "spot": _spot_on(l, rect, c[4])}
+	return best
+
+
+## The nearest shown furniture surface (as shelf_at) that the ray from `origin` along `dir` comes down onto from
+## above inside its rect, within `max_d` (at most SHELF_RAY_MAX): {square, shelf, spot (as shelf_at), point
+## (world, where it meets the surface)}; {} for none. For the mouse: LookRay sees furniture as solid boxes.
+func shelf_on_ray(origin: Vector3, dir: Vector3, max_d: float) -> Dictionary:
+	if not origin.is_finite() or not dir.is_finite() or dir.length() < 1e-6 or not is_finite(max_d) or max_d <= 0.0 \
+			or coords == null:
+		return {}
+	var n := dir.normalized()
+	var reach := minf(max_d, SHELF_RAY_MAX)
+	var seen := {}
+	var sqs: Array[Vector3i] = []
+	var steps := ceili(reach / SHELF_RAY_STEP)
+	for i in steps + 1:   # the squares along the ray and around it (a step under a square: none skipped)
+		var s := coords.world_to_ms(origin + n * (reach * i / steps))
+		for d: Vector2i in SHELF_LOOK:
+			var q := s + Vector3i(d.x, d.y, 0)
+			if not seen.has(q):
+				seen[q] = true
+				sqs.append(q)
+	var best := {}
+	var best_t := INF
+	for c: Array in _shelves_shown(sqs):
+		var xf: Transform3D = c[2]
+		var inv := xf.affine_inverse()
+		var o := inv * origin
+		var dl := inv.basis * n
+		if o.y <= 0.0 or dl.y >= -1e-6:   # only coming down onto it from above
+			continue
+		var l := o + dl * (-o.y / dl.y)
+		var rect: Rect2 = c[3]
+		if l.x < rect.position.x or l.x > rect.end.x or l.z < rect.position.y or l.z > rect.end.y:
+			continue
+		var hit := xf * Vector3(l.x, 0.0, l.z)
+		var t := (hit - origin).dot(n)
+		if t < 0.0 or t > reach or t >= best_t:
+			continue
+		best_t = t
+		best = {"square": c[0], "shelf": c[1], "spot": _spot_on(l, rect, c[4]), "point": hit}
+	return best
+
+
+## The shown shelves of squares `sqs` (PropMesher.Result.shelves; shown as items are, _shown: a drawer while
+## open, a surface behind doors or a lid while one is open): [square, shelf, its frame now (Transform3D, world:
+## a drawer or door where it is now), rect, its rest basis (world, orthonormal: what spots are measured in)].
+func _shelves_shown(sqs: Array[Vector3i]) -> Array:
+	var out := []
+	for sq in sqs:
+		var pos := CddaCoords.ms_to_sm(sq)
+		var node: Node3D = _nodes.get(pos)
+		var list: Array = ((_built.get(pos, {}) as Dictionary).get("shelves", {}) as Dictionary).get(sq, [])
+		if node == null or list.is_empty():
+			continue
+		var at := node.global_transform if node.is_inside_tree() else node.transform
+		for k in list.size():
+			var e: Array = list[k]
+			var rect: Rect2 = e[1]
+			if e.size() < 6 or e[5] or not _shown(e[2], e[4]) or rect.size.x <= 0.0 or rect.size.y <= 0.0:
+				continue
+			var rest: Transform3D = at * (e[0] as Transform3D)
+			var xf := rest
+			var g: Grabbable = parts.get(e[2]) if e[2] != "" and is_instance_valid(parts.get(e[2])) else null
+			if g != null and g.is_inside_tree() and int(e[3]) >= 0 and int(e[3]) < g.surfaces.size():
+				xf = g.surface_global(e[3])
+			if not xf.is_finite() or absf(xf.basis.determinant()) < 1e-9:
+				continue
+			out.append([sq, k, xf, rect, rest.basis.orthonormalized()])
+	return out
+
+
+## The spot that draws an item at local point `l` of a surface (PropMesher.Surface.spot_uv backwards): its place
+## across `rect`, turned by the surface's rest basis into the square's axes.
+static func _spot_on(l: Vector3, rect: Rect2, rest: Basis) -> Vector2:
+	var u := clampf((l.x - rect.position.x) / rect.size.x, 0.0, 1.0)
+	var v := clampf((l.z - rect.position.y) / rect.size.y, 0.0, 1.0)
+	var d := rest * Vector3(u - 0.5, 0.0, v - 0.5)
+	return Vector2(clampf(d.x + 0.5, 0.0, SPOT_MAX), clampf(d.z + 0.5, 0.0, SPOT_MAX))
+
+
 func _set_slots(pos: Vector3i, slots: Array) -> void:
 	var b: Dictionary = _built[pos]
 	for tile_slots: Array in (b.get("slots", {}) as Dictionary).values():
@@ -936,14 +1053,16 @@ func _slots_around(centre: Vector3i) -> Array:
 ## always: they lie on top of it); one behind a model's doors or lid while one of them is open
 ## (PropMesher.Result.item_slots ride / gates). A part that is gone hides its items.
 func _slot_shown(e: Array) -> bool:
-	if e.size() < 8:
-		return true
-	var ride: String = e[6]
+	return e.size() < 8 or _shown(e[6], e[7])
+
+
+## Shown when what it rides (a part id, "" none) is open enough to see into (a lid always: its top shows) and,
+## behind doors or lids (`gates`), one of them is.
+func _shown(ride: String, gates: PackedStringArray) -> bool:
 	if not ride.is_empty():
 		var g: Variant = parts.get(ride)
 		if not is_instance_valid(g) or not (g is Grabbable) or ((g as Grabbable).kind != "lid" and not part_open(g)):
 			return false
-	var gates: PackedStringArray = e[7]
 	if gates.is_empty():
 		return true
 	for id in gates:

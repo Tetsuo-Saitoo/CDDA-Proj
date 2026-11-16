@@ -16,12 +16,14 @@ const BLEND_MIN := 0.08
 const AMBIENT_ENERGY := 0.8
 const GROUND_BOUNCE := Color(0.42, 0.42, 0.4)   # the lower half of the sky: daylight coming back up off the ground
 const EYE_M := 1.6
-const INDOOR_CLEAR_M := 8.0   # under a roof the fog starts this far out: the room is clear, the windows show it
+const INDOOR_CLEAR_M := 8.0   # under a roof the fog starts at least this far out: the room is clear, the windows show it
+const ROOM_REACH := 40        # squares: how far a roofed room in sight is followed to keep its far end clear (room_reach_m)
+const ROOM_TURNS := 10        # the room is followed again after this many turns (a door opened), else only on leaving it
 const INDOOR_CLEAR_S := 1.5   # seconds it takes to clear or close in when the player goes under or leaves a roof
 ## The lightning flash brightens the whole view, so it is kept safe for photosensitive players whatever arrives:
 ## one pulse per flash, never two flashes within FLASH_EVERY_S (far under three a second), none while game time
 ## runs fast (waiting, sleeping: CDDA's flashes arrive packed together) or the character sleeps, weaker in VR,
-## and off altogether with flash_enabled (the F1 menu's "Lightning flash").
+## and off altogether with flash_enabled (the F1 menu's "Bright flashes").
 const FLASH_S := 0.5          # one pulse, fading out
 const FLASH_EVERY_S := 3.0    # the least time from one strike (flash and thunder) to the next
 const FLASH_LIGHT := 1.5      # energy of the flash's light at its peak
@@ -75,7 +77,10 @@ var _from: WeatherState
 var _blend_t := 1.0
 var _since_step := 0.0
 var _shown := false
-var _clear_m := 0.0                # how far out the fog starts now (INDOOR_CLEAR_M under a roof)
+var _clear_m := 0.0                # how far out the fog starts now (indoor_clear_m under a roof)
+var _room_m := 0.0                 # how far the room around the player reaches (the last snapshot under a roof)
+var _room := Room.new()            # the roofed squares last followed (room_fill)
+var _room_turn := -1               # the turn they were followed on
 static var _cover: Image
 
 
@@ -131,11 +136,18 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	for e in snap.player_effects:
 		asleep = asleep or e.get("id") == SLEEP_EFFECT
 	var next := WeatherState.from_snapshot(snap)
+	if next.sheltered:
+		var at := snap.player_pos
+		if at.z != _room.z or not _room.squares.has(Vector2i(at.x, at.y)) or snap.turn < _room_turn \
+				or snap.turn - _room_turn >= ROOM_TURNS:
+			_room = room_fill(snap)   # left the room (or a while passed): follow it again, not on every step
+			_room_turn = snap.turn
+		_room_m = _room.reach_m(at)
 	# The same weather as the last snapshot's (light and wind drift a little each turn): a blend toward it goes on.
 	var same_goal := _shown and _close(target, next)
 	target = next
 	if not _shown or blend_s <= 0.0:
-		_clear_m = INDOOR_CLEAR_M if target.sheltered else 0.0
+		_clear_m = indoor_clear_m()
 	if not _shown or blend_s <= 0.0 or (_blend_t >= 1.0 and _close(state, target)):
 		_blend_t = 1.0
 		state = target
@@ -347,8 +359,8 @@ func _set_sky(property: StringName, value: Variant) -> void:
 func _place_fog(delta: float) -> void:
 	if _env == null or not _env.fog_enabled:
 		return
-	_clear_m = move_toward(_clear_m, INDOOR_CLEAR_M if target.sheltered else 0.0,
-			delta * INDOOR_CLEAR_M / INDOOR_CLEAR_S)
+	var goal := indoor_clear_m()
+	_clear_m = move_toward(_clear_m, goal, delta * maxf(INDOOR_CLEAR_M, absf(goal - _clear_m)) / INDOOR_CLEAR_S)
 	var away := _clear_m
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
 	if cam != null:
@@ -358,6 +370,70 @@ func _place_fog(delta: float) -> void:
 		_env.fog_depth_begin = away
 		_env.fog_depth_end = end
 		_fog_to_pass()
+
+
+## How far out the fog starts around the player: past the room they are in (at least INDOOR_CLEAR_M) under a
+## roof, at the eyes outside.
+func indoor_clear_m() -> float:
+	return maxf(INDOOR_CLEAR_M, _room_m) if target.sheltered else 0.0
+
+
+## The roofed squares in sight that join the player's square on its level, followed 4-way at most ROOM_REACH
+## squares out (a room, a long hall, a warehouse); none when the player's square has no roof or isn't in sight.
+## Windows and doors to the open end it, so what lies outside stays in the fog.
+class Room:
+	var z := 1 << 20
+	var squares := {}            # Vector2i (absolute x, y) -> true
+	var lo := Vector2i.ZERO      # their bounds
+	var hi := Vector2i.ZERO
+
+	## How far it reaches from square `at`: to the far side of its bounds' farthest corner; 0 when empty.
+	func reach_m(at: Vector3i) -> float:
+		if squares.is_empty():
+			return 0.0
+		var far := Vector2(maxi(absi(at.x - lo.x), absi(hi.x - at.x)), maxi(absi(at.y - lo.y), absi(hi.y - at.y)))
+		return (far.length() + 1.0) * CddaCoords.TILE_M
+
+
+static func room_fill(snap: Snapshot) -> Room:
+	var room := Room.new()
+	var at := snap.player_pos
+	room.z = at.z
+	if not _roofed_in_sight(snap, at):
+		return room
+	var start := Vector2i(at.x, at.y)
+	room.squares[start] = true
+	room.lo = start
+	room.hi = start
+	var met := {start: true}
+	var todo: Array[Vector2i] = [start]
+	while not todo.is_empty():
+		var q: Vector2i = todo.pop_back()
+		for step: Vector2i in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]:
+			var n := q + step
+			if met.has(n) or absi(n.x - start.x) > ROOM_REACH or absi(n.y - start.y) > ROOM_REACH:
+				continue
+			met[n] = true
+			if _roofed_in_sight(snap, Vector3i(n.x, n.y, at.z)):
+				room.squares[n] = true
+				room.lo = room.lo.min(n)
+				room.hi = room.hi.max(n)
+				todo.append(n)
+	return room
+
+
+## How far the room around the player reaches from their square (room_fill, Room.reach_m).
+static func room_reach_m(snap: Snapshot) -> float:
+	return room_fill(snap).reach_m(snap.player_pos)
+
+
+static func _roofed_in_sight(snap: Snapshot, p: Vector3i) -> bool:
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(p))
+	if sm == null:
+		return false
+	var l := CddaCoords.ms_to_local(p)
+	var i := l.y * CddaCoords.SEEX + l.x
+	return sm.flags[i] & Snapshot.FLAG_ROOF != 0 and sm.vis[i] >= 2   # seen, or in sight but dark
 
 
 ## The cloud layer for the sky's cover (equirectangular, L8), made once: soft noise shapes on a flat layer overhead

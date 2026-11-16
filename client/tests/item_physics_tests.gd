@@ -91,6 +91,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hands_api()
 	_test_sync_cost()
 	_test_placer()
+	_test_shelf_rest()
 	_test_live_ops()
 	_bodies.clear()
 	var drawn := 0   # the pile's rocks drawn static again (one of the six was taken into the pack in _test_sync_cost)
@@ -673,14 +674,16 @@ class FakeBridge extends RefCounted:
 	var ops: Array[Dictionary] = []
 	var take := true
 
-	func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+	func place_item(uid: float, type: float, pos: Vector3i, to: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int,
+			shelf := -1) -> bool:
 		ops.append({"op": "place", "uid": int(uid), "type": int(type), "pos": pos, "to": to, "spot": spot, "yaw": yaw,
-				"side": side, "tag": tag})
+				"side": side, "tag": tag, "shelf": shelf})
 		return take
 
-	func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int) -> bool:
+	func spot_item(uid: float, type: float, pos: Vector3i, spot: Vector2, yaw: int, side: bool, tag: int,
+			shelf := -1) -> bool:
 		ops.append({"op": "spot", "uid": int(uid), "type": int(type), "pos": pos, "spot": spot, "yaw": yaw, "side": side,
-				"tag": tag})
+				"tag": tag, "shelf": shelf})
 		return take
 
 
@@ -768,6 +771,34 @@ static func _result(uid: int, tag: int, done: bool, text := "") -> Dictionary:
 
 ## Slices 3-4: ItemPlacer and the stand-in bridge. X and Y are two items lying next to the player, put on E first
 ## (the tests before this one moved things about).
+## L8 slice 2: a body resting on furniture's surface (the table's top) is on that shelf (WorldView.shelf_at), and
+## the spot op telling CDDA where it lies carries the shelf.
+func _test_shelf_rest() -> void:
+	var u := UID + 21   # the hammer on the table
+	var rb := _bodies.body_of(u)
+	var r0 := _bodies.rest_of(u)
+	_check.call(rb != null and r0.get("square") == TABLE and int(r0.get("shelf", -1)) >= 0,
+			"item placer: a body on the table rests on its shelf (%s)" % [r0])
+	if rb == null:
+		return
+	var fake := FakeBridge.new()
+	var placer := ItemPlacer.new()
+	_ms = 19_000_000
+	placer.clock = func() -> int: return _ms
+	placer.centre = func() -> Variant: return P
+	placer.bodies = _bodies
+	placer.backend = fake
+	_rest_at(u, TABLE, Vector2(0.3, 0.7))
+	var want: Variant = _world.shelf_at(rb.global_position).get("spot")   # the spot that draws it there
+	placer.update()
+	var op: Dictionary = fake.ops[-1] if not fake.ops.is_empty() else {}
+	_check.call(op.get("op") == "spot" and op.get("uid") == u and op.get("pos") == TABLE and op.get("shelf") == r0.get("shelf")
+			and want is Vector2 and (op.get("spot", Vector2.INF) as Vector2).distance_to(want) < 0.01,
+			"item placer: moved on the table: the spot op carries its shelf and the shelf's spot (%s, %s)" % [op, want])
+	placer.bodies = null
+	placer.free()
+
+
 func _test_placer() -> void:
 	var a := P + Vector3i(2, 0, 0)    # floor next to E
 	var b := P + Vector3i(0, 2, 0)    # floor two squares from A, by way of PILE

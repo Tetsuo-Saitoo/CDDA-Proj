@@ -448,14 +448,27 @@ func _repo(rel: String) -> String:
 ## dropped on the player's square, placed onto a square next to it with a pose (tried all 8 ways in one turn: a
 ## random start may have walls around; exactly one place may go through, as an item moves once a turn), its pose
 ## changed in place (spot), then refusals: a place from 3 squares out (by CDDA: a reason, never a log message) and
-## places LiveSession refuses itself (nothing sent). Returns the main-loop request it ends on ({} if the game stopped).
+## places LiveSession refuses itself (nothing sent). A dropped item CDDA won't move by hand at all (a drink's liquid,
+## taken out of its bottle: every way refused for the same reason) stays where it fell, and the next carried item is
+## tried. Returns the main-loop request it ends on ({} if the game stopped).
 func _check_item_physics(req: Dictionary) -> Dictionary:
 	var live := LiveSession.new()
 	live._sim = _sim   # only its item calls are used; outside the tree it drains nothing, so _drain() still sees all
 	var snap := Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
 	var me := snap.player_pos
-	# 1. Drop: the first loose carried item (in a pocket, not worn or held, holding nothing) CDDA lets go of.
-	var dropped := {}
+	var ways: Array[Vector3i] = [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+			Vector3i(1, 1, 0), Vector3i(-1, -1, 0), Vector3i(1, -1, 0), Vector3i(-1, 1, 0)]
+	var uid := 0
+	var type := 0
+	var drops := 0
+	var sent := 0
+	var waited := false
+	var done: Array[int] = []
+	var refused_ok := false
+	var log_before := 0
+	var passed_over: Array[String] = []   # items no way took: "itype: reason"
+	# 1. Drop the first loose carried item (in a pocket, not worn or held, holding nothing) CDDA lets go of; 2. place
+	# it onto a next square with a pose: one of the 8 goes through, the rest are refused (it has moved on).
 	for c in _loose_carried(snap).slice(0, 6):
 		_item_results.clear()
 		if not (_sim.queue_item_action({"op": "drop", "item": c[0], "type": c[1], "pos": me, "tag": 101})
@@ -463,41 +476,51 @@ func _check_item_physics(req: Dictionary) -> Dictionary:
 			break
 		req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
 		if req.is_empty():
-			break
+			live.free()
+			return req
+		var dropped := {}
 		if _result(101).get("amount", 0) == 1:
 			dropped = _handle(Snapshot.parse_text(_sim.get_snapshot_json(0, 0)), c[0], c[1], me)
+		if dropped.is_empty():
+			continue
+		drops += 1
+		uid = dropped["uid"]
+		type = dropped["type"]
+		_item_results.clear()
+		log_before = _messages.size()
+		sent = 0
+		for i in ways.size():
+			sent += int(live.place_item(float(uid), float(type), me, me + ways[i], Vector2(0.3, 0.6), 90, true, 11 + i))
+		waited = _sim.queue_action("pause")
+		if not waited:
 			break
-	_check(not dropped.is_empty(), "item physics: a carried item dropped on the player's square (%s)" % dropped)
-	if dropped.is_empty():
+		req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+		if req.is_empty():
+			live.free()
+			return req
+		done.clear()
+		refused_ok = true
+		var reasons := {}
+		for i in ways.size():
+			var r := _result(11 + i)
+			if r.get("amount", -1) == 1:
+				done.append(i)
+			elif r.get("amount", -1) != 0 or str(r.get("text", "")).is_empty() or int(r.get("uid", 0)) != uid:
+				refused_ok = false
+			else:
+				reasons[str(r["text"])] = true
+		if not done.is_empty() or reasons.size() != 1 or sent != ways.size() or not refused_ok:
+			break
+		passed_over.append("%d: %s" % [type, reasons.keys()[0]])
+	_check(drops > 0, "item physics: a carried item dropped on the player's square (%d dropped)" % drops)
+	if drops == 0:
 		live.free()
 		return req
-	var uid: int = dropped["uid"]
-	var type: int = dropped["type"]
-	# 2. Place onto a next square with a pose: one of the 8 goes through, the rest are refused (it has moved on).
-	var ways: Array[Vector3i] = [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0),
-			Vector3i(1, 1, 0), Vector3i(-1, -1, 0), Vector3i(1, -1, 0), Vector3i(-1, 1, 0)]
-	_item_results.clear()
-	var log_before := _messages.size()
-	var sent := 0
-	for i in ways.size():
-		sent += int(live.place_item(float(uid), float(type), me, me + ways[i], Vector2(0.3, 0.6), 90, true, 11 + i))
 	_check(sent == ways.size(), "item physics: LiveSession.place_item sends a place each way (%d)" % sent)
-	_check(_sim.queue_action("pause"), "item physics: a wait queued after the places")
-	req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
-	if req.is_empty():
-		live.free()
-		return req
-	var done: Array[int] = []
-	var refused_ok := true
-	for i in ways.size():
-		var r := _result(11 + i)
-		if r.get("amount", -1) == 1:
-			done.append(i)
-		elif r.get("amount", -1) != 0 or str(r.get("text", "")).is_empty() or int(r.get("uid", 0)) != uid:
-			refused_ok = false
+	_check(waited, "item physics: a wait queued after the places")
 	_check(_item_results.size() == ways.size() and done.size() == 1 and refused_ok,
-			"item physics: one item_result per place, exactly one done, the others refused with a reason (%s)"
-			% [_item_results])
+			("item physics: one item_result per place, exactly one done, the others refused with a reason "
+			+ "(%s; passed over %s)") % [_item_results, passed_over])
 	if done.size() != 1:
 		live.free()
 		return req
