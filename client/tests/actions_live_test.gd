@@ -6,7 +6,8 @@ extends SceneTree
 ## answer with a message instead (CDDA's "nothing to ..."): that is reported, not failed, except for the keys whose
 ## list or direction prompt is sure (KEYS). Last, F1 in the game: a free key goes in inventory's next key slot by
 ## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
-## key opens the inventory. Uses this run's own CDDA folder, never the player's saves.
+## key opens the inventory. Then the screen HUD: body bars, needs, move line and message feed from the live game.
+## Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -105,6 +106,7 @@ func _run() -> void:
 			break
 	if _live.state == "running":
 		await _rebind_live(&"cdda_inventory")
+		_hud_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -149,6 +151,26 @@ func _rebind_live(action: StringName) -> void:
 	_check(not km.visible, "Esc closes the key menu")
 	await _try_key(action, "list", key)
 	InputActions.set_slots(action, old)
+
+
+## The screen HUD (main's HudView) in the live game: body bars, needs and the move line from CDDA's snapshot, and
+## the message feed from its events (the keys above made CDDA say "nothing ... nearby").
+func _hud_live() -> void:
+	var v := _main.hud_view
+	var rows := v.body_rows()
+	var fracs := not rows.is_empty()
+	for r: Array in rows:
+		fracs = fracs and float(r[1]) >= 0.0 and float(r[1]) <= 1.0
+	_check(rows.size() >= 6 and fracs, "HUD: %d body bars from the live game (%s ...)" % [rows.size(), rows.slice(0, 2)])
+	_check(not v.need_lines().is_empty() and not v.move_line().is_empty(),
+			"HUD: needs and the move line (%s; %s)" % [", ".join(v.need_lines()), v.move_line()])
+	var said := false
+	for m: Dictionary in _main.hud_data.messages:
+		said = said or str(m["text"]).contains("nothing that can be examined")
+	var feed := v.feed.text.split("\n")
+	var last: String = _main.hud_data.messages.back()["text"] if not _main.hud_data.messages.is_empty() else ""
+	_check(said and not last.is_empty() and feed[feed.size() - 1] == last,
+			"HUD: CDDA's messages reach the feed, newest last (\"%s\")" % last)
 
 
 ## Presses `action`'s key (`ev`, else its first binding) in the main loop; CDDA's answer must show (and be the

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Screen HUD checked in a live game, headless (`actions_live_test`: body bars, needs, move line and CDDA's messages in the feed). HUD-in-view notes brought up to date (VR panel and wrist parts are done).
 - 2026-11-15 — F1 rebinding tried in a live game, headless: `actions_live_test` gives inventory a new key through the menu (saved in the test run's folder, not the player's) and that key opens the list. Keys notes brought up to date.
 - 2026-11-15 — CDDA action keys' menus tried in a live game, headless: new `tests/actions_live_test.gd` presses 17 action keys in the test range; every list and direction prompt shows and Esc cancels it. Passes.
 - 2026-11-15 — HUD warnings no longer lie over the developer status lines: they move just under them while they would overlap (no lower than the screen's bottom), else stay under the compass. Client tests pass.
