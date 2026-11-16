@@ -38,10 +38,11 @@ var hurt_check: CheckBox
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
-## G7 options (HudSettings look_speed, invert_y, fov, render_scale, ui_scale, fullscreen, vsync).
+## G7 options (HudSettings look_speed, invert_y, fov, render_scale, ui_scale, fullscreen, vsync, weather_quality).
 var look_slider: HSlider
 var invert_check: CheckBox
 var ui_slider: HSlider
+var weather_pick: OptionButton
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -253,6 +254,18 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 			settings.fullscreen)
 	vsync_check = _option_check(disp_row, "Vsync", "Waits for the screen: no tearing. Off can be faster but tears.",
 			&"vsync", settings.vsync)
+	var wl := Label.new()
+	wl.text = "Weather"
+	disp_row.add_child(wl)
+	weather_pick = OptionButton.new()
+	for n: String in WeatherView.QUALITY_NAMES:   # index = WeatherView.MINIMAL, LOW, HIGH
+		weather_pick.add_item(n.capitalize())
+	weather_pick.tooltip_text = ("How much rain, snow and cloud is drawn. Low and Minimal are lighter on the GPU; the "
+			+ "darker light, the fog and the sound stay.")
+	weather_pick.focus_mode = Control.FOCUS_NONE
+	weather_pick.select(clampi(settings.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
+	weather_pick.item_selected.connect(func(i: int) -> void: set_option(&"weather_quality", i))
+	disp_row.add_child(weather_pick)
 	_box.add_child(disp_row)
 	_box.move_child(disp_row, 4)
 	_show_compass_value()
@@ -290,7 +303,8 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
-	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync"]:
+	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
+			&"weather_quality"]:
 		return
 	hud.set(key, v)
 	_show_options()
@@ -425,6 +439,7 @@ func open() -> void:
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
 		ui_slider.set_value_no_signal(hud.ui_scale)
+		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()

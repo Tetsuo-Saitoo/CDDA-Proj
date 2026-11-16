@@ -44,6 +44,9 @@ var render_scale := 1.0
 var fullscreen := false
 var vsync := true
 var ui_scale := 1.0
+## lead-world's weather detail (WeatherView.quality: MINIMAL, LOW, HIGH), flat screen and headset alike. Saved as
+## [weather] quality; anything but a whole number leaves HIGH, a number out of range is clamped.
+var weather_quality := WeatherView.HIGH
 
 
 static func clamp_opacity(v: float) -> float:
@@ -108,6 +111,8 @@ func load_file(path := FILE) -> String:
 	var vs: Variant = cfg.get_value("display", "vsync", true)
 	vsync = vs if vs is bool else true
 	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
+	var wq: Variant = cfg.get_value("weather", "quality", WeatherView.HIGH)
+	weather_quality = clampi(wq, WeatherView.MINIMAL, WeatherView.HIGH) if wq is int else WeatherView.HIGH
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -133,4 +138,5 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("display", "fullscreen", fullscreen)
 	cfg.set_value("display", "vsync", vsync)
 	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
+	cfg.set_value("weather", "quality", clampi(weather_quality, WeatherView.MINIMAL, WeatherView.HIGH))
 	return cfg.save(path)

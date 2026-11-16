@@ -1446,6 +1446,7 @@ func _setup_hud() -> void:
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
+	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
 	_apply_options()
 	_apply_ui_scale()
@@ -1492,6 +1493,7 @@ func _setup_hud() -> void:
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
+		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash
 		_apply_options())
