@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — F1 rebinding tried in a live game, headless: `actions_live_test` gives inventory a new key through the menu (saved in the test run's folder, not the player's) and that key opens the list. Keys notes brought up to date.
 - 2026-11-15 — CDDA action keys' menus tried in a live game, headless: new `tests/actions_live_test.gd` presses 17 action keys in the test range; every list and direction prompt shows and Esc cancels it. Passes.
 - 2026-11-15 — HUD warnings no longer lie over the developer status lines: they move just under them while they would overlap (no lower than the screen's bottom), else stay under the compass. Client tests pass.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.

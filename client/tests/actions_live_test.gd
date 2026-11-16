@@ -4,7 +4,9 @@ extends SceneTree
 ## widget for its kind, and Esc must cancel it back to the main loop with the game still running. The lists get
 ## things to list first: the test kit and a few items at the feet. A key whose action finds nothing to work on may
 ## answer with a message instead (CDDA's "nothing to ..."): that is reported, not failed, except for the keys whose
-## list or direction prompt is sure (KEYS). Uses this run's own CDDA folder, never the player's saves.
+## list or direction prompt is sure (KEYS). Last, F1 in the game: a free key goes in inventory's next key slot by
+## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
+## key opens the inventory. Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -57,6 +59,7 @@ func _run() -> void:
 	_main.cdda_user_dir = TestDir.global("cdda-actions")
 	root.add_child(_main)
 	await process_frame
+	_main.key_menu.save_path = TestDir.path("keys.json")   # a key set in F1 here never reaches the player's file
 	_live = _main.live
 	_cp = _main.cheat_panel
 	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
@@ -100,6 +103,8 @@ func _run() -> void:
 		if _live.state != "running":
 			_check(false, "the game stopped after %s (%s %s)" % [k[0], _live.state, _live.error])
 			break
+	if _live.state == "running":
+		await _rebind_live(&"cdda_inventory")
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -107,10 +112,50 @@ func _run() -> void:
 	_finish()
 
 
-## Presses `action`'s key in the main loop; CDDA's answer must show (and be the `want` kind, when set), and Esc
-## must bring the game back to its main loop.
-func _try_key(action: StringName, want: String) -> void:
-	var ev := _key_of(action)
+## F1 in the game, then a free key put in `action`'s next key slot by its button in the menu (saved to this run's
+## folder), Esc closes the menu, and the new key does the action in the game.
+func _rebind_live(action: StringName) -> void:
+	var km := _main.key_menu
+	var key: InputEventKey = null
+	for code: Key in [KEY_SEMICOLON, KEY_APOSTROPHE, KEY_F8, KEY_F9, KEY_K]:
+		var k := InputEventKey.new()
+		k.keycode = code
+		k.physical_keycode = code
+		k.pressed = true
+		if InputActions.users_of(InputActions.binding_from(k)).is_empty():
+			key = k
+			break
+	if key == null:
+		_check(false, "F1: a free key to bind")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	var old := InputActions.slots(action)
+	var f1 := InputEventKey.new()
+	f1.keycode = InputActions.MENU_KEY
+	f1.physical_keycode = InputActions.MENU_KEY
+	f1.pressed = true
+	root.push_input(f1)
+	_check(km.visible, "F1 opens the key menu in the live game")
+	(km._buttons[action][mini(old.size(), KeyMenu.SLOTS - 1)] as Button).pressed.emit()
+	root.push_input(key)
+	var t := InputActions.event_text(InputActions.binding_from(key))
+	var bound := false
+	for e in InputActions.slots(action):
+		bound = bound or InputActions.event_text(e) == t
+	_check(bound and FileAccess.file_exists(km.save_path) and km._status.text.begins_with(InputActions.info(action)[2] + ": "),
+			"F1: %s bound to %s, saved in this run's folder (%s)" % [action, t, km._status.text])
+	root.push_input(_esc_key())
+	_check(not km.visible, "Esc closes the key menu")
+	await _try_key(action, "list", key)
+	InputActions.set_slots(action, old)
+
+
+## Presses `action`'s key (`ev`, else its first binding) in the main loop; CDDA's answer must show (and be the
+## `want` kind, when set), and Esc must bring the game back to its main loop.
+func _try_key(action: StringName, want: String, ev: InputEventKey = null) -> void:
+	if ev == null:
+		ev = _key_of(action)
 	var label := "%s (%s)" % [action, ev.as_text() if ev != null else "no key"]
 	if ev == null:
 		_check(false, label + ": has a key")
