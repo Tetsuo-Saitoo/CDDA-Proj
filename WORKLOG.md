@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — L8: a VR grip inside an open drawer takes the item lying there, not the drawer (furniture parts count from their handle once the hand is inside them).
 - 2026-11-15 — VR checks in a real session: `--vr-check=<scenarios>` (VrCheck) and `tools/vr/vr_check.sh` under SteamVR's null headset; the bug report's picture now renders the head's view with a plain camera (the XR view can't be read back), checked there. L8 slice plan agreed with lead-world (placeholder furniture parts) and lead-bridge (furniture open/close, closed containers, shelf, bag contents, piles).
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
 - 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.
