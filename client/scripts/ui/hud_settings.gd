@@ -47,6 +47,10 @@ var ui_scale := 1.0
 ## lead-world's weather detail (WeatherView.quality: MINIMAL, LOW, HIGH), flat screen and headset alike. Saved as
 ## [weather] quality; anything but a whole number leaves HIGH, a number out of range is clamped.
 var weather_quality := WeatherView.HIGH
+## G7: the game's loudness, 0 (silent) .. 1 (as made), on the Master bus where every sound plays. Saved as [sound]
+## volume, clamped like the other numbers.
+const VOLUMES := Vector2(0.0, 1.0)
+var volume := 1.0
 
 
 static func clamp_opacity(v: float) -> float:
@@ -113,6 +117,7 @@ func load_file(path := FILE) -> String:
 	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
 	var wq: Variant = cfg.get_value("weather", "quality", WeatherView.HIGH)
 	weather_quality = clampi(wq, WeatherView.MINIMAL, WeatherView.HIGH) if wq is int else WeatherView.HIGH
+	volume = clamp_to(cfg.get_value("sound", "volume", 1.0), VOLUMES, 1.0)
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -139,4 +144,5 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("display", "vsync", vsync)
 	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
 	cfg.set_value("weather", "quality", clampi(weather_quality, WeatherView.MINIMAL, WeatherView.HIGH))
+	cfg.set_value("sound", "volume", snappedf(clamp_to(volume, VOLUMES, 1.0), 0.01))
 	return cfg.save(path)

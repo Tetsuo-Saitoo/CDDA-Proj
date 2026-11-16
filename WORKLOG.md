@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
