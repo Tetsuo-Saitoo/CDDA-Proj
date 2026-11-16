@@ -135,10 +135,20 @@ func _test_mouse() -> void:
 	_hands.release("mouse", {})
 	_check.call(grabbed and dr.open_amount() > 0.99 and not _world.item_slot(rock).is_empty() and _hands.holding("mouse").is_empty(),
 			"loot: mouse: drag a drawer out; what it holds shows (%.2f open)" % dr.open_amount())
-	t = _hands.find_on_ray(eye, _mid(rock) - eye)
+	var at := _mid(rock)
+	t = _hands.find_on_ray(eye, at - eye)
 	_check.call(_uid(t) == rock, "loot: mouse: the crosshair on an item in an open drawer finds the item (%s)" % [t.get("kind")])
 	_check.call(_uid(t) == rock and _hands.take("mouse", t, "pack") and _carried(rock) and _handle(E, _it["rock"]) != rock,
 			"loot: mouse: E takes it out of the drawer into the pack")
+	# slice 2: the crosshair on the open drawer's floor puts it back on that drawer's shelf; shut, it's no shelf
+	var held := ItemRef.on_player(rock, _it["rock"], 0, -1, 0, P)
+	var d := _hands.drop_on_ray(eye, at - eye, held)
+	_check.call(d["kind"] == "surface" and d["square"] == E and int(d["shelf"]) >= 0,
+			"loot: mouse: the crosshair on the open drawer's floor puts it back on its shelf (%s)" % [d])
+	dr.set_amount(0.0)
+	d = _hands.drop_on_ray(eye, at - eye, held)
+	_check.call(int(d["shelf"]) == -1, "loot: mouse: a shut drawer is no shelf (%s)" % [d])
+	dr.set_amount(1.0)
 
 
 ## VR: a hand at the handle grabs the drawer and pulls it; a grip inside the open drawer takes the hammer into the
