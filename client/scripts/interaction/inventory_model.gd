@@ -13,7 +13,8 @@ extends RefCounted
 ##   "nearby"  ground items on the squares in reach, grouped by square (key = Vector3i; "here" always listed).
 ## A column: {id, kind ("hands" | "worn" | "loose" | "nearby"), title, container (ItemRef, worn only, else null),
 ##   square (Vector3i: the reach square for "nearby", else the player's), groups: [{key, title, rows, weight_g,
-##   volume_ml}], weight_g, volume_ml (everything listed in it, nested items too), rows (rows kept), cut (rows left
+##   volume_ml, used_ml (its direct contents only: what takes room in the pocket), max_ml and max_g (a worn
+##   container's pocket limits from the id tables, 0 when not known)}], weight_g, volume_ml (everything listed in it, nested items too), rows (rows kept), cut (rows left
 ##   out by MAX_ROWS)}.
 ## A row: {uid, item (ItemRef), name, weight_g, volume_ml (one item of the itype; a stack counts as one), pending
 ##   (an action is in flight), depth (0 = right in the group; 1 = inside a carried container listed above it ...),
@@ -122,7 +123,8 @@ static func _column(id: String, kind: String, title: String, square: Vector3i) -
 
 
 static func _group(col: Dictionary, key: Variant, title: String) -> Dictionary:
-	var g := {"key": key, "title": clean(title, MAX_TITLE), "rows": [], "weight_g": 0, "volume_ml": 0}
+	var g := {"key": key, "title": clean(title, MAX_TITLE), "rows": [], "weight_g": 0, "volume_ml": 0, "used_ml": 0,
+			"max_ml": 0, "max_g": 0}
 	(col["groups"] as Array).append(g)
 	return g
 
@@ -152,9 +154,24 @@ static func _worn_column(c: ItemRef, kids: Dictionary, tables: IdTables, actions
 	for p: int in pockets:
 		var g := _group(col, p, pocket_title(known[p], p) if p >= 0 and p < known.size()
 				else ("pocket %d" % (p + 1) if p >= 0 else "pocket ?"))
+		if p >= 0 and p < known.size():
+			g["max_ml"] = clampi(int(known[p].get("volume_ml", 0)), 0, MAX_ITEM)
+			g["max_g"] = clampi(int(known[p].get("max_weight_g", 0)), 0, MAX_ITEM)
 		for r: ItemRef in by_pocket[p]:
 			_add_tree(col, g, r, 0, kids, tables, actions, seen)
 	return col
+
+
+## How full a group's pocket is, 0..1 and past 1 when over: the fuller of its room (used_ml / max_ml) and its weight
+## limit (weight_g / max_g); -1 when it has no known limit. Counted from item types (a stack counts as one item),
+## so it can read low.
+static func fill(g: Dictionary) -> float:
+	var out := -1.0
+	if int(g.get("max_ml", 0)) > 0:
+		out = float(g.get("used_ml", 0)) / float(g["max_ml"])
+	if int(g.get("max_g", 0)) > 0:
+		out = maxf(out, float(g.get("weight_g", 0)) / float(g["max_g"]))
+	return out
 
 
 ## A pocket heading from its id tables entry: "holster (max 1.00 L, 2.00 kg)"; the name when sent, else
@@ -223,7 +240,10 @@ static func _add_tree(col: Dictionary, g: Dictionary, r: ItemRef, depth: int, ki
 	if seen.has(r.uid) or depth > MAX_DEPTH:
 		return
 	seen[r.uid] = true
-	_add_row(col, g, _row(r, depth, tables, actions, kids.has(r.uid)))
+	var row := _row(r, depth, tables, actions, kids.has(r.uid))
+	if depth == 0:   # what is nested sits inside this one's room
+		g["used_ml"] = mini(int(g["used_ml"]) + int(row["volume_ml"]), MAX_ITEM)
+	_add_row(col, g, row)
 	for c: ItemRef in kids.get(r.uid, []):
 		_add_tree(col, g, c, depth + 1, kids, tables, actions, seen)
 

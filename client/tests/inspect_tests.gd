@@ -242,6 +242,17 @@ func _test_model() -> void:
 			and sack["volume_ml"] == ml.call("bottle_plastic") + ml.call("water_clean") + ml.call("rock")
 			and sack["rows"] == 3 and sack["cut"] == 0, "inspect: totals in g and ml per pocket and column (%d g, %d ml)"
 			% [sack["weight_g"], sack["volume_ml"]])
+	_check.call(p1["used_ml"] == ml.call("bottle_plastic") and p0["used_ml"] == ml.call("rock")
+			and InventoryModel.fill(p0) == -1.0, "inspect: a pocket's room counts only what is right in it (the water is "
+			+ "inside the bottle); no known limit, no fill (%d ml)" % p1["used_ml"])
+	var half := InventoryModel.fill({"used_ml": 250, "max_ml": 1000, "weight_g": 1500, "max_g": 2000})
+	var over := InventoryModel.fill({"used_ml": 1500, "max_ml": 1000, "weight_g": 0, "max_g": 0})
+	var bar := InspectView._fill_bar(over)
+	var tip := InspectView._fill_tip({"used_ml": 250, "max_ml": 1000, "weight_g": 1500, "max_g": 2000})
+	_check.call(is_equal_approx(half, 0.75) and is_equal_approx(over, 1.5) and bar.value == 1.0
+			and tip.begins_with("About 250 ml of 1.00 L, 1.50 kg of 2.00 kg used."),
+			"inspect: pocket fill is the fuller of room and weight; the bar stops at full (%s, %s)" % [half, tip])
+	bar.free()
 	var near := InventoryModel.find_column(cols, "nearby")
 	var here := _group(near, P)
 	var east := _group(near, E)

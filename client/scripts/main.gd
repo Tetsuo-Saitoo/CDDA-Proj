@@ -741,9 +741,13 @@ func _on_game_over(s: String) -> void:
 	_back_to_menu.call_deferred(said[0], said[1])
 
 
-## What the main menu says after a game: [text, ok]. `error` is LiveSession.error (CDDA's reason, plain text).
+## What the main menu says after a game: [text, ok]. `error` is LiveSession.error (CDDA's reason, plain text). A
+## cancelled character creation or world setup is no error: just the menu ("character creation cancelled" was the
+## bridge's word for it before the "cancelled" ending).
 static func game_over_text(state: String, error: String) -> Array:
 	match error:
+		"cancelled", "character creation cancelled":
+			return ["", false]
 		"saved and quit":
 			return ["Game saved.", true]
 		"the character died":
