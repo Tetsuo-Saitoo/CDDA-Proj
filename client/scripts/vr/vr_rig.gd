@@ -1328,12 +1328,34 @@ func report_bug() -> void:
 		await get_tree().process_frame
 	if not is_inside_tree():
 		return
-	var tex := get_viewport().get_texture()
-	var path := VrReport.save(body, tex.get_image() if tex != null else null)
+	var shot := await view_image()
+	if not is_inside_tree():
+		return
+	var path := VrReport.save(body, shot)
 	var i := 0 if settings["main_hand"] == "left" else 1
 	say(i, "Bug report saved: send the bug_reports folder" if not path.is_empty() else "The bug report couldn't be saved")
 	feel(main_ctrl())
 	print("VR bug report: " + (path if not path.is_empty() else "not saved"))   # user://: no account name in the log
+
+
+## A picture of what the head sees (1280x720): the XR view itself can't be read back, so a plain camera at the
+## head's pose renders the same scene once (as main.gd's --screenshot). Null when it couldn't be made.
+func view_image() -> Image:
+	var sv := SubViewport.new()
+	sv.size = Vector2i(1280, 720)
+	sv.render_target_update_mode = SubViewport.UPDATE_ONCE
+	var cam := Camera3D.new()
+	cam.fov = 90.0
+	sv.add_child(cam)
+	add_child(sv)
+	cam.global_transform = camera.global_transform
+	cam.current = true
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var img: Image = sv.get_texture().get_image() if is_instance_valid(sv) else null
+	if is_instance_valid(sv):
+		sv.queue_free()
+	return img
 
 
 ## The menu sent a range op: a teleport remembers where the player stands now.

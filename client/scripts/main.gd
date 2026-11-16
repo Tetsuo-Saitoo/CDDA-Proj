@@ -251,6 +251,12 @@ func _ready() -> void:
 		_open_key_menu()
 	if _args.has("screenshot"):
 		_screenshot_and_quit(_args["screenshot"])
+	if _args.has("vr-check") and vr != null:   # automated checks in a real VR session (VrCheck)
+		var vc := VrCheck.new()
+		vc.rig = vr
+		vc.quit = _quit
+		add_child(vc)
+		vc.run(str(_args["vr-check"]))
 
 
 ## A file of the repo (cdda/, assets/, contracts/). An exported game (the AppImage) has them next to its executable.
