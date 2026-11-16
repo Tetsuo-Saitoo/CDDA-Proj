@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Bridge, L8 slice 1: `CddaSim.queue_action_at(action, square)` makes CDDA's adjacent-square prompt (open, close, examine) take exactly the client's square, never the only other one CDDA would auto-pick; sim test checks furniture open/close and what a closed container shows from 1 and 2 squares.
 - 2026-11-15 — Bridge: the fork's version string is refreshed on every build (incremental builds reported an old rev); `fp3d::interrupt()` now also stops auto-travel, is refused while nothing runs, and a stray one no longer stops a later activity; `CddaSim.interrupt()` returns bool. Sim test checks all three.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
 - 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.

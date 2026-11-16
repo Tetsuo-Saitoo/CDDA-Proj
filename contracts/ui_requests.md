@@ -140,7 +140,9 @@ request's `actions`) at any time, up to 32 (`queue_action` returns false when fu
 request before waiting, under the lock that posts the request, so the client only ever sees a timed request when
 the queue is empty. Nothing is taken while paused. An action that isn't valid there is dropped with a `message`
 event ("Can't do that here: …"). Auto-pause clears the queue. Menus and other untimed requests are still answered
-with `answer()`. Asking again after a bad answer keeps the request `timed` (fixed in B5: it used to lose the flag).
+with `answer()`. `queue_action_at(action, square)` queues an action for one square next to the player: CDDA's
+adjacent-square prompt (open, close, examine, ...) takes that square and asks nothing, or does nothing with its
+"nothing ... nearby" message when it doesn't allow it there; it is dropped when the main loop next waits. Asking again after a bad answer keeps the request `timed` (fixed in B5: it used to lose the flag).
 
 Threads: the sim runs on its own thread; the client polls `wait_request( 0 )`, `latest_snapshot()` and
 `drain_events()` from its frame loop and never blocks. All of them are mutex-guarded handoffs.
