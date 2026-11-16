@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Inventory (Tab view): each worn bag's pocket shows how full it is as a thin bar, red when full. Client tests pass.
 - 2026-11-16 — Back to the main menu after a game: death, CDDA's save and quit (new F1 button) or a failure brings the menu back with a message, and the next game starts from it with nothing left from the last. Two games in a row checked live; client tests pass.
 - 2026-11-16 — Character screen: a new turn with nothing changed no longer rebuilds it, and a change redraws only its card (no frame spikes on a big modded sheet). Client tests pass.
 - 2026-11-16 — Shift+E checked live: the held water is drunk with no menu, and a non-food is refused with CDDA's words in the feed. A consume is now judged by the bridge's tagged result, so a sip no longer times out as "That didn't work.". Client and live tests pass.
