@@ -12,6 +12,7 @@
 - 2026-11-16 — Cancelling character creation now just goes back to the main menu, without a red error. Checked live with death and abandon too; client tests pass.
 - 2026-11-16 — Inventory and character screen show what you carry against what you can carry (weight and volume, from the game), with bars in the Tab view. Checked live; client tests pass.
 - 2026-11-16 — Number prompts (how many to drop, and the like) get their own field: type a number or step it with Up / Down or -1 / +1, kept within the game's range. Client tests pass; live check waits for the bridge side.
+- 2026-11-16 — Number prompts checked in the real game: setting hunger through the debug menu with the new field works. Live test passes.
 - 2026-11-16 — Character screen: a new turn with nothing changed no longer rebuilds it, and a change redraws only its card (no frame spikes on a big modded sheet). Client tests pass.
 - 2026-11-16 — Shift+E checked live: the held water is drunk with no menu, and a non-food is refused with CDDA's words in the feed. A consume is now judged by the bridge's tagged result, so a sip no longer times out as "That didn't work.". Client and live tests pass.
 - 2026-11-16 — Character screen reads the game's sheet (G4): stats, skills with theory levels, encumbrance with layering, speed, traits, bionics come from the bridge's character query, asked on open and each turn while shown. Client tests pass; live check waits for the bridge merge.
