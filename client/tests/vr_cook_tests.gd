@@ -78,6 +78,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_head = Node3D.new()
 	_head.position = Vector3(5.5, 1.6, 5.5)
 	root.add_child(_head)
+	_test_ops()
 	_test_texts()
 	_test_cards()
 	_test_queries()
@@ -159,6 +160,54 @@ func _water_in() -> Array:
 
 
 # --- tests ---
+
+## The bridge's L9 ops through LiveSession (lead-ui's OK): cook (also going on with a paused craft), light (with a
+## firestarter or CDDA's pick), extinguish, and pour from a pot; bad handles, squares, recipes, batches and tags send
+## nothing.
+func _test_ops() -> void:
+	var me := Vector3i(5, 5, 0)
+	var ls := LiveSession.new()
+	var off := ls.cook_item(7.0, 3.0, me, "soup")
+	var sim := OpSim.new()
+	ls._sim = sim
+	var e := me + Vector3i(1, 0, 0)
+	var ok: Array = [ls.cook_item(7.0, 3.0, e, "soup_veggy", 2), ls.cook_item(7.0, 3.0, e, "soup_veggy", 1, 9),
+			ls.light_fire(e, me), ls.light_fire(e, me, 11.0, 5.0, 12), ls.extinguish_fire(me, me), ls.extinguish_fire(e, me, 13),
+			ls.pour_item(7.0, 3.0, me), ls.pour_into(7.0, 3.0, 8.0, 4.0, 0)]
+	_check.call(not off and not ok.has(false) and sim.sent == [
+			{"op": "cook", "item": 7, "type": 3, "pos": e, "recipe": "soup_veggy", "batch": 2},
+			{"op": "cook", "item": 7, "type": 3, "pos": e, "recipe": "soup_veggy", "batch": 1, "tag": 9},
+			{"op": "light", "pos": e}, {"op": "light", "pos": e, "item": 11, "type": 5, "tag": 12},
+			{"op": "extinguish", "pos": me}, {"op": "extinguish", "pos": e, "tag": 13},
+			{"op": "pour", "item": 7, "type": 3, "pos": me},
+			{"op": "pour", "item": 7, "type": 3, "container": 8, "container_type": 4, "pocket": 0}],
+			"vr cook: LiveSession sends cook, light, extinguish and pour as the bridge takes them (%s)" % [sim.sent])
+	var far := me + Vector3i(2, 0, 0)
+	var bad: Array = [ls.cook_item(7.5, 3.0, e, "soup"), ls.cook_item(NAN, 3.0, e, "soup"), ls.cook_item(7.0, 0.0, e, "soup"),
+			ls.cook_item(7.0, 3.0, e, ""), ls.cook_item(7.0, 3.0, e, "soup veggy"), ls.cook_item(7.0, 3.0, e, "soup\"x"),
+			ls.cook_item(7.0, 3.0, e, "soup\\x"), ls.cook_item(7.0, 3.0, e, "sopa_\u00f1"), ls.cook_item(7.0, 3.0, e, "x".repeat(129)),
+			ls.cook_item(7.0, 3.0, e, "soup\n"), ls.cook_item(7.0, 3.0, e, "soup", 0), ls.cook_item(7.0, 3.0, e, "soup", 21),
+			ls.cook_item(7.0, 3.0, e, "soup", 1, -1), ls.cook_item(7.0, 3.0, e, "soup", 1, LiveSession.MAX_ITEM_TAG + 1),
+			ls.cook_item(7.0, 3.0, Vector3i(1 << 30, 0, 0), "soup"),
+			ls.light_fire(me, me), ls.light_fire(far, me), ls.light_fire(e + Vector3i(0, 0, 1), me), ls.light_fire(e, me, 11.0),
+			ls.light_fire(e, me, -1.0, 5.0), ls.light_fire(e, me, 0.0, 5.0), ls.light_fire(e, me, 11.0, 5.0, -2),
+			ls.extinguish_fire(far, me), ls.extinguish_fire(me + Vector3i(0, 0, 1), me), ls.extinguish_fire(e, me, -1),
+			ls.pour_item(0.0, 3.0, me), ls.pour_item(7.0, INF, me), ls.pour_into(7.0, 3.0, 7.0, 3.0),
+			ls.pour_into(7.0, 3.0, 8.5, 4.0), ls.pour_into(7.0, 3.0, 8.0, 4.0, -2), ls.pour_into(7.0, 3.0, 8.0, 4.0, 256)]
+	_check.call(not bad.has(true) and sim.sent.size() == 8,
+			"vr cook: bad handles, squares, recipe ids, batches, tags and pockets send nothing (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+
+
+## A stand-in for CddaSim's queue_item_action: records what it is given.
+class OpSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_item_action(d: Dictionary) -> bool:
+		sent.append(d.duplicate())
+		return true
+
 
 func _test_texts() -> void:
 	_check.call(VrCook.heat_text({"source": 1, "tool": _plate, "fire": 0, "charges": 120, "lit": true}, _tables)
