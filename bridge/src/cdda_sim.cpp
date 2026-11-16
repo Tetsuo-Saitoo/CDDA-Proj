@@ -530,6 +530,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::spot;
     } else if( op == "hold" ) {
         a.op = fp3d::item_op::hold;
+    } else if( op == "consume" ) {
+        a.op = fp3d::item_op::consume;
     } else {
         return false;
     }
@@ -608,6 +610,11 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         } else {
             return false;
         }
+    }
+    // take: out of a container lying on `pos` (L8), when one is named.
+    if( a.op == fp3d::item_op::take && ( d.has( "container" ) || d.has( "container_type" ) ) &&
+        !ref( "container", "container_type", a.container ) ) {
+        return false;
     }
     if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
         return false;

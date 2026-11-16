@@ -89,7 +89,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
      window uses SDL's `offscreen` driver, so the game thread needs no display.
      From Windows through WSL (Ubuntu 24.04, packages as above): `bash tools/build/wsl_build.sh [targets]` from
      the checkout under `/mnt/...`. It copies the tree (no `.git`, no build output) to `~/cdda3d` (Linux disk
-     is much faster), builds there with one job per 2 GB of RAM (more get killed by the OOM killer), and
+     is much faster; through a mirror, `~/cdda3d.mirror`, so a changed file gets a new time and is rebuilt
+     even when it was edited during an earlier build), builds there with one job per 2 GB of RAM (more get killed by the OOM killer), and
      copies the `.so` back to `client/bin/`. `KEEP_GOING=1` lists every compile error in one run. Tests on
      Linux run from `~/cdda3d/cdda` (`out/build/fp3d-linux/src/fp3d/fp3d-*-test`) and with the Linux Godot
      (`--headless --path ~/cdda3d/client --script res://tests/live_test.gd`).
