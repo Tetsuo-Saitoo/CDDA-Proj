@@ -629,6 +629,7 @@ func _start_live() -> void:
 		return world.snapshot.player_pos + Vector3i(s.x, s.y, 0)
 	_sync_cheats_allowed()
 	item_actions.backend = live
+	item_actions.asking = func() -> bool: return not _in_main_loop()   # a consume's question: no timeout meanwhile
 	live.events_arrived.connect(item_actions.on_events)
 	if item_placer != null:
 		item_placer.backend = live
