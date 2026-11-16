@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — wsl_build.sh syncs through a mirror (QA lead): a file edited during an earlier Linux build no longer keeps an old time that made ninja skip it; unchanged files keep theirs. It also refuses more unsafe target folders.
 - 2026-11-16 — Sim test flake noted (QA lead): the teleport cheat round timed out once on a loaded Linux machine; the scenes after it were skipped, not failed.
 - 2026-11-16 — ThreadSanitizer run of the fork tests clean in WSL (QA lead): the TSan preset keeps GCC 13's flow-based warnings non-fatal; fork f46b331 makes faults::all_of_type give the stored list; fork 15bacde stretches the tests' waits and time limits in a TSan build (`fp3d::slow_build`). The CI run on main is next.
 - 2026-11-15 — Live test: item physics passes over an item CDDA won't move by hand (a drink's liquid, frozen water) and places the next carried one (5a18178).
