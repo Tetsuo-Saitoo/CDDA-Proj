@@ -33,8 +33,9 @@ owner before making many models, and keep one style across a set.
   itself:
   - Walls, windows and fences: the wall runs left to right in Front view (along X). The front is one face
     of the wall; the game doesn't know inside from outside yet, so make both faces look right.
-  - Stairs and ramps: the bottom step at the front, rising toward the back to 3 m. Longer flights repeat
-    the model on each tile for now.
+  - Stairs and ramps: the bottom step at the front, rising toward the back to 3 m. A longer flight of
+    stairs draws the model once per lane, stretched front to back over its tiles (make the steps look right
+    a little deeper); a ramp's model still repeats on each tile.
   - Floors, roofs and water: the whole tile surface; the model replaces the flat tile.
   - Trees, shrubs and other standing things: the game draws the ground under them, so model only the thing.
     Set `random_yaw` in the registry to turn them freely.

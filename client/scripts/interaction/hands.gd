@@ -476,6 +476,8 @@ func take(id: String, target: Dictionary, where := "pack") -> bool:
 		return false
 	var it: ItemRef = target["item"]
 	var now := picker.by_uid(it.uid)   # a stale target: carried or gone since
+	if it.parent != 0:   # L8: one inside a lying container (the tray) isn't the picker's; the snapshot still lists it there
+		now = it if ItemActions.listed_inside(world.snapshot, it) else null
 	if it.carried or now == null or now.carried or not _usable(it):
 		return false
 	_owner[it.uid] = id

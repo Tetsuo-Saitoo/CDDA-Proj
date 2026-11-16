@@ -759,7 +759,8 @@ func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 
 
 ## Terrain models (assets/models/terrain/<id>.glb + a registry entry): they replace the procedural shape,
-## turned along wall runs and stair flights; a bad or missing model leaves the tile procedural.
+## turned along wall runs and stair flights (one stairs model per lane, stretched over it); a bad or missing
+## model leaves the tile procedural.
 func _test_terrain(glb: PackedByteArray, data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
 	_write("models/terrain/t_wall.glb", glb)
 	_write("models/terrain/t_tree.glb", glb)
@@ -804,6 +805,9 @@ func _test_terrain(glb: PackedByteArray, data: Variant, tables: IdTables, scene:
 	var ter := {at.call(4, 5): "t_wall", at.call(5, 5): "t_wall", at.call(6, 5): "t_wall",   # east-west run
 			at.call(9, 2): "t_wall", at.call(9, 3): "t_wall", at.call(9, 4): "t_wall",        # north-south run
 			at.call(2, 8): "t_stairs_up", at.call(3, 8): "t_wall",                            # rises east, to the wall
+			at.call(5, 10): "t_stairs_up", at.call(6, 10): "t_stairs_up", at.call(7, 10): "t_stairs_up",   # a 2 x 3 flight
+			at.call(5, 11): "t_stairs_up", at.call(6, 11): "t_stairs_up", at.call(7, 11): "t_stairs_up",   # (a wall east)
+			at.call(8, 10): "t_wall", at.call(8, 11): "t_wall",
 			at.call(8, 9): "t_tree_pine", at.call(10, 7): "t_flat_roof",
 			at.call(2, 2): "t_brick_wall", at.call(2, 4): "t_concrete_wall"}
 	var snap: Snapshot = scene.call(data, tables, ter, {}, [])
@@ -819,8 +823,9 @@ func _test_terrain(glb: PackedByteArray, data: Variant, tables: IdTables, scene:
 	var r := TerrainMesher.new(snap, terrain).build(sm.pos)
 	var r0 := TerrainMesher.new(snap, plain).build(sm.pos)
 	var walls: Array = r.models.get(wall_m, [])
-	_check.call(walls.size() == 7 and (r.models.get(plain_wall_m, []) as Array).size() == 1 and (r.models.get(tree_m, []) as Array).size() == 1
-			and r0.models.is_empty(), "terrain models listed: 7 walls, the stairs, the pine (%d, %d)" % [walls.size(), r.models.size()])
+	var stair_xfs: Array = r.models.get(plain_wall_m, [])
+	_check.call(walls.size() == 9 and not stair_xfs.is_empty() and (r.models.get(tree_m, []) as Array).size() == 1
+			and r0.models.is_empty(), "terrain models listed: 9 walls, the stairs, the pine (%d, %d)" % [walls.size(), r.models.size()])
 	var xf_at := func(xfs: Array, x: int, y: int) -> Variant:
 		for xf: Transform3D in xfs:
 			if xf.origin.is_equal_approx(Vector3(x + 0.5, xf.origin.y, y + 0.5)):
@@ -836,6 +841,33 @@ func _test_terrain(glb: PackedByteArray, data: Variant, tables: IdTables, scene:
 	var stairs: Variant = xf_at.call(r.models.get(plain_wall_m, []), 2, 8)
 	_check.call(stairs != null and ((stairs as Transform3D).basis * Vector3.BACK).is_equal_approx(Vector3.LEFT),
 			"a stairs model: bottom step at the front (west), rising east toward the wall")
+	# The 2 x 3 block is one flight (which way it rises depends on the level above): each lane's bottom square
+	# draws one model at the lane's middle, its front (model +z) down the flight and stretched over the lane.
+	var kind_at := TerrainMesher.kind_lookup(snap, terrain)
+	var walk := func(k: int) -> bool: return k in TerrainMesher.WALKABLE
+	var corner := CddaCoords.sm_to_ms(sm.pos)
+	var lanes := 0
+	var longest := 0
+	var lanes_ok := true
+	for y in [10, 11]:
+		for x in [5, 6, 7]:
+			var f := TerrainMesher.stair_flight(corner + Vector3i(x, y, 0), kind_at, TerrainCatalog.Kind.STAIRS_UP, walk)
+			if f.y > 0:
+				continue
+			lanes += 1
+			longest = maxi(longest, f.z)
+			var rise := Vector3(TerrainMesher.DIRS[f.x].x, 0, TerrainMesher.DIRS[f.x].y)
+			var mid := Vector3(x + 0.5, 0, y + 0.5) + rise * (f.z - 1) * 0.5
+			var found := 0
+			for xf: Transform3D in stair_xfs:
+				if xf.origin.is_equal_approx(Vector3(mid.x, xf.origin.y, mid.z)):
+					found += 1
+					lanes_ok = lanes_ok and (xf.basis * Vector3.BACK).is_equal_approx(-rise * f.z) \
+							and is_equal_approx((xf.basis * Vector3.RIGHT).length(), 1.0) and (xf.basis * Vector3.UP).is_equal_approx(Vector3.UP)
+			lanes_ok = lanes_ok and found == 1
+	_check.call(lanes_ok and lanes >= 2 and longest >= 2 and stair_xfs.size() == lanes + 1
+			and _solid_in(r, 5, 10) == 0 and _solid_in(r, 6, 11) == 0 and _solid_in(r0, 6, 11) > 0,
+			"a 2 x 3 flight: one stairs model per lane, at its middle, stretched over it (%d lanes, %d models)" % [lanes, stair_xfs.size()])
 	_check.call(_solid_in(r, 5, 5) == 0 and _solid_in(r0, 5, 5) > 0 and _solid_in(r, 2, 8) == 0 and _solid_in(r0, 2, 8) > 0
 			and r.vertices < r0.vertices, "no procedural geometry on model tiles (%d vs %d vertices)" % [r.vertices, r0.vertices])
 	_check.call(_solid_in(r, 8, 9) > 0 and _solid_in(r, 8, 9, 0.05) == 0 and _solid_in(r0, 8, 9, 0.05) > 0,

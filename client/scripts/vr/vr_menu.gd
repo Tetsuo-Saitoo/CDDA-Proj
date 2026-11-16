@@ -57,6 +57,9 @@ var row := 0
 var page := SETTINGS_PAGE
 ## The Cheats page may show (VrRig.cheats_allowed: --test / --cheats).
 var cheats_allowed := false
+## () -> {tables: IdTables, feet: Vector3i, ahead: Vector3i}: what the range page's spawn rows need (VrRig sets
+## it); not set: no spawn rows.
+var spawn_where := Callable()
 ## Who the Cheats page talks to (VrRig.cheats_backend: the LiveSession; null in the mock).
 var cheats_backend: Object:
 	set(b):
@@ -322,7 +325,8 @@ func refresh() -> void:
 	else:
 		cheat_rows = []
 	if page == RANGE_PAGE:
-		range_rows = VrRange.rows(cheats_backend)
+		var t: Variant = _where().get("tables")
+		range_rows = VrRange.rows(cheats_backend, t if t is IdTables else null)
 		range_reads += 1
 		_build_range_view()
 	else:
@@ -418,7 +422,7 @@ func _use_cheat(key: String) -> void:
 
 ## Sends one range op; the status line waits for its range_done. A refusal says so and buzzes.
 func _use_range(key: String) -> void:
-	var r := VrRange.use(cheats_backend, key)
+	var r := VrRange.use(cheats_backend, key, _where())
 	var what := str(r.get("text", "")).left(STATUS_MAX)
 	var id: int = r.get("id", 0)
 	range_warn = id <= 0
@@ -434,6 +438,11 @@ func _use_range(key: String) -> void:
 		range_sent.emit(id, key)
 	else:
 		cheat_refused.emit(range_status)
+
+
+func _where() -> Dictionary:
+	var w: Variant = spawn_where.call() if spawn_where.is_valid() else {}
+	return w if w is Dictionary else {}
 
 
 ## Lines as the page has them: [text, colour, font size] each.

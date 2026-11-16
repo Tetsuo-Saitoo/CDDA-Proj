@@ -25,7 +25,8 @@ const STORM := {"precip": 3, "precip_kind": 1, "sight_penalty": 1.25, "light_mod
 ## name, env, and optionally: view (first / shoulder / top / outside), yaw and pitch in degrees (first person:
 ## 0 looks north, 90 west), night, move (squares from the mock's player), roof (the player counts as sheltered),
 ## settle (seconds before the picture), flash (a lightning event, pictured at once and again after it), lamp (a
-## light source on the player's square: CDDA's light falls off around it).
+## light source on the player's square: CDDA's light falls off around it), turn (game seconds after the mock's turn:
+## snow lies and the ground gets wet over game time; a shot back at the mock's turn starts afresh).
 const SHOTS := [
 	{"name": "clear", "env": CLEAR, "yaw": 45.0},
 	{"name": "cloudy", "env": CLOUDY, "yaw": 45.0},
@@ -42,6 +43,10 @@ const SHOTS := [
 	{"name": "rain_top", "env": RAIN, "view": "top"},
 	{"name": "fog_top", "env": FOG, "view": "top"},
 	{"name": "clear_again", "env": CLEAR, "yaw": 45.0},
+	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
+	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
+	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
+	{"name": "snow_lying_top", "env": SNOW, "view": "top", "turn": 3600},
 	# Inside the building: the ceiling and the walls must read as a room, by day and by lamp light.
 	{"name": "room_day_window", "env": CLEAR, "yaw": -90.0, "pitch": 35.0, "move": Vector3i(-8, -6, 0), "roof": true},
 	{"name": "room_day_inward", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true},
@@ -125,6 +130,8 @@ func _shot(index: int, shot: Dictionary) -> void:
 	else:
 		d["submaps"] = (_data["submaps"] as Array).duplicate(false)
 	d["env"] = env
+	if shot.has("turn"):
+		d["turn"] = int(_data["turn"]) + int(shot["turn"])
 	var player: Dictionary = (_data["player"] as Dictionary).duplicate(true)
 	var move: Vector3i = shot.get("move", Vector3i.ZERO)
 	player["pos"] = [int(player["pos"][0]) + move.x, int(player["pos"][1]) + move.y, int(player["pos"][2]) + move.z]

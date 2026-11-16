@@ -24,12 +24,16 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_sound(root)
 	_test_wet_mesh(root, data, tables)
 	_test_soak(root)
+	_test_snow_cover(root)
 
 
-func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0, asleep := false) -> Snapshot:
+func _snap(w: Array, sheltered := false, wind := 0.0, wind_here := -1.0, turn := 1, z := 0, asleep := false,
+		temp: Variant = null) -> Snapshot:
 	var env := {"sun_alt_deg": 45.0, "sun_az_deg": 0.0, "ambient_light": 100, "precip": w[0], "precip_kind": w[1],
 			"sight_penalty": w[2], "light_modifier": w[3], "sun_multiplier": w[4], "weather_sound": w[5],
 			"sheltered": sheltered, "wind_speed": wind, "wind_dir_deg": 0.0}
+	if temp != null:
+		env["temperature_c"] = temp
 	if wind_here >= 0.0:
 		env["wind_at_player"] = wind_here
 	return Snapshot.from_data({"contract_version": 0, "turn": turn, "seq": 1, "bubble_origin": [0, 0, 0],
@@ -437,3 +441,62 @@ func _test_soak(root: Node) -> void:
 	root.remove_child(view)
 	view.free()
 	TerrainMesher.wet_ground(0.0)
+
+
+## Snow lying on the ground: the air's temperature is read; snow covers the ground while it falls (heavier faster),
+## stays at or below freezing, melts when warmer (faster the warmer) and in rain; a game loaded in snow starts
+## covered; MINIMAL quality shows none; the snow pass follows the bubble's origin and leaves when it is gone.
+func _test_snow_cover(root: Node) -> void:
+	var t := func(w: Array, turn: int, temp: Variant) -> Snapshot: return _snap(w, false, 0.0, -1.0, turn, 0, false, temp)
+	var cold: Snapshot = t.call(SNOWING, 1, -5.5)
+	_check.call(cold.is_valid() and is_equal_approx(cold.temperature_c, -5.5) and is_nan(_snap(CLEAR).temperature_c)
+			and not (t.call(CLEAR, 1, 150.0) as Snapshot).is_valid() and not (t.call(CLEAR, 1, "cold") as Snapshot).is_valid(),
+			"snow: the air's temperature is read; none sent is unknown; out of range or not a number fails the snapshot")
+	var ground := TerrainMesher.material(TerrainMesher.GROUND)
+	var view := WeatherView.new()
+	root.add_child(view)
+	view.blend_s = 0.0
+	var coords := CddaCoords.new()
+	var at := func(w: Array, turn: int, temp: Variant) -> void: view.apply(t.call(w, turn, temp), coords, true)
+	at.call(CLEAR, 1000, -5.0)
+	var bare := view.snow_cover == 0.0 and ground.next_pass == null
+	at.call(SNOWING, 1900, -5.0)
+	var snow_pass := ground.next_pass as ShaderMaterial
+	var half: bool = is_equal_approx(view.snow_cover, 0.5) and snow_pass != null and snow_pass.shader == TerrainMesher.SNOW_SHADER \
+			and is_equal_approx(float(snow_pass.get_shader_parameter(&"cover")), 0.5) and snow_pass.render_priority == WorldLighting.UNDER_PRIORITY
+	at.call(CLEAR, 5500, -5.0)
+	var frozen := is_equal_approx(view.snow_cover, 0.5)
+	at.call(CLEAR, 5500 + 1800, 4.0)
+	var melting := is_equal_approx(view.snow_cover, 0.25)
+	at.call(CLEAR, 5500 + 2700, 8.0)
+	var gone := view.snow_cover == 0.0 and ground.next_pass == null
+	_check.call(bare and half and frozen and melting and gone, "snow: half covered after 15 minutes of heavy snow, kept in the frost, "
+			+ "melting at 4 C, gone faster at 8 C (%.2f)" % view.snow_cover)
+	at.call(SNOWING, 9000, -1.0)
+	at.call(SNOWING, 9000 + 3600, -1.0)
+	var full := view.snow_cover == 1.0
+	at.call(RAIN, 9000 + 3600 + 900, 0.0)
+	var rained := is_equal_approx(view.snow_cover, 0.5)
+	at.call(DRIZZLE, 9000 + 3600 + 1800, null)   # no temperature: melts slowly, as at MELT_UNKNOWN_C
+	var unknown := view.snow_cover < 0.5 - 900.0 * (1.0 / 3.0) / WeatherView.RAIN_MELT_S \
+			and view.snow_cover > 0.5 - 900.0 / WeatherView.RAIN_MELT_S
+	_check.call(full and rained and unknown, "snow: at most covered; rain melts it; no temperature melts it as a little above freezing")
+	at.call(SNOWING, 50, -3.0)   # another game, loaded in snow
+	var loaded := view.snow_cover == 1.0 and ground.next_pass != null
+	view.quality = WeatherView.MINIMAL
+	var minimal := ground.next_pass == null
+	view.quality = WeatherView.HIGH
+	coords.origin_ms = Vector3i(600, -3, 0)
+	at.call(SNOWING, 60, -3.0)
+	var pass2 := ground.next_pass as ShaderMaterial
+	var moved: bool = pass2 != null and pass2.get_shader_parameter(&"origin_m") == Vector2(88, 509)
+	_check.call(loaded and minimal and moved, "snow: a game loaded in snow starts covered; none at minimal quality; the patches "
+			+ "follow the bubble's origin")
+	var code := TerrainMesher.SNOW_SHADER.code
+	_check.call(code.contains("uniform float cover") and code.contains("origin_m") and code.contains("NORMAL")
+			and code.contains("const float PERIOD = %d.0" % TerrainMesher.SNOW_PERIOD), "snow: the shader lies on what faces up, "
+			+ "its patches repeat at SNOW_PERIOD")
+	root.remove_child(view)
+	view.free()
+	_check.call(ground.next_pass == null, "snow: the shared ground material is bare again when the view goes")
+	TerrainMesher.snow_ground(0.0, Vector3i.ZERO)

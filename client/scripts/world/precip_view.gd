@@ -7,7 +7,8 @@ extends Node3D
 ## or under a roof, also when the wind leans the fall; what falls outside shows through the windows. Bounded: at
 ## most MAX_RAIN / MAX_SNOW particles within RADIUS squares of the player, fewer for lighter weather and for less
 ## open ground. The GPU moves them (once a frame, not per eye); the start points are worked out again only when
-## the player has walked a few squares, or the wind or the map nearby changes.
+## the player has walked a few squares, or the wind or the map nearby changes. `particle_share` (WeatherView.quality)
+## cuts the particles down, or off.
 
 const RADIUS := 12             # squares around the centre
 const CENTRE_STEP := 3         # the centre follows the player in steps of this many squares
@@ -32,6 +33,19 @@ const BOUNDS_UP := 12.0        # the drops' box reaches this far above their sta
 
 var rain := GPUParticles3D.new()
 var snow := GPUParticles3D.new()
+## Share of MAX_RAIN / MAX_SNOW the emitters have (WeatherView.quality); 0 shows no rain or snow at all.
+var particle_share := 1.0:
+	set(s):
+		s = clampf(s, 0.0, 1.0)
+		if s == particle_share:
+			return
+		particle_share = s
+		if s > 0.0:
+			rain.amount = maxi(1, roundi(MAX_RAIN * s))
+			snow.amount = maxi(1, roundi(MAX_SNOW * s))
+		if _last.size() == 3:
+			apply(_last[0], _last[1], _last[2])   # at once, not on the next snapshot
+var _last := []                # the last apply's [snap, coords, state]
 var squares := 0               # open squares the drops land on now
 var points := 0                # start points in use
 var rebuilds := 0              # times the start points were worked out
@@ -81,8 +95,9 @@ func _setup(p: GPUParticles3D, amount: int, size: Vector2, color: Color, align: 
 
 ## Shows `state`'s precipitation around `snap`'s player.
 func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
+	_last = [snap, coords, state]
 	var on := (state.precip > 0.0 and snap != null and coords != null and snap.is_valid()
-			and snap.player_pos.z >= 0)   # nothing underground
+			and snap.player_pos.z >= 0 and particle_share > 0.0)   # nothing underground
 	var p := snow if state.snow else rain
 	(rain if state.snow else snow).emitting = false
 	if not on:
