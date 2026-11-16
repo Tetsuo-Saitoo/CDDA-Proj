@@ -386,6 +386,29 @@ func _test_colliders() -> void:
 			"a collider hull starts from at most %d points (%d)" % [ModelLibrary.MAX_HULL_POINTS, hull.points.size() if hull else -1])
 
 
+## C6: a see-through part of a model is drawn under the light pass (darkened at night), its tinted copy too;
+## an opaque one keeps its place.
+func _test_see_through() -> void:
+	var prio := func(m: ModelLibrary.Model) -> int:
+		if m == null or m.parts.is_empty():
+			return 1 << 20
+		var mat := (m.parts[0][0] as Mesh).surface_get_material(0)
+		return mat.render_priority if mat != null else 1 << 20
+	_write("models/furniture/tri.glb", tri_glb({"materials": [{"alphaMode": "BLEND",
+			"pbrMetallicRoughness": {"baseColorFactor": [0.5, 0.7, 0.9, 0.4]}}], "meshes/0/primitives/0/material": 0}))
+	var lib := _lib()
+	var glass := lib.get_model("furniture/tri.glb")
+	_check.call(prio.call(glass) == WorldLighting.UNDER_PRIORITY
+			and prio.call(lib.get_tinted("furniture/tri.glb", "brick")) == WorldLighting.UNDER_PRIORITY,
+			"a see-through model part is drawn under the light pass, tinted too (%s)" % prio.call(glass))
+	_write("models/furniture/tri.glb", tri_glb({"materials": [{"alphaMode": "MASK"}], "meshes/0/primitives/0/material": 0}))
+	_check.call(prio.call(_lib().get_model("furniture/tri.glb")) == 0, "a cut-out (MASK) part stays in the opaque pass")
+	var plain := StandardMaterial3D.new()
+	_check.call(not ModelLibrary.under_light(plain) and plain.render_priority == 0 and not ModelLibrary.under_light(null),
+			"an opaque material keeps its place")
+	_write("models/furniture/tri.glb", tri_glb())
+
+
 ## One small .glb per rule of the strict checks; the one-triangle model itself loads.
 func _test_strict() -> void:
 	_write("models/furniture/tri.glb", tri_glb())
@@ -395,6 +418,7 @@ func _test_strict() -> void:
 			"meshes/0/primitives/0/material": 0, "nodes/0/extras": {"extensions": {"anything": 1}}}))
 	lib = _lib()
 	_check.call(lib.get_model("furniture/tri.glb") != null, "known extensions and extras still load " + str(lib.warnings))
+	_test_see_through()
 	var asset := {"version": "2.0"}
 	var png := PackedByteArray([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
 			0, 0, 8, 0, 0, 0, 8, 0, 8, 6, 0, 0, 0, 0, 0, 0, 0])   # 2048 x 2048

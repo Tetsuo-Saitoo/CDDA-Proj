@@ -2,12 +2,13 @@ class_name WorldLighting
 extends Node3D
 ## Block C6: shows CDDA's light. A full-screen pass (shaders/world_light.gdshader) multiplies what is drawn by
 ## the light of the tile each pixel shows (LightMap: light, vis, night tint, lamp warmth) and the sky by the
-## natural light; OmniLights stand at the nearest light sources. WorldView owns it and gives it a LightMap per
+## natural light; OmniLights stand at the nearest light sources, the nearest `shadow_lamps` of them casting
+## shadows so walls keep a lamp's light in its room. WorldView owns it and gives it a LightMap per
 ## snapshot (built on its worker); the scene's own lights stay bright, so this pass alone does the darkening.
 ##
 ## The pass is drawn first among transparent things (PASS_PRIORITY): fire, explosions, glyphs, markers and VR
-## panels drawn after it stay bright. World surfaces that are transparent (glass, blood) use UNDER_PRIORITY,
-## so they are drawn before it and darkened with what is behind them.
+## panels drawn after it stay bright. World surfaces that are transparent (glass, blood, see-through parts of
+## models) use UNDER_PRIORITY, so they are drawn before it and darkened with what is behind them.
 
 const PASS_PRIORITY := -100
 const UNDER_PRIORITY := -110
@@ -16,12 +17,19 @@ const OUTSIDE_MIN := 0.25
 const LAMP := Color(1.0, 0.8, 0.55)
 const FIRE := Color(1.0, 0.58, 0.28)
 const SHADER := preload("res://shaders/world_light.gdshader")
+const SHADOW_LAMPS := 4   # default shadow_lamps: shadows cost a render of the casters near each lamp that changed
 
 ## Off: no darkening and no lamps (--no-light).
 var enabled := true:
 	set(v):
 		enabled = v
 		_update_visible()
+## How many of the lamps (the nearest to the player first) cast shadows, 0..LightMap.MAX_SOURCES.
+var shadow_lamps := SHADOW_LAMPS:
+	set(v):
+		shadow_lamps = clampi(v, 0, LightMap.MAX_SOURCES)
+		for i in _lights.size():
+			_lights[i].shadow_enabled = i < shadow_lamps
 ## Lowest multiplier for world pixels (not the sky).
 var min_brightness := 0.0:
 	set(v):
@@ -73,7 +81,8 @@ func _init() -> void:
 	for i in LightMap.MAX_SOURCES:
 		var l := OmniLight3D.new()
 		l.name = "lamp_%d" % i
-		l.shadow_enabled = false
+		l.shadow_enabled = i < shadow_lamps   # sources come nearest first (LightMap)
+		l.omni_shadow_mode = OmniLight3D.SHADOW_DUAL_PARABOLOID   # two renders, not six
 		l.light_specular = 0.25
 		l.omni_attenuation = 1.5
 		l.visible = false
