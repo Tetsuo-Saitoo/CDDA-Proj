@@ -1358,6 +1358,11 @@ func toggle_menu() -> void:
 		menu.action.connect(_menu_action)
 		menu.cheats_backend = cheats_backend
 		menu.cheats_allowed = cheats_allowed
+		menu.spawn_where = func() -> Dictionary:   # K7 spawn rows: items at the feet, monsters ahead of the head
+			var s := world.snapshot
+			if s == null or world.tables == null:
+				return {}
+			return {"tables": world.tables, "feet": s.player_pos, "ahead": VrRange.ahead_of(s.player_pos, camera.global_basis)}
 		menu.cheat_refused.connect(func(_why: String) -> void: _feel(main_ctrl()))   # the reason shows on the page
 		menu.range_sent.connect(_on_range_sent)
 		menu.range_finished.connect(_on_range_finished)
