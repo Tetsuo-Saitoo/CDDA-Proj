@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge, G4: a character sheet still over 64 KB with no descriptions now loses list tails (effects first, skills last) instead of answering "too large".
 - 2026-11-16 — Bridge, G4: `query_character()` returns the character screen's data (stats, speed, encumbrance, skills, proficiencies, traits, bionics, effect texts) as a query result.
 - 2026-11-16 — Bridge, L8 slices 3 and 4: containers lying next to the player list what's in them (`inside`), take takes an item out of one; piles next to the player list up to 256 handles, `more` counts the rest.
 - 2026-11-15 — Bridge: the off hand lets go of an item that has grown too heavy for one hand (it stays in its pocket, with a message).

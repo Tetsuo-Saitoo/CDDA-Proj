@@ -826,7 +826,7 @@ int64_t CddaSim::match_recipes( const Dictionary &d )
     return static_cast<int64_t>( fp3d::post_recipe_query( ref, fp3d::ui_point{ pos.x, pos.y, pos.z } ) );
 }
 
-// G4: the character screen's data (fp3d/character_sheet.h, contracts/bridge_api.md "Character queries"). One at a
+// G4: the character screen's data (fp3d/snapshot.h, contracts/bridge_api.md "Character queries"). One at a
 // time; the bridge refuses a second while one is pending.
 int64_t CddaSim::query_character()
 {
