@@ -244,7 +244,14 @@ func _character_live() -> void:
 	var body: Dictionary = _main.character_data.card("body")
 	_check(v.visible and t.find("[Body]") >= 0 and t.find("[Needs]") >= 0 and (body.get("rows", []) as Array).size() >= 6,
 			"P: the character screen, %d body parts" % (body.get("rows", []) as Array).size())
+	var worn: Array = _main.character_data.card("worn").get("rows", [])
+	var parts: Array = _main.character_data.card("worn_parts").get("rows", [])
+	var covered := parts.filter(func(r: Dictionary) -> bool: return r["value"] != "bare").size()
+	_check(worn.size() >= 1 and parts.size() >= 6 and covered >= 3 and t.find("[Worn]") >= 0 and t.find("[Worn by body part]") >= 0,
+			"P: what the character wears (%d items) and the layers on %d body parts, %d covered" % [worn.size(), parts.size(), covered])
 	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
+	var at := t.find("[Worn]")
+	print("    " + "\n    ".join(t.substr(at if at >= 0 else 0).split("\n").slice(0, 14)))
 	var esc := InputEventKey.new()
 	esc.keycode = KEY_ESCAPE
 	esc.physical_keycode = KEY_ESCAPE

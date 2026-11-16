@@ -334,7 +334,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
-	character_data.update(hud_data)
+	character_data.update(hud_data, snap, world.tables)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,

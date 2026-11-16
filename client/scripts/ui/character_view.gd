@@ -1,8 +1,9 @@
 class_name CharacterView
 extends PanelContainer
 ## G4: the character screen (P, `character`; again or Esc closes it). Draws CharacterData's cards (stats, body,
-## needs, mood, effects, skills, proficiencies, traits, bionics, speed) as panels that wrap across the screen,
-## each row a name and a value in its level's colour, the game's description as the row's tooltip. The same view
+## needs, mood, effects, worn, worn by body part, skills, proficiencies, traits, bionics, speed) as panels that
+## wrap across the screen, each row a name and a value in its level's colour, the game's description as the row's
+## tooltip. The same view
 ## goes on the VR panel (main.gd menus_to_panel), so the headset gets it too. Rebuilt on CharacterData.changed
 ## only while shown. The mouse cursor comes on while it is open and its old mode comes back on close.
 

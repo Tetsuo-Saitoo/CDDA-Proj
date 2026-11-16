@@ -53,6 +53,55 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 			"character screen: a sheet that isn't a Dictionary is dropped")
 	cd.set_sheet(_sheet())
 	_test_view(cd)
+	_test_worn(snap, tables, hud)
+
+
+## G2's paper doll on the character screen: worn items inner to outer with CDDA's layer names and damage colours,
+## and the layers per body part (bare ones too, parts the snapshot doesn't list after them).
+func _test_worn(snap: Snapshot, tables: IdTables, hud: HudData) -> void:
+	var torso := tables.body_parts.find("torso")
+	var rock := tables.index_of("itype", "rock")
+	if torso < 0 or rock < 1:
+		_check.call(false, "character screen: the mock tables have a torso and a rock (%d %d)" % [torso, rock])
+		return
+	var a := Snapshot.Worn.new()
+	a.type = rock
+	a.layer = 1
+	a.covers = PackedInt32Array([torso])
+	var b := Snapshot.Worn.new()
+	b.type = 0
+	b.layer = 99
+	b.damage = 5
+	b.covers = PackedInt32Array([torso, 999])
+	snap.player_worn.clear()
+	snap.player_worn.append(a)
+	snap.player_worn.append(b)
+	var cd := CharacterData.new()
+	cd.update(hud, null, tables)
+	var none := cd.card("worn").is_empty()
+	cd.update(hud, snap, tables)
+	var worn: Array = cd.card("worn")["rows"]
+	var rock_name := HudData.clean(tables.def_at("itype", rock).name, CharacterData.MAX_LABEL)
+	_check.call(none and worn.size() == 2 and worn[0]["label"] == rock_name and worn[0]["value"] == "Close to skin"
+			and worn[0]["level"] == HudData.UNKNOWN and worn[1]["value"] == "Layer 99" and worn[1]["level"] == HudData.BAD
+			and (worn[1]["tip"] as String) == "Nearly destroyed. Covers torso, part 999.",
+			"character screen: worn items inner to outer, CDDA's layer names, damage as colour and tooltip (%s)" % worn[1]["tip"])
+	var by_part := {}
+	for r: Dictionary in cd.card("worn_parts")["rows"]:
+		by_part[r["label"]] = r
+	var rows: Array = cd.card("worn_parts")["rows"]
+	var bare := rows.filter(func(r: Dictionary) -> bool: return r["value"] == "bare").size()
+	_check.call(by_part.has("Torso") and by_part["Torso"]["value"] == "2 layers" and by_part["Torso"]["tip"] == rock_name + ", " + _item0(tables)
+			and rows.back()["label"] == "Part 999" and rows.back()["value"] == "1 layer" and bare == snap.player_parts.size() - 1,
+			"character screen: layers per body part, the others bare, a part only the clothes name comes last (%d rows)" % rows.size())
+
+
+static func _item0(tables: IdTables) -> String:
+	var d := tables.def_at("itype", 0)
+	var n := HudData.clean(d.name, CharacterData.MAX_LABEL) if d != null else ""
+	if n.is_empty() and d != null:
+		n = HudData.clean(d.id, CharacterData.MAX_LABEL)
+	return n if not n.is_empty() else "item type 0"
 
 
 func _test_view(cd: CharacterData) -> void:
