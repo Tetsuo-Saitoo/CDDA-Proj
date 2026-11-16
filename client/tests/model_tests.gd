@@ -1,7 +1,8 @@
 extends RefCounted
 ## Model loading (ModelLibrary, docs/MODELS.md): a tiny .glb built here with GLTFDocument, its markers,
 ## the caps, hostile files and paths, the strict glTF checks (one small file per rule), the cache, links,
-## registry fallbacks, model props and item piles on model surfaces, monster models and their hit regions.
+## registry fallbacks, model props and item piles on model surfaces, monster models and their hit regions,
+## and the game's own models (assets/models).
 ## Run from run_tests.gd; files go to model_test in the run's own folder (tests/test_dir.gd) and are removed
 ## afterwards.
 
@@ -35,6 +36,7 @@ func run(check: Callable, data: Variant, tables: IdTables, scene: Callable, repo
 	_test_joins(data, tables, scene, repo)
 	_test_terrain(glb, data, tables, scene, repo)
 	_test_creature_model()
+	_test_repo_models(repo)
 	_remove(_dir)
 
 
@@ -936,6 +938,53 @@ static func _tris_in(mesh: ArrayMesh, x: int, y: int, min_y := -INF) -> int:
 
 ## Monster models (docs/MODELS.md): hit_ regions are hidden and kept by id; the registry's `monster` entries
 ## by id, then looks_like (the figures: run_figures).
+## Every model the game's own registry names (assets/registry): it loads without warnings, keeps to the
+## docs/MODELS.md budgets and sits as the docs say.
+func _test_repo_models(repo: Callable) -> void:
+	var dir: String = repo.call("assets/registry")
+	var reg := AssetRegistry.new()
+	reg.load_dir(dir)
+	var seen := {}
+	var bad := PackedStringArray()
+	for f: String in DirAccess.get_files_at(dir):
+		var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(dir.path_join(f))) if f.ends_with(".json") else null
+		for d: Variant in (data if data is Array else []):
+			if not (d is Dictionary and d.has("model")):
+				continue
+			var ids: Variant = d.get("id")
+			for id: Variant in (ids if ids is Array else [ids]):
+				var e := reg.entry(str(id), str(d.get("kind")))   # the entry that won (later files override)
+				if e == null or e.model.is_empty() or seen.has(e.model + "|" + e.kind):
+					continue
+				seen[e.model + "|" + e.kind] = true
+				var why := model_fault(reg.models.get_model(e.model), e.kind)
+				if not why.is_empty():
+					bad.append("%s: %s" % [e.model, why])
+	_check.call(seen.size() >= 47 and bad.is_empty() and reg.all_warnings().is_empty(),
+			"the game's %d models load, keep to the budgets and sit right %s %s" % [seen.size(), bad, reg.all_warnings()])
+
+
+## Why a model breaks docs/MODELS.md ("" when it doesn't): triangle and texture budgets by kind, the bottom
+## centre at the origin, items of a real size, furniture inside its 1 m tile and one storey.
+static func model_fault(m: ModelLibrary.Model, kind: String) -> String:
+	if m == null:
+		return "doesn't load"
+	var box := m.aabb
+	var item := kind == "item"
+	if m.triangles > (5000 if item else 15000):
+		return "%d triangles" % m.triangles
+	if m.image_bytes > (1024 * 1024 if item else 2048 * 2048) * 4:
+		return "%d bytes of texture" % m.image_bytes
+	if absf(box.position.y) > 0.01 or absf(box.get_center().x) > 0.01 or absf(box.get_center().z) > 0.01:
+		return "not standing on its bottom centre %s" % box
+	var longest := maxf(box.size.x, maxf(box.size.y, box.size.z))
+	if item and (longest < 0.01 or longest > 2.0):
+		return "%.2f m long" % longest
+	if not item and (box.size.x > 1.0 or box.size.z > 1.0 or box.size.y > 3.0):
+		return "doesn't fit its tile %s" % box.size
+	return ""
+
+
 func _test_creature_model() -> void:
 	var reg := _monster_registry()
 	var lib := _lib()

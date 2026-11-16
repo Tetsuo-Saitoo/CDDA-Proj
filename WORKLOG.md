@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — First real models (lead-world): 41 items and 6 pieces of furniture that don't open (oven, chair, toilet, washer, dryer, fire ring) from Kenney's CC0 kits, converted to real size and registered in `models_kenney.json`, credited in `assets/models/LICENSE.md`; a test loads every game model and checks the budgets. Client tests pass.
 - 2026-11-16 — Monsters can be drawn as registry models (lead-world): a monster's own entry, else its looks_like's, replaces the placeholder figure; the model's `hit_` regions are hidden and used as hit zones, else the figure's; corpses lie as the model, darker. Tested with a small model made in the tests; client tests pass.
 - 2026-11-16 — Puddles on the open ground (lead-world): they fill in rain, more slowly than the ground wets, dry in game time after it, hide under snow, and draw nothing while dry; none at minimal weather quality. Client tests pass; render check pictures look right.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
