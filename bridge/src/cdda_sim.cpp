@@ -656,6 +656,20 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.yaw = static_cast<uint16_t>( deg );
         a.side = d.has( "side" ) && static_cast<bool>( side );
     }
+    // Which furniture shelf it was put on (the client's numbering): only next to a spot, for the same ops.
+    if( !field( d, "shelf", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "shelf" ) ) {
+        const int64_t shelf = v;
+        const bool stores = a.op == fp3d::item_op::drop || a.op == fp3d::item_op::place ||
+                            a.op == fp3d::item_op::spot;
+        if( !stores || !a.has_spot || shelf < 0 || shelf > fp3d::max_item_shelf ) {
+            return false;
+        }
+        a.has_shelf = true;
+        a.shelf = static_cast<uint8_t>( shelf );
+    }
     // The client's number for this action: an `item_result` event answers it.
     if( !field( d, "tag", Variant::INT, v ) ) {
         return false;
