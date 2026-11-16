@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Options: invert Y (mouse up looks down) in the F1 menu, for the first-person and outside cameras. Client tests pass.
 - 2026-11-16 — Options: the F1 menu (and an Options button on the main menu) sets look speed, field of view, 3D resolution, fullscreen and vsync, saved between games. Client tests pass.
 - 2026-11-16 — Number prompts checked in the real game: setting hunger through the debug menu with the new field works. Live test passes.
 - 2026-11-16 — Number prompts (how many to drop, and the like) get their own field: type a number or step it with Up / Down or -1 / +1, kept within the game's range. Client tests pass; live check waits for the bridge side.

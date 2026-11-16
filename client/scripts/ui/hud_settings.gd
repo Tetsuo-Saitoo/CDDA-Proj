@@ -29,13 +29,15 @@ const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnin
 ## of group names (anything but known names ignored).
 var feed_hidden := PackedStringArray()
 ## G7 options (flat screen; the headset has its own, VrSettings): the mouse look speed (times the cameras' own),
-## the field of view in degrees, the 3D render scale, fullscreen and vsync. Saved as [look] speed, fov and
-## [display] scale, fullscreen, vsync; numbers out of range are clamped, anything else leaves the default.
+## inverted up-down look, the field of view in degrees, the 3D render scale, fullscreen and vsync. Saved as [look]
+## speed, invert, fov and [display] scale, fullscreen, vsync; numbers out of range are clamped, anything else
+## leaves the default.
 const LOOK_SPEEDS := Vector2(0.25, 4.0)
 const FOVS := Vector2(60.0, 110.0)
 const RENDER_SCALES := Vector2(0.5, 1.0)
 const DEFAULT_FOV := 75.0   # Camera3D's own
 var look_speed := 1.0
+var invert_y := false
 var fov := DEFAULT_FOV
 var render_scale := 1.0
 var fullscreen := false
@@ -95,6 +97,8 @@ func load_file(path := FILE) -> String:
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
+	var iy: Variant = cfg.get_value("look", "invert", false)
+	invert_y = iy if iy is bool else false
 	fov = clamp_to(cfg.get_value("look", "fov", DEFAULT_FOV), FOVS, DEFAULT_FOV)
 	render_scale = clamp_to(cfg.get_value("display", "scale", 1.0), RENDER_SCALES, 1.0)
 	var fs: Variant = cfg.get_value("display", "fullscreen", false)
@@ -120,6 +124,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
+	cfg.set_value("look", "invert", invert_y)
 	cfg.set_value("look", "fov", roundf(clamp_to(fov, FOVS, DEFAULT_FOV)))
 	cfg.set_value("display", "scale", snappedf(clamp_to(render_scale, RENDER_SCALES, 1.0), 0.01))
 	cfg.set_value("display", "fullscreen", fullscreen)
