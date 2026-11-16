@@ -118,6 +118,7 @@ func _run() -> void:
 		await _hands_live()
 		_classic_live()
 		_character_live()
+		await _compass_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -197,6 +198,42 @@ func _classic_live() -> void:
 	print("    " + "\n    ".join(lines.slice(ClassicView.RY - 4, ClassicView.RY + 5)))
 	root.push_input(_key_of(&"classic_view"))
 	_check(not v.visible, "F3 again hides it")
+
+
+## The compass in the live game: a zombie spawned two squares ahead (by name, through the Cheats page's picker; at
+## noon, monsters frozen) shows as a hostile marker near the middle of the strip, close by.
+func _compass_live() -> void:
+	var c := _main.compass
+	if not _live.range_info().get("ai_frozen", false):
+		_check(await _op(func() -> void: _cp.set_frozen(true), "Freeze") == "", "monsters frozen")
+	_cp.hour.value = 12
+	_check(await _op(_cp.set_time, "Time 12:00") == "", "time set to noon")
+	var hostiles := func() -> int: return c.blips.filter(func(b: Vector3) -> bool: return int(b.z) == Snapshot.Creature.HOSTILE).size()
+	var before: int = hostiles.call()
+	_cp.monster_id.text = "zombie"
+	_check(await _op(_cp.spawn_monster, "Spawn mon_zombie") == "", "a zombie spawned ahead (picked: %s)"
+			% (_cp.monster_pick.get_item_text(_cp.monster_pick.selected) if _cp.monster_pick.selected >= 0 else "none"))
+	var more := func() -> bool: return hostiles.call() > before
+	var seen := await _until(more, OP_TIMEOUT_MS, true)
+	var b: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)   # hostiles come first, nearest first
+	var at := Compass.strip_pos(b.x, c.heading_deg)
+	_check(seen and int(b.z) == Snapshot.Creature.HOSTILE and absf(at) < 0.3 and b.y < 4.0,
+			"compass: the zombie ahead is a hostile marker near the strip's middle (%.2f of half the strip, %.1f m away, heading %.0f)"
+			% [at, b.y, c.heading_deg])
+	if not _main.first_person:
+		print("  (compass turn not tried: not in first person)")
+		return
+	var fp := _main.fp
+	var yaw0 := fp.yaw
+	var h0 := c.heading_deg
+	fp.set_look(yaw0 - PI / 2.0, fp.pitch)   # a quarter turn right: the zombie is now to the left
+	await process_frame
+	await process_frame
+	var b2: Vector3 = c.blips[0] if not c.blips.is_empty() else Vector3(0, INF, -1)
+	var at2 := Compass.strip_pos(b2.x, c.heading_deg)
+	_check(absf(wrapf(c.heading_deg - h0, -180.0, 180.0) - 90.0) < 1.0 and absf(at2 - (at - 1.0)) < 0.05,
+			"compass: a quarter turn right turns the heading 90 and moves the zombie to the strip's left end (%.2f)" % at2)
+	fp.set_look(yaw0, fp.pitch)
 
 
 ## G4: P shows the character screen with the live game's body and needs; Esc closes it.
