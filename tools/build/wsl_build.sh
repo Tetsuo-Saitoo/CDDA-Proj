@@ -23,7 +23,7 @@ for d in "$dst" "$mirror"; do
     if [ -n "$refuse" ]; then echo "refusing to sync into $d" >&2; exit 1; fi
 done
 mkdir -p "$dst" "$mirror"
-skip=(--exclude=.git/ --exclude=/cdda/out/ --exclude=/client/.godot/ --exclude=/tools/out/ --exclude=/game/
+skip=(--exclude=.git/ --exclude=/.claude/ --exclude=/cdda/out/ --exclude=/client/.godot/ --exclude=/tools/out/ --exclude=/game/
       --exclude='*.dll' --exclude='*.so' --exclude='*.pdb' --exclude='*.exp' --exclude='*.lib'
       --exclude=__pycache__/ --exclude=/cdda/CMakeUserPresets.json --exclude=/cdda/data/cache/)
 # Two steps. The mirror keeps Windows' file times, so rsync's quick check (size and time) finds what changed
