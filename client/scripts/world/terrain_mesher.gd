@@ -45,6 +45,9 @@ const GROUND := "ground"
 const CEILING := Color(0.82, 0.81, 0.78)
 const CEILING_SHARE := 0.75
 const WET_ROUGHNESS := 0.35
+const SNOW_SHADER := preload("res://shaders/snow_cover.gdshader")
+const SNOW_PERIOD := 512   # squares: the snow's patches repeat this often (the shader's PERIOD)
+static var _snow: ShaderMaterial   # the snow pass over the ground (snow_ground), made on first use
 const WET_SPECULAR := 0.8
 const WET_TINT := Color(0.72, 0.74, 0.78)
 static var _materials := {}
@@ -241,13 +244,15 @@ func _tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 ## then the entry's offset and scale). Facing: walls and windows with their run along the model's x (front
 ## +z out of the wall: south for an east-west run, east for a north-south one), fences the same over the
 ## fences they join, stairs and ramps with the bottom step at the front and rising toward the back (the
-## flight's rise direction), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
+## flight's rise direction; a stairs model is drawn once per lane of its flight, by the bottom square,
+## stretched along the lane), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
 ## and water models replace their slab; standing things (trees, shrubs, ladders, fences, boxes) keep the
 ## ground slab under them; walls, windows, stairs and tree tops are the model alone.
 func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) -> void:
 	var y := 0.0
 	var facing := UNTURNED
 	var free := false
+	var lane := Vector3.ZERO   # a stairs model's lane: from its middle back to the bottom square's centre
 	match st.kind:
 		K.FLOOR:
 			if not floor_ok:
@@ -264,7 +269,12 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 			_fence_base(o, st, floor_ok)
 			facing = UNTURNED if _fence_joins(p, st, 1) or _fence_joins(p, st, 3) else 1
 		K.STAIRS_UP, K.RAMP_UP:
-			facing = (_flight(p).x + 2) % 4
+			var f := _flight(p)
+			facing = (f.x + 2) % 4
+			if st.kind == K.STAIRS_UP:
+				if f.y > 0:
+					return   # the bottom square draws the lane
+				lane = Vector3(DIRS[f.x].x, 0, DIRS[f.x].y) * (f.z - 1)
 		_:
 			_ground(o, floor_ok)
 			free = st.random_yaw
@@ -273,8 +283,10 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 		var rng := RandomNumberGenerator.new()
 		rng.seed = square_hash(p)
 		yaw = rng.randf() * TAU
-	var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale),
-			o + Vector3(0.5, y, 0.5) + st.offset) * MODEL_TURN
+	var basis := Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale)
+	if lane != Vector3.ZERO:   # front to back (model z, along the rise) over the lane's squares
+		basis = basis * Basis.from_scale(Vector3(1, 1, lane.length() + 1))
+	var xf := Transform3D(basis, o + Vector3(0.5, y, 0.5) + st.offset + lane * 0.5) * MODEL_TURN
 	var md := _roof_models if st.kind == K.ROOF else _models
 	if not md.has(st.model):
 		md[st.model] = []
@@ -766,6 +778,24 @@ static func wet_ground(wet: float) -> void:
 	m.roughness = lerpf(0.9, WET_ROUGHNESS, w)
 	m.metallic_specular = lerpf(0.5, WET_SPECULAR, w)
 	m.albedo_color = Color.WHITE.lerp(WET_TINT, w)
+
+
+## How much of the open ground and roofs lies under snow, 0 bare .. 1 covered: a pass over the ground material
+## (shaders/snow_cover.gdshader: white on what faces up, in patches that grow with `cover`), none at 0. `origin_ms`:
+## the bubble's origin, so the patches stay put on the map when it shifts. Main thread.
+static func snow_ground(cover: float, origin_ms: Vector3i) -> void:
+	var m := material(GROUND)
+	var c := clampf(cover, 0.0, 1.0) if is_finite(cover) else 0.0
+	if c <= 0.0:
+		m.next_pass = null
+		return
+	if _snow == null:
+		_snow = ShaderMaterial.new()
+		_snow.shader = SNOW_SHADER
+		_snow.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the ground
+	_snow.set_shader_parameter(&"cover", c)
+	_snow.set_shader_parameter(&"origin_m", Vector2(posmod(origin_ms.x, SNOW_PERIOD), posmod(origin_ms.y, SNOW_PERIOD)) * CddaCoords.TILE_M)
+	m.next_pass = _snow
 
 
 ## The shared material `name` ("solid", "ground" or "glass"), made on first use by whichever thread asks first: the meshing

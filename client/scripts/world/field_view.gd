@@ -6,7 +6,7 @@ extends Node3D
 ## specks; more and denser with intensity (1..3). Invisible fields (hot and cold air, markers) and vents (the
 ## emitters; what they emit is its own field) are skipped. One MultiMesh per look (four draws at most), every
 ## instance a camera-facing quad from one small shader per look: billboards use the main camera's inverse view,
-## so both VR eyes see the same quad. Rebuilt per snapshot, deterministic per square, MAX_PER_LOOK instances
+## so both VR eyes see the same quad. Rebuilt per snapshot and when the cutaway moves, deterministic per square, MAX_PER_LOOK instances
 ## per look at most.
 
 const MAX_PER_LOOK := 2048
@@ -43,7 +43,8 @@ const KINDS := {
 	"fd_bee_swarm": [Look.SWARM, Color(0.16, 0.12, 0.04, 0.95)],
 }
 
-var view_z_max := CddaCoords.Z_LIMIT
+var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
+var _world: WorldView = null   # the world last applied (refresh follows its cutaway)
 ## Instances per look at most (tests lower it).
 var max_per_look := MAX_PER_LOOK
 var _layers := {}      # Look -> MultiMeshInstance3D
@@ -66,6 +67,7 @@ func count(look := -1) -> int:
 
 
 func apply(snap: Snapshot, world: WorldView) -> void:
+	_world = world
 	var by_look := {}   # Look -> [[Transform3D, Color, phase], ...]
 	if world.tables != null:
 		for sm: Snapshot.Submap in snap.submaps.values():
@@ -104,6 +106,20 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			mm.set_instance_color(i, xs[i][1])
 			mm.set_instance_custom_data(i, Color(xs[i][2], 0, 0, 0))
 		_counts[look] = xs.size()
+
+## Each frame: a cutaway change (WorldView.things_z_max) redraws at once, not on the next snapshot.
+func _process(_delta: float) -> void:
+	refresh()
+
+
+## Follows the cutaway of the world last applied: redraws its snapshot when things_z_max() moved.
+func refresh() -> void:
+	if _world == null or not is_instance_valid(_world) or _world.snapshot == null:
+		return
+	var z := _world.things_z_max()
+	if z != view_z_max:
+		view_z_max = z
+		apply(_world.snapshot, _world)
 
 
 func shift(d: Vector3) -> void:

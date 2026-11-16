@@ -731,6 +731,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.options_requested.connect(func() -> void: open_ui("keys"))
 	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
@@ -1379,6 +1380,34 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
+const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
+
+
+## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
+func _apply_options() -> void:
+	var o := hud_settings
+	for c: Camera3D in [fp, view_cam, camera]:
+		if c != null:
+			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
+	if fp != null:
+		fp.sensitivity = speed
+		fp.invert_y = o.invert_y
+	if camera != null:
+		camera.sensitivity = speed
+		camera.invert_y = o.invert_y
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if o.vsync else DisplayServer.VSYNC_DISABLED)
+	var full := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN,
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+	if full != o.fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if o.fullscreen
+				else DisplayServer.WINDOW_MODE_WINDOWED)
+
+
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1409,6 +1438,7 @@ func _setup_hud() -> void:
 	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
+	_apply_options()
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1453,7 +1483,8 @@ func _setup_hud() -> void:
 		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		if viewmodel != null:
-			viewmodel.flashes = hud_settings.weather_flash)
+			viewmodel.flashes = hud_settings.weather_flash
+		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
