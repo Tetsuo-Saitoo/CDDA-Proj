@@ -5,7 +5,9 @@ extends PanelContainer
 ## wrap across the screen, each row a name and a value in its level's colour, the game's description as the row's
 ## tooltip. The same view
 ## goes on the VR panel (main.gd menus_to_panel), so the headset gets it too. Rebuilt on CharacterData.changed
-## only while shown. The mouse cursor comes on while it is open and its old mode comes back on close.
+## only while shown, and on opening only when the data changed since; a rebuild replaces only the cards whose rows
+## changed (a big modded sheet has hundreds of rows). The mouse cursor comes on while it is open and its old mode
+## comes back on close.
 
 signal opened
 signal closed
@@ -21,6 +23,7 @@ var data: CharacterData:
 		if data != null and data.changed.is_connected(_on_changed):
 			data.changed.disconnect(_on_changed)
 		data = v
+		_built_rev = -1
 		if data != null:
 			data.changed.connect(_on_changed)
 		_on_changed()
@@ -33,6 +36,10 @@ var _note: Label
 var _hint: Label
 var _flow: HFlowContainer
 var _prev_mouse: int = Input.MOUSE_MODE_VISIBLE
+var _built_rev := -1   # the CharacterData.revision on screen (-1: none)
+var _shown := {}       # card id -> [the card's Dictionary as drawn, its node]
+## Card nodes made so far (tests: a rebuild that changed one card makes one).
+var cards_made := 0
 
 
 func _init() -> void:
@@ -127,21 +134,50 @@ func _on_changed() -> void:
 
 
 func rebuild() -> void:
-	for c in _flow.get_children():
-		_flow.remove_child(c)
-		c.queue_free()
 	_hint.text = "%s or Esc: close" % InputActions.key_of(&"character")
 	if data == null:
+		for id: String in _shown:
+			_drop(_shown[id][1])
+		_shown = {}
+		_built_rev = -1
 		_title.text = "Character"
 		_subtitle.text = ""
 		_note.text = ""
 		return
+	if data.revision == _built_rev:
+		return
+	_built_rev = data.revision
 	_title.text = data.title
 	_subtitle.text = ("   " + data.subtitle) if not data.subtitle.is_empty() else ""
 	_note.text = data.note
 	_note.visible = not data.note.is_empty()
+	var keep := {}
 	for c: Dictionary in data.cards:
-		_flow.add_child(_card(c))
+		var id := str(c["id"])
+		if keep.has(id):
+			continue   # ids are unique; a repeat would only be drawn twice
+		var old: Array = _shown.get(id, [])
+		var node: Control
+		if not old.is_empty() and old[0] == c:
+			node = old[1]
+		else:
+			if not old.is_empty():
+				_drop(old[1])
+			node = _card(c)
+			cards_made += 1
+			_flow.add_child(node)
+		_flow.move_child(node, keep.size())
+		keep[id] = [c, node]
+	for id: String in _shown:
+		if not keep.has(id):
+			_drop(_shown[id][1])
+	_shown = keep
+
+
+func _drop(n: Node) -> void:
+	if n.get_parent() == _flow:
+		_flow.remove_child(n)
+	n.queue_free()
 
 
 ## What the cards show: per card a "[title]" line, then a "label: value" line per row (tests, logs).

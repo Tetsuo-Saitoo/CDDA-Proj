@@ -619,8 +619,8 @@ func _part_builder(pi: int) -> PropShapes.Builder:
 ## surface_N planes when it has them: plane is the index into the model's surfaces, else -1); empty when they
 ## are inside a closed container. Deterministic per square.
 ## Without `handles` (the tile's [uid, itype, spot_x, spot_y] lists): the four largest itypes, then
-## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
-## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
+## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle (the
+## first Snapshot.MAX_HANDLES_PER_TILE: a big pile next to the player lists more) in their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
 ## slot, the 17th and later on top of the ones before on the same slot; `hidden` ones are skipped (their
 ## slot stays empty, so the rest don't move); then clutter for the items without a handle. An item with a
 ## pose (the snapshot's `poses`) lies turned as it was placed (pose_basis), else at a turn of its own.
@@ -653,7 +653,7 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	for _s in SUB * SUB:
 		jitter.append(Vector2(rng.randf_range(-0.04, 0.04), rng.randf_range(-0.04, 0.04)))
 	var tops := {}   # Vector2i(slot, surface) -> height of what lies there
-	var n := handles.size()
+	var n := mini(handles.size(), Snapshot.MAX_HANDLES_PER_TILE)   # a big pile next to the player: its tray shows the rest
 	for k in n + clampi(count - n, 0, MAX_SHOWN):
 		var uid := 0
 		var itype := 0

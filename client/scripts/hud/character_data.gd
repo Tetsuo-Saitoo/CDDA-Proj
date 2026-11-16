@@ -29,7 +29,8 @@ const NEEDS := ["stamina", "hunger", "thirst", "sleepiness", "pain"]
 const NO_SHEET := "Stats, skills, proficiencies, traits and bionics come with the game's character data, which this game doesn't send yet."
 const WAITING := "Asking the game for stats, skills, proficiencies, traits and bionics..."
 const FAILED := "The game couldn't send the character data (%s)."
-const TRUNCATED := "Some descriptions were too long to send and are left out."
+## `truncated`: the bridge emptied descriptions and, for a huge sheet, cut entries off the ends of the lists.
+const TRUNCATED := "The character data was too big to send whole: some descriptions or list entries are left out."
 ## A query result's errors (contracts/bridge_api.md "Character queries"); anything else reads as "internal".
 const ERRORS := ["internal", "too large"]
 const MAX_RESULT_BYTES := 72 << 10   # the bridge caps a result at 64 KB
@@ -44,6 +45,8 @@ var note := NO_SHEET
 ## The cards in display order, empty ones left out: {id, title, rows: [{label, value, level (HudData.OK ...),
 ## tip}]}. Rows are at most MAX_ROWS per card.
 var cards: Array[Dictionary] = []
+## Bumped with each `changed`: views skip a rebuild when they have shown this revision already.
+var revision := 0
 
 var _hud: HudData
 var _snap: Snapshot
@@ -109,8 +112,12 @@ func card(id: String) -> Dictionary:
 	return {}
 
 
+## Works the cards out again; `changed` only when something shown differs (each new turn calls this while most of
+## the screen stays the same).
 func _build() -> void:
-	cards.clear()
+	var was := [title, subtitle, note, cards]
+	var fresh: Array[Dictionary] = []
+	cards = fresh
 	_heading()
 	_add("stats", "Stats", _stats_rows())
 	if _hud != null:
@@ -126,6 +133,9 @@ func _build() -> void:
 	_add("traits", "Traits and mutations", _trait_rows())
 	_add("bionics", "Bionics", _bionic_rows())
 	_add("speed", "Speed", _speed_rows())
+	if [title, subtitle, note, cards] == was:
+		return
+	revision += 1
 	changed.emit()
 
 

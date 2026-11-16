@@ -315,7 +315,8 @@ func on_events(events: Array) -> void:
 func _tagged_result(ev: Dictionary) -> Array:
 	var tag: Variant = ev.get("detail")
 	var amount: Variant = ev.get("amount")
-	if not (tag is int or tag is float) or not (amount is int or amount is float) or not is_finite(float(tag)):
+	if not (tag is int or tag is float) or not (amount is int or amount is float) or not is_finite(float(tag)) \
+			or not is_finite(float(amount)):
 		return []
 	var t := int(tag)
 	if t < TAG_BASE or t > MAX_TAG or float(t) != float(tag):

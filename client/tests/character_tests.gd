@@ -56,6 +56,38 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_view(cd)
 	_test_worn(snap, tables, hud)
 	_test_query(snap, tables, hud)
+	_test_rebuild(snap, tables, hud)
+
+
+## A new turn or the same sheet again changes nothing on screen (no `changed`, no new cards); a changed skill
+## replaces only the Skills card; reopening with nothing new rebuilds nothing.
+func _test_rebuild(snap: Snapshot, tables: IdTables, hud: HudData) -> void:
+	var cd := CharacterData.new()
+	cd.update(hud, snap, tables)
+	cd.set_sheet(_sheet())
+	var v := CharacterView.new()
+	v.mouse_hook = func(_set_to: int) -> int: return Input.MOUSE_MODE_VISIBLE
+	v.data = cd
+	v.open()
+	var made := v.cards_made
+	var fired := [0]
+	cd.changed.connect(func() -> void: fired[0] += 1)
+	var rev := cd.revision
+	cd.update(hud, snap, tables)   # a new turn, nothing different
+	cd.set_sheet(_sheet())         # the same sheet again
+	var same: bool = fired[0] == 0 and cd.revision == rev and v.cards_made == made
+	var sheet := _sheet()
+	(sheet["skills"] as Array)[0]["level"] = 3
+	cd.set_sheet(sheet)
+	var one: bool = fired[0] == 1 and v.cards_made == made + 1 and v.text().find("Melee: 3 (40%)") >= 0 \
+			and v.text().begins_with("[Stats]")
+	v.close()
+	v.open()
+	var reopened := v.cards_made == made + 1
+	_check.call(made >= 6 and same and one and reopened,
+			"character screen: the same data again rebuilds nothing; a changed skill replaces only its card (%d cards, %d made)"
+			% [cd.cards.size(), v.cards_made])
+	v.free()
 
 
 ## The bridge's query_character (contracts/bridge_api.md "Character queries"): its result read and checked, the real
