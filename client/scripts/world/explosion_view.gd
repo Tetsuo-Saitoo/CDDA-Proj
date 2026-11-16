@@ -199,8 +199,10 @@ static func near_squares(path: Variant, centre: Vector3i) -> Array:
 		return out
 	for sq: Variant in (path as Array).slice(0, MAX_AREA):
 		if sq is Vector3i:
-			var d: Vector3i = (sq as Vector3i) - centre
-			if absi(d.x) <= MAX_RADIUS and absi(d.y) <= MAX_RADIUS and absi(d.z) <= MAX_RADIUS:
+			var v: Vector3i = sq
+			# Per axis in 64-bit ints: Vector3i's own subtraction is 32-bit and wraps near the edges.
+			if (absi(v.x - centre.x) <= MAX_RADIUS and absi(v.y - centre.y) <= MAX_RADIUS
+					and absi(v.z - centre.z) <= MAX_RADIUS):
 				out.append(sq)
 	return out
 

@@ -654,7 +654,8 @@ func _test_explosions(root: Node, world: WorldView, tables: IdTables, me: Vector
 	many.fill(me)
 	var near_ok := (ExplosionView.near_squares([me, "x", me + Vector3i(999, 0, 0), Vector3(1, 2, 3),
 			me + Vector3i(60, -60, 1)], me).size() == 2 and ExplosionView.near_squares("junk", me).is_empty()
-			and ExplosionView.near_squares(many, me).size() == ExplosionView.MAX_AREA)
+			and ExplosionView.near_squares(many, me).size() == ExplosionView.MAX_AREA
+			and ExplosionView.near_squares([Vector3i(2147483647, 0, 0)], Vector3i(-2147483647, 0, 0)).is_empty())
 	for i in 6:
 		ev2.on_events([{"kind": "explosion", "pos": me, "amount": 0, "text": "spell:acid", "detail": 0, "path": [me]}])
 	var spells_capped := ev2.spell_count() == ExplosionView.MAX_SPELLS
