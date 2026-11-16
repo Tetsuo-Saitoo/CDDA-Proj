@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge: another game can start in the same process after stop() (or a game that ended or failed), with the same folders; the game thread stays between games and CDDA's and the bridge's per-game state is cleared. live_test plays a load and the test range as second games. Sim test timeouts scale with slow_build.
 - 2026-11-16 — Bridge, G4: a character sheet still over 64 KB with no descriptions now loses list tails (effects first, skills last) instead of answering "too large".
 - 2026-11-16 — Spell area effects (combat lead, fork fp3d-combat + client): a spell's area sends an `explosion` event "spell:<damage type>" over its squares; ExplosionView makes them glow in the damage type's colour and fade (no ring, fireball or flash), at most 4 at once, only squares near the centre (events_test, aim_tests). Not seen on screen.
 - 2026-11-16 — EMP, scrambler and resonance pulses (combat lead, fork fp3d-combat + client): EMP and scrambler grenades, EMP ammo, the EMP bionic and resonance cascades send `explosion` events (emp, scrambler, resonance), one per blast; ExplosionView draws a fading coloured ring and a soft light, no fireball, smoke or flash; older blasts unchanged (events_test, aim_tests). Not seen on screen.
