@@ -545,8 +545,30 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::hold;
     } else if( op == "consume" ) {
         a.op = fp3d::item_op::consume;
+    } else if( op == "cook" ) {
+        a.op = fp3d::item_op::cook;
     } else {
         return false;
+    }
+    // cook: the recipe (required) and the batch (1 if left out); only cook has them. The sim checks them again.
+    if( !field( d, "recipe", Variant::STRING, v ) || d.has( "recipe" ) != ( a.op == fp3d::item_op::cook ) ) {
+        return false;
+    }
+    if( d.has( "recipe" ) ) {
+        a.recipe = to_std( v );
+        if( a.recipe.empty() || a.recipe.size() > fp3d::max_cook_recipe_bytes ) {
+            return false;
+        }
+    }
+    if( !field( d, "batch", Variant::INT, v ) || ( d.has( "batch" ) && a.op != fp3d::item_op::cook ) ) {
+        return false;
+    }
+    if( d.has( "batch" ) ) {
+        const int64_t batch = v;
+        if( batch < 1 || batch > fp3d::max_cook_batch ) {
+            return false;
+        }
+        a.batch = static_cast<int>( batch );
     }
     const auto ref = [&d]( const char *uid_key, const char *type_key, fp3d::item_ref & r ) {
         Variant u;
@@ -580,7 +602,7 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
     } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ||
-               a.op == fp3d::item_op::place || a.op == fp3d::item_op::spot ) {
+               a.op == fp3d::item_op::place || a.op == fp3d::item_op::spot || a.op == fp3d::item_op::cook ) {
         return false;
     }
     // place: where the item comes to rest. Only place has it, and needs it.
