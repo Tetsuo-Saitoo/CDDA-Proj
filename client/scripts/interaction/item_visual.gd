@@ -11,6 +11,12 @@ const MAX_CACHED := 512
 static var _meshes := {}   # "<generation>:<itype>" -> ArrayMesh (placeholder shapes)
 
 
+## Forgets the shared meshes: another game (main.gd's back to the menu) may load other mods under a generation
+## number this one used.
+static func clear_cache() -> void:
+	_meshes.clear()
+
+
 ## A node showing item `type` at its drawn size; its origin is where the item rests (the bottom centre).
 static func make(type: int, world: WorldView) -> Node3D:
 	var prop := world.props.item(type)

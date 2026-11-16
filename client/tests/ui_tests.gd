@@ -28,6 +28,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_chargen()
 	_test_main_menu()
 	_test_world_setup()
+	_test_game_over(root)
 	ui.free()
 	_test_hands_panel(root)
 
@@ -955,6 +956,30 @@ const WORLD_CATALOG := {
 	],
 	"default_mods": ["dda"],
 }
+
+
+## Back to the main menu after a game: what the menu says, and F1's "Save and quit to menu".
+func _test_game_over(root: Node) -> void:
+	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
+			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),
+			Main.game_over_text("failed", "boom"), Main.game_over_text("ended", "odd")]
+	_check.call(said == [["Game saved.", true], ["Your character died.", false], ["The game ended.", false],
+			["The game ended.", false], ["The game failed: boom", false], ["The game ended: odd", false]],
+			"game over: the menu's message per reason -> %s" % [said])
+	var long_text: String = Main.game_over_text("failed", "x".repeat(5000))[0]
+	_check.call(long_text.length() < 400, "game over: a long failure is cut (%d chars)" % long_text.length())
+	var m := KeyMenu.new()
+	root.add_child(m)
+	var fired := [0]
+	m.quit_to_menu.connect(func() -> void: fired[0] += 1)
+	var hidden_at_first := not m.quit_button.visible
+	m.show_quit_to_menu(true)
+	m.visible = true
+	m.quit_button.pressed.emit()
+	_check.call(hidden_at_first and m.quit_button.visible and fired[0] == 1 and not m.visible,
+			"F1: \"Save and quit to menu\" shows only for a live game, closes the menu and asks once (fired %d)"
+			% fired[0])
+	m.free()
 
 
 func _test_world_setup() -> void:
