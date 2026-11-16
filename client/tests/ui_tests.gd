@@ -30,6 +30,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_main_menu()
 	_test_world_setup()
 	_test_game_over(root)
+	_test_options()
 	ui.free()
 	_test_hands_panel(root)
 
@@ -868,6 +869,13 @@ func _test_main_menu() -> void:
 	_check.call(m.suggested_world() == "World2", "menu: suggests a free world name")
 	_check.call(MainMenu.world_name_ok("a_b-1") and not MainMenu.world_name_ok("../x")
 			and not MainMenu.world_name_ok(""), "menu: world name rule")
+	var opts := [0]
+	m.options_requested.connect(func() -> void: opts[0] += 1)
+	m.show_page("main")
+	for b: Node in m._box.get_children():
+		if b is Button and (b as Button).text == "Options (F1)":
+			(b as Button).pressed.emit()
+	_check.call(opts[0] == 1, "menu: the Options (F1) button asks for the F1 menu")
 	m.show_page("credits")
 	_check.call(m.page == "credits" and m._box.get_child_count() >= 4, "menu: credits page")
 	m.show_page("new")
@@ -1016,6 +1024,50 @@ const WORLD_CATALOG := {
 
 
 ## Back to the main menu after a game: what the menu says, and F1's "Save and quit to menu".
+## G7 options in HudSettings and the F1 menu: defaults, the controls save them, the file is clamped / ignored.
+func _test_options() -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_options.cfg")
+	var hs := HudSettings.new()
+	_check.call(hs.look_speed == 1.0 and hs.fov == HudSettings.DEFAULT_FOV and hs.render_scale == 1.0
+			and not hs.fullscreen and hs.vsync, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var seen := [0]
+	menu.hud_changed.connect(func() -> void: seen[0] += 1)
+	for sv: Array in [[menu.fov_slider, 90.0], [menu.look_slider, 2.0], [menu.scale_slider, 0.75]]:
+		var s := sv[0] as HSlider
+		s.value = sv[1]
+		s.value_changed.emit(s.value)   # a slider outside the tree doesn't emit it itself
+	menu.fullscreen_check.button_pressed = true
+	menu.vsync_check.button_pressed = false
+	var back := HudSettings.new()
+	var why := back.load_file(path)
+	_check.call(why == "" and back.fov == 90.0 and back.look_speed == 2.0 and back.render_scale == 0.75
+			and back.fullscreen and not back.vsync and seen[0] == 5,
+			"options: the F1 controls set and save each (%s, %s, %s, %s, %s; %d changes)"
+			% [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync, seen[0]])
+	var shown := [(menu._option_values[&"fov"] as Label).text, (menu._option_values[&"render_scale"] as Label).text]
+	_check.call(shown == ["90%s" % char(0xb0), "75 %"], "options: the values show next to the sliders (%s)" % [shown])
+	menu.set_option(&"debug_cheats", true)
+	_check.call(not hs.debug_cheats and seen[0] == 5, "options: set_option takes only the option fields")
+	hs.fov = 300.0   # out of range in memory: saved clamped
+	hs.save_file(path)
+	back = HudSettings.new()
+	back.load_file(path)
+	_check.call(back.fov == HudSettings.FOVS.y, "options: an out-of-range value is saved clamped (%s)" % back.fov)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\nfov=nan\n[display]\nscale=-3\nfullscreen=1\n"
+			+ "vsync=\"no\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	_check.call(junk.look_speed == HudSettings.LOOK_SPEEDS.y and junk.fov == HudSettings.DEFAULT_FOV
+			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync,
+			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
+			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
+	menu.free()
+
+
 func _test_game_over(root: Node) -> void:
 	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
 			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),

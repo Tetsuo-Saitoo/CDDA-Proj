@@ -10,6 +10,8 @@ extends PanelContainer
 signal new_game(world: String, fresh_world: bool, chargen: bool, world_setup: bool)
 signal load_game(world: String, save: String)
 signal quit_requested
+## "Options (F1)" (G7): main opens the F1 menu, which holds the keys, the HUD and the look / display options.
+signal options_requested
 ## "Test range" (PLAN.md K7): lead-qa's generated world with everything in it, cheats allowed.
 signal test_range_requested
 
@@ -131,6 +133,7 @@ func show_page(p: String) -> void:
 			if test_range:
 				var r := _button("Test range", func() -> void: test_range_requested.emit())
 				r.tooltip_text = "A fresh test world with every item, vehicle and monster in zones; cheats on the F1 menu."
+			_button("Options (F1)", func() -> void: options_requested.emit())
 			_button("Credits", func() -> void: show_page("credits"))
 			_button("Quit", func() -> void: quit_requested.emit())
 		"credits":
