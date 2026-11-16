@@ -20,6 +20,7 @@ const CORPSE_M := 1.0
 
 class Prop:
 	var model: ModelLibrary.Model   # drawn instead of the shape when set (real size: no item scaling)
+	var joins := {}                 # AssetRegistry.JOINS name -> Model: pieces of joined furniture (with a model)
 	var shape := ""            # "" and no model = glyph card
 	var step := AssetRegistry.Step.GLYPH
 	var via := ""
@@ -151,6 +152,7 @@ func _make(table: String, index: int) -> Prop:
 	if found.entry != null and (model != null or PropShapes.has_shape(found.entry.placeholder)):
 		var e := found.entry
 		p.model = model
+		p.joins = registry.joins_of(e) if model != null else {}
 		p.shape = e.placeholder if PropShapes.has_shape(e.placeholder) else ""
 		p.step = found.step
 		p.via = found.via
