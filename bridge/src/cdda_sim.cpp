@@ -235,7 +235,7 @@ void CddaSim::_bind_methods()
 
 void CddaSim::stop_session()
 {
-    fp3d_session::stop();
+    fp3d_session::unload();
 }
 
 String CddaSim::start( const String &data_dir, const String &user_dir, const String &world )

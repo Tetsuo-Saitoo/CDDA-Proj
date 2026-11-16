@@ -675,12 +675,12 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	world.free()
 
 
-## Join pieces (`joins`): an L of counters draws its ends, middles and corner as the registry names them,
-## each turned so its joining sides meet its neighbours; a lone counter draws the plain model. Bad `joins`
-## refuse the entry.
+## Join pieces (`joins`): an L, a T and a cross of counters draw their ends, middles, corner, tee and cross
+## as the registry names them, each turned so its joining sides meet its neighbours; a lone counter draws
+## the plain model. Bad `joins` refuse the entry.
 func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
 	DirAccess.make_dir_recursive_absolute(_dir.path_join("registry_joins"))
-	var names := ["single", "end_left", "end_right", "middle", "corner"]
+	var names := ["single", "end_left", "end_right", "middle", "corner", "tee", "cross"]
 	var joins := {}
 	for n: String in names:
 		_write("models/furniture/c_%s.glb" % n, tri_glb())
@@ -710,9 +710,12 @@ func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	terrain.set_tables(tables)
 	var cat := PropCatalog.new(reg)
 	cat.set_tables(tables)
-	_check.call(cat.furniture(tables.index_of("furn", "f_counter")).joins.size() == 4, "joins: the counter has its four pieces")
+	_check.call(cat.furniture(tables.index_of("furn", "f_counter")).joins.size() == 6, "joins: the counter has its six pieces")
 	var at := func(x: int, y: int) -> int: return y * 12 + x
-	var counters := [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(2, 3), Vector2i(2, 4), Vector2i(9, 9)]
+	# An L, a lone counter, a T (row y 7, stem down at x 3) and a cross centred on (8, 4).
+	var counters := [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(2, 3), Vector2i(2, 4), Vector2i(9, 9),
+			Vector2i(2, 7), Vector2i(3, 7), Vector2i(4, 7), Vector2i(3, 8), Vector2i(3, 9),
+			Vector2i(8, 3), Vector2i(7, 4), Vector2i(8, 4), Vector2i(9, 4), Vector2i(8, 5)]
 	var furn := {}
 	for c: Vector2i in counters:
 		furn[at.call(c.x, c.y)] = "f_counter"
@@ -722,7 +725,8 @@ func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	cat.set_snapshot(snap)
 	var r := PropMesher.new(snap, terrain, cat).build(Vector3i(int(pos[0]), int(pos[1]), int(pos[2])))
 	var sides := {"single": [], "end_left": [Vector3.RIGHT], "end_right": [Vector3.LEFT], "middle": [Vector3.RIGHT, Vector3.LEFT],
-			"corner": [Vector3.RIGHT, Vector3.BACK]}
+			"corner": [Vector3.RIGHT, Vector3.BACK], "tee": [Vector3.RIGHT, Vector3.LEFT, Vector3.BACK],
+			"cross": [Vector3.RIGHT, Vector3.LEFT, Vector3.BACK, Vector3.FORWARD]}
 	var count := {}
 	var meets := true
 	for n: String in names:
@@ -737,11 +741,12 @@ func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 			for s: Vector3 in sides[n]:
 				var w := (xf.basis * s).normalized()
 				meets = meets and counters.has(tile + Vector2i(roundi(w.x), roundi(w.z)))
-	_check.call(count["single"] == 1 and count["end_left"] + count["end_right"] == 2 and count["middle"] == 3 and count["corner"] == 1,
-			"joins: an L of six counters draws two ends, three middles and a corner; a lone one the plain model " + str(count))
+	_check.call(count["single"] == 1 and count["end_left"] + count["end_right"] == 9 and count["middle"] == 4 and count["corner"] == 1
+			and count["tee"] == 1 and count["cross"] == 1,
+			"joins: an L, a T and a cross draw their ends, middles, corner, tee and cross; a lone one the plain model " + str(count))
 	_check.call(meets, "joins: each piece's joining sides meet its neighbours, and only them")
 	var turned := true
-	for links: int in [1, 2, 3, 4, 5, 6, 8, 9, 10, 12]:   # shape-local bits -> the sides the piece must join
+	for links: int in range(1, 16):   # shape-local bits -> the sides the piece must join
 		var j := PropMesher.join_of(links)
 		var b := PropMesher.MODEL_TURN.basis * Basis(Vector3.UP, int(j[1]) * PI / 2.0)
 		var got := 0
@@ -749,8 +754,8 @@ func _test_joins(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 			var w := b * s   # shape-local: front -z (bit 1), +x (2), back +z (4), -x (8)
 			got |= 1 if w.z < -0.5 else (2 if w.x > 0.5 else (4 if w.z > 0.5 else 8))
 		turned = turned and got == links
-	_check.call(turned and PropMesher.join_of(7)[0] == "" and PropMesher.join_of(15)[0] == "" and PropMesher.join_of(0)[0] == "",
-			"joins: every one- and two-sided join gets a piece turned to it; a T, a cross or none gets the plain model")
+	_check.call(turned and PropMesher.join_of(0)[0] == "",
+			"joins: every join, one to four sides, gets a piece turned to it; none gets the plain model")
 
 
 ## Terrain models (assets/models/terrain/<id>.glb + a registry entry): they replace the procedural shape,

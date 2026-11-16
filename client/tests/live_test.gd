@@ -1,9 +1,10 @@
 extends SceneTree
-## Headless check of the bridge (CddaSim) in two Godot runs, since CDDA runs once per process.
+## Headless check of the bridge (CddaSim) in two Godot runs.
 ## Run 1 loads the extension, refuses bad input, lists worlds and saves from a crafted folder, boots a new CDDA
 ## game, reads a snapshot, the id tables and events, plays a turn through the action queue, saves while paused
-## (save_game) and plays on, stops a turn later, then starts run 2 (`-- --load`): it loads that save, checks the
-## turn and position, and stops.
+## (save_game) and plays on, stops a turn later, loads that save as a second game in the same process (other
+## folders refused, nothing of the first game shown), then starts run 2 (`-- --load`): it loads that save in a
+## fresh process, checks the turn and position, stops, deletes it and plays the test range as its second game.
 ## Needs the DLL (build target fp3d-cdda) and the game data in ../cdda. ~2 min. From the repo root:
 ##   godot --headless --path client --script res://tests/live_test.gd
 ## Exit code 0 = all passed.
@@ -232,6 +233,7 @@ func _run() -> void:
 	if saves.size() != 1:
 		_finish()
 		return
+	await _second_game(saves[0], saved_turn, saved_pos)
 
 	var expect := {"save": saves[0], "turn": saved_turn, "pos": [saved_pos.x, saved_pos.y, saved_pos.z]}
 	var f := FileAccess.open(user_dir.path_join(EXPECT_FILE), FileAccess.WRITE)
@@ -294,7 +296,46 @@ func _run_load() -> void:
 	_check(why.is_empty(), "delete_save deletes the character after its game (%s)" % why)
 	_check(_sim.list_saves(_user_dir, WORLD).is_empty() and not (WORLD in _sim.list_worlds(_user_dir)),
 			"and the world it leaves empty")
+	# A new game after a loaded one, in the same process: the test range.
+	why = _sim.start_test_range(_data_dir, _user_dir)
+	_check(why.is_empty(), "the test range starts as a second game (%s)" % why)
+	req = await _main_loop_request(0, BOOT_TIMEOUT_MS)
+	_check(not req.is_empty(), "and reaches the main loop (state %s %s)" % [_sim.get_state(), _sim.get_error()])
+	_check(_sim.get_range_info().get("range", false), "as a range game")
+	snap = Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	_check(snap.is_valid() and snap.player_pos != saved_pos, "with its own snapshot (%s)" % snap.player_pos)
+	_sim.stop()
+	_check(_sim.get_state() == "stopped", "the range stops")
 	_finish()
+
+
+## Run 1, once its first game stopped: a second game in the same process loads that game's save.
+func _second_game(save: String, saved_turn: int, saved_pos: Vector3i) -> void:
+	var last_seq: int = _sim.get_snapshot_seq()
+	var other := _user_dir + "-other"
+	DirAccess.make_dir_recursive_absolute(other)
+	var why: String = _sim.start(_data_dir, other, WORLD + "-other")
+	_check(why.contains("other folders"), "a second game refuses other folders (%s)" % why)
+	why = _sim.start_load(_data_dir, _user_dir, WORLD, save)
+	_check(why.is_empty(), "a second game starts in the same process (%s)" % why)
+	_check(_sim.get_snapshot_seq() == 0 and String(_sim.get_id_tables_json()).is_empty()
+			and int(_sim.get_held().get("turn", -1)) == 0 and not _sim.get_range_info().get("range", true),
+			"nothing of the first game shows while it boots")
+	_check(not String(_sim.start_load(_data_dir, _user_dir, WORLD, save)).is_empty(), "refuses a start while it boots")
+	var req := await _main_loop_request(0, BOOT_TIMEOUT_MS)
+	_check(not req.is_empty(), "the second game reaches the main loop (state %s %s)" % [_sim.get_state(),
+			_sim.get_error()])
+	if req.is_empty():
+		return
+	var snap := Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	_check(snap.is_valid() and int(req["turn"]) == saved_turn and snap.player_pos == saved_pos,
+			"it loads the save: turn %d (saved %d), %s (saved %s)" % [req["turn"], saved_turn, snap.player_pos,
+			saved_pos])
+	_check(_sim.get_snapshot_seq() > last_seq, "snapshot seqs keep counting (%d after %d)" % [
+			_sim.get_snapshot_seq(), last_seq])
+	_check(not String(_sim.get_id_tables_json()).is_empty(), "with id tables")
+	_sim.stop()
+	_check(_sim.get_state() == "stopped", "the second game stops")
 
 
 ## Run 3, started by run 2 while its game holds the world: delete_save must refuse and touch nothing.
