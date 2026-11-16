@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — game_over_live_test (QA lead): a headless run of the ways a game ends through the main menu (character creation cancelled, a death in the test range, CDDA's "Abandon this character", one more game). It fails on three open TASKS items (Game endings).
 - 2026-11-16 — B5 done (QA lead): the ThreadSanitizer workflow on main passes, with all fork tests under TSan in about 60 min.
 - 2026-11-16 — wsl_build.sh syncs through a mirror (QA lead): a file edited during an earlier Linux build no longer keeps an old time that made ninja skip it; unchanged files keep theirs. It also refuses more unsafe target folders.
 - 2026-11-16 — Sim test flake noted (QA lead): the teleport cheat round timed out once on a loaded Linux machine; the scenes after it were skipped, not failed.
