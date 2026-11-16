@@ -17,6 +17,9 @@ const CHEAT_COLOR := Color(1.0, 0.55, 0.1)
 ## The left column's top, in pixels from the screen's middle: the body block, then the mood line, then the feed,
 ## each under what the one above draws (_layout), so they never overlap however many rows CDDA sends.
 const BODY_TOP := -140.0
+## The warning lines' top (px from the screen's top), under the compass; lower while they would cover the developer
+## status lines (avoid).
+const WARN_TOP := 40.0
 const MOOD_H := 36.0
 
 var data: HudData:
@@ -56,7 +59,7 @@ func _init() -> void:
 	mood.add_theme_font_size_override("font_size", FONT_SIZE - 2)
 	warn = _label("Warnings", HORIZONTAL_ALIGNMENT_CENTER)
 	warn.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	warn.position = Vector2(-300, 40)
+	warn.position = Vector2(-300, WARN_TOP)
 	warn.size = Vector2(600, WARN_LINES * 20)
 	cheat_mark = _label("Cheats", HORIZONTAL_ALIGNMENT_RIGHT)
 	cheat_mark.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -210,7 +213,20 @@ func _layout() -> void:
 	_place(feed, y)
 
 
-## Moves `c` (anchored at the left middle) to `y` px from the middle, keeping its height.
+## `box`: the developer status lines' text (main.gd's top-left label, in this view's canvas; empty while hidden). The
+## warning lines go just under it while their text (centred) would overlap it, else back under the compass.
+func avoid(box: Rect2) -> void:
+	var top := WARN_TOP
+	if not warn.text.is_empty() and box.has_area():
+		var w := warn.get_combined_minimum_size().x
+		var mine := Rect2(global_position.x + (size.x - w) / 2.0, global_position.y + WARN_TOP, w, warn.size.y)
+		if mine.intersects(box):
+			top = box.end.y - global_position.y + 4.0
+	if not is_equal_approx(warn.offset_top, top):
+		_place(warn, top)
+
+
+## Moves `c` to `y` px from its anchor (the left middle; the warnings: the top), keeping its height.
 static func _place(c: Control, y: float) -> void:
 	var h := c.offset_bottom - c.offset_top
 	c.offset_top = y

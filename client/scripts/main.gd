@@ -1414,6 +1414,7 @@ func _process(_delta: float) -> void:
 	hud.text = "\n".join(lines)
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
+	hud_view.avoid(Rect2(hud.global_position, hud.get_combined_minimum_size()) if hud.visible else Rect2())
 
 
 ## The view's key line, from the current bindings.

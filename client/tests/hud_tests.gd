@@ -322,6 +322,16 @@ func _test_view(tables: IdTables) -> void:
 	_check.call(v.body_rows() == [["head", 1.0, HudData.OK], ["right leg", 0.0, HudData.BROKEN]]
 			and v.feed.text == "line 2\nline 3\nline 4\nline 5\nline 6\nline 7" and v.warn.text == "Right Leg broken"
 			and v.need_lines().is_empty(), "hud view: body rows, newest messages, warnings; unknown needs hidden (%s)" % [v.body_rows()])
+	# the warning lines clear the developer status lines (top left) only when their centred text would cover them
+	v.size = Vector2(960, 540)
+	v.avoid(Rect2(10, 50, 900, 120))
+	var under := v.warn.offset_top == 174.0 and v.warn.offset_bottom - v.warn.offset_top == HudView.WARN_LINES * 20
+	v.avoid(Rect2(10, 50, 100, 120))
+	var narrow := v.warn.offset_top == HudView.WARN_TOP
+	v.avoid(Rect2(10, 50, 900, 120))
+	v.avoid(Rect2())
+	_check.call(under and narrow and v.warn.offset_top == HudView.WARN_TOP,
+			"hud view: warnings move under the status lines they would cover, else stay under the compass")
 	v.data = null
 	_check.call(v.feed.text == "" and v.warn.text == "" and v.body_rows().is_empty(), "hud view: no data, nothing shown")
 	v.free()
