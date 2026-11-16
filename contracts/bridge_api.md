@@ -113,8 +113,10 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   ones left out, at most 128; `rating` 1 good / −1 bad / 0 neutral (CDDA's point cost), `mutation` false for a
   starting trait. Bionics: one entry per installed bionic, at most 64; power in whole kJ. Effects: the ones the
   snapshot lists (each id once, at most 64). Over 64 KB, descriptions are emptied from the end (effects first, then
-  bionics, traits, proficiencies, skills), the lists stay whole and `truncated` is true. Refused: `{"id", "ok":
-  false, "kind": "character", "error"}` with `internal` or `too large` (shouldn't happen).
+  bionics, traits, proficiencies, skills) and `truncated` is true; if that isn't enough (a heavily modded
+  character), entries go from the ends of the lists: effects, proficiencies being learned, known ones, traits,
+  bionics, speed modifiers, skills. Refused: `{"id", "ok": false, "kind": "character", "error"}` with `internal`
+  or `too large` (shouldn't happen).
 - Boot takes ~30 s (data load, new game). The first snapshot arrives with the first request.
 - Saving: `save_game()`, then watch `get_save_status().done` go up. Or queue the main-loop action `save` (CDDA's "save and quit"); it asks to confirm with a `popup`
   request, answer `action: "YES"`. The game then ends (`ended`, `saved and quit`). `start_load` in a new process
