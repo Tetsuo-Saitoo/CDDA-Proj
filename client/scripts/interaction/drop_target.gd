@@ -83,7 +83,6 @@ static func furniture_id(p: Vector3i, snap: Snapshot, tables: IdTables) -> Strin
 	return n if n is String else ""
 
 
-## Where `point` lies across square `sq`, each 0..SPOT_MAX (x east = +X, y south = +Z).
 ## A shelf_at / shelf_on_ray answer DropTarget takes: a square, a whole shelf 0..MAX_SHELF and a finite spot.
 static func _shelf_ok(s: Dictionary) -> bool:
 	var sh: Variant = s.get("shelf")
@@ -92,6 +91,7 @@ static func _shelf_ok(s: Dictionary) -> bool:
 			and (sh as int) <= ItemActions.MAX_SHELF and sp is Vector2 and (sp as Vector2).is_finite()
 
 
+## Where `point` lies across square `sq`, each 0..SPOT_MAX (x east = +X, y south = +Z).
 static func _spot(coords: CddaCoords, sq: Vector3i, point: Vector3) -> Vector2:
 	if coords == null:
 		return Vector2(-1, -1)
