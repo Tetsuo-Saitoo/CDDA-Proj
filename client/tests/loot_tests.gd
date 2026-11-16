@@ -346,3 +346,32 @@ func _test_take_container() -> void:
 	_check.call(not refused.has(true) and be.calls.size() == 2,
 			"loot: container take: a carried, negative, own, elsewhere or unknown parent is refused, nothing sent (%s)" % [refused])
 	acts.free()
+	_test_mock_take_container(c)
+
+
+## MockItems answers a container take the bridge's way: out of `inside` only for that container on that square.
+func _test_mock_take_container(c: int) -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock := float(_it["rock"])
+	var ham := float(_it["hammer"])
+	sm.inside[c] = [[424250, _it["rock"], 0], [424251, _it["rock"], 0]]
+	var said: Array[String] = []
+	var hear := func(t: String) -> void: said.append(t)
+	_mock.message.connect(hear)
+	var seq := _snap.seq
+	# refused, nothing moves: another square, the wrong container type, not in it, a half pair, itself
+	var bad := [_mock.take_item(424250, rock, P, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", c, rock), _mock.take_item(424259, rock, E, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", c), _mock.take_item(c, ham, E, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", NAN, ham)]
+	_check.call(bad == [true, true, true, false, false, false] and said.size() == 3
+			and said.all(func(t: String) -> bool: return t == "That isn't there any more.")
+			and (sm.inside[c] as Array).size() == 2 and ItemActions.carried_row(_snap, 424250, _it["rock"]) < 0,
+			"loot: mock container take: elsewhere, wrong or missing is refused; bad args return false (%s %s)" % [bad, said])
+	var ok := _mock.take_item(424250, rock, E, "pack", c, ham)
+	_check.call(ok and _snap.seq > seq and (sm.inside[c] as Array).size() == 1 and ItemActions.carried_row(_snap, 424250, _it["rock"]) >= 0
+			and _handle(E, _it["hammer"]) == c,
+			"loot: mock container take: the item leaves the container for the pack, the container stays")
+	ok = _mock.take_item(424251, rock, E, "pack", c, ham)
+	_check.call(ok and not sm.inside.has(c) and ItemActions.carried_row(_snap, 424251, _it["rock"]) >= 0, "loot: mock container take: the last one empties its list")
+	_mock.message.disconnect(hear)
