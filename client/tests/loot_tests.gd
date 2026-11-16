@@ -25,6 +25,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_closed()
 	_test_mouse()
 	_test_vr()
+	_test_open_at()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -160,3 +161,40 @@ func _test_vr() -> void:
 	t = _hands.find_near(mid)
 	_check.call(_uid(t) == hammer and _hands.grab("vr_r", t, "main") and (_hands.holding("vr_r")["item"] as ItemRef).is_wielded()
 			and _handle(E, _it["hammer"]) != hammer, "loot: VR: a grip inside the open drawer takes the hammer into the hand")
+
+
+## An older DLL's CddaSim: no queue_action_at.
+class OldSim extends RefCounted:
+	func queue_action(_action: String) -> bool:
+		return true
+
+
+## Stands in for CddaSim with queue_action_at: keeps what reached it.
+class ActAtSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_action_at(action: String, square: Vector3i) -> bool:
+		sent.append([action, square])
+		return true
+
+
+## LiveSession.open_at (safes and every door, main.gd _on_door_wants): CDDA's open / close for exactly that square;
+## refused here, nothing sent, unless it is one of the eight squares around the player; an older DLL without
+## queue_action_at says so (can_act_at), so main.gd answers CDDA's "where?" prompt instead.
+func _test_open_at() -> void:
+	var ls := LiveSession.new()
+	var none := not ls.can_act_at() and not ls.open_at(true, E, P)
+	var sim := ActAtSim.new()
+	ls._sim = sim
+	var ok := ls.can_act_at() and ls.open_at(true, E, P) and ls.open_at(false, P + Vector3i(-1, 1, 0), P)
+	_check.call(none and ok and sim.sent == [["open", E], ["close", P + Vector3i(-1, 1, 0)]],
+			"loot: open_at: CDDA's open / close for exactly that square (%s)" % [sim.sent])
+	var far := Vector3i(1 << 30, 0, 0)
+	var bad: Array[bool] = [ls.open_at(true, P, P), ls.open_at(true, P + Vector3i(2, 0, 0), P),
+			ls.open_at(true, E + Vector3i(0, 0, 1), P), ls.open_at(true, far, far + Vector3i(-1, 0, 0))]
+	_check.call(not bad.has(true) and sim.sent.size() == 2,
+			"loot: open_at: the player's own square, two away, another level or out of range: nothing sent (%s)" % [bad])
+	ls._sim = OldSim.new()
+	_check.call(not ls.can_act_at() and not ls.open_at(true, E, P), "loot: open_at: an older DLL can't (main.gd asks the old way)")
+	ls._sim = null
+	ls.free()

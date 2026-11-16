@@ -1195,7 +1195,10 @@ func _reach_square() -> Variant:
 func _on_door_wants(square: Vector3i, open: bool) -> void:
 	if live == null or world.snapshot == null or not _in_main_loop():
 		return
-	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())
+	if live.can_act_at():   # CDDA takes exactly this square; one it refuses never falls back to its own pick
+		live.open_at(open, square, world.snapshot.player_pos)
+		return
+	var act := grab.want(square, open, world.snapshot.player_pos, Time.get_ticks_msec())   # older DLLs: answer "where?"
 	if act != "" and not live.queue_action(act):
 		grab.ask = {}
 

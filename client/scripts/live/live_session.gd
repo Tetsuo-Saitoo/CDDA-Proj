@@ -535,6 +535,13 @@ func queue_action(action: String) -> bool:
 	return _sim != null and _sim.queue_action(action)
 
 
+## A main-loop action for one square (CddaSim.queue_action_at, contracts/bridge_api.md): `square` is absolute (map
+## squares, as the snapshot's positions). False when the bridge refuses it (out of range, a reserved action) or this
+## DLL has no queue_action_at; an action CDDA doesn't allow at that square isn't a false but a message event.
+func queue_action_at(action: String, square: Vector3i) -> bool:
+	return _sim != null and _sim.has_method("queue_action_at") and _sim.queue_action_at(action, square)
+
+
 ## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
 ## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
 ## Take from square `pos` into hand "pack", "main" or "off".
@@ -620,6 +627,21 @@ func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
 func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
 			"container": int(container), "container_type": int(container_type), "pocket": pocket})
+
+
+## L8: CDDA's own open (or close) of exactly the door, drawer or lid's furniture on `square`, one of the eight
+## squares around `player` on its level (queue_action_at: CDDA never takes another square it would pick by itself;
+## one it doesn't allow is CDDA's message, "There is nothing that can be opened nearby."). False when refused here
+## (no game, a bad square, not next to the player) or when this DLL has no queue_action_at (see can_act_at).
+func open_at(open: bool, square: Vector3i, player: Vector3i) -> bool:
+	if not can_act_at() or not ItemActions.ok_square(square) or not ItemActions.ok_square(player) 			or not GrabController.adjacent(square - player):
+		return false
+	return queue_action_at("open" if open else "close", square)
+
+
+## The bridge takes actions for one square (CddaSim.queue_action_at; older DLLs don't).
+func can_act_at() -> bool:
+	return _sim != null and _sim.has_method("queue_action_at")
 
 
 ## E2 item physics (ItemPlacer): move item `uid` from square `pos` to the square next to it, `to` (same level; a
