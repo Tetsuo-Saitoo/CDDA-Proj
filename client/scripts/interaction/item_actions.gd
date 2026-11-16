@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold, consume) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -33,15 +33,17 @@ const SPOT_MAX := 0.999
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
 ## Ops judged by the carried rows around the item (see above).
-const CONTENT_OPS := ["unload", "reload", "pour"]
+const CONTENT_OPS := ["unload", "reload", "pour", "consume"]
 ## Ops whose result the snapshot may not show (rounds topped up, one unit of a stack thrown, a partial pour, a jam
-## still being cleared): no message after two looks is no refusal.
-const QUIET_OK := ["unload", "reload", "throw", "pour", "clear"]
+## still being cleared, a sip of a bottle): no message after two looks is no refusal.
+const QUIET_OK := ["unload", "reload", "throw", "pour", "clear", "consume"]
+## Id-table itype categories of what CDDA eats, drinks or takes (comestibles; drinks are "food", pills "drugs").
+const CONSUME_CATEGORIES := ["food", "drugs"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
 ## Anything with take_item / put_item / drop_item / unload_item / reload_item / clear_item / throw_item / pour_item /
-## pour_into / hold_item (-> bool; a missing one refuses that op here) and queued_actions()
+## pour_into / hold_item / consume_item (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
@@ -161,7 +163,40 @@ func pour_into(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 			[float(item.uid), float(item.type), float(container.uid), float(container.type), pocket])
 
 
-## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour"), "" when none.
+## Eats, drinks or takes a carried `item` (a container: what is inside it) with CDDA's consume rules, no menu.
+## Backend method consume_item(uid, type) (LiveSession has it; a bridge without the op refuses there, and so here).
+func consume(item: ItemRef) -> bool:
+	if not _ok_ref(item) or not item.carried:
+		return false
+	return _send("consume", item, null, Vector2(-1, -1), "consume_item", [float(item.uid), float(item.type)])
+
+
+## True when carried `item` is something to eat, drink or take (CONSUME_CATEGORIES), or holds one: its contents
+## are the carried rows under it in `snap` (depth first). A gun, a fuel can or an empty bottle is not.
+static func consumable(item: ItemRef, snap: Snapshot, tables: IdTables) -> bool:
+	if item == null or tables == null:
+		return false
+	if _eats(item.type, tables):
+		return true
+	if snap == null:
+		return false
+	var c := snap.carried
+	var inside := {item.uid: true}
+	for i in range(0, c.size() - Snapshot.CARRIED_STRIDE + 1, Snapshot.CARRIED_STRIDE):
+		if inside.has(c[i + 2]) and c[i] != item.uid:
+			inside[c[i]] = true
+			if _eats(int(c[i + 1]), tables):
+				return true
+	return false
+
+
+static func _eats(t: int, tables: IdTables) -> bool:
+	var d := tables.def_at("itype", t)
+	return d != null and d.category in CONSUME_CATEGORIES
+
+
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour", "consume"), ""
+## when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -391,6 +426,10 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 				return Where.UNKNOWN if full else Where.MOVED
 			var into: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, into) != e["before"] else Where.STILL
+		"consume":   # eaten whole (gone), or what was inside it changed; a sip may not show (QUIET_OK)
+			if row < 0:
+				return Where.UNKNOWN if full else Where.MOVED
+			return Where.MOVED if contents_sig(snap, item) != e["before"] else Where.STILL
 		"clear":   # the faults changed while it is still the wielded gun: cleared
 			var now: Variant = gun_faults(snap, item)
 			if not now is Array:

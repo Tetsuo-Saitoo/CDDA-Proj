@@ -79,7 +79,7 @@ const ACTIONS := [
 	[&"cdda_fire", "Act", "fire; aiming: fire at the target", ["F"]],
 	[&"cdda_reload", "Act", "reload the wielded gun", ["R"]],
 	[&"aim_fire", "Act", "aiming: fire at the crosshair / target", ["pad:10"]],
-	[&"cdda_eat", "Act", "eat", ["Shift+E"]],
+	[&"cdda_eat", "Act", "eat / drink: what you hold, else a list", ["Shift+E"]],
 	[&"cdda_wear", "Act", "wear", ["Shift+W"]],
 	[&"cdda_take_off", "Act", "take off", ["Shift+T"]],
 	[&"cdda_read", "Act", "read", ["Shift+R"]],
