@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge: character names, input validation for every source (random names, a name taken over in play); the save id is set once when a new game starts. Chargen test and sim test `names` check it.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
 - 2026-11-16 — Bridge: L9 cooking starts the craft. Item op `cook` {pos, recipe, batch} on a pot in reach checks CDDA's rules, takes the ingredients from the pot only, lays the craft at the player's feet linked to the pot (its progress shows in the pot's `cookware` entry) and starts CDDA's craft activity. Sim test `cooking` starts and stops a water_clean craft and checks the refusals.
 - 2026-11-16 — Bridge: the E3 `number` request. CDDA's query_int, query_int64_t and edit( int ) ask the client for a whole number (`min`, `max`, `default`; answer `number`); out of range or no number is asked again with a status, 8 asks at most, then cancel. Sim test `number` checks each path.
