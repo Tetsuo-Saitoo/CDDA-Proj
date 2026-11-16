@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Events test (combat lead, fork fp3d-combat): the forced-technique check compares CDDA's translated name, not the English one.
 - 2026-11-15 — Suppressed guns don't flash (combat lead, fork fp3d-combat + client): the snapshot's wielded gun says `suppressed` when a gunmod (an integral one too) lowers its report; the viewmodel then only recoils (snapshot_test, aim_tests). Not seen on screen.
 - 2026-11-15 — VR gun misfires (combat lead, client): the player's misfire stops the VR gun's kick and gives a light buzz; the dry click is the flat viewmodel's sound (vr_gun_tests). Not felt in a headset.
 - 2026-11-15 — Misfires (combat lead, fork fp3d-combat + client): a trigger pull with no round sends a `misfire` event and the gun clicks; recoil and the muzzle flash now follow CDDA's real shots. Windows and Linux tests pass.
