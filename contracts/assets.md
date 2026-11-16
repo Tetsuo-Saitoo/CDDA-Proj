@@ -18,7 +18,7 @@ Schema: [schema/fp3d_model.schema.json](schema/fp3d_model.schema.json). Mods can
 |---|---|
 | `id` | CDDA id or list of ids sharing this art |
 | `kind` | `terrain` \| `furniture` \| `trap` \| `field` \| `item` \| `monster` \| `vehicle_part` |
-| `model` | `.glb` path relative to `assets/models/` (plain relative path: letters, digits, `_ - . /`, no `..`) |
+| `model` | `.glb` path relative to `assets/models/` (plain relative path: letters, digits, `_ - . /`; no leading `/`, empty part, `..` or part ending in `.`) |
 | `mesher` | Terrain only: procedural builder (`floor`, `wall`, `window`, `door`, `fence`, `stairs_up`, `stairs_down`, `ramp`, `water`, `roof`, `open_air`) |
 | `placeholder` | Props (furniture, traps, items): a procedural low-poly shape the client builds while there is no model (`chair`, `table`, `counter`, `shelf`, `bed`, `fridge`, `item_book`, ...; the list is `NAMES` in `client/scripts/world/prop_shapes.gd`) |
 | `material` | Material name from `assets/materials/` (for now the palette names in `client/scripts/world/palette.gd`). Colours meshers and placeholders, and tints the entry's model (see Models) |
