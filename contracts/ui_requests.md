@@ -35,8 +35,12 @@ request, wait for the answer". The client shows a generic widget (block E3) and 
 | `chargen` | `fp3d::run_chargen` (`cdda/src/fp3d/chargen.h`), at a new game started with `start_new_game(..., chargen = true)`, before `start_game` | `text` = the choices as JSON (cap 16 KB): `scenario`, `profession`, `backgrounds` [ids; omitted = CDDA's default], `str`/`dex`/`int`/`per`, `traits` [ids, besides the locked ones], `skills` {id: level}, `name` ("" = random), `male`, `age`, `height`, optional `save_template` (name: also saves it as a CDDA template). Or just `{"template": name, "name": ""}` to start from a template the catalog's `templates` lists, or `{"delete_template": name}` to delete one (re-asked with a fresh catalog and `status` "deleted template …"). The catalog's `template_choices` gives each template's contents in the answer format, for editing. The request's `text` is the catalog JSON (pool rules, `skill_costs`, ranges, `scenarios` with their `professions`/`backgrounds`/`extra_traits`/`forbidden_traits`/`locked_traits`, `professions`, `backgrounds`, `traits` with `points`/`starting`/`cancels`/`types`, `skills`); invalid choices are asked again with `status` saying why; cancel ends the boot (`failed`, "character creation cancelled"). Points are only enforced with CDDA's `multi_pool` option (default `story_teller` = freeform). Client: `Chargen` model + `ChargenRequestWidget`. |
 
 Target requests carry `origin`, `cursor`, `range`, `status` ("" or bad_target / out_of_ammo / out_of_range)
-and `candidates` (absolute squares of visible creatures; hostiles only when aiming; capped at 256). Peeking's
-blind throw/fire isn't offered yet.
+and `candidates` (absolute squares of visible creatures; hostiles only when aiming; capped at 256). A peek
+(`mode` peek, CDDA's `peek` action after its direction request) offers CDDA's blind throws as `actions`:
+`throw_blind` (CDDA then asks what to throw with an `item_select`) and, while something is wielded,
+`throw_blind_wielded`; either is answered without a `pos` and is followed by a `target` request in `mode`
+throw_blind for where it goes. An action the request didn't offer is ignored (a look with no square). CDDA has no
+blind fire.
 
 Client aiming (AimController): the 3D view picks `pos` with a camera ray (click a creature or square, a
 second click or F / pad R1 fires); holding RMB in first person aims with a centre crosshair like an FPS (attack
