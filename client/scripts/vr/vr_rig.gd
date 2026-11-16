@@ -1100,7 +1100,7 @@ func step(delta: float, inp: Dictionary) -> void:
 		_aim(tv)
 		if _turn(tv, delta):
 			moving = true
-	vignette = move_toward(vignette, settings["vignette"] if moving else 0.0, delta * 4.0)
+	vignette = move_toward(vignette, settings["vignette"] if moving or _gliding else 0.0, delta * 4.0)
 	_fade = maxf(_fade - delta / FADE_S, 0.0)
 	_update_visuals()
 
@@ -1241,18 +1241,22 @@ func place_height() -> void:
 	global_position.y = floor_y() + float(settings["height"])
 
 
-const GROUND_RATE := 12.0   # 1/s: how fast the origin glides to the ground under the head (a stair flight, a ramp)
-const GROUND_JUMP := 0.6    # m: a bigger gap (onto a flight from its side) is jumped at once
+const GROUND_RATE := 8.0    # 1/s: how fast the origin glides to the ground under the head (a stair flight, a ramp)
+const GLIDE_VIGNETTE := 0.05   # m: a glide this far from the ground shows the vignette (setting `vignette`)
+var _gliding := false
 
 
 ## Each frame: the origin glides to `height` over the ground under the head (floor_y), so walking or leaning
-## onto a stair flight or ramp climbs it and stepping off comes down; a gap over GROUND_JUMP is closed at once.
+## onto a stair flight or ramp climbs it and stepping off comes down. It never jumps (a sudden rise or drop makes
+## people sick), however big the gap; the vignette shows while it glides. A teleport or level change places the
+## height with the jump itself (place_height, under its blink), so there is nothing left to glide.
 func follow_ground(delta: float) -> void:
 	var goal := floor_y() + float(settings["height"])
+	if not is_finite(global_position.y):
+		global_position.y = goal   # nothing to glide from
 	var gap := goal - global_position.y
-	if absf(gap) > GROUND_JUMP or not is_finite(delta) or delta < 0.0:
-		global_position.y = goal
-	else:
+	_gliding = absf(gap) > GLIDE_VIGNETTE
+	if is_finite(delta) and delta > 0.0:
 		global_position.y += gap * (1.0 - exp(-GROUND_RATE * delta))
 
 
