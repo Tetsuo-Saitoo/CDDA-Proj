@@ -100,7 +100,8 @@ func reach_square() -> Variant:
 	return world.snapshot.player_pos if world.snapshot != null else null
 
 
-## The nearest door leaf or item a ray meets within reach (the crosshair, a VR pointer); {} if none.
+## The nearest door leaf or item a ray meets within reach (the crosshair, a VR pointer); {} if none. An item inside
+## an open furniture part's box (a drawer) wins over the part.
 func find_on_ray(origin: Vector3, dir: Vector3, max_m := RAY_M) -> Dictionary:
 	var centre: Variant = reach_square()
 	if centre == null:
@@ -116,7 +117,9 @@ func find_on_ray(origin: Vector3, dir: Vector3, max_m := RAY_M) -> Dictionary:
 	var it := picker.on_ray(origin, dir, max_m)
 	if it != null and _usable(it):
 		var dist := origin.distance_to(it.point)
-		if best.is_empty() or dist < float(best["dist"]):
+		# an item inside an open drawer is behind the drawer's box, but it's what the ray is on
+		var g: Variant = best.get("node")
+		if best.is_empty() or dist < float(best["dist"]) or (is_instance_valid(g) and g is Grabbable and (g as Grabbable).holds(it.point)):
 			best = _item_target(it, dist)
 	return best
 

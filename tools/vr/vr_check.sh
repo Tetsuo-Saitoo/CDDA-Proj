@@ -11,6 +11,7 @@ STEAM="${STEAM:-/c/Program Files (x86)/Steam}"
 SVR="$STEAM/steamapps/common/SteamVR"
 export XR_RUNTIME_JSON="$(cygpath -w "$SVR/steamxr_win64.json")"
 up() { tasklist //FI "IMAGENAME eq vrcompositor.exe" | grep -qi vrcompositor; }
+svr_up() { tasklist | grep -qiE "^(vrserver|vrmonitor|vrcompositor|vrdashboard|vrwebhelper)\.exe"; }   # SteamVR's own
 started=0
 if ! up; then
   "$SVR/bin/win64/vrstartup.exe" &
@@ -32,9 +33,9 @@ ok=$?
 if [ "$started" = 1 ]; then   # only SteamVR this run started
   for k in 1 2 3 4; do   # a graceful close; SteamVR sometimes ignores the first
     taskkill //IM vrmonitor.exe > /dev/null 2>&1
-    for i in $(seq 1 10); do tasklist | grep -qi "^vr" || break; sleep 2; done
-    tasklist | grep -qi "^vr" || break
+    for i in $(seq 1 10); do svr_up || break; sleep 2; done
+    svr_up || break
   done
-  tasklist | grep -qi "^vr" && echo "SteamVR is still up: close it from its window"
+  svr_up && echo "SteamVR is still up: close it from its window"
 fi
 exit $ok

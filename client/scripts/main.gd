@@ -256,6 +256,7 @@ func _ready() -> void:
 		var vc := VrCheck.new()
 		vc.rig = vr
 		vc.quit = _quit
+		vc.mock_of = func() -> MockItems: return mock_items
 		add_child(vc)
 		vc.run(str(_args["vr-check"]))
 
