@@ -6,10 +6,13 @@ extends Node3D
 ## effect from `profile_for`: a fireball growing to the radius, a light, smoke, glowing squares over the area, a
 ## ring for shockwaves, and for a flashbang a white screen flash that fades (stronger the closer the camera).
 ## EMP, scrambler and resonance are pulses (`ball` false): only a fading ring and a light that rises and falls
-## smoothly, no fireball, smoke or screen flash; radius 0 (one square) still shows a ring a square wide.
+## smoothly, no fireball, smoke or screen flash; radius 0 (one square) still shows a ring a square wide. A spell
+## ("spell:<damage type>") is a pulse without a ring: its squares glow in the damage type's colour (SPELL_COLOURS,
+## violet for others) and fade in and out.
 ## Effects only: what the blast did comes from the snapshot. Anything malformed is skipped; at most MAX_LIVE at once.
 
 const MAX_LIVE := 16
+const MAX_SPELLS := 4   # spell pulses at once, within MAX_LIVE
 const MAX_AREA := 1024
 const MAX_RADIUS := 60
 const SQUARE_M := 1.0
@@ -35,9 +38,19 @@ const KINDS := {
 	"resonance": {"fire": Color(0.75, 0.45, 1.0, 0.5), "smoke": Color(0.3, 0.2, 0.4), "light": Color(0.7, 0.4, 1.0),
 			"time": 2.5, "size": 1.0, "ring": true, "flash": 0.0, "ball": false, "shake": 0.4, "energy": 3.0,
 			"smoke_scale": 0.0},
+	"spell": {"fire": Color(0.75, 0.5, 1.0, 0.45), "smoke": Color(0.4, 0.3, 0.5), "light": Color(0.75, 0.5, 1.0),
+			"time": 0.7, "size": 1.0, "ring": false, "flash": 0.0, "ball": false, "shake": 0.0, "energy": 1.5,
+			"smoke_scale": 0.0},
 }
+## A spell's colour by CDDA damage type id ("spell:<id>"); other ids keep KINDS["spell"]'s violet.
+const SPELL_COLOURS := {
+	"heat": Color(1.0, 0.5, 0.15), "cold": Color(0.6, 0.85, 1.0), "electric": Color(1.0, 1.0, 0.55),
+	"acid": Color(0.45, 1.0, 0.3), "biological": Color(0.6, 0.08, 0.08), "bash": Color(0.75, 0.75, 0.75),
+	"cut": Color(0.75, 0.75, 0.75), "stab": Color(0.75, 0.75, 0.75), "bullet": Color(0.75, 0.75, 0.75),
+}
+const GLOW_A := 0.35   # the area glow's alpha (a pulse's at its peak)
 ## Pulse sounds: seconds and buzz pitch (Hz). EMP and scrambler crackle over a buzz; resonance is a low hum.
-const PULSE_SOUNDS := {"emp": [0.6, 120.0], "scrambler": [0.5, 180.0], "resonance": [2.5, 55.0]}
+const PULSE_SOUNDS := {"emp": [0.6, 120.0], "scrambler": [0.5, 180.0], "resonance": [2.5, 55.0], "spell": [0.5, 330.0]}
 ## Item id parts that change the look (first match wins).
 const ITEM_LOOKS := [
 	["flashbang", {"flash": 1.0}],
@@ -79,9 +92,17 @@ func _init(w: WorldView) -> void:
 
 ## The look of one explosion: KINDS[kind] (blast for unknown kinds) changed by the item's id (not for pulses).
 static func profile_for(kind: String, item_id: String) -> Dictionary:
+	var dmg := ""
+	if kind.begins_with("spell:"):
+		dmg = kind.substr(6, 32)
+		kind = "spell"
 	var p: Dictionary = (KINDS.get(kind, KINDS["blast"]) as Dictionary).duplicate()
 	p["kind"] = kind if KINDS.has(kind) else "blast"
 	p["smoke_scale"] = p.get("smoke_scale", 1.0)
+	if SPELL_COLOURS.has(dmg):
+		var c: Color = SPELL_COLOURS[dmg]
+		p["fire"] = Color(c, (p["fire"] as Color).a)
+		p["light"] = c
 	if not p.get("ball", true):
 		return p
 	var id := item_id.to_lower()
@@ -108,7 +129,9 @@ func start(e: Dictionary) -> bool:
 	if e.get("detail") is int and int(e["detail"]) > 0 and world.tables != null:
 		var d: IdTables.Def = world.tables.def_at("itype", int(e["detail"]))
 		item_id = d.id if d != null else ""
-	var p := profile_for(kind.left(32), item_id)
+	var p := profile_for(kind.left(40), item_id)
+	if p["kind"] == "spell" and spell_count() >= MAX_SPELLS:
+		return false   # auras and monster spells cast every turn: they never crowd out the blasts
 	var r_m := maxf(radius, 1) * SQUARE_M * float(p["size"])
 	var root := Node3D.new()
 	root.position = world.coords.ms_center_to_world(e["pos"]) + Vector3(0, 0.6, 0)
@@ -130,11 +153,15 @@ func start(e: Dictionary) -> bool:
 	light.omni_range = r_m * 3.0 + 4.0
 	light.light_energy = 6.0 if p.get("ball", true) else 0.0   # a pulse's light rises (tick)
 	root.add_child(light)
-	var area: Array = e.get("path") if e.get("path") is Array else []
+	var area := near_squares(e.get("path"), e["pos"])
+	var glow: MultiMeshInstance3D = null
 	if not area.is_empty():
-		root.add_child(_area_glow(area.slice(0, MAX_AREA), root.position, p["fire"]))
+		glow = _area_glow(area, root.position, p["fire"])
+		if not p.get("ball", true):
+			(glow.material_override as StandardMaterial3D).albedo_color.a = 0.0   # a pulse's glow fades in (tick)
+		root.add_child(glow)
 	_live.append({"root": root, "fire": fire, "smoke": smoke, "ring": ring, "light": light, "t": 0.0, "p": p,
-			"r": r_m})
+			"r": r_m, "glow": glow})
 	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
 	var dist := cam.global_position.distance_to(root.global_position) if cam != null else 0.0
 	if float(p["flash"]) > 0.0:
@@ -154,6 +181,28 @@ func start(e: Dictionary) -> bool:
 
 func live_count() -> int:
 	return _live.size()
+
+
+## How many spell pulses are showing (at most MAX_SPELLS).
+func spell_count() -> int:
+	var n := 0
+	for x in _live:
+		n += 1 if (x["p"] as Dictionary)["kind"] == "spell" else 0
+	return n
+
+
+## The squares of an event's `path` to glow: only the first MAX_AREA entries are looked at, and only squares
+## (Vector3i) within MAX_RADIUS of the centre on each axis are kept.
+static func near_squares(path: Variant, centre: Vector3i) -> Array:
+	var out: Array = []
+	if not path is Array:
+		return out
+	for sq: Variant in (path as Array).slice(0, MAX_AREA):
+		if sq is Vector3i:
+			var d: Vector3i = (sq as Vector3i) - centre
+			if absi(d.x) <= MAX_RADIUS and absi(d.y) <= MAX_RADIUS and absi(d.z) <= MAX_RADIUS:
+				out.append(sq)
+	return out
 
 
 func flash_strength() -> float:
@@ -194,6 +243,9 @@ func tick(delta: float) -> void:
 			if x["ring"] != null:
 				var rm := (x["ring"] as MeshInstance3D).material_override as StandardMaterial3D
 				rm.albedo_color.a = (p["fire"] as Color).a * (1.0 - k)
+			if x["glow"] != null:
+				var gm := (x["glow"] as MultiMeshInstance3D).material_override as StandardMaterial3D
+				gm.albedo_color.a = GLOW_A * sin(PI * k)
 		if x["t"] >= dur:
 			(x["root"] as Node3D).queue_free()
 			_live.remove_at(i)
@@ -328,6 +380,6 @@ func _area_glow(area: Array, centre: Vector3, c: Color) -> MultiMeshInstance3D:
 		mm.set_instance_transform(i, Transform3D(Basis(), pts[i]))
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = mm
-	mi.material_override = _mat(Color(c, 0.35))
+	mi.material_override = _mat(Color(c, GLOW_A))
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
