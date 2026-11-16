@@ -241,13 +241,15 @@ func _tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 ## then the entry's offset and scale). Facing: walls and windows with their run along the model's x (front
 ## +z out of the wall: south for an east-west run, east for a north-south one), fences the same over the
 ## fences they join, stairs and ramps with the bottom step at the front and rising toward the back (the
-## flight's rise direction), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
+## flight's rise direction; a stairs model is drawn once per lane of its flight, by the bottom square,
+## stretched along the lane), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
 ## and water models replace their slab; standing things (trees, shrubs, ladders, fences, boxes) keep the
 ## ground slab under them; walls, windows, stairs and tree tops are the model alone.
 func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) -> void:
 	var y := 0.0
 	var facing := UNTURNED
 	var free := false
+	var lane := Vector3.ZERO   # a stairs model's lane: from its middle back to the bottom square's centre
 	match st.kind:
 		K.FLOOR:
 			if not floor_ok:
@@ -264,7 +266,12 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 			_fence_base(o, st, floor_ok)
 			facing = UNTURNED if _fence_joins(p, st, 1) or _fence_joins(p, st, 3) else 1
 		K.STAIRS_UP, K.RAMP_UP:
-			facing = (_flight(p).x + 2) % 4
+			var f := _flight(p)
+			facing = (f.x + 2) % 4
+			if st.kind == K.STAIRS_UP:
+				if f.y > 0:
+					return   # the bottom square draws the lane
+				lane = Vector3(DIRS[f.x].x, 0, DIRS[f.x].y) * (f.z - 1)
 		_:
 			_ground(o, floor_ok)
 			free = st.random_yaw
@@ -273,8 +280,10 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 		var rng := RandomNumberGenerator.new()
 		rng.seed = square_hash(p)
 		yaw = rng.randf() * TAU
-	var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale),
-			o + Vector3(0.5, y, 0.5) + st.offset) * MODEL_TURN
+	var basis := Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale)
+	if lane != Vector3.ZERO:   # front to back (model z, along the rise) over the lane's squares
+		basis = basis * Basis.from_scale(Vector3(1, 1, lane.length() + 1))
+	var xf := Transform3D(basis, o + Vector3(0.5, y, 0.5) + st.offset + lane * 0.5) * MODEL_TURN
 	var md := _roof_models if st.kind == K.ROOF else _models
 	if not md.has(st.model):
 		md[st.model] = []
