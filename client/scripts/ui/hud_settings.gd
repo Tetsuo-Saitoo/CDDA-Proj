@@ -23,10 +23,28 @@ var weather_flash := true
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
 var view := "first"
+## G1: the message feed's filter groups (HudData.message_group), in the F1 menu's order, with their labels.
+const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnings", "info": "Info", "other": "Other"}
+## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
+## of group names (anything but known names ignored).
+var feed_hidden := PackedStringArray()
 
 
 static func clamp_opacity(v: float) -> float:
 	return clampf(v, MIN_COMPASS_OPACITY, 1.0) if is_finite(v) else DEFAULT_COMPASS_OPACITY
+
+
+## The known FEED_GROUPS names in `v` (an Array or PackedStringArray), each once, in FEED_GROUPS order; anything
+## else gives none.
+static func feed_groups_from(v: Variant) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not (v is Array or v is PackedStringArray):
+		return out
+	var given: Array = Array(v).slice(0, 64)
+	for g: String in FEED_GROUPS:
+		if given.has(g):
+			out.append(g)
+	return out
 
 
 ## Reads the file; returns "" or why it was ignored (missing is not an error).
@@ -56,6 +74,7 @@ func load_file(path := FILE) -> String:
 	weather_flash = wf if wf is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
+	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -73,4 +92,5 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
+	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	return cfg.save(path)

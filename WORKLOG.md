@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Message feed filter (G1): the F1 menu's "Messages shown" boxes hide or show CDDA's message groups (good, bad, warnings, info, other), saved in hud.cfg. Client tests pass; not seen on screen.
 - 2026-11-16 — Hurt tint (combat lead, client, PLAN F3): the view's edges go dark red when the player is hit and stay faintly red while bleeding; smooth, no flashes; F1 "Hurt tint" box turns it off (aim_tests). Not seen on screen; flat screen only.
 - 2026-11-15 — Reach weapons strike a knight's move off (combat lead, fork fp3d-combat + client): keys and the VR swing send `fp3d_attack_main_aim_at` with the creature's square (queue_action_at); the fork checks reach, level and self. LiveSession.queue_action_at added (lead-ui OK). Not played.
 - 2026-11-16 — L8 slice 2, hand side: a carried item let go inside an open drawer or over a shelf goes on that shelf, where the hand or crosshair is (VR hand, mouse, thrown bodies coming to rest), and is drawn there riding the drawer. Client tests and the null-headset `loot` check pass.
