@@ -50,8 +50,10 @@ extends XROrigin3D
 ## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
-## Cooking (block L9, VrCook `cook`, shows only): a card over each pot on a heat square near the head (heat, contents,
-## CDDA's craft progress or the recipes its contents match; main.gd sets `cook.backend`).
+## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
+## craft progress or the recipes its contents match; main.gd sets `cook.backend`). One recipe CDDA would start now
+## starts by itself; of several, the trigger with an empty hand on a "+" line starts that one; a paused craft goes on
+## when its pot is put back on a lit heat or its heat is lit.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -1574,6 +1576,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		if tt.get("kind") == "frame":
 			tray.close("closed")   # the trigger on the tray's frame closes it
 			return
+	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() and cook.press_at(c.global_position):
+		return   # L9: an empty hand on a cooking card's "+" line starts that recipe
 	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
 		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
