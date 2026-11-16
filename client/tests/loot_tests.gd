@@ -26,6 +26,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_mouse()
 	_test_vr()
 	_test_open_at()
+	_test_shelf_ops()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -198,3 +199,62 @@ func _test_open_at() -> void:
 	_check.call(not ls.can_act_at() and not ls.open_at(true, E, P), "loot: open_at: an older DLL can't (main.gd asks the old way)")
 	ls._sim = null
 	ls.free()
+
+
+## Stands in for CddaSim's queue_item_action: keeps what reached it.
+class ItemSim extends RefCounted:
+	var sent: Array[Dictionary] = []
+
+	func queue_item_action(a: Dictionary) -> bool:
+		sent.append(a)
+		return true
+
+
+## Stands in for an ItemActions backend: keeps each drop_item call's arguments.
+class DropBackend extends RefCounted:
+	var calls: Array = []
+
+	func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+		calls.append([int(uid), int(type), pos, spot, shelf])
+		return true
+
+
+## L8 slice 2, the drop side of a shelf (the bridge's `shelf`, 0..15, kept with the spot): LiveSession sends it only
+## with a spot and refuses one out of range; ItemActions passes it on (no shelf without a spot); DropTarget takes a
+## well-formed shelf_at answer in reach (a container under the pointer still comes first).
+func _test_shelf_ops() -> void:
+	var ls := LiveSession.new()
+	var sim := ItemSim.new()
+	ls._sim = sim
+	var half := Vector2(0.5, 0.25)
+	var ok := ls.drop_item(5.0, 3.0, E, half, 2) and ls.drop_item(5.0, 3.0, E, Vector2(-1, -1), 2) \
+			and ls.place_item(5.0, 3.0, P, E, half, 90, false, 7, 15) and ls.spot_item(6.0, 4.0, P, half, 0, false, 8, 0) \
+			and ls.drop_item(5.0, 3.0, E, half)
+	var shelves := sim.sent.map(func(a: Dictionary) -> int: return a.get("shelf", -1))
+	_check.call(ok and shelves == [2, -1, 15, 0, -1], "loot: shelf: LiveSession sends it only with a spot (%s)" % [shelves])
+	var n := sim.sent.size()
+	var bad: Array[bool] = [ls.drop_item(5.0, 3.0, E, half, 16), ls.drop_item(5.0, 3.0, E, half, -2),
+			ls.place_item(5.0, 3.0, P, E, half, 0, false, 1, 16), ls.spot_item(5.0, 3.0, P, half, 0, false, 1, -5)]
+	_check.call(not bad.has(true) and sim.sent.size() == n, "loot: shelf: one outside 0..15 is refused, nothing sent (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+	var acts := ItemActions.new()
+	var be := DropBackend.new()
+	acts.backend = be
+	var item := func(u: int) -> ItemRef: return ItemRef.on_player(u, _it["rock"], 0, -1, 0, P)
+	ok = acts.drop(item.call(21), E, half, 3) and acts.drop(item.call(22), E, Vector2(-1, -1), 3) \
+			and not acts.drop(item.call(23), E, half, ItemActions.MAX_SHELF + 1)
+	_check.call(ok and be.calls.size() == 2 and be.calls[0][4] == 3 and be.calls[1][4] == -1,
+			"loot: shelf: ItemActions.drop passes it on, never without a spot (%s)" % [be.calls])
+	acts.free()
+	var reach := func(sq: Vector3i) -> bool: return GrabController.adjacent(sq - P) or sq == P
+	var held: ItemRef = item.call(24)
+	var shelf := {"square": E, "shelf": 1, "spot": Vector2(0.3, 1.4)}
+	var d := DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, shelf)
+	_check.call(d["kind"] == "surface" and d["square"] == E and d["shelf"] == 1 and d["spot"] == Vector2(0.3, DropTarget.SPOT_MAX),
+			"loot: shelf: DropTarget puts it on the shelf it's over, the spot clamped (%s)" % [d])
+	var odd: Array = [{"square": E, "shelf": 16, "spot": half}, {"square": E, "shelf": 1.0, "spot": half},
+			{"square": E, "shelf": 1, "spot": Vector2(NAN, 0)}, {"square": P + Vector3i(3, 0, 0), "shelf": 1, "spot": half}]
+	var none := odd.all(func(o: Dictionary) -> bool:
+		return DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, o)["shelf"] == -1)
+	_check.call(none, "loot: shelf: a malformed or out-of-reach shelf counts as none")

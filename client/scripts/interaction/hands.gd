@@ -510,10 +510,11 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	var spot: Vector2 = drop.get("spot", Vector2(-1, -1))
 	var container: ItemRef = drop.get("container")
 	var pocket: int = drop.get("pocket", -1)
+	var shelf: int = drop.get("shelf", -1)
 	var second := func(c: ItemRef) -> bool:
 		if kind == "container":
 			return actions.put(c, container, pocket)
-		return actions.drop(c, square, spot)
+		return actions.drop(c, square, spot, shelf)
 	return _two_step(id, it, second, "put" if kind == "container" else "drop")
 
 

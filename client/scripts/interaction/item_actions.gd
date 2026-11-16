@@ -30,6 +30,7 @@ const MAX_EVENTS := 4096           # the bridge's event queue
 const M_INFO := 4                  # CDDA's game_message_type m_info: every refusal of the bridge's item actions
 const HANDS := ["pack", "main", "off"]
 const SPOT_MAX := 0.999
+const MAX_SHELF := 15   # L8: a furniture shelf, the client's own numbering (WorldView.shelf_at); the bridge keeps 0..15
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
 ## Ops judged by the carried rows around the item (see above).
@@ -73,15 +74,20 @@ func put(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 
 
 ## Drops a carried `item` on `square`; `spot` (each 0..1 across the square, x east, y south) places it there,
-## (-1, -1) none.
-func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1)) -> bool:
-	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y):
+## (-1, -1) none. `shelf` (0..MAX_SHELF, -1 none; L8) is the furniture shelf it goes on, kept only with a spot.
+func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y) \
+			or shelf < -1 or shelf > MAX_SHELF:
 		return false
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		spot = Vector2(clampf(spot.x, 0.0, SPOT_MAX), clampf(spot.y, 0.0, SPOT_MAX))
 	else:
 		spot = Vector2(-1, -1)
-	return _send("drop", item, square, spot, "drop_item", [float(item.uid), float(item.type), square, spot])
+		shelf = -1
+	var args: Array = [float(item.uid), float(item.type), square, spot]
+	if shelf >= 0:
+		args.append(shelf)   # only then: a backend without shelves takes the call as before
+	return _send("drop", item, square, spot, "drop_item", args)
 
 
 ## Unloads `item` (carried, or lying in reach on its square): a gun gives its magazine whole, a magazine its
