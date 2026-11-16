@@ -1,6 +1,6 @@
 class_name VrCook
 extends Node3D
-## Block L9 (dynamic cooking), VR side, first part: it shows, it never starts anything. Over each pot (cookware:
+## Block L9 (dynamic cooking), VR side: it shows, and starts what CDDA would. Over each pot (cookware:
 ## an item with CDDA's COOK or BOIL quality, Snapshot.cookware_at) lying on a heat square within RANGE_M of the
 ## head, a small card floats CARD_UP above the pot, turned to the head (yaw only, every frame: at most MAX_CARDS
 ## cards, the nearest):
@@ -22,7 +22,16 @@ extends Node3D
 ## asked again). Answers are hostile all the same: clean_result bounds, cleans and clamps them.
 ## Pots are found through the submaps around the head only (≤ 4: RANGE_M is far less than a submap) and their
 ## `cookware` lists (≤ 16 each, Snapshot's cap), every TICK_S; a card's text and bar are redrawn only on a change.
-## The sim decides everything: nothing here starts, stops or changes a craft (the bridge can't start one yet).
+## Cooking (`backend` with cook_item, LiveSession's L9 op; CDDA decides the rest, its questions stay its popups),
+## only on a lit heat within REACH of the player:
+## - the answer lists every match and CDDA would start exactly one of them now: it starts by itself, once per
+##   contents and heat; what a craft sent from here leaves in the pot never starts another by itself (_hold);
+## - else the trigger with an empty hand on a "+" line starts that one (press_at; the card says how);
+## - a paused craft (taking the pot off the heat pauses it) goes on when the pot comes back onto a lit heat out of
+##   the player's hands, or when its heat is lit under it (not when the player just walks up to it);
+## - for STARTING_S after a send the card says "starting <name>...".
+## Recipe ids come from the bridge's answers and the snapshot: only ones LiveSession.recipe_ok takes are used, and
+## LiveSession checks every op again. A refused send (false) is tried again on the next look.
 
 const RANGE_M := 2.5        # cards for pots this near the head ...
 const MAX_CARDS := 4        # ... at most this many, the nearest
@@ -49,6 +58,11 @@ const BAR_W := 0.2
 const BAR_H := 0.014
 const PIXEL := 0.0006       # Label3D metres per pixel (font 32: a line is about 2 cm high)
 const STEAM_PUFFS := 6
+const FONT := 32            # the card's font size (pixels)
+const STARTING_S := 4.0     # "starting <name>..." shows this long after a cook was sent
+const PICK_Z := 0.06        # press_at: the hand this near the card's plane ...
+const PICK_PAD := 0.02      # ... and over a line's text, give or take this
+const PICK_HINT := "empty hand on a + line, trigger: cook it"
 const SOURCES := ["fire", "furniture", "vehicle"]   # Snapshot.HEAT_FIRE / HEAT_FURNITURE / HEAT_VEHICLE
 ## The bridge's refusals (contracts/bridge_api.md "Recipe queries") as the card says them.
 const ERRORS := {"out of reach": "too far from you to check", "not found": "the pot isn't there any more",
@@ -65,6 +79,8 @@ class Card extends Node3D:
 	var back: MeshInstance3D
 	var fill: MeshInstance3D
 	var steam: GPUParticles3D
+	var pot := {}           # the pots_near entry it was last drawn for
+	var matches: Array = [] # what its lines 2.. list (clean_match each; press_at), [] none
 
 
 var world: WorldView
@@ -79,17 +95,24 @@ var backend: Object = null:
 		_pending.clear()
 		_results.clear()
 		_retry.clear()
+		_sent.clear()
 		if b != null and is_instance_valid(b) and b.has_signal("recipes_matched"):
 			b.connect("recipes_matched", _on_matched)
 var cards := {}             # uid -> Card shown now (≤ MAX_CARDS)
 var queries_sent := 0       # match_recipes calls that got a query id (tests)
 var redraws := 0            # label texts set (tests: only on a change)
+var cooks_sent := 0         # cook_item calls the backend took (tests)
 var _free: Array[Card] = [] # hidden cards for reuse
 var _pending := {}          # uid -> {sig, id, at}: the query in flight for that pot
 var _results := {}          # uid -> clean_result + {sig, until}
 var _retry := {}            # uid -> clock before which a refused pot isn't asked again
 var _sig := {}              # uid -> signature, the pots near the head at the last refresh
 var _seen := {}             # uid -> clock it was last near the head
+var _sent := {}             # uid -> {sig, name, at}: the cook sent for that pot's contents and heat
+var _hold := {}             # uid -> contents_sig a craft sent from here left: not started again by itself
+var _lit := {}              # uid -> its heat lit at the last look (pots near the head)
+var _paused := {}           # uid -> type: pots seen with a craft in them on a heat
+var _carried := {}          # uid -> true: a paused pot the player held (off the heat) at the last look
 var _clock := 0.0
 var _wait := 0.0
 var _mats := {}
@@ -118,6 +141,8 @@ func refresh() -> void:
 	var snap: Snapshot = world.snapshot if world != null else null
 	if snap == null or not is_instance_valid(head):
 		_sig.clear()
+		_lit.clear()
+		_carried.clear()
 		_show([])
 		_expire()
 		return
@@ -131,6 +156,8 @@ func refresh() -> void:
 	_poll()
 	for p: Dictionary in near:
 		_maybe_ask(snap, p)
+		_maybe_cook(snap, p)
+	_note(snap, near)
 	_show(near)
 
 
@@ -207,6 +234,11 @@ static func signature(cw: Snapshot.Cookware, heat: Dictionary) -> int:
 	return hash([cw.type, cw.contents, _yes(heat.get("lit"))])
 
 
+## What a pot holds, whatever its heat: a craft sent from here holds what it left by this.
+static func contents_sig(cw: Snapshot.Cookware) -> int:
+	return hash([cw.type, cw.contents])
+
+
 ## The player can reach square `sq` for crafting (CDDA's crafting reach, same level; walls are the bridge's to judge).
 static func in_reach(player: Vector3i, sq: Vector3i) -> bool:
 	return sq.z == player.z and maxi(absi(sq.x - player.x), absi(sq.y - player.y)) <= REACH
@@ -215,6 +247,61 @@ static func in_reach(player: Vector3i, sq: Vector3i) -> bool:
 ## The backend can be asked (LiveSession with the recipe wrapper).
 func can_ask() -> bool:
 	return is_instance_valid(backend) and backend.has_method("match_recipes")
+
+
+## The backend can cook (LiveSession with the L9 ops).
+func can_cook() -> bool:
+	return is_instance_valid(backend) and backend.has_method("cook_item")
+
+
+## What the card says is starting in pot `uid` ("" nothing): for STARTING_S after a cook for these contents and heat.
+func starting(uid: int) -> String:
+	var s: Dictionary = _sent.get(uid, {})
+	if s.is_empty() or s["sig"] != _sig.get(uid) or _clock >= float(s["at"]) + STARTING_S:
+		return ""
+	return s["name"]
+
+
+## The card line under the hand at `pt` (world): {uid, line (0 = the top one), match (the clean_match it lists,
+## {} none)}; {} off every card. A line is its text's width (PICK_PAD more) and its height; the hand within PICK_Z
+## of the card's plane.
+func line_at(pt: Vector3) -> Dictionary:
+	if not pt.is_finite():
+		return {}
+	for c: Card in cards.values():
+		if not c.visible or c.text.is_empty():
+			continue
+		var font: Font = c.label.font if c.label.font != null else ThemeDB.fallback_font
+		var lh := font.get_height(FONT) * PIXEL
+		var xf := c.global_transform if c.is_inside_tree() else c.transform
+		var l := xf.affine_inverse() * pt
+		var up := l.y - c.label.position.y
+		if lh <= 0.0 or up < 0.0 or absf(l.z) > PICK_Z:
+			continue
+		var lines := c.text.split("\n")
+		var k := lines.size() - 1 - int(up / lh)   # bottom-aligned: the last line sits on the label's origin
+		if k < 0:
+			continue
+		var w := font.get_string_size(lines[k], HORIZONTAL_ALIGNMENT_LEFT, -1, FONT).x * PIXEL
+		if absf(l.x) > w * 0.5 + PICK_PAD:
+			continue
+		var i := k - 2
+		return {"uid": c.uid, "line": k, "match": c.matches[i] if i >= 0 and i < c.matches.size() else {}}
+	return {}
+
+
+## The trigger with an empty hand at `pt`: on a "+" line (a recipe CDDA would start now) that recipe starts. True
+## when a cook was sent.
+func press_at(pt: Vector3) -> bool:
+	if not can_cook() or world == null or world.snapshot == null:
+		return false
+	var hit := line_at(pt)
+	var m: Dictionary = hit.get("match", {})
+	var c: Card = cards.get(hit.get("uid", 0))
+	if m.is_empty() or c == null or c.pot.is_empty() or not m["can_start"] or str(m["recipe"]).is_empty() \
+			or not in_reach(world.snapshot.player_pos, c.pot["square"]):
+		return false
+	return _cook(c.pot, m["recipe"], m["name"])
 
 
 func pending_count() -> int:
@@ -280,8 +367,8 @@ static func clean_result(v: Variant) -> Dictionary:
 	return out
 
 
-## One match made safe: {name, time_s (-1 unknown), can_start, missing (the first missing thing, "" none)};
-## {} when it has no usable name.
+## One match made safe: {name, time_s (-1 unknown), can_start, missing (the first missing thing, "" none), recipe
+## (its id when LiveSession.recipe_ok takes it, else "": shown, never sent)}; {} when it has no usable name.
 static func clean_match(v: Variant) -> Dictionary:
 	if not v is Dictionary:
 		return {}
@@ -304,7 +391,9 @@ static func clean_match(v: Variant) -> Dictionary:
 			miss = _text(mv[i], MISSING_MAX)
 			if not miss.is_empty():
 				break
-	return {"name": nm, "time_s": secs, "can_start": _yes(m.get("can_start")), "missing": miss}
+	var rid: Variant = m.get("recipe")
+	var recipe: String = rid if rid is String and LiveSession.recipe_ok(rid) else ""
+	return {"name": nm, "time_s": secs, "can_start": _yes(m.get("can_start")), "missing": miss, "recipe": recipe}
 
 
 # --- card text ---
@@ -355,12 +444,15 @@ static func contents_text(contents: PackedInt64Array, tables: IdTables) -> Strin
 
 ## "making vegetable soup 45%" (the result's name, else the recipe id, else "something").
 static func craft_text(cw: Snapshot.Cookware, tables: IdTables) -> String:
+	return _cap("making %s %d%%" % [craft_name(cw, tables), clampi(cw.craft_progress, 0, 1000) / 10])
+
+
+## The craft's name: its result's, else its recipe id, else "something".
+static func craft_name(cw: Snapshot.Cookware, tables: IdTables) -> String:
 	var nm := _item_name(cw.craft_result, tables) if cw.craft_result > 0 else ""
 	if nm.is_empty():
 		nm = _text(cw.craft_recipe, NAME_MAX).replace("_", " ").strip_edges()
-	if nm.is_empty():
-		nm = "something"
-	return _cap("making %s %d%%" % [nm, clampi(cw.craft_progress, 0, 1000) / 10])
+	return nm if not nm.is_empty() else "something"
 
 
 ## "+ name — 12 min" (CDDA would start it now), "- name — needs fire" (else, with the first missing thing).
@@ -392,7 +484,11 @@ func card_text(p: Dictionary, snap: Snapshot) -> String:
 	if cw.craft_progress > 0:
 		lines.append(craft_text(cw, tables))
 	elif not cw.contents.is_empty() and can_ask():
-		lines.append_array(_recipe_lines(p, snap))
+		var st := starting(p["uid"])
+		if not st.is_empty():
+			lines.append(_cap("starting %s..." % st))
+		else:
+			lines.append_array(_recipe_lines(p, snap))
 	return "\n".join(lines)
 
 
@@ -414,6 +510,8 @@ func _recipe_lines(p: Dictionary, snap: Snapshot) -> Array[String]:
 			out.append(match_line(m))
 		if r["more"] > 0:
 			out.append("+%d more" % r["more"])
+		if can_cook() and ms.any(func(m: Dictionary) -> bool: return m["can_start"] and not m["recipe"].is_empty()):
+			out.append(PICK_HINT)
 		return out
 	out.append("checking recipes..." if in_reach(snap.player_pos, p["square"]) else "(out of your reach)")
 	return out
@@ -444,6 +542,64 @@ func _maybe_ask(snap: Snapshot, p: Dictionary) -> void:
 	_pending[uid] = {"sig": _sig[uid], "id": id, "at": _clock}
 
 
+## L9: starts or goes on with a craft in pot `p` when due (see the top).
+func _maybe_cook(snap: Snapshot, p: Dictionary) -> void:
+	var uid: int = p["uid"]
+	var cw: Snapshot.Cookware = p["cw"]
+	var sent: Dictionary = _sent.get(uid, {})
+	if not sent.is_empty() and sent["sig"] != _sig[uid] and cw.craft_progress <= 0:
+		_sent.erase(uid)
+		_hold[uid] = contents_sig(cw)   # what the craft left: it doesn't start another by itself
+	if not can_cook() or cw.type < 1 or not _yes(p["heat"].get("lit")) or not in_reach(snap.player_pos, p["square"]):
+		return
+	if cw.craft_progress > 0:
+		if ((_lit.has(uid) and not _lit[uid]) or _carried.has(uid)) and LiveSession.recipe_ok(cw.craft_recipe):
+			_cook(p, cw.craft_recipe, craft_name(cw, world.tables))   # back on the heat, or its heat lit: go on
+		return
+	if _sent.has(uid) or (_hold.has(uid) and _hold[uid] == contents_sig(cw)):
+		return
+	var r: Dictionary = _results.get(uid, {})
+	if r.is_empty() or r["sig"] != _sig[uid] or not r["ok"] or r["more"] > 0:
+		return
+	var one := {}
+	for m: Dictionary in r["matches"]:
+		if m["can_start"]:
+			if not one.is_empty():
+				return   # several: the player picks one (press_at)
+			one = m
+	if not one.is_empty() and not one["recipe"].is_empty():
+		_cook(p, one["recipe"], one["name"])
+
+
+## Sends cook `recipe` for pot `p` (pots_near's entry); remembered for its contents and heat when the backend took it.
+func _cook(p: Dictionary, recipe: String, nm: String) -> bool:
+	var uid: int = p["uid"]
+	var cw: Snapshot.Cookware = p["cw"]
+	var v: Variant = backend.call("cook_item", float(uid), float(cw.type), p["square"], recipe)
+	if not (v is bool and v):
+		return false
+	cooks_sent += 1
+	_sent[uid] = {"sig": _sig.get(uid, 0), "name": nm, "at": _clock}
+	return true
+
+
+## For the next look: whose heat was lit, which pots hold a craft, and which of those the player holds now.
+func _note(snap: Snapshot, near: Array[Dictionary]) -> void:
+	_lit.clear()
+	_carried.clear()
+	for p: Dictionary in near:
+		var cw: Snapshot.Cookware = p["cw"]
+		_lit[p["uid"]] = _yes(p["heat"].get("lit"))
+		if cw.craft_progress > 0:
+			_paused[p["uid"]] = cw.type
+		else:
+			_paused.erase(p["uid"])
+	for uid: int in _paused.keys():
+		if not _lit.has(uid) and ItemActions.carried_row(snap, uid, _paused[uid]) >= 0:
+			_carried[uid] = true
+			_seen[uid] = _clock   # kept while held: putting it back goes on with the craft
+
+
 ## Without the signal, LiveSession's last result per pot (recipe_matches) is read for the pots asked.
 func _poll() -> void:
 	if _pending.is_empty() or not is_instance_valid(backend) or backend.has_signal("recipes_matched") \
@@ -471,7 +627,7 @@ func _prune() -> void:
 	for uid: int in _seen.keys():
 		if _clock - float(_seen[uid]) > FORGET_S or (_seen.size() > MAX_KEPT and not _sig.has(uid)):
 			_seen.erase(uid)
-	for d: Dictionary in [_results, _retry]:
+	for d: Dictionary in [_results, _retry, _sent, _hold, _paused]:
 		for uid: int in d.keys():
 			if not _seen.has(uid):
 				d.erase(uid)
@@ -487,6 +643,8 @@ func _show(near: Array[Dictionary]) -> void:
 			gone.visible = false
 			gone.steam.emitting = false
 			gone.steaming = false
+			gone.pot = {}
+			gone.matches = []
 			cards.erase(uid)
 			_free.append(gone)
 	if near.is_empty():
@@ -503,6 +661,8 @@ func _show(near: Array[Dictionary]) -> void:
 			cards[uid] = c
 		c.position = (p["point"] as Vector3) + Vector3(0.0, CARD_UP, 0.0)
 		c.visible = true
+		c.pot = p
+		c.matches = _listed(p)
 		var t := card_text(p, snap)
 		if t != c.text:
 			c.text = t
@@ -518,6 +678,18 @@ func _show(near: Array[Dictionary]) -> void:
 			c.steam.emitting = st
 
 
+## The matches card lines 2.. list for pot `p` now; [] when they list none (a craft, starting, no answer yet).
+func _listed(p: Dictionary) -> Array:
+	var cw: Snapshot.Cookware = p["cw"]
+	var uid: int = p["uid"]
+	if cw.craft_progress > 0 or cw.contents.is_empty() or not can_ask() or not starting(uid).is_empty():
+		return []
+	var r: Dictionary = _results.get(uid, {})
+	if r.is_empty() or not _sig.has(uid) or r["sig"] != _sig[uid] or not r["ok"]:
+		return []
+	return r["matches"]
+
+
 func _take_card() -> Card:
 	if not _free.is_empty():
 		return _free.pop_back()
@@ -526,7 +698,7 @@ func _take_card() -> Card:
 	c.top_level = true   # stays where the pot is while the rig walks or teleports
 	var l := Label3D.new()
 	l.pixel_size = PIXEL
-	l.font_size = 32
+	l.font_size = FONT
 	l.outline_size = 8
 	l.modulate = Color(0.97, 0.94, 0.86)
 	l.outline_modulate = Color(0.08, 0.06, 0.04, 0.9)
