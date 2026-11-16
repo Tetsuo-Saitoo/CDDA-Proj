@@ -159,7 +159,8 @@ func _test_consume() -> void:
 	a.on_snapshot(_snap(7, [], rows.slice(1)))
 	a.on_snapshot(_snap(8, [], rows.slice(1)))
 	a.on_events([result.call(3, 1, ""), result.call(str(t42), 1, ""), result.call(NAN, 1, ""), result.call(t42 + 0.5, 1, ""),
-			result.call(t42, "1", ""), {"kind": "item_result", "detail": t42}, result.call(t42 + 1, 1, "")])
+			result.call(t42, "1", ""), {"kind": "item_result", "detail": t42}, result.call(t42 + 1, 1, ""),
+			result.call(t42, NAN, "")])
 	var waited := seen.size() == 1 and a.pending(42) == "consume" and t42 == ItemActions.TAG_BASE + 1
 	a.on_events([result.call(float(t42), 1, "")])
 	var sipped: bool = seen.size() == 2 and seen[-1] == ["finished", 42, "consume"]
