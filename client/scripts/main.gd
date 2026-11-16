@@ -1378,7 +1378,7 @@ func _setup_environment() -> void:
 const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
 
 
-## G7 options: the look speed and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
@@ -1388,8 +1388,10 @@ func _apply_options() -> void:
 	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
 	if fp != null:
 		fp.sensitivity = speed
+		fp.invert_y = o.invert_y
 	if camera != null:
 		camera.sensitivity = speed
+		camera.invert_y = o.invert_y
 	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
 		return
 	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)

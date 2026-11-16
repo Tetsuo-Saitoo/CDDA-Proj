@@ -4,7 +4,10 @@ extends Camera3D
 ## Shift for 4x speed, mouse wheel changes speed.
 
 var speed := 12.0
+## Mouse look: `sensitivity` in radians per pixel, `invert_y` turns the up-down motion the other way; with `fov`
+## (Camera3D's) they are the G7 options main sets from hud.cfg (HudSettings).
 var sensitivity := 0.003
+var invert_y := false
 var _yaw := 0.0
 var _pitch := -0.6
 
@@ -35,10 +38,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.is_action(&"look"):
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if event.is_pressed() else Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		var mm := event as InputEventMouseMotion
-		_yaw -= mm.relative.x * sensitivity
-		_pitch = clampf(_pitch - mm.relative.y * sensitivity, -1.55, 1.55)
-		rotation = Vector3(_pitch, _yaw, 0)
+		look((event as InputEventMouseMotion).relative)
+
+
+## Mouse motion in pixels.
+func look(rel: Vector2) -> void:
+	_yaw -= rel.x * sensitivity
+	_pitch = clampf(_pitch - rel.y * sensitivity * (-1.0 if invert_y else 1.0), -1.55, 1.55)
+	rotation = Vector3(_pitch, _yaw, 0)
 
 
 func _process(delta: float) -> void:
