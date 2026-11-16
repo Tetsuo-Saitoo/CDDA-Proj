@@ -530,6 +530,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::spot;
     } else if( op == "hold" ) {
         a.op = fp3d::item_op::hold;
+    } else if( op == "consume" ) {
+        a.op = fp3d::item_op::consume;
     } else {
         return false;
     }
