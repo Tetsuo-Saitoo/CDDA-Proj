@@ -48,11 +48,12 @@
     {
       "name": "fp3d-linux-tsan",
       "displayName": "FP3D: Linux ThreadSanitizer (fork tests only, no bridge)",
+      "description": "TSan changes GCC 13's inlining, and its flow-based warnings (array-bounds, stringop-*, restrict, maybe-uninitialized) then fire on CDDA's own code (vehicle_use.cpp vector copies): kept as warnings here, not errors. The plain build keeps -Werror for them.",
       "inherits": "fp3d-linux",
       "binaryDir": "${sourceDir}/out/build/fp3d-linux-tsan",
       "cacheVariables": {
-        "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan",
-        "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan",
+        "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan -Wno-error=array-bounds -Wno-error=stringop-overflow -Wno-error=stringop-overread -Wno-error=restrict -Wno-error=maybe-uninitialized",
+        "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceParentDir}/= -fsanitize=thread -Wno-tsan -Wno-error=array-bounds -Wno-error=stringop-overflow -Wno-error=stringop-overread -Wno-error=restrict -Wno-error=maybe-uninitialized",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
         "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
       }
