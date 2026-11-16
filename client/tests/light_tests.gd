@@ -238,6 +238,10 @@ func _test_world(root: Node, data: Variant) -> void:
 	_check.call(all_on.count(true) == LightMap.MAX_SOURCES and shadows.call().count(true) == 0 and lit.shadow_lamps == 0,
 			"light: shadow_lamps clamps, 0 turns lamp shadows off")
 	lit.shadow_lamps = WorldLighting.SHADOW_LAMPS
+	_check.call(WorldLighting.shadows_for(4, WorldLighting.VR_SHADOW_LAMPS, true) == 0
+			and WorldLighting.shadows_for(4, 2, true) == 2 and WorldLighting.shadows_for(4, 0, false) == 4
+			and lit.vr_shadow_lamps == WorldLighting.VR_SHADOW_LAMPS,
+			"light: in VR no lamp shadows by default (vr_shadow_lamps), on a screen shadow_lamps")
 	world.apply_snapshot(Snapshot.from_data(data))
 	_check.call(lit.ambient == 114 and lit.lut_ambient == 114 and lit.lamps().is_empty(), "light: by day, no lamps")
 	lit.min_brightness = 3.0
