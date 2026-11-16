@@ -1,10 +1,6 @@
 # WORKLOG
 
 - 2026-11-16 — Puddles on the open ground (lead-world): they fill in rain, more slowly than the ground wets, dry in game time after it, hide under snow, and draw nothing while dry; none at minimal weather quality. Client tests pass; render check pictures look right.
-- 2026-11-16 — Snow lies on the open ground and roofs (lead-world): it builds while snow falls, melts by the air's temperature (snapshot `temperature_c`) and in rain, in patches that close as it deepens; none at minimal weather quality. Client tests pass; render check pictures look right.
-- 2026-11-16 — Weather quality (lead-world): WeatherView.quality high / low / minimal trims rain and snow particles, cloud layer, wet ground and blend steps; the fog and darker light stay. Client tests pass; the menu row is lead-ui's.
-- 2026-11-16 — Blood, gibs, fire, smoke and gas follow a cutaway change (PgUp / PgDn, top-down view) at once instead of on the next snapshot (lead-world). Client tests pass.
-- 2026-11-16 — A stairs model on a flight longer than one tile is drawn once per lane, stretched over it, instead of a whole stair on every tile (C3 leftover, lead-world). Client tests pass.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
 - 2026-11-16 — Bridge: L9 cooking starts the craft. Item op `cook` {pos, recipe, batch} on a pot in reach checks CDDA's rules, takes the ingredients from the pot only, lays the craft at the player's feet linked to the pot (its progress shows in the pot's `cookware` entry) and starts CDDA's craft activity. Sim test `cooking` starts and stops a water_clean craft and checks the refusals.
 - 2026-11-16 — VR test range page: spawn rows for a few test items (at your feet) and monsters (two squares ahead of where you look). Client tests pass.
