@@ -113,7 +113,8 @@ class Result:
 	## The surfaces items can be put on, per furniture square (absolute) that has any, numbered (the shelf number,
 	## 0..Snapshot.MAX_SHELF, is the index): [rest (Transform3D, submap-local: the surface's frame, its top at
 	## y 0, as drawn at rest), rect (Rect2 in that frame's x, z), part (id of the door, drawer or lid it moves
-	## with, "" none), j (its index in that part's `surfaces`, -1 none)]. See shelves_of.
+	## with, "" none), j (its index in that part's `surfaces`, -1 none), gates (ids of the doors and lids it lies
+	## behind, as item_slots), shut (true: behind doors that are drawn shut, never seen)]. See shelves_of.
 	var shelves := {}
 
 
@@ -758,6 +759,8 @@ func shelves_of(sm: Snapshot.Submap, base: Vector3i, i: int, tile_xf: Dictionary
 	if surf == null or (surf.planes.is_empty() and not PropShapes.info(_cat.furniture(sm.furn[i]).shape).has("surfaces")):
 		return out
 	var tp: Array = _tile_parts.get(i, [])
+	var behind := _inside_closed(sm, base, i)
+	var gates := _gates(i, r) if behind else PackedStringArray()
 	for k in mini(surf.count(), Snapshot.MAX_SHELF + 1):
 		var rest: Transform3D
 		var rect: Rect2
@@ -778,7 +781,7 @@ func shelves_of(sm: Snapshot.Submap, base: Vector3i, i: int, tile_xf: Dictionary
 			for q in k:
 				if m.surface_mover[q] == m.surface_mover[k]:
 					j += 1
-		out.append([rest, rect.abs(), part, j])
+		out.append([rest, rect.abs(), part, j, gates, pi < 0 and behind and gates.is_empty()])
 	return out
 
 
