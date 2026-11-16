@@ -3,7 +3,8 @@ extends RefCounted
 ## whose fist line meets the zombie sends CDDA's aimed strike for that hand (main / off by controller, left-handed
 ## too) and AimController answers the swing request with the part touched (the head; the body leaves CDDA's pick);
 ## one strike per swing (re-arm, gap, one in flight until its swing request is answered); a confirmed hit buzzes the
-## striking hand once; nothing from a slow hand, a hand off the figure, a creature off the 8 ways, with a menu open,
+## striking hand once; the main hand strikes a creature a knight's move off at its square; nothing from a slow
+## hand, a hand off the figure, with a menu open,
 ## from an untracked hand, the pack hand, a hand racking the gun or pulling an item in, the gun hand with a finger on
 ## the trigger or a hand steadying the other hand's two-handed item; a refused queue sends nothing on; a held plank
 ## reaches where a fist doesn't, with either end. No XR runtime: the test places the controllers and sets their
@@ -272,8 +273,11 @@ func _test_blocked() -> void:
 	_world.snapshot.player_pos = P + Vector3i(1, -1, 0)   # the zombie is now a knight's move off: not one of the 8 ways
 	_swing(1, FAST)
 	_world.snapshot.player_pos = P
-	_check.call(_sent.size() == n and _aim.melee_aim.is_empty(), "vr swing: a creature off the 8 ways: nothing sent")
+	var at_sq: Variant = _aim.strike_square(str(_sent.back())) if _sent.size() == n + 1 else null
+	_check.call(_sent.size() == n + 1 and _sent.back() == AimController.AT_ACTION and at_sq == ZP,
+			"vr swing: a creature a knight's move off: the main hand strikes at its square (a reach weapon's; the fork checks)")
 	_rest()
+	n = _sent.size()
 	_rig.press(_rig.left, "menu_button")
 	_swing(1, FAST)
 	var with_menu := _sent.size() == n and _rig.menu_open()

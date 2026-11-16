@@ -97,6 +97,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
 	_test_misfires(root, aim, tables)
+	_test_queue_at()
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -740,11 +741,22 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 			"melee: a strike by hand is the aimed action and answers the swing request (%s, %s)" % [act, by_hand])
 	_check.call(seg.get("want") == "stun" and kept.get("want") == "stun" and by_hand.get("action") == "stun",
 			"melee: a strike by hand keeps the family its zone calls and sends it (%s, %s)" % [kept, by_hand])
-	var off_way := aim.strike_segment("main", near, tip, zp + Vector3i(2, 1, 0)) == "" and aim.melee_aim.is_empty()
+	var knight_sq := zp + Vector3i(2, 1, 0)   # the zombie a knight's move off: the main hand strikes at its square
+	var knight := aim.strike_segment("main", near, tip, knight_sq)
+	_check.call(knight == S.AT_ACTION and aim.strike_square(knight) == zp and aim.melee_aim.get("uid") == ZUID
+			and aim.strike_square("fp3d_attack_main_aim_LEFT") == null,
+			"melee: by hand a knight's move off, the main hand strikes at the square (%s, %s)" % [knight, aim.melee_aim])
+	_check.call(S.strike_off_way(me, me + Vector3i(2, 1, 0)) and S.strike_off_way(me, me + Vector3i(-1, 2, 0))
+			and not S.strike_off_way(me, me + Vector3i(2, 0, 0)) and not S.strike_off_way(me, me + Vector3i(1, 1, 0))
+			and not S.strike_off_way(me, me + Vector3i(3, 1, 0)) and not S.strike_off_way(me, me + Vector3i(2, 1, 1))
+			and not S.strike_off_way(me, me), "melee: off-way squares (a knight's move within 2, this level)")
+	aim.melee_aim = {}
+	var off_way := aim.strike_segment("off", near, tip, knight_sq) == "" and aim.melee_aim.is_empty() \
+			and aim.strike_square(S.AT_ACTION) == null
 	var bad_hand := aim.strike_segment("left", near, tip, beside) == "" and aim.strike_segment("", near, tip, beside) == "" \
 			and aim.melee_aim.is_empty()
 	var miss := aim.strike_segment("main", near, near + dir * 0.3, beside) == "" and aim.melee_aim.is_empty()
-	_check.call(off_way and bad_hand and miss, "melee: by hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
+	_check.call(off_way and bad_hand and miss, "melee: the off hand off the 8 ways, an unknown hand or a miss: no action, no aim kept (%s)"
 			% [[off_way, bad_hand, miss]])
 	# techniques: the zone a strike lands on calls a family, sent as the swing answer's `action`
 	var calls := {"head": "stun", "eye": "stun", "leg_l": "down", "leg_r": "down", "leg": "down", "arm_l": "disarm",
@@ -1576,3 +1588,29 @@ static func _strings(n: int) -> Array:
 	for i in n:
 		out.append("fault_%d" % i)
 	return out
+
+
+## Stands in for CddaSim with queue_action_at: keeps what reached it.
+class AtSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_action_at(action: String, square: Vector3i) -> bool:
+		sent.append([action, square])
+		return true
+
+
+## LiveSession.queue_action_at: reaches the sim with its square; false without a game or on a DLL without it.
+func _test_queue_at() -> void:
+	var ls := LiveSession.new()
+	var sq := Vector3i(195, 384, 0)
+	var no_game := not ls.queue_action_at(AimController.AT_ACTION, sq)
+	ls._sim = RefCounted.new()   # an older DLL: no queue_action_at
+	var old_dll := not ls.queue_action_at(AimController.AT_ACTION, sq)
+	var sim := AtSim.new()
+	ls._sim = sim
+	var ok := ls.queue_action_at(AimController.AT_ACTION, sq)
+	_check.call(no_game and old_dll and ok and sim.sent == [[AimController.AT_ACTION, sq]],
+			"melee: LiveSession.queue_action_at reaches the sim with its square; none without a game or the method (%s)"
+			% [sim.sent])
+	ls._sim = null
+	ls.free()

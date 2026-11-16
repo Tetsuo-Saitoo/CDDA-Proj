@@ -485,7 +485,7 @@ func _start_vr() -> void:
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
-	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and live.queue_action(a)
+	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
@@ -937,8 +937,17 @@ func _live_action(event: InputEvent) -> bool:
 		return false
 	if _in_main_loop():
 		grab.ask = {}   # a key's own action: its prompts are the player's to answer
-		live.queue_action(act)
+		_queue_act(act)
 	return true
+
+
+## A hand or key action out to CDDA; a strike at a square (AimController.strike_square, a knight's move off) goes
+## by queue_action_at, and one whose square is gone isn't sent.
+func _queue_act(act: String) -> bool:
+	if act == AimController.AT_ACTION:
+		var sq: Variant = aim.strike_square(act)
+		return sq is Vector3i and live.queue_action_at(act, sq)
+	return live.queue_action(act)
 
 
 ## Look at (L / middle click): what is under the mouse (the screen centre while the mouse looks around), with a

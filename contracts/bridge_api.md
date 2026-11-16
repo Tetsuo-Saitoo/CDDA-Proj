@@ -108,6 +108,11 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   strike aimed: the client's crosshair (VR: the hand) is on that creature, so the swing sends one `swing`
   request (`ui_requests.md`); its answer may also call a technique family, and the hit's `attack` event names
   the technique used (`events.md`).
+  `fp3d_attack_main_at` / `fp3d_attack_main_aim_at` by `queue_action_at(action, square)`: the main hand at that
+  absolute square, e.g. a knight's move off that no way reaches. The fork checks it: this level, not the player's
+  square, within the weapon's reach (CDDA's rl_dist, 3 at most), else "That's out of reach." and no time; next to
+  you a plain strike, further only a creature the player sees (CDDA's reach attack). No square: "Nothing there
+  to hit." The off hand has no `_at` action.
 - Held items and context use (`cdda/src/fp3d/held.h`): the off hand (left) holds one carried item, marked with
   the item var `fp3d_offhand` (it stays in its pocket for CDDA's rules; saves keep it; a token the avatar keeps
   too means an item that left the avatar isn't held again on return), empty while the wielded item needs both
