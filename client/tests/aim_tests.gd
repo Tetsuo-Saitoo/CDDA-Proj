@@ -1477,6 +1477,16 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	_check.call(dark and rebuilt and pistol_on and not vm.flashing() and vm._flash == null,
 			"muzzle flash: none with flashes off (and one showing goes), a new gun gets its own, a knife has none")
+	vm.set_item(pistol, tables)
+	vm._process(1.0)
+	vm.suppressed = true
+	vm.kick()
+	vm._process(0.001)
+	var hushed := not vm.flashing() and not vm.lit() and vm.rotation.x > 0.0
+	vm.suppressed = false
+	vm._process(1.0)
+	vm.kick()
+	_check.call(hushed and vm.flashing(), "muzzle flash: none from a suppressed gun (it still recoils), back without one")
 	vm.free()
 
 
@@ -1528,11 +1538,17 @@ func _test_gun_state(d: Dictionary, tables: IdTables) -> void:
 		return Snapshot.from_data(dd)
 	var good: Snapshot = snap_with.call({"type": gi, "dirt": 4200, "faults": ["fault_gun_dirt", "fault_gun_blackpowder"], "rounds": 12})
 	_check.call(good.is_valid() and good.player_gun == {"type": gi, "dirt": 4200, "rounds": 12,
-			"faults": ["fault_gun_dirt", "fault_gun_blackpowder"]} and good.player_gun["faults"] is Array,
+			"faults": ["fault_gun_dirt", "fault_gun_blackpowder"], "suppressed": false} and good.player_gun["faults"] is Array,
 			"gun state: a wielded gun's type, dirt, faults and rounds parse (%s %s)" % [good.error, good.player_gun])
 	var bare: Snapshot = snap_with.call({"type": gi})
-	_check.call(bare.is_valid() and bare.player_gun == {"type": gi, "dirt": -1, "rounds": -1, "faults": []},
+	_check.call(bare.is_valid() and bare.player_gun == {"type": gi, "dirt": -1, "rounds": -1, "faults": [], "suppressed": false},
 			"gun state: no dirt / rounds give -1, no faults none (%s)" % [bare.player_gun])
+	var quiet := []
+	for v: Variant in [true, false, "true", 1, 1.0, [true], {}, null]:
+		var q: Snapshot = snap_with.call({"type": gi, "suppressed": v})
+		quiet.append(q.player_gun.get("suppressed") if q.is_valid() else "invalid")
+	_check.call(quiet == [true, false, false, false, false, false, false, false],
+			"gun state: suppressed only for a JSON true, anything else is false (%s)" % [quiet])
 	dd["player"].erase("wielded_gun")
 	var none := Snapshot.from_data(dd)
 	var null_gun: Snapshot = snap_with.call(null)

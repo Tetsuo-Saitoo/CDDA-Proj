@@ -41,6 +41,7 @@ class CddaSim : public godot::RefCounted
         godot::Dictionary get_request() const;
         bool answer( const godot::Dictionary &a );
         bool queue_action( const godot::String &action );
+        bool queue_action_at( const godot::String &action, const godot::Vector3i &square );
         bool queue_item_action( const godot::Dictionary &a );
         bool use_stairs( const godot::Vector3i &pos, int64_t dir );
         void clear_actions();
@@ -57,7 +58,7 @@ class CddaSim : public godot::RefCounted
         void set_timescale( double scale );
         void set_paused( bool on );
         void set_auto_pause( bool on );
-        void interrupt();
+        bool interrupt();
 
         bool save_game( bool only_if_changed );
         godot::Dictionary get_held() const;

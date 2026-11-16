@@ -256,6 +256,7 @@ func _ready() -> void:
 		var vc := VrCheck.new()
 		vc.rig = vr
 		vc.quit = _quit
+		vc.mock_of = func() -> MockItems: return mock_items
 		add_child(vc)
 		vc.run(str(_args["vr-check"]))
 
@@ -928,6 +929,10 @@ func _live_action(event: InputEvent) -> bool:
 			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
 					captured, world.snapshot.player_pos, facing)
+	if act == "eat" and _in_main_loop():
+		var food := _held_consumable()
+		if food != null and item_actions.consume(food):
+			return true   # what a hand holds is eaten or drunk, no menu (else CDDA's eat menu, below)
 	if act == "":
 		return false
 	if _in_main_loop():
@@ -1120,10 +1125,21 @@ func _update_aim() -> void:
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
+	viewmodel.suppressed = world.snapshot != null and world.snapshot.player_gun.get("suppressed", false) == true
 
 
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
+
+
+## What a hand holds that CDDA eats, drinks or takes, or holds such (a bottle of water), main hand first; null if
+## none (ItemActions.consumable).
+func _held_consumable() -> ItemRef:
+	for h: String in ["main", "off"]:
+		var it: Variant = hud_data.held.get(h)
+		if it is ItemRef and ItemActions.consumable(it, world.snapshot, world.tables):
+			return it
+	return null
 
 
 ## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
