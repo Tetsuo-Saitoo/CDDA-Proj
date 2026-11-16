@@ -101,7 +101,11 @@ func _abandon() -> bool:
 	_check(_main.main_menu == null, "Start starts a random character in %s (%s)" % [WORLD, menu.message])
 	if not await _running("the random character's game"):
 		return false
+	var saved := [false]   # saved first, so the Load page has the character until it is abandoned
+	_live.saved.connect(func(ok: bool) -> void: saved[0] = ok, CONNECT_ONE_SHOT)
+	_check(_live.save() and await _until(func() -> bool: return saved[0], OP_TIMEOUT_MS), "saved")
 	var saves_before := LiveSession.list_saves(_user_dir, WORLD)
+	_check(saves_before.size() == 1, "the Load page has the character (%s)" % [saves_before])
 	_check(_live.queue_action("SUICIDE"), "CDDA's \"Abandon this character\" queued")
 	var said: Variant = await _back_on_menu("abandoned")
 	if said == null:
