@@ -68,6 +68,7 @@ var jam := ""            # the held gun's jam (a JAMS key), "" none
 var _cant := 0.0         # 0..1, eased toward 1 while jammed
 var _jam_label: Label3D
 var flashes := true      # muzzle flashes at all (off: shots only recoil)
+var suppressed := false  # the wielded gun has a suppressor (Snapshot.player_gun): shots only recoil
 var _flash: Node3D       # under the gun's Muzzle: the star (Star) and the light (Light); null for other shapes
 var _flash_t := 0.0      # seconds of the flash left
 var _flash_wait := 0.0   # seconds before the next muzzle flash may come
@@ -204,8 +205,8 @@ static func grime_for(d: int) -> float:
 
 func kick() -> void:
 	_kick = 1.0
-	if _flash == null or not flashes or _flash_wait > 0.0:
-		return   # no gun, flashes off, or too soon after the last flash
+	if _flash == null or not flashes or suppressed or _flash_wait > 0.0:
+		return   # no gun, flashes off, a suppressor, or too soon after the last flash
 	_flash_t = FLASH_S
 	_flash_wait = FLASH_GAP_S
 	_flash.rotation.z = randf() * TAU
