@@ -57,7 +57,7 @@ class CddaSim : public godot::RefCounted
         void set_timescale( double scale );
         void set_paused( bool on );
         void set_auto_pause( bool on );
-        void interrupt();
+        bool interrupt();
 
         bool save_game( bool only_if_changed );
         godot::Dictionary get_held() const;
