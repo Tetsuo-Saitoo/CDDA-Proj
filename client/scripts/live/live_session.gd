@@ -639,7 +639,8 @@ func pour_into(uid: float, type: float, container: float, container_type: float,
 ## one it doesn't allow is CDDA's message, "There is nothing that can be opened nearby."). False when refused here
 ## (no game, a bad square, not next to the player) or when this DLL has no queue_action_at (see can_act_at).
 func open_at(open: bool, square: Vector3i, player: Vector3i) -> bool:
-	if not can_act_at() or not ItemActions.ok_square(square) or not ItemActions.ok_square(player) 			or not GrabController.adjacent(square - player):
+	if not can_act_at() or not ItemActions.ok_square(square) or not ItemActions.ok_square(player) \
+			or not GrabController.adjacent(square - player):
 		return false
 	return queue_action_at("open" if open else "close", square)
 
