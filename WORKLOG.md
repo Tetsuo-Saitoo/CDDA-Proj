@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge, G4: `query_character()` returns the character screen's data (stats, speed, encumbrance, skills, proficiencies, traits, bionics, effect texts) as a query result.
 - 2026-11-16 — Bridge, L8 slices 3 and 4: containers lying next to the player list what's in them (`inside`), take takes an item out of one; piles next to the player list up to 256 handles, `more` counts the rest.
 - 2026-11-15 — Bridge: the off hand lets go of an item that has grown too heavy for one hand (it stays in its pocket, with a message).
 - 2026-11-15 — Bridge: item op `consume` (CDDA's eat, drink or first aid on one item, no menu; CDDA's own questions stay real popups); sim and live checks.
