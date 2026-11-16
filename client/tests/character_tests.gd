@@ -39,7 +39,8 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	var bionics: Array = cd.card("bionics")["rows"]
 	var prof: Array = cd.card("proficiencies")["rows"]
 	_check.call(skills.size() == 64 and skills[0]["label"] == "Melee" and skills[0]["value"] == "2 (40%)"
-			and skills[0]["level"] == HudData.OK and skills[1]["value"] == "0" and (skills[0]["tip"] as String).length() == CharacterData.MAX_TIP
+			and skills[0]["level"] == HudData.OK and skills[1]["value"] == "0"
+			and (skills[0]["tip"] as String).get_slice("\n", 0) == "x".repeat(CharacterData.MAX_TIP)
 			and traits.size() == 2 and traits[0]["level"] == HudData.OK and traits[1]["level"] == HudData.HURT
 			and traits[1]["value"] == "mutation" and bionics[0]["value"] == "50 / 100 kJ" and bionics[1]["value"] == "on"
 			and prof.size() == 2 and prof[1]["value"] == "25%",
@@ -54,6 +55,88 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	cd.set_sheet(_sheet())
 	_test_view(cd)
 	_test_worn(snap, tables, hud)
+	_test_query(snap, tables, hud)
+
+
+## The bridge's query_character (contracts/bridge_api.md "Character queries"): its result read and checked, the real
+## format's fields shown (theory levels, layering, move cost), errors and waiting noted, LiveSession asking one at a
+## time and handing results on.
+func _test_query(snap: Snapshot, tables: IdTables, hud: HudData) -> void:
+	var good := JSON.stringify({"id": 7, "ok": true, "kind": "character", "name": "Bo"})
+	var junk := [CharacterData.parse_result(good, 8), CharacterData.parse_result(good.replace("character", "recipes"), 7),
+			CharacterData.parse_result("{not json", 7), CharacterData.parse_result(12, 7),
+			CharacterData.parse_result(JSON.stringify({"id": 7, "kind": "character"}), 7),
+			CharacterData.parse_result(good + " ".repeat(CharacterData.MAX_RESULT_BYTES), 7),
+			CharacterData.parse_result(good, 0)]
+	_check.call(CharacterData.parse_result(good, 7).get("name") == "Bo" and junk.all(func(d: Dictionary) -> bool: return d.is_empty()),
+			"character query: a result is read only for its own id and kind, as JSON with ok, under the size cap")
+	var cd := CharacterData.new()
+	cd.update(hud, snap, tables)
+	cd.set_waiting(true)
+	var waiting := cd.note == CharacterData.WAITING
+	cd.set_sheet({"id": 7, "ok": false, "kind": "character", "error": "<b>Object(</b>"})
+	var failed := cd.note == CharacterData.FAILED % "internal" and not cd.has_sheet()
+	var sheet := {"id": 7, "ok": true, "kind": "character", "name": "Bo", "truncated": true,
+		"skills": [{"id": "melee", "name": "Melee", "level": 2, "knowledge": 4, "progress": 40, "knowledge_progress": 10,
+				"description": "Hit things."}, {"id": "dodge", "name": "Dodge", "level": 3, "knowledge": 1, "progress": 0}],
+		"encumbrance": [{"enc": 10, "layer": 2, "warmth": 30}],
+		"speed": {"cur": 90, "move_cost": 120, "modifiers": [{"name": "Pain", "value": -10, "percent": false, "move_cost": false},
+				{"name": "Encumbrance", "value": 20, "percent": false, "move_cost": true},
+				{"name": "Stimulants", "value": 5, "percent": true, "move_cost": "yes"}]},
+	}
+	cd.set_sheet(sheet)
+	var sk: Array = cd.card("skills")["rows"]
+	var sp: Array = cd.card("speed")["rows"]
+	var body0: Dictionary = cd.card("body")["rows"][0]
+	var spv := sp.map(func(r: Dictionary) -> String: return "%s=%s/%d" % [r["label"], r["value"], r["level"]])
+	cd.set_sheet({"ok": false, "error": "too large"})   # a later refresh failing keeps what was shown
+	_check.call(waiting and failed and sk[0]["value"] == "2 (40%), theory 4" and (sk[0]["tip"] as String).contains("Theory 4, 10%")
+			and sk[1]["value"] == "3" and (body0["value"] as String).ends_with(", enc 12")
+			and (body0["tip"] as String).contains("(2 from layering), warmth 30")
+			and spv == ["Move cost=120/%d" % HudData.HURT, "Pain=-10/%d" % HudData.HURT, "Encumbrance=+20/%d" % HudData.HURT,
+					"Stimulants=+5%%/%d" % HudData.OK] and cd.has_sheet() and cd.note == CharacterData.TRUNCATED and cd.title == "Bo",
+			"character query: theory levels, layering in encumbrance, move cost and percent modifiers; errors noted, waiting said (%s)" % [spv])
+	# LiveSession: one query at a time, polled each frame, its result handed on; junk dropped
+	var sim := QuerySim.new()
+	var ls := LiveSession.new()
+	ls.state = "running"
+	ls._sim = sim
+	var got: Array = []
+	ls.character_sheet.connect(func(d: Dictionary) -> void: got.append(d))
+	var id1 := ls.query_character()
+	var refused := ls.query_character()
+	ls._poll_character()   # no answer yet
+	sim.results[id1] = JSON.stringify({"id": id1, "ok": true, "kind": "character", "name": "Bo"})
+	ls._poll_character()
+	var id2 := ls.query_character()
+	sim.results[id2] = JSON.stringify({"id": id1, "ok": true, "kind": "character"})   # another query's id: junk
+	ls._poll_character()
+	var id3 := ls.query_character()
+	ls.state = "ended"
+	ls._poll_character()
+	var after_end := ls.character_pending()
+	ls.state = "running"
+	ls._sim = RefCounted.new()   # an older DLL
+	var old_dll := ls.query_character()
+	_check.call(id1 == 1 and refused == 0 and sim.asked == 3 and got.size() == 1 and got[0]["name"] == "Bo" and id2 == 2
+			and id3 == 3 and not after_end and old_dll == 0,
+			"character query: LiveSession asks one at a time, hands the result on, drops junk and forgets it when the game ends")
+	ls.free()
+
+
+## A sim that answers query_character with ids 1, 2 ... and gives back what `results` holds for them.
+class QuerySim extends RefCounted:
+	var asked := 0
+	var results := {}
+
+	func query_character() -> int:
+		asked += 1
+		return asked
+
+	func take_query_result(id: int) -> String:
+		var r: String = results.get(id, "")
+		results.erase(id)
+		return r
 
 
 ## G2's paper doll on the character screen: worn items inner to outer with CDDA's layer names and damage colours,

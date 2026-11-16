@@ -117,7 +117,7 @@ func _run() -> void:
 		_hud_live()
 		await _hands_live()
 		_classic_live()
-		_character_live()
+		await _character_live()
 		await _compass_live()
 	print("  what each key did:")
 	for line in _seen:
@@ -252,6 +252,19 @@ func _character_live() -> void:
 	print("    " + "\n    ".join(t.split("\n").slice(0, 12)))
 	var at := t.find("[Worn]")
 	print("    " + "\n    ".join(t.substr(at if at >= 0 else 0).split("\n").slice(0, 14)))
+	# G4: the game's character sheet (bridge query_character), asked when the screen opens
+	if _live._sim.has_method("query_character"):
+		var cd := _main.character_data
+		var came: bool = await _until(func() -> bool: return cd.has_sheet(), ASK_TIMEOUT_MS, false)
+		var stats: Array = cd.card("stats").get("rows", [])
+		var skills: Array = cd.card("skills").get("rows", [])
+		_check(came and stats.size() == 5 and skills.size() >= 10 and cd.title != "Character" and not cd.subtitle.is_empty()
+				and cd.note.is_empty() and v.text().find("[Skills]") >= 0,
+				"P: the game's sheet: %s (%s), %d stats, %d skills, %d traits" % [cd.title, cd.subtitle, stats.size(),
+				skills.size(), (cd.card("traits").get("rows", []) as Array).size()])
+		print("    " + "\n    ".join(v.text().substr(maxi(0, v.text().find("[Stats]"))).split("\n").slice(0, 8)))
+	else:
+		print("    (this DLL has no query_character: the sheet's cards not checked)")
 	var esc := InputEventKey.new()
 	esc.keycode = KEY_ESCAPE
 	esc.physical_keycode = KEY_ESCAPE
