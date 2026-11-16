@@ -227,6 +227,8 @@ func _ready() -> void:
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
 		fp.set_process_unhandled_input(false))
@@ -354,8 +356,10 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
 	character_data.update(hud_data, snap, world.tables)
-	if character.visible:
-		_ask_character()   # each new turn while shown (refused while the last one is still out)
+	# Each new turn while shown (refused while the last one is still out); the Tab view shows what is carried from
+	# the same sheet.
+	if character.visible or inspect.visible:
+		_ask_character()
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,

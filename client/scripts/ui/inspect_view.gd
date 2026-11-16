@@ -54,6 +54,17 @@ var mouse_hook := Callable()
 var cols: Array[Dictionary] = []
 ## The status line: the last refusal or local "can't".
 var status := ""
+## G2: what the character carries against what they can carry (CharacterData.carry, from the game's character
+## sheet), as two bars in the top line; hidden while the sheet doesn't say.
+var character: CharacterData:
+	set(v):
+		if character != null and character.changed.is_connected(_show_carry):
+			character.changed.disconnect(_show_carry)
+		character = v
+		if character != null:
+			character.changed.connect(_show_carry)
+		_show_carry()
+var _carry_box: HBoxContainer
 ## The rows picked to act on together: uid -> itype.
 var selection := {}
 
@@ -134,6 +145,11 @@ func _init(h: Hands, a: ItemActions) -> void:
 	_head = _label("", Color(1.0, 0.85, 0.3))
 	_head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(_head)
+	_carry_box = HBoxContainer.new()
+	_carry_box.name = "Carry"
+	_carry_box.add_theme_constant_override("separation", 8)
+	_carry_box.visible = false
+	top.add_child(_carry_box)
 	close_button = _bar_button("Close", close, "Close (Tab)", top)   # for a pointer alone (the VR panel)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -243,6 +259,38 @@ func _process(_delta: float) -> void:
 		rebuild()
 	if _batch_total > 0:
 		_run_batch()
+
+
+## [[text, how full 0..1+], ...] for the top line: weight, then volume, each when the sheet has it.
+static func carry_parts(c: Dictionary) -> Array:
+	var out := []
+	for k: Array in [["weight_g", "weight_max_g", "weight"], ["volume_ml", "volume_max_ml", "volume"]]:
+		var cur := int(c.get(k[0], -1))
+		var cap := int(c.get(k[1], -1))
+		if cur < 0 or cap <= 0:
+			continue
+		var t := (InventoryModel.weight_text(cur) + " of " + InventoryModel.weight_text(cap) if k[2] == "weight"
+				else InventoryModel.volume_text(cur) + " of " + InventoryModel.volume_text(cap))
+		out.append([t, float(cur) / float(cap)])
+	return out
+
+
+func _show_carry() -> void:
+	if _carry_box == null:
+		return
+	for c in _carry_box.get_children():
+		_carry_box.remove_child(c)
+		c.queue_free()
+	var parts := carry_parts(character.carry) if character != null else []
+	_carry_box.visible = not parts.is_empty()
+	for p: Array in parts:
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 1)
+		v.custom_minimum_size.x = 130
+		v.add_child(_label(p[0], DIM))
+		v.add_child(_fill_bar(p[1]))
+		_carry_box.add_child(v)
+	_carry_box.tooltip_text = "What you carry, from the game. Past the weight limit you are slowed and tire faster."
 
 
 ## Builds the columns again from the newest snapshot (now).
