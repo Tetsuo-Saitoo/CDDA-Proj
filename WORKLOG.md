@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Puddles on the open ground (lead-world): they fill in rain, more slowly than the ground wets, dry in game time after it, hide under snow, and draw nothing while dry; none at minimal weather quality. Client tests pass; render check pictures look right.
 - 2026-11-16 — Snow lies on the open ground and roofs (lead-world): it builds while snow falls, melts by the air's temperature (snapshot `temperature_c`) and in rain, in patches that close as it deepens; none at minimal weather quality. Client tests pass; render check pictures look right.
 - 2026-11-16 — Weather quality (lead-world): WeatherView.quality high / low / minimal trims rain and snow particles, cloud layer, wet ground and blend steps; the fog and darker light stay. Client tests pass; the menu row is lead-ui's.
 - 2026-11-16 — Blood, gibs, fire, smoke and gas follow a cutaway change (PgUp / PgDn, top-down view) at once instead of on the next snapshot (lead-world). Client tests pass.
