@@ -53,7 +53,10 @@ extends XROrigin3D
 ## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
 ## craft progress or the recipes its contents match; main.gd sets `cook.backend`). One recipe CDDA would start now
 ## starts by itself; of several, the trigger with an empty hand on a "+" line starts that one; a paused craft goes on
-## when its pot is put back on a lit heat or its heat is lit.
+## when its pot is put back on a lit heat or its heat is lit. Fires (VrFire `fire`, the same backend): the trigger
+## with a hand low over a fire square next to you puts out a burning one, lights an unlit one (with the carried item
+## the hand holds, else CDDA's pick), or lights the fuel lying there while the hand holds a carried item; a line by
+## the hand says which.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -182,6 +185,7 @@ var gun: VrGun             # L2: the wielded gun in the main hand (built in _bui
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
+var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -304,6 +308,9 @@ func _build() -> void:
 	add_child(tray)
 	cook.head = camera
 	add_child(cook)
+	fire = VrFire.new()
+	fire.world = world
+	add_child(fire)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -408,6 +415,9 @@ func _process(delta: float) -> void:
 	place_compass()
 	place_hud(delta)
 	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
+	fire.backend = cook.backend
+	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
+			world.snapshot != null and not ui_open())
 	follow_teleport(delta)
 
 
@@ -1034,6 +1044,34 @@ func refused_here(reason: String) -> void:
 	say(i, reason)
 
 
+## The item hand i holds (ItemRef), null when it holds none.
+func held_item(i: int) -> ItemRef:
+	if hands == null:
+		return null
+	var h := hands.holding(HAND_IDS[i])
+	return h.get("item") as ItemRef if h.get("kind") == "item" and h.get("item") is ItemRef else null
+
+
+## L9: the trigger of controller c on a fire square (VrFire.press): a light buzz when sent, a buzz and why when
+## refused. True when the hand was on one.
+func fire_press(c: XRController3D) -> bool:
+	if world.snapshot == null:
+		return false
+	fire.backend = cook.backend
+	var i := 0 if c == left else 1
+	match fire.press(c.global_position, held_item(i)):
+		VrFire.LIGHT, VrFire.EXTINGUISH:
+			feel(c, 0.3, 0.05)
+			return true
+		"wait":
+			return true
+		"refused":
+			_feel(c)
+			say(i, "You can't do that now.")
+			return true
+	return false
+
+
 ## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
 func say(i: int, text: String) -> void:
 	if notes[i] == null or not is_instance_valid(notes[i]):
@@ -1580,6 +1618,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return   # L9: an empty hand on a cooking card's "+" line starts that recipe
 	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
 		return   # a gun in the main hand fires (VrGun)
+	if n == "trigger_click" and fire_press(c):
+		return   # L9: a hand low over a fire square lights or puts out that fire
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
