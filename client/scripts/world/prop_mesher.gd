@@ -31,8 +31,9 @@ extends RefCounted
 ## furniture model's `surface_N` planes replace the placeholder's surfaces (items behind a model's doors
 ## are drawn there and hidden by the doors).
 ##
-## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8) is drawn as
-## the model's `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
+## Furniture whose model has doors, drawers or lids that open (ModelLibrary.Mover, block L8), and a
+## placeholder container that opens (PropBoxes: cupboards, dressers, crates, bins...), is drawn as the model's
+## `still` variant, and each mover becomes a part spec in Result.parts (WorldView makes them
 ## Grabbables): plain data, so this stays worker-safe. Items on a mover's surface_N are drawn with it (the
 ## spec's items_*), in its own space; their item slot names the part (WorldView moves the slot with it and
 ## points at it only while the part is open, or always on a lid). Items behind a model's doors get a slot
@@ -53,7 +54,7 @@ const WALLISH := [K.WALL, K.WINDOW, K.DOOR]
 const WALKABLE := [K.FLOOR, K.ROOF, K.SHRUB]
 ## Layouts of joined tiles (see the class notes).
 enum Lay { FREE, ROW, LENGTH }
-const ROW_SHAPES := ["counter", "sink", "sofa", "bench", "park_bench", "shelf", "bookcase", "desk",
+const ROW_SHAPES := ["counter", "cupboard", "sink", "sofa", "bench", "park_bench", "shelf", "bookcase", "desk",
 		"workbench", "dresser", "cabinet_tall", "locker", "filing_cabinet", "fridge", "glass_fridge",
 		"chest_freezer", "appliance", "oven", "stove", "toilet", "display_case", "glass_cabinet", "vending",
 		"arcade", "machine", "console", "chair", "stool", "armchair"]
@@ -162,10 +163,15 @@ func build(sm_pos: Vector3i) -> Result:
 			tile_xf[i] = xf
 			var links := _links(p, prop, _facing_of(xf))
 			var drawn := drawn_model(prop, links, xf)
-			if drawn[0] != prop.model:
-				_drawn[p] = drawn
-			if _ter.style_for(sm.ter[i]).kind == K.ROOF or not _add_parts(p, i, prop, drawn[0], drawn[1], md, r):
-				_emit(b, md, prop, xf, links, r, rng, drawn)
+			var roof := _ter.style_for(sm.ter[i]).kind == K.ROOF
+			var box := PropBoxes.model_of(prop) if drawn[0] == null and not roof else null
+			if box != null and _add_parts(p, i, prop, box, xf * MODEL_TURN, md, r):
+				_drawn[p] = [box, xf * MODEL_TURN]   # a placeholder container that opens (PropBoxes)
+			else:
+				if drawn[0] != prop.model:
+					_drawn[p] = drawn
+				if roof or not _add_parts(p, i, prop, drawn[0], drawn[1], md, r):
+					_emit(b, md, prop, xf, links, r, rng, drawn)
 			r.furniture += 1
 		if t != 0:
 			var prop := _cat.trap(t)
@@ -519,7 +525,7 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 	var placed := pile_transforms(sm, base, pile, tile_xf, handles)
 	var b := _builder(sm, pile[0])
 	var md := _models(sm, pile[0], r)
-	var behind_doors := _inside_closed(sm, pile[0])
+	var behind_doors := _inside_closed(sm, base, pile[0])
 	for k in placed.size():
 		var e: Array = placed[k]
 		var xf: Transform3D = e[0]
@@ -534,7 +540,7 @@ func _pile(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array, tile_xf:
 		# has doors or lids that open (WorldView checks one is). On a part: named, WorldView moves it with it.
 		var glyph_only := prop.model == null and prop.shape.is_empty()
 		var gates := _gates(pile[0], r) if behind_doors else PackedStringArray()
-		var pointable: bool = e[2] != 0 and not (behind_doors and gates.is_empty()) \
+		var pointable: bool = e[2] != 0 and (pi >= 0 or not (behind_doors and gates.is_empty())) \
 				and not (glyph_only and r.glyphs.size() >= MAX_GLYPHS)
 		if pointable:
 			var ride: String = r.parts[pi]["id"] if pi >= 0 else ""
@@ -709,11 +715,13 @@ static func rest_lift(box: AABB, b: Basis) -> float:
 
 ## Items on square `i` lie on a furniture model's inner surface_N planes behind doors that are drawn closed
 ## (its placeholder hides contents): drawn, but not pointable through the doors.
-func _inside_closed(sm: Snapshot.Submap, i: int) -> bool:
+func _inside_closed(sm: Snapshot.Submap, base: Vector3i, i: int) -> bool:
 	if sm.furn[i] == 0:
 		return false
 	var furn := _cat.furniture(sm.furn[i])
-	return furn.model != null and not furn.model.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
+	var drawn: Array = _drawn.get(base + Vector3i(i % SEEX, i / SEEX, 0), [])
+	var m: ModelLibrary.Model = drawn[0] if not drawn.is_empty() else furn.model
+	return m != null and not m.surfaces.is_empty() and PropShapes.info(furn.shape).get("hide", false)
 
 
 ## [transform, itype, uid, size_m, centre, height, plane] of an item drawn at `xf` (scaled by `size`) on model

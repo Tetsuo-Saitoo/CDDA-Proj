@@ -616,8 +616,8 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	var r := pm.build(sm.pos)
 	# The cupboard's door_1 opens (a Grabbable part): the furniture draws the model without it (`still`).
 	var xfs: Array = r.models.get(cupboard.model.still, []) if cupboard.model.still != null else []
-	_check.call(r.model_props == 3 and xfs.size() == 1 and (r.models.get(cupboard.model, []) as Array).size() == 2
-			and r.parts.size() == 1, "model props listed: the cupboard (still, its door a part) and two books (%d)" % r.model_props)
+	_check.call(r.model_props == 5 and xfs.size() == 1 and (r.models.get(cupboard.model, []) as Array).size() == 2
+			and r.parts.size() == 4, "model props listed: the cupboard (still, its door a part), two books on it, the placeholder dresser (its three drawers parts) and the book in it (%d)" % r.model_props)
 	if xfs.is_empty():
 		return
 	var base := CddaCoords.sm_to_ms(sm.pos)
@@ -633,8 +633,8 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	_check.call(heights == [0.5, 1.0, 0.5], "items lie on the model's surface_1, surface_2, surface_1 " + str(heights))
 	var first: Vector3 = (on[0][0] as Transform3D).origin - xf.origin
 	_check.call(first.dot(front) > 0.0 and absf(first.dot(front)) <= 0.21, "surface_1 (front half) turns with the model")
-	_check.call((pm.pile_transforms(sm, base, sm.items.slice(Snapshot.PILE_STRIDE, 2 * Snapshot.PILE_STRIDE), {}) as Array).is_empty(),
-			"items in the dresser (placeholder, closed) stay hidden")
+	var in_dresser: Array = pm.pile_transforms(sm, base, sm.items.slice(Snapshot.PILE_STRIDE, 2 * Snapshot.PILE_STRIDE), {})
+	_check.call(in_dresser.size() == 1 and int(in_dresser[0][6]) >= 0, "the book in the placeholder dresser lies in a drawer (PropBoxes)")
 
 	var world := WorldView.new()
 	world.catalog = terrain
@@ -645,9 +645,9 @@ func _test_props(data: Variant, tables: IdTables, scene: Callable, repo: Callabl
 	var mms := holder.get_children() if holder else []
 	var counts := mms.map(func(n: Node) -> int: return (n as MultiMeshInstance3D).multimesh.instance_count)
 	var door_sq := base + Vector3i(5, 5, 0)
-	_check.call(counts == [1, 2, 2, 2] and world.prop_counts["models"] >= 3
+	_check.call(counts == [1, 1, 2, 2, 2] and world.prop_counts["models"] >= 3
 			and world.parts.has("%d_%d_%d/door_1" % [door_sq.x, door_sq.y, door_sq.z]),
-			"the world draws one multimesh per model part, an instance per prop (the cupboard's still body; books) " + str(counts))
+			"the world draws one multimesh per model part, an instance per prop (the cupboard's and the dresser's still bodies; books) " + str(counts))
 	world.free()
 
 

@@ -59,7 +59,7 @@ const INFO := {
 	"bathtub": {"surfaces": [0.12], "rect": [-0.38, -0.28, 0.38, 0.28]},
 	"shower": {"surfaces": [0.08], "rect": [-0.38, -0.38, 0.38, 0.3]},
 	"groundsheet": {"surfaces": [0.02], "rect": [-0.42, -0.42, 0.42, 0.42]},
-	"cabinet_tall": {"hide": true}, "dresser": {"hide": true}, "locker": {"hide": true},
+	"cabinet_tall": {"hide": true}, "dresser": {"hide": true}, "locker": {"hide": true}, "cupboard": {"hide": true},
 	"filing_cabinet": {"hide": true}, "fridge": {"hide": true}, "chest_freezer": {"hide": true},
 	"appliance": {"hide": true}, "oven": {"hide": true}, "stove": {"hide": true}, "crate": {"hide": true},
 	"cardboard_box": {"hide": true}, "trash_can": {"hide": true}, "recycle_bin": {"hide": true},
@@ -131,7 +131,7 @@ static func has_shape(shape: String) -> bool:
 
 
 const NAMES := ["chair", "stool", "armchair", "sofa", "bench", "park_bench", "table", "coffee_table",
-		"desk", "workbench", "counter", "sink", "shelf", "bookcase", "cabinet_tall", "dresser", "locker",
+		"desk", "workbench", "counter", "cupboard", "sink", "shelf", "bookcase", "cabinet_tall", "dresser", "locker",
 		"filing_cabinet", "fridge", "glass_fridge", "chest_freezer", "appliance", "oven", "stove", "toilet",
 		"bathtub", "shower", "bed", "crate", "crate_open", "cardboard_box", "trash_can", "recycle_bin",
 		"dumpster", "plant", "flower", "hedge", "street_light", "pole", "sign", "mailbox", "boulder",
@@ -214,7 +214,7 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			_jbox(b, xl, Vector3(-0.44, 0.18, -0.34), Vector3(0.44, 0.21, 0.34), main.darkened(0.1))
 			_jbox(b, xl, Vector3(-0.48, 0.85, -0.4), Vector3(0.48, 0.93, 0.4), main, ALL)
 			b.box(Vector3(0.28, 0.93, -0.42), Vector3(0.44, 1.02, -0.3), METAL_DARK)
-		"counter":
+		"counter", "cupboard":   # a cupboard keeps what it holds inside (PropBoxes opens it)
 			_counter(b, main, links)
 		"sink":
 			_counter(b, main, links)
