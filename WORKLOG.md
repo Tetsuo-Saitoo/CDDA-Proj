@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
 - 2026-11-16 — Bridge: L9 cooking starts the craft. Item op `cook` {pos, recipe, batch} on a pot in reach checks CDDA's rules, takes the ingredients from the pot only, lays the craft at the player's feet linked to the pot (its progress shows in the pot's `cookware` entry) and starts CDDA's craft activity. Sim test `cooking` starts and stops a water_clean craft and checks the refusals.
 - 2026-11-16 — L8 slice 3, mock: MockItems takes an item out of a container lying next to you (the snapshot's `inside`), refusing as the game does when it isn't there. Null-headset VR check on main 8a42fdf: 4 ok. Client tests pass.
 - 2026-11-16 — L8 slice 3, client take: an item in a bag or box lying next to you can be taken out (ItemActions.take / LiveSession.take_item send the container; bad or half pairs send nothing). Client tests pass.

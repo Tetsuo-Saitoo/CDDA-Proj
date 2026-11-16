@@ -547,6 +547,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::consume;
     } else if( op == "cook" ) {
         a.op = fp3d::item_op::cook;
+    } else if( op == "light" ) {
+        a.op = fp3d::item_op::light;
+    } else if( op == "extinguish" ) {
+        a.op = fp3d::item_op::extinguish;
     } else {
         return false;
     }
@@ -586,7 +590,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         r.type = static_cast<uint32_t>( type );
         return true;
     };
-    if( !ref( "item", "type", a.item ) ) {
+    // light: the firestarter may be left out (the sim picks a carried one). extinguish: never an item.
+    const bool item_given = d.has( "item" ) || d.has( "type" );
+    if( a.op == fp3d::item_op::extinguish ? item_given :
+        ( a.op != fp3d::item_op::light || item_given ) && !ref( "item", "type", a.item ) ) {
         return false;
     }
     if( !field( d, "pos", Variant::VECTOR3I, v ) ) {
@@ -602,7 +609,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         }
         a.pos = fp3d::ui_point{ p.x, p.y, p.z };
     } else if( a.op == fp3d::item_op::take || a.op == fp3d::item_op::drop || a.op == fp3d::item_op::throw_ ||
-               a.op == fp3d::item_op::place || a.op == fp3d::item_op::spot || a.op == fp3d::item_op::cook ) {
+               a.op == fp3d::item_op::place || a.op == fp3d::item_op::spot || a.op == fp3d::item_op::cook ||
+               a.op == fp3d::item_op::light || a.op == fp3d::item_op::extinguish ) {
         return false;
     }
     // place: where the item comes to rest. Only place has it, and needs it.

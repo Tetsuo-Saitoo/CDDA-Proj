@@ -68,8 +68,10 @@ struct cookware_view  { uint8 tile; uint64 uid; uint32 type; std::vector<cookwar
     // An item with the COOK or BOIL quality lying on a heat square (top level of the map stack; vehicle cargo not
     // yet). uid = its handle, the same uid the pile's `handles` list. contents: its CONTAINER pockets, one level,
     // cap 16. An in-progress CDDA craft among the contents, else one the `cook` item action started for this pot
-    // (it lies at the character's feet, next to the pot, naming the pot): craft_result = itype index of the result
-    // (0 none), craft_recipe = recipe id ("" none), craft_progress = permille.
+    // (it lies on the character's square or one next to it, next to the pot, naming the pot): craft_result = itype
+    // index of the result (0 none), craft_recipe = recipe id ("" none), craft_progress = permille.
+    // Snapshots come with requests, and CDDA asks nothing while the craft activity runs (it fast-forwards): the
+    // progress seen is that of a paused craft, or of one a question interrupts.
 struct cookware_item_view { uint64 uid; uint32 type; int32 count; };   // count = charges if counted by charges, else 1
 
 struct creature_view {
