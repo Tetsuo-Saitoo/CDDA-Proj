@@ -51,7 +51,7 @@ owner before making many models, and keep one style across a set.
 
 - One material per model if possible, two at most.
 - PBR metallic-roughness: base colour, normal, and occlusion-roughness-metallic packed in one texture.
-- Transparency only for glass and liquids.
+- Transparency only for glass and liquids (alpha blend; it darkens with the world at night like the rest).
 - No LODs needed for now (models are loaded at run time, so Godot doesn't make LODs; the budgets keep
   that fine).
 

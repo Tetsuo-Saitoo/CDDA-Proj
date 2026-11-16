@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Light leftovers (C6, lead-world): the 4 nearest lamps cast shadows, so walls keep their light in the room; see-through parts of models darken at night like glass. Client tests pass; not seen live or in VR.
 - 2026-11-15 — VR stands on stair flights and ramps (C2 leftover, lead-world): the rig follows the ground under the head and the teleport arc lands on it, like the first-person camera. Client tests pass; not tried in a headset.
 - 2026-11-15 — Indoor fog cheaper (lead-qa's perf note): the roofed room around the player is followed again only on leaving it, a level change or every 10 turns, not on every step. Client tests pass.
 - 2026-11-15 — Placeholder containers open (L8, lead-world, for lead-vr): cupboards, wardrobes, lockers, fridges, dressers, filing cabinets, freezers, crates, boxes, bins and dumpsters get doors, drawers or a lid as Grabbable parts, with shelves and drawer floors that hold their items; sealed crates stay shut. Client tests pass.

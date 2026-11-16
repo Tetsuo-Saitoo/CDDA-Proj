@@ -223,6 +223,21 @@ func _test_world(root: Node, data: Variant) -> void:
 	_check.call(lamps.size() == 1 and lamps[0].visible
 			and lamps[0].position == world.coords.ms_center_to_world(Vector3i(195, 384, 0)) + Vector3(0, 1.5, 0)
 			and is_equal_approx(lamps[0].omni_range, LightMap.light_range(60)), "light: an OmniLight on the lamp")
+	var shadows := func() -> Array:
+		var out := []
+		for c in lit.get_children():
+			if c is OmniLight3D:
+				out.append((c as OmniLight3D).shadow_enabled)
+		return out
+	_check.call(lamps[0].shadow_enabled and shadows.call().count(true) == WorldLighting.SHADOW_LAMPS
+			and shadows.call().slice(0, WorldLighting.SHADOW_LAMPS).count(true) == WorldLighting.SHADOW_LAMPS,
+			"light: the nearest %d lamps cast shadows (walls keep the light in)" % WorldLighting.SHADOW_LAMPS)
+	lit.shadow_lamps = 99
+	var all_on: Array = shadows.call()
+	lit.shadow_lamps = -1
+	_check.call(all_on.count(true) == LightMap.MAX_SOURCES and shadows.call().count(true) == 0 and lit.shadow_lamps == 0,
+			"light: shadow_lamps clamps, 0 turns lamp shadows off")
+	lit.shadow_lamps = WorldLighting.SHADOW_LAMPS
 	world.apply_snapshot(Snapshot.from_data(data))
 	_check.call(lit.ambient == 114 and lit.lut_ambient == 114 and lit.lamps().is_empty(), "light: by day, no lamps")
 	lit.min_brightness = 3.0
