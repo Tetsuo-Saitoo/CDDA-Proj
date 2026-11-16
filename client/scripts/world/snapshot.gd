@@ -26,6 +26,7 @@ const MAX_NAME_LEN := 128
 const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
 const MAX_CREATURES := 1024               # the contract's cap
 const MAX_UID := 1 << 53                  # JSON numbers are doubles
+const MAX_SHELF := 15   # shelves: a furniture square's numbered surfaces are 0..15
 const PILE_STRIDE := 8                    # items: tile, count, top[4], corpse, corpse state
 const PILE_TOP_END := 6                   # top[4] is at [2, PILE_TOP_END)
 const PILE_CORPSE := 6                    # mtype index of the largest corpse on the tile, 0 = none
@@ -96,6 +97,7 @@ class Submap:
 	var fields: PackedInt32Array  # FIELD_STRIDE ints each (seen tiles only)
 	var handles: PackedInt64Array # HANDLE_STRIDE ints per item a client can point at (seen tiles only)
 	var poses := {}               # uid -> Vector2i(yaw whole degrees 0..359, side 0 / 1): how a placed item lies
+	var shelves := {}             # uid -> shelf 0..MAX_SHELF: the furniture surface it was put on (PropMesher numbers them)
 	var flags: PackedByteArray
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
@@ -674,6 +676,7 @@ func _read_submaps(v: Variant) -> void:
 		sm.fields = _fields(s.get("fields"), what + ".fields")
 		sm.handles = _handles(s.get("handles"), what + ".handles")
 		sm.poses = _poses(s.get("poses"), sm.handles, what + ".poses")
+		sm.shelves = _shelves(s.get("shelves"), sm.handles, what + ".shelves")
 		sm.flags = _bytes(s.get("flags"), 255, what + ".flags")
 		sm.vis = _bytes(s.get("vis"), 3, what + ".vis")
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
@@ -862,6 +865,35 @@ func _poses(v: Variant, handles: PackedInt64Array, what: String) -> Dictionary:
 		if not is_valid():
 			return out
 		out[uid] = Vector2i(yaw, 1 if side else 0)
+	return out
+
+
+## [[uid, shelf], ...]: the furniture surface each placed item was put on (older bridges send none); each uid
+## one of the submap's handles, at most once; shelf 0..MAX_SHELF.
+func _shelves(v: Variant, handles: PackedInt64Array, what: String) -> Dictionary:
+	var out := {}
+	if v == null or not is_valid():
+		return out
+	var n := handles.size() / HANDLE_STRIDE
+	if not v is Array or (v as Array).size() > n:
+		_fail("%s: expected a list of at most %d shelves (one per handle)" % [what, n])
+		return out
+	var known := {}
+	for k in range(1, handles.size(), HANDLE_STRIDE):
+		known[handles[k]] = true
+	for i in (v as Array).size():
+		var e: Variant = v[i]
+		var w := "%s[%d]" % [what, i]
+		if not e is Array or (e as Array).size() != 2:
+			_fail(w + ": expected [uid, shelf]")
+			return out
+		var uid := _int(e[0], 1, MAX_UID - 1, w + ".uid")
+		var shelf := _int(e[1], 0, MAX_SHELF, w + ".shelf")
+		if is_valid() and (not known.has(uid) or out.has(uid)):
+			_fail("%s: uid %d is not a handle here, or comes twice" % [w, uid])
+		if not is_valid():
+			return out
+		out[uid] = shelf
 	return out
 
 

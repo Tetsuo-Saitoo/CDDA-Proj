@@ -738,12 +738,66 @@ func _build_props(pos: Vector3i, r: PropMesher.Result, snap: Snapshot) -> void:
 	b["counts"] = {"furniture": r.furniture, "items": r.items, "traps": r.traps, "glyphs": r.glyphs.size(),
 			"models": r.model_props, "parts": r.parts.size()}
 	b["props"] = drawn
+	b["shelves"] = r.shelves
 	if not drawn and not b.get("terrain", false):
 		_free_node(pos)   # nothing left to draw: open sky keeps no node
 	_set_slots(pos, r.item_slots)
 
 
 ## Replaces the item slots of submap `pos` (PropMesher.Result.item_slots).
+const SHELF_ABOVE := 0.35   # m: how far over a surface a point (a hand, a dropped item) still puts things on it
+const SHELF_BELOW := 0.05   # m: and under its top (a ray hitting its edge)
+const SHELF_EDGE := 0.03    # m: past its sides
+const SPOT_MAX := 0.999     # spots are 0..0.999 across a square (DropTarget's)
+const SHELF_LOOK: Array[Vector2i] = [Vector2i(0, 0), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1)]
+
+
+## The furniture surface under world point `point` that a dropped item would be put on: {square (Vector3i),
+## shelf (0..Snapshot.MAX_SHELF, PropMesher.shelves_of's numbering), spot (Vector2, each 0..0.999 across the
+## square, x east, y south: where it is then drawn, PropMesher's spot)}; {} when the point isn't over one (the
+## floor, mid-air, furniture without surfaces of its own). A drawer or door counts where it is now; of surfaces
+## stacked under the point, the nearest one below it.
+func shelf_at(point: Vector3) -> Dictionary:
+	if not point.is_finite() or coords == null:
+		return {}
+	var sq0 := coords.world_to_ms(point)
+	var best := {}
+	var best_y := INF
+	for d: Vector2i in SHELF_LOOK:   # an open drawer or door reaches over the next square
+		var sq := sq0 + Vector3i(d.x, d.y, 0)
+		var pos := CddaCoords.ms_to_sm(sq)
+		var node: Node3D = _nodes.get(pos)
+		var list: Array = ((_built.get(pos, {}) as Dictionary).get("shelves", {}) as Dictionary).get(sq, [])
+		if node == null or list.is_empty():
+			continue
+		var at := node.global_transform if node.is_inside_tree() else node.transform
+		for k in list.size():
+			var e: Array = list[k]
+			var xf: Transform3D = at * (e[0] as Transform3D)
+			var g: Grabbable = parts.get(e[2]) if e[2] != "" and is_instance_valid(parts.get(e[2])) else null
+			if g != null and g.is_inside_tree() and int(e[3]) >= 0 and int(e[3]) < g.surfaces.size():
+				xf = g.surface_global(e[3])   # a drawer or a door where it is now
+			if absf(xf.basis.determinant()) < 1e-9:
+				continue
+			var l := xf.affine_inverse() * point
+			var rect: Rect2 = e[1]
+			if l.y < -SHELF_BELOW or l.y > SHELF_ABOVE or l.y >= best_y or rect.size.x <= 0.0 or rect.size.y <= 0.0 					or l.x < rect.position.x - SHELF_EDGE or l.x > rect.end.x + SHELF_EDGE 					or l.z < rect.position.y - SHELF_EDGE or l.z > rect.end.y + SHELF_EDGE:
+				continue
+			best_y = l.y
+			best = {"square": sq, "shelf": k, "rest": (at * (e[0] as Transform3D)).basis.orthonormalized(),
+					"uv": Vector2(clampf((l.x - rect.position.x) / rect.size.x, 0.0, 1.0),
+					clampf((l.z - rect.position.y) / rect.size.y, 0.0, 1.0))}
+	if best.is_empty():
+		return {}
+	# The spot that draws there (PropMesher.Surface.spot_uv backwards): across the surface at rest, turned
+	# into the square's axes.
+	var uv: Vector2 = best["uv"]
+	var dd: Vector3 = (best["rest"] as Basis) * Vector3(uv.x - 0.5, 0.0, uv.y - 0.5)
+	return {"square": best["square"], "shelf": best["shelf"],
+			"spot": Vector2(clampf(dd.x + 0.5, 0.0, SPOT_MAX), clampf(dd.z + 0.5, 0.0, SPOT_MAX))}
+
+
 func _set_slots(pos: Vector3i, slots: Array) -> void:
 	var b: Dictionary = _built[pos]
 	for tile_slots: Array in (b.get("slots", {}) as Dictionary).values():
