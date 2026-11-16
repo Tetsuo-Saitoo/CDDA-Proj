@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Cancelling character creation now just goes back to the main menu, without a red error. Checked live with death and abandon too; client tests pass.
 - 2026-11-16 — Inventory (Tab view): each worn bag's pocket shows how full it is as a thin bar, red when full. Client tests pass.
 - 2026-11-16 — Back to the main menu after a game: death, CDDA's save and quit (new F1 button) or a failure brings the menu back with a message, and the next game starts from it with nothing left from the last. Two games in a row checked live; client tests pass.
 - 2026-11-16 — VR combat feedback (combat lead, in lead-vr's files): a red hurt edge in the headset (`vr/vr_hurt.gd`, the flat hurt tint's level on its own ring under the tunnel vignette, at most 0.35) and a short buzz in both hands per hit (rate-limited); VR melee: a faint buzz for a miss and the technique's name by the striking hand, fading; VR guns: a thump in the gun hand when a shot hits (`HitFeedback.shot_confirmed`). Client tests pass on Windows and Linux; not tried in a headset.
