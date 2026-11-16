@@ -14,6 +14,8 @@ extends Node3D
 ## new turn each time) and a warm light around it. Both come together at most once every FLASH_GAP_S: a shot
 ## sooner only recoils, so a long burst never flashes faster than 3 times a second (photosensitivity, as the
 ## lightning flash). `flashes` off (main.gd: the HUD's flash setting) shows neither.
+## `kick()` follows CDDA's real shots (AimController.shot_went); a trigger pull with no round (HitFeedback.misfired)
+## calls `click()` instead: a dry click, no recoil, no flash.
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
@@ -44,6 +46,9 @@ const FLASH_COLOR := Color(1.0, 0.78, 0.45)
 const FLASH_ENERGY := 2.0             # the muzzle light at its brightest
 const FLASH_RANGE := 4.0              # m
 const FLASH_GAP_S := 0.34             # at least this long between two muzzle flashes (under 3 a second)
+const CLICK_RATE := 22050
+const CLICK_S := 0.035
+const CLICK_DB := -8.0
 
 var shape := ""          # "" none, "pistol", "long", "bow", "launcher", "melee", "item"
 var dirt := -1           # the held gun's fouling as last set (0..DIRT_MAX), -1 none / NON-FOULING
@@ -66,6 +71,9 @@ var flashes := true      # muzzle flashes at all (off: shots only recoil)
 var _flash: Node3D       # under the gun's Muzzle: the star (Star) and the light (Light); null for other shapes
 var _flash_t := 0.0      # seconds of the flash left
 var _flash_wait := 0.0   # seconds before the next muzzle flash may come
+var clicks := 0          # misfire clicks played (tests)
+var _click_player: AudioStreamPlayer   # made on the first click
+static var _click: AudioStreamWAV
 
 
 func _init() -> void:
@@ -202,6 +210,42 @@ func kick() -> void:
 	_flash_wait = FLASH_GAP_S
 	_flash.rotation.z = randf() * TAU
 	_tick_flash(0.0)   # shown at once, not on the next frame
+
+
+## A trigger pull with no round (`jammed`: the gun jammed then; its pose comes with the snapshot's faults): a dry
+## click, no recoil, no flash.
+func click(_jammed := false) -> void:
+	clicks += 1
+	if not is_inside_tree():
+		return
+	if _click_player == null:   # made on the first click, so the model stays the only child till then
+		_click_player = AudioStreamPlayer.new()
+		_click_player.name = "Click"
+		_click_player.volume_db = CLICK_DB
+		add_child(_click_player)
+	_click_player.stream = click_stream()
+	_click_player.play()
+
+
+## The dry-fire click, made once: a short noise tick over a low knock, under a fast decay.
+static func click_stream() -> AudioStreamWAV:
+	if _click != null:
+		return _click
+	var n := int(CLICK_RATE * CLICK_S)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7   # the same click every time
+	for i in n:
+		var t := float(i) / CLICK_RATE
+		var v := (0.55 * rng.randf_range(-1.0, 1.0) * exp(-t * 400.0) + 0.45 * sin(TAU * 900.0 * t) * exp(-t * 120.0))
+		data.encode_s16(i * 2, int(clampf(v, -1.0, 1.0) * 30000.0))
+	var w := AudioStreamWAV.new()
+	w.format = AudioStreamWAV.FORMAT_16_BITS
+	w.mix_rate = CLICK_RATE
+	w.data = data
+	_click = w
+	return w
 
 
 ## True while a muzzle flash shows.

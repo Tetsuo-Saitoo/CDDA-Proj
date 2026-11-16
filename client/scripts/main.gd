@@ -227,7 +227,8 @@ func _ready() -> void:
 	viewmodel = WeaponViewmodel.new()
 	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
 	fp.add_child(viewmodel)
-	aim.fired.connect(viewmodel.kick)
+	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
+	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
 	_set_view(start_view(_args, hud_settings.view))
 	_boot_log("client set up")
 	if _args.has("live"):
