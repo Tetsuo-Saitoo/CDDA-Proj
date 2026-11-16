@@ -56,6 +56,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 		_old_wp = _zdef.weakpoints
 		_zdef.weakpoints = {"head": true, "eye": true}
 	_test_fist()
+	_test_feedback()
 	_test_hands()
 	_test_blocked()
 	_test_held_item()
@@ -241,6 +242,56 @@ func _test_fist() -> void:
 	var body := _answer()
 	_check.call(body.get("cancel") == true,
 			"vr swing: a strike on the body (no weak point there) leaves the part to CDDA (%s)" % [body])
+	_rest()
+
+
+## CDDA's word on a VR strike: a technique shows by the hand that struck, one clean line, and fades; a miss buzzes
+## that hand faintly, once; a hit is no miss (its damage buzzes, on_hit).
+func _test_feedback() -> void:
+	var sw := _rig.swing
+	var hf := _aim.hits
+	_rest()
+	_hand_at_head(_rig.right)
+	var n := _sent.size()
+	_swing(1, FAST)
+	var b := _rig.buzzes.duplicate()
+	hf.technique_used.emit(ZUID + 1, "Other", 1)
+	var other := sw.label == null or not sw.label.visible
+	var raw := "Precise
+Strike" + "!".repeat(80)
+	hf.technique_used.emit(ZUID, raw, 3)
+	var l := sw.label
+	var text := l.text if l != null else ""
+	_check.call(_sent.size() == n + 1 and other and l != null and l.visible and l.get_parent() == _rig._ctrl(1)
+			and text == Snapshot.plain_text(raw, VrSwing.LABEL_LEN) and text.length() <= VrSwing.LABEL_LEN
+			and not text.contains("
+") and text.begins_with("Precise") and l.billboard == BaseMaterial3D.BILLBOARD_ENABLED,
+			"vr swing: the technique CDDA used shows by the hand that struck, one clean line (%s)" % text)
+	hf.swing_resolved.emit(ZUID, false)
+	var missed: bool = sw.misses == 1 and _rig.buzzes[1] == b[1] + 1 and _rig.buzz_amp[1] == VrSwing.MISS_AMP
+	hf.swing_resolved.emit(ZUID, false)
+	_check.call(missed and sw.misses == 1 and _rig.buzzes[1] == b[1] + 1 and _rig.buzzes[0] == b[0],
+			"vr swing: CDDA's miss buzzes the hand that struck faintly, once")
+	if l == null:
+		return
+	_swing(1, 0.0, 0.7)
+	_swing(1, 0.0, 0.7)
+	var full := l.visible and l.modulate.a == 1.0
+	_swing(1, 0.0, 0.1 + VrSwing.LABEL_FADE_S * 0.5)
+	var fading := l.visible and absf(l.modulate.a - 0.5) < 0.01
+	_swing(1, 0.0, VrSwing.LABEL_FADE_S)
+	_check.call(full and fading and not l.visible,
+			"vr swing: the technique's name stays %.1f s, then fades out (%.2f)" % [VrSwing.LABEL_S, l.modulate.a])
+	_rest()
+	_hand_at_head(_rig.right)
+	_swing(1, FAST)
+	b = _rig.buzzes.duplicate()
+	var hits0 := sw.hits
+	hf.swing_resolved.emit(ZUID, true)
+	var no_miss: bool = sw.misses == 1 and _rig.buzzes == b
+	hf.strike_confirmed.emit(ZUID, "head", 9, false)
+	_check.call(_sent.size() == n + 2 and no_miss and sw.hits == hits0 + 1 and _rig.buzzes[1] == b[1] + 1,
+			"vr swing: CDDA's hit is no miss; its damage buzzes the hand that struck")
 	_rest()
 
 
