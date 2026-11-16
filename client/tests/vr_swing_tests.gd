@@ -3,7 +3,8 @@ extends RefCounted
 ## whose fist line meets the zombie sends CDDA's aimed strike for that hand (main / off by controller, left-handed
 ## too) and AimController answers the swing request with the part touched (the head; the body leaves CDDA's pick);
 ## one strike per swing (re-arm, gap, one in flight until its swing request is answered); a confirmed hit buzzes the
-## striking hand once; nothing from a slow hand, a hand off the figure, a creature off the 8 ways, with a menu open,
+## striking hand once; the main hand strikes a creature a knight's move off at its square; nothing from a slow
+## hand, a hand off the figure, with a menu open,
 ## from an untracked hand, the pack hand, a hand racking the gun or pulling an item in, the gun hand with a finger on
 ## the trigger or a hand steadying the other hand's two-handed item; a refused queue sends nothing on; a held plank
 ## reaches where a fist doesn't, with either end. No XR runtime: the test places the controllers and sets their
@@ -55,6 +56,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 		_old_wp = _zdef.weakpoints
 		_zdef.weakpoints = {"head": true, "eye": true}
 	_test_fist()
+	_test_feedback()
 	_test_hands()
 	_test_blocked()
 	_test_held_item()
@@ -243,6 +245,56 @@ func _test_fist() -> void:
 	_rest()
 
 
+## CDDA's word on a VR strike: a technique shows by the hand that struck, one clean line, and fades; a miss buzzes
+## that hand faintly, once; a hit is no miss (its damage buzzes, on_hit).
+func _test_feedback() -> void:
+	var sw := _rig.swing
+	var hf := _aim.hits
+	_rest()
+	_hand_at_head(_rig.right)
+	var n := _sent.size()
+	_swing(1, FAST)
+	var b := _rig.buzzes.duplicate()
+	hf.technique_used.emit(ZUID + 1, "Other", 1)
+	var other := sw.label == null or not sw.label.visible
+	var raw := "Precise
+Strike" + "!".repeat(80)
+	hf.technique_used.emit(ZUID, raw, 3)
+	var l := sw.label
+	var text := l.text if l != null else ""
+	_check.call(_sent.size() == n + 1 and other and l != null and l.visible and l.get_parent() == _rig._ctrl(1)
+			and text == Snapshot.plain_text(raw, VrSwing.LABEL_LEN) and text.length() <= VrSwing.LABEL_LEN
+			and not text.contains("
+") and text.begins_with("Precise") and l.billboard == BaseMaterial3D.BILLBOARD_ENABLED,
+			"vr swing: the technique CDDA used shows by the hand that struck, one clean line (%s)" % text)
+	hf.swing_resolved.emit(ZUID, false)
+	var missed: bool = sw.misses == 1 and _rig.buzzes[1] == b[1] + 1 and _rig.buzz_amp[1] == VrSwing.MISS_AMP
+	hf.swing_resolved.emit(ZUID, false)
+	_check.call(missed and sw.misses == 1 and _rig.buzzes[1] == b[1] + 1 and _rig.buzzes[0] == b[0],
+			"vr swing: CDDA's miss buzzes the hand that struck faintly, once")
+	if l == null:
+		return
+	_swing(1, 0.0, 0.7)
+	_swing(1, 0.0, 0.7)
+	var full := l.visible and l.modulate.a == 1.0
+	_swing(1, 0.0, 0.1 + VrSwing.LABEL_FADE_S * 0.5)
+	var fading := l.visible and absf(l.modulate.a - 0.5) < 0.01
+	_swing(1, 0.0, VrSwing.LABEL_FADE_S)
+	_check.call(full and fading and not l.visible,
+			"vr swing: the technique's name stays %.1f s, then fades out (%.2f)" % [VrSwing.LABEL_S, l.modulate.a])
+	_rest()
+	_hand_at_head(_rig.right)
+	_swing(1, FAST)
+	b = _rig.buzzes.duplicate()
+	var hits0 := sw.hits
+	hf.swing_resolved.emit(ZUID, true)
+	var no_miss: bool = sw.misses == 1 and _rig.buzzes == b
+	hf.strike_confirmed.emit(ZUID, "head", 9, false)
+	_check.call(_sent.size() == n + 2 and no_miss and sw.hits == hits0 + 1 and _rig.buzzes[1] == b[1] + 1,
+			"vr swing: CDDA's hit is no miss; its damage buzzes the hand that struck")
+	_rest()
+
+
 func _test_hands() -> void:
 	_hand_at(_rig.left)
 	_rig.right.global_position = Vector3(0, -50, 0)
@@ -272,8 +324,11 @@ func _test_blocked() -> void:
 	_world.snapshot.player_pos = P + Vector3i(1, -1, 0)   # the zombie is now a knight's move off: not one of the 8 ways
 	_swing(1, FAST)
 	_world.snapshot.player_pos = P
-	_check.call(_sent.size() == n and _aim.melee_aim.is_empty(), "vr swing: a creature off the 8 ways: nothing sent")
+	var at_sq: Variant = _aim.strike_square(str(_sent.back())) if _sent.size() == n + 1 else null
+	_check.call(_sent.size() == n + 1 and _sent.back() == AimController.AT_ACTION and at_sq == ZP,
+			"vr swing: a creature a knight's move off: the main hand strikes at its square (a reach weapon's; the fork checks)")
 	_rest()
+	n = _sent.size()
 	_rig.press(_rig.left, "menu_button")
 	_swing(1, FAST)
 	var with_menu := _sent.size() == n and _rig.menu_open()

@@ -285,10 +285,17 @@ func _test_fire() -> void:
 			"vr gun: the model kicks (%.3f m at the muzzle) and settles back" % kicked)
 	b = _rig.buzzes.duplicate()
 	_aim.hits.hit_confirmed.emit(ZUID, "torso", 12, false)
-	var plain_hit := _rig.buzzes == b
-	_aim.hits.hit_confirmed.emit(ZUID, "head", 30, true)
-	_check.call(plain_hit and _rig.buzzes[1] == b[1] + 1 and _rig.buzz_amp[1] == VrGun.KILL_AMP,
-			"vr gun: a confirmed kill buzzes the main hand harder (a hit alone doesn't)")
+	_aim.hits.strike_confirmed.emit(ZUID, "torso", 12, true)
+	g.shown = false   # no gun in the hand: nothing to feel it in
+	_aim.hits.shot_confirmed.emit(ZUID, "torso", 12, false)
+	g.shown = true
+	var not_shots: bool = _rig.buzzes == b and g.hits == 0
+	_aim.hits.shot_confirmed.emit(ZUID, "torso", 12, false)
+	var hit_felt: bool = _rig.buzzes[1] == b[1] + 1 and _rig.buzz_amp[1] == VrGun.HIT_AMP and _rig.buzzes[0] == b[0]
+	_aim.hits.shot_confirmed.emit(ZUID, "head", 30, true)
+	_check.call(not_shots and hit_felt and _rig.buzzes[1] == b[1] + 2 and _rig.buzz_amp[1] == VrGun.KILL_AMP
+			and g.hits == 2,
+			"vr gun: a shot's hit thumps the main hand, a kill harder; a melee hit, or a gun not in the hand, doesn't")
 	var lp: Variant = _aim.live_aim.call() if _aim.live_aim.is_valid() else null
 	_rig.right.global_position += Vector3(0.1, 0.05, 0.0)
 	_frame()

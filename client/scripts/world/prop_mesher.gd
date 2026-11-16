@@ -459,8 +459,8 @@ static func _facing_of(xf: Transform3D) -> int:
 
 
 ## The model a furniture tile draws and its transform, [Model, Transform3D]: one of the prop's `joins` pieces
-## when its links (shape-local bits, _links) make it an end, the middle or the corner of joined tiles and the
-## prop has that piece, else its own model (null for a placeholder) at xf * MODEL_TURN.
+## when its links (shape-local bits, _links) make it an end, the middle, a corner, a T or a cross of joined
+## tiles and the prop has that piece, else its own model (null for a placeholder) at xf * MODEL_TURN.
 static func drawn_model(prop: PropCatalog.Prop, links: int, xf: Transform3D) -> Array:
 	var j := join_of(links)
 	if prop.model != null and prop.joins.has(j[0]):
@@ -471,8 +471,9 @@ static func drawn_model(prop: PropCatalog.Prop, links: int, xf: Transform3D) -> 
 ## The `joins` piece (contracts/assets.md) for a tile with these links (shape-local bits: 1 front, 2 its left
 ## seen from the front, 4 back, 8 its right) and the quarter turns (counter-clockwise seen from above) it
 ## takes in model space: an end joins the run on one side, the middle on both, the corner on its right and
-## its front. A tile joined in front or behind (a block laid out with one facing: tables, model-only props)
-## takes an end or the middle turned a quarter, its front sideways. ["", 0] for none: alone, a T or a cross.
+## its front, the tee on both sides and its front, the cross on all four. A tile joined in front or behind (a
+## block laid out with one facing: tables, model-only props) takes an end or the middle turned a quarter, its
+## front sideways. ["", 0] for none: alone.
 static func join_of(links: int) -> Array:
 	match links:
 		8:
@@ -495,6 +496,16 @@ static func join_of(links: int) -> Array:
 			return ["corner", 2]
 		3:
 			return ["corner", 3]
+		11:
+			return ["tee", 0]
+		13:
+			return ["tee", 1]
+		14:
+			return ["tee", 2]
+		7:
+			return ["tee", 3]
+		15:
+			return ["cross", 0]
 	return ["", 0]
 
 
@@ -619,8 +630,8 @@ func _part_builder(pi: int) -> PropShapes.Builder:
 ## surface_N planes when it has them: plane is the index into the model's surfaces, else -1); empty when they
 ## are inside a closed container. Deterministic per square.
 ## Without `handles` (the tile's [uid, itype, spot_x, spot_y] lists): the four largest itypes, then
-## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle in
-## their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
+## clutter (itype 0) for the smaller rest, MAX_SHOWN at most, uid 0. With them: one item per handle (the
+## first Snapshot.MAX_HANDLES_PER_TILE: a big pile next to the player lists more) in their order, at its spot (permille of the square, turned onto the surface) or else at its sub-tile
 ## slot, the 17th and later on top of the ones before on the same slot; `hidden` ones are skipped (their
 ## slot stays empty, so the rest don't move); then clutter for the items without a handle. An item with a
 ## pose (the snapshot's `poses`) lies turned as it was placed (pose_basis), else at a turn of its own.
@@ -653,7 +664,7 @@ func pile_transforms(sm: Snapshot.Submap, base: Vector3i, pile: PackedInt32Array
 	for _s in SUB * SUB:
 		jitter.append(Vector2(rng.randf_range(-0.04, 0.04), rng.randf_range(-0.04, 0.04)))
 	var tops := {}   # Vector2i(slot, surface) -> height of what lies there
-	var n := handles.size()
+	var n := mini(handles.size(), Snapshot.MAX_HANDLES_PER_TILE)   # a big pile next to the player: its tray shows the rest
 	for k in n + clampi(count - n, 0, MAX_SHOWN):
 		var uid := 0
 		var itype := 0

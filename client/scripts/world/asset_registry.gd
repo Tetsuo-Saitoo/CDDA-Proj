@@ -19,7 +19,7 @@ const MAX_STR := 128
 ## Steps 2 of the chain: looks_like links followed at most.
 const MAX_CHAIN := 16
 ## Pieces a furniture model can name for joined tiles (`joins`, contracts/assets.md "Placement").
-const JOINS := ["end_left", "end_right", "middle", "corner"]
+const JOINS := ["end_left", "end_right", "middle", "corner", "tee", "cross"]
 const KINDS := ["terrain", "furniture", "trap", "field", "item", "monster", "vehicle_part"]
 const MESHERS := ["floor", "wall", "window", "door", "fence", "stairs_up", "stairs_down", "ramp",
 		"water", "roof", "open_air"]

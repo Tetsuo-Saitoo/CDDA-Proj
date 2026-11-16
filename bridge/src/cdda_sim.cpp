@@ -87,6 +87,11 @@ Dictionary request_dict( const fp3d::ui_request &r )
     d["actions"] = actions;
     d["allow_cancel"] = r.allow_cancel;
     d["max_len"] = r.max_len;
+    if( r.kind == fp3d::request_kind::number ) {
+        d["min"] = r.number_min;
+        d["max"] = r.number_max;
+        d["default"] = r.number_default;
+    }
     d["mode"] = to_godot( r.mode );
     d["status"] = to_godot( r.status );
     d["origin"] = to_vec( r.origin );
@@ -229,12 +234,13 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "cheat_set_weather", "id", "wind" ), &CddaSim::cheat_set_weather );
     ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
+    ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
 void CddaSim::stop_session()
 {
-    fp3d_session::stop();
+    fp3d_session::unload();
 }
 
 String CddaSim::start( const String &data_dir, const String &user_dir, const String &world )
@@ -383,6 +389,13 @@ bool CddaSim::answer( const Dictionary &d )
         // The sim caps it again by request kind (only chargen takes the larger cap).
         a.text = fp3d::sanitize_text( to_std( v ), fp3d::max_answer_json );
     }
+    if( !field( d, "number", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "number" ) ) {
+        // Any int64: the sim checks it against the request's range and asks again when it's outside.
+        a.number = static_cast<int64_t>( v );
+    }
     if( !field( d, "picks", Variant::ARRAY, v ) ) {
         return false;
     }
@@ -530,6 +543,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::spot;
     } else if( op == "hold" ) {
         a.op = fp3d::item_op::hold;
+    } else if( op == "consume" ) {
+        a.op = fp3d::item_op::consume;
     } else {
         return false;
     }
@@ -609,6 +624,11 @@ bool CddaSim::queue_item_action( const Dictionary &d )
             return false;
         }
     }
+    // take: out of a container lying on `pos` (L8), when one is named.
+    if( a.op == fp3d::item_op::take && ( d.has( "container" ) || d.has( "container_type" ) ) &&
+        !ref( "container", "container_type", a.container ) ) {
+        return false;
+    }
     if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
@@ -655,6 +675,20 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.has_pose = true;
         a.yaw = static_cast<uint16_t>( deg );
         a.side = d.has( "side" ) && static_cast<bool>( side );
+    }
+    // Which furniture shelf it was put on (the client's numbering): only next to a spot, for the same ops.
+    if( !field( d, "shelf", Variant::INT, v ) ) {
+        return false;
+    }
+    if( d.has( "shelf" ) ) {
+        const int64_t shelf = v;
+        const bool stores = a.op == fp3d::item_op::drop || a.op == fp3d::item_op::place ||
+                            a.op == fp3d::item_op::spot;
+        if( !stores || !a.has_spot || shelf < 0 || shelf > fp3d::max_item_shelf ) {
+            return false;
+        }
+        a.has_shelf = true;
+        a.shelf = static_cast<uint8_t>( shelf );
     }
     // The client's number for this action: an `item_result` event answers it.
     if( !field( d, "tag", Variant::INT, v ) ) {
@@ -802,6 +836,16 @@ int64_t CddaSim::match_recipes( const Dictionary &d )
     }
     const fp3d::item_ref ref{ static_cast<uint64_t>( uid ), static_cast<uint32_t>( type ) };
     return static_cast<int64_t>( fp3d::post_recipe_query( ref, fp3d::ui_point{ pos.x, pos.y, pos.z } ) );
+}
+
+// G4: the character screen's data (fp3d/snapshot.h, contracts/bridge_api.md "Character queries"). One at a
+// time; the bridge refuses a second while one is pending.
+int64_t CddaSim::query_character()
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    return static_cast<int64_t>( fp3d::post_character_query() );
 }
 
 String CddaSim::take_query_result( int64_t id )

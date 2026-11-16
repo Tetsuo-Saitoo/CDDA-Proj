@@ -13,6 +13,7 @@ extends PanelContainer
 
 signal closed
 signal hud_changed   # a HudSettings value changed (and was saved)
+signal quit_to_menu   # "Save and quit to menu" pressed (main.gd: CDDA's save and quit)
 
 const SLOTS := 2
 const PAD_SLOTS := 2
@@ -32,10 +33,22 @@ var compass_slider: HSlider
 var _compass_value: Label
 var debug_check: CheckBox
 var mood_check: CheckBox
+var hurt_check: CheckBox
 var flash_check: CheckBox
+## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
+var feed_checks := {}
+const FEED_TIPS := {
+	"good": "Good things that happen to you: healing, learning, a good find.",
+	"bad": "Bad or mixed things that happen to you: hits, pain, a skill getting rusty.",
+	"warning": "Dangers: a monster comes into view, an alarm, a noise.",
+	"info": "What you examine or look at, how something works.",
+	"other": "Everything else: misses, small things.",
+}
 var cheat_page: CheatPanel    # set by add_cheat_page
 var cheat_scroll: ScrollContainer   # holds it: the page scrolls when taller than the menu (small window, VR panel)
 var cheats_button: Button
+## "Save and quit to menu": shown with show_quit_to_menu (a live game); closes the menu and emits quit_to_menu.
+var quit_button: Button
 ## --test / --cheats: the Cheats page is there this session whatever the debug switch says.
 var cheats_forced := false:
 	set(v):
@@ -115,12 +128,24 @@ func _init() -> void:
 	cheats_button.visible = false
 	cheats_button.pressed.connect(func() -> void: show_cheats(not showing_cheats()))
 	bar.add_child(cheats_button)
+	quit_button = Button.new()
+	quit_button.text = "Save and quit to menu"
+	quit_button.focus_mode = Control.FOCUS_NONE
+	quit_button.visible = false
+	quit_button.pressed.connect(func() -> void:
+		close()
+		quit_to_menu.emit())
+	bar.add_child(quit_button)
 	for t: String in ["Reset all", "Close"]:
 		var b := Button.new()
 		b.text = t
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(reset_all if t == "Reset all" else close)
 		bar.add_child(b)
+
+
+func show_quit_to_menu(on: bool) -> void:
+	quit_button.visible = on
 
 
 ## Adds the HUD row under the title: compass opacity 0..100 %.
@@ -150,6 +175,13 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	mood_check.button_pressed = settings.mood_cues
 	mood_check.toggled.connect(_on_mood_cues)
 	row.add_child(mood_check)
+	hurt_check = CheckBox.new()
+	hurt_check.text = "Hurt tint"
+	hurt_check.tooltip_text = "Darkens the edges of the view red when you are hit or bleeding."
+	hurt_check.focus_mode = Control.FOCUS_NONE
+	hurt_check.button_pressed = settings.hurt_cues
+	hurt_check.toggled.connect(_on_hurt_cues)
+	row.add_child(hurt_check)
 	flash_check = CheckBox.new()
 	flash_check.text = "Bright flashes"
 	flash_check.tooltip_text = "Lightning and muzzle flashes. Off: thunder and recoil only."
@@ -166,6 +198,21 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	row.add_child(debug_check)
 	_box.add_child(row)
 	_box.move_child(row, 1)
+	var feed_row := HBoxContainer.new()
+	var fl := Label.new()
+	fl.text = "Messages shown"
+	feed_row.add_child(fl)
+	for g: String in HudSettings.FEED_GROUPS:
+		var c := CheckBox.new()
+		c.text = HudSettings.FEED_GROUPS[g]
+		c.tooltip_text = FEED_TIPS[g]
+		c.focus_mode = Control.FOCUS_NONE
+		c.button_pressed = not settings.feed_hidden.has(g)
+		c.toggled.connect(_on_feed_group.bind(g))
+		feed_checks[g] = c
+		feed_row.add_child(c)
+	_box.add_child(feed_row)
+	_box.move_child(feed_row, 2)
 	_show_compass_value()
 
 
@@ -233,11 +280,34 @@ func _on_weather_flash(on: bool) -> void:
 	hud_changed.emit()
 
 
+## A feed group's box: checked shows the group's messages in the feed (HudData.set_feed_hidden via main).
+func _on_feed_group(on: bool, group: String) -> void:
+	var hidden := PackedStringArray(hud.feed_hidden)
+	if on:
+		if hidden.has(group):
+			hidden.remove_at(hidden.find(group))
+	elif not hidden.has(group):
+		hidden.append(group)
+	hud.feed_hidden = HudSettings.feed_groups_from(hidden)
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Message filter not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
 func _on_mood_cues(on: bool) -> void:
 	hud.mood_cues = on
 	var err := hud.save_file(hud_path)
 	if err != OK:
 		_status.text = "Mood tint setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _on_hurt_cues(on: bool) -> void:
+	hud.hurt_cues = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Hurt tint setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

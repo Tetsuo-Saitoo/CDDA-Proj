@@ -21,6 +21,9 @@ signal cheats_changed(cheats: Dictionary)
 ## A recipe query (match_recipes) came back: RecipeMatches.parse's result for that container (`ok` false when the
 ## sim refused it: out of reach, not found, ...).
 signal recipes_matched(container_uid: int, result: Dictionary)
+## G4: a character query (query_character) came back: CharacterData.parse_result's Dictionary, still game data
+## (`ok` false: {error}; CharacterData.set_sheet reads it).
+signal character_sheet(sheet: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
@@ -56,6 +59,9 @@ var _cheats := {}
 ## Recipe queries: query id -> [container uid, msec asked]; results kept per container uid (the last one).
 var _queries := {}
 var _recipe_results := {}
+## The character query waiting for its result (0 none) and when it was asked (msec).
+var _char_query := 0
+var _char_asked := 0
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
 const MAX_KEPT_RESULTS := 32
@@ -477,6 +483,43 @@ func match_recipes(container: ItemRef, avatar_square := Vector3i.ZERO) -> int:
 	return id
 
 
+## G4: the character sheet (bridge query_character; read-only, the sim answers at its next request). Returns the
+## query id, 0 when refused (no game, an older DLL, one still waiting: the bridge takes one at a time).
+## character_sheet follows. A query unanswered for QUERY_TIMEOUT_MS may be replaced if the bridge takes a new one.
+func query_character() -> int:
+	if not _can("query_character") or (_char_query > 0 and Time.get_ticks_msec() - _char_asked < QUERY_TIMEOUT_MS):
+		return 0
+	var v: Variant = _sim.query_character()
+	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
+	if id < 1 or id > CharacterData.MAX_QUERY_ID:
+		return 0
+	_char_query = id
+	_char_asked = Time.get_ticks_msec()
+	return id
+
+
+func character_pending() -> bool:
+	return _char_query > 0
+
+
+func _poll_character() -> void:
+	if _char_query < 1:
+		return
+	if state != "running" or not _sim.has_method("take_query_result"):
+		_char_query = 0
+		return
+	var text: Variant = _sim.take_query_result(_char_query)
+	if not text is String or (text as String).is_empty():
+		return
+	var id := _char_query
+	_char_query = 0
+	var d := CharacterData.parse_result(text, id)
+	if d.is_empty():
+		push_warning("character query %d: unreadable result" % id)
+		return
+	character_sheet.emit(d)
+
+
 ## The last recipe result for container `uid` (as recipes_matched gave it), {} for none.
 func recipe_matches(uid: int) -> Dictionary:
 	return _recipe_results.get(uid, {})
@@ -514,6 +557,7 @@ func _make_sim() -> bool:
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
+	_char_query = 0
 	_push_cheats_allowed()
 	return true
 
@@ -598,12 +642,17 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 
 
 ## Eat, drink or take carried (or held) `uid` with CDDA's consume rules and move costs, no menu: a container's
-## contents. CDDA's refusals come as messages. False when refused here (nothing sent): no game, a bad handle, or a
-## bridge without the op (it refuses an unknown op), so callers can fall back to CDDA's eat menu.
-func consume_item(uid: float, type: float) -> bool:
-	if _sim == null or not handle_ok(uid, type):
+## contents. `tag` 1..MAX_ITEM_TAG (0: none) comes back in its `item_result` event (done once CDDA's activity has
+## started; refused with CDDA's text, or "" when its message said why). False when refused here (nothing sent): no
+## game, a bad handle or tag, or a bridge without the op (it refuses an unknown op), so callers can fall back to
+## CDDA's eat menu.
+func consume_item(uid: float, type: float, tag := 0) -> bool:
+	if _sim == null or not handle_ok(uid, type) or tag < 0 or tag > MAX_ITEM_TAG:
 		return false
-	return bool(_sim.queue_item_action({"op": "consume", "item": int(uid), "type": int(type)}))
+	var a := {"op": "consume", "item": int(uid), "type": int(type)}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
 
 
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
@@ -754,6 +803,7 @@ func _poll(delta: float) -> void:
 			held_changed.emit(held)
 	_poll_cheats()
 	_poll_queries()
+	_poll_character()
 	_poll_range(delta)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():

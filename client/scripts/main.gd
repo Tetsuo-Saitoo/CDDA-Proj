@@ -66,9 +66,13 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
+var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
+var character_data := CharacterData.new()   # the character screen's cards (G4), for screen and VR
+var character: CharacterView      # P: the character screen
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
+var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -94,6 +98,15 @@ var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
+## Back to the main menu after a game (_on_game_over): this Main hands over to a fresh one (`replaced`, then it is
+## freed), so nothing of the ended game (state, timers, signals, workers) reaches the next. The fresh one opens on
+## the menu (`open_menu`, whatever the command line asked for) showing `menu_message` (green when `menu_ok`).
+signal replaced(fresh: Node3D)   # the fresh Main
+const SCENE := "res://scenes/main.tscn"
+var open_menu := false
+var menu_message := ""
+var menu_ok := false
+var _leaving := false
 
 
 ## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
@@ -214,6 +227,8 @@ func _ready() -> void:
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
 		fp.set_process_unhandled_input(false))
@@ -229,6 +244,7 @@ func _ready() -> void:
 	fp.add_child(viewmodel)
 	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
 	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
+	aim.hits.player_hurt.connect(hurt_cue.hurt)   # damage to the player: a red edge, fading
 	_set_view(start_view(_args, hud_settings.view))
 	_boot_log("client set up")
 	if _args.has("live"):
@@ -339,6 +355,12 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
+	character_data.update(hud_data, snap, world.tables)
+	# Each new turn while shown (refused while the last one is still out); the Tab view shows what is carried from
+	# the same sheet.
+	if character.visible or inspect.visible:
+		_ask_character()
+	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
 			world.prop_counts["furniture"], world.prop_counts["items"]]
@@ -484,8 +506,10 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
+	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
-	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and live.queue_action(a)
+	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0
@@ -517,7 +541,8 @@ func _start_vr() -> void:
 	# Each is a direct child of the panel's root (the panel shows while one of them is visible), drawn larger.
 	var panel := panel_root(vr)
 	if panel != null:
-		menus_to_panel(panel, [inspect, key_menu, main_menu.get_parent() if main_menu != null else null], PANEL_UI_SCALE)
+		menus_to_panel(panel, [inspect, character, key_menu, main_menu.get_parent() if main_menu != null else null],
+				PANEL_UI_SCALE)
 		request_ui.reparent(panel, false)
 		if inspect.get_parent() == panel:   # prompts draw over the Tab view, under the F1 menu
 			panel.move_child(request_ui, inspect.get_index() + 1)
@@ -552,6 +577,10 @@ func open_ui(which: String) -> bool:
 			if not inspect.visible and _can_inspect():
 				inspect.open()
 			return inspect.visible
+		"character":
+			if not character.visible and _can_open_character():
+				character.open()
+			return character.visible
 	return false
 
 
@@ -587,10 +616,17 @@ func _start_live() -> void:
 	live.saved.connect(_on_live_saved)
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
+	live.character_sheet.connect(character_data.set_sheet)   # G4: the character screen's stats, skills ...
+	live.state_changed.connect(func(s: String) -> void:
+		if s != "running":
+			character_data.set_sheet(null))   # another game, another character
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
 	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
+	live.state_changed.connect(_on_game_over)   # died, saved and quit, failed: back to the main menu
+	key_menu.quit_to_menu.connect(_quit_to_menu)
+	key_menu.show_quit_to_menu(true)
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
 	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
@@ -611,6 +647,7 @@ func _start_live() -> void:
 		return world.snapshot.player_pos + Vector3i(s.x, s.y, 0)
 	_sync_cheats_allowed()
 	item_actions.backend = live
+	item_actions.asking = func() -> bool: return not _in_main_loop()   # a consume's question: no timeout meanwhile
 	live.events_arrived.connect(item_actions.on_events)
 	if item_placer != null:
 		item_placer.backend = live
@@ -625,6 +662,10 @@ func _start_live() -> void:
 	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
+	if open_menu:   # after a game: the menu, never the command line's quick start or save again
+		_show_main_menu(data_dir, user_dir)
+		main_menu.set_message(menu_message, menu_ok)
+		return
 	if _args.has("world") or _args.has("save"):
 		var w: String = _args.get("world", "")
 		if w.is_empty():
@@ -691,6 +732,68 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 		_sync_cheats_allowed()
 		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
+
+
+## The game ended (the character died, CDDA's save and quit) or failed: back to the main menu, in a fresh Main
+## (deferred: this runs inside LiveSession's poll). Not while quitting (closing the window ends the program), in
+## a --screenshot or --vr-check run, or after a stop() of our own ("stopped").
+func _on_game_over(s: String) -> void:
+	if (s != "ended" and s != "failed") or _quitting or _saving_to_quit or _leaving or _args.has("screenshot") \
+			or _args.has("vr-check"):
+		return
+	var said := game_over_text(s, live.error)
+	_back_to_menu.call_deferred(said[0], said[1])
+
+
+## What the main menu says after a game: [text, ok]. `error` is LiveSession.error (CDDA's reason, plain text). A
+## cancelled character creation or world setup is no error: just the menu ("character creation cancelled" was the
+## bridge's word for it before the "cancelled" ending).
+static func game_over_text(state: String, error: String) -> Array:
+	match error:
+		"cancelled", "character creation cancelled":
+			return ["", false]
+		"saved and quit":
+			return ["Game saved.", true]
+		"the character died":
+			return ["Your character died.", false]
+		"the game ended", "":
+			return ["The game ended.", false]
+	return [("The game failed: %s" if state == "failed" else "The game ended: %s") % error.left(300), false]
+
+
+## Hands over to a fresh Main showing the main menu with `text`, in this one's place (the scene's current scene
+## too), and frees this one: its _exit_tree and its children's let the game's workers finish first (the snapshot
+## parse, the world's meshing; LiveSession.stop on a game that is over returns at once). The two caches shared
+## across Mains are emptied: item meshes and the wet ground.
+func _back_to_menu(text: String, ok: bool) -> void:
+	if _leaving or not is_inside_tree():
+		return
+	_leaving = true
+	var fresh := (load(SCENE) as PackedScene).instantiate() as Node3D
+	var fields := {"cdda_user_dir": cdda_user_dir, "open_menu": true, "menu_message": text, "menu_ok": ok}
+	for k: String in fields:   # by name: main.gd has no class_name to type `fresh` with
+		fresh.set(k, fields[k])
+	ItemVisual.clear_cache()
+	TerrainMesher.wet_ground(0.0)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE   # the game may have captured it; the menu needs it
+	var parent := get_parent()
+	var at := get_index()
+	var current := get_tree().current_scene == self
+	parent.remove_child(self)
+	parent.add_child(fresh)
+	parent.move_child(fresh, at)
+	if current:
+		get_tree().current_scene = fresh
+	print("live: back to the main menu (%s)" % text)
+	replaced.emit(fresh)
+	queue_free()
+
+
+## F1's "Save and quit to menu": CDDA's own save and quit (it asks "Save and quit?" first); once the game has
+## ended, _on_game_over brings the main menu back.
+func _quit_to_menu() -> void:
+	if live == null or live.state != "running" or not _in_main_loop() or not live.queue_action("save"):
+		status = "can't save and quit now (the game isn't waiting for a move)"
 
 
 func _menu_started(center: Control, ok: bool) -> void:
@@ -937,8 +1040,17 @@ func _live_action(event: InputEvent) -> bool:
 		return false
 	if _in_main_loop():
 		grab.ask = {}   # a key's own action: its prompts are the player's to answer
-		live.queue_action(act)
+		_queue_act(act)
 	return true
+
+
+## A hand or key action out to CDDA; a strike at a square (AimController.strike_square, a knight's move off) goes
+## by queue_action_at, and one whose square is gone isn't sent.
+func _queue_act(act: String) -> bool:
+	if act == AimController.AT_ACTION:
+		var sq: Variant = aim.strike_square(act)
+		return sq is Vector3i and live.queue_action_at(act, sq)
+	return live.queue_action(act)
 
 
 ## Look at (L / middle click): what is under the mouse (the screen centre while the mouse looks around), with a
@@ -960,8 +1072,7 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 		where += ", %d level%s %s" % [absi(d.z), "" if absi(d.z) == 1 else "s", "up" if d.z > 0 else "down"]
 	var lines := PackedStringArray(["look: %s, %s" % [r["what"], where]])
 	lines.append_array(look_ray.describe(sq))
-	look_panel.text = "
-".join(lines)
+	look_panel.text = "\n".join(lines)
 	_look_end = r["point"]
 	_look_line = _line_mesh(from, _look_end)
 	add_child(_look_line)
@@ -1172,6 +1283,19 @@ func _use_tap() -> void:
 
 
 ## Tab opens the inspect view: first person or VR, in the main loop, no prompt, menu or held item in the way.
+## The character screen may open: a world is shown, no menu or CDDA prompt is up.
+## G4: asks the game for the character sheet (stats, skills, traits ...); the screen says it's waiting until the
+## first one comes. Nothing without a live game or with an older DLL.
+func _ask_character() -> void:
+	if live != null and live.query_character() > 0:
+		character_data.set_waiting(true)
+
+
+func _can_open_character() -> bool:
+	return world.snapshot != null and main_menu == null and not request_ui.visible and not key_menu.visible \
+			and not inspect.visible
+
+
 func _can_inspect() -> bool:
 	return (_fp_active() or vr != null) and world.snapshot != null and main_menu == null and not request_ui.visible \
 			and not key_menu.visible and not grab.carrying() and grab.grabbed == null \
@@ -1256,6 +1380,9 @@ func _setup_hud() -> void:
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
+	hurt_cue.world = world
+	layer.add_child(hurt_cue)
 	hud = Label.new()
 	hud.position = Vector2(10, 50)   # under the compass's hostile markers
 	hud.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -1274,7 +1401,9 @@ func _setup_hud() -> void:
 		push_warning("HUD settings: " + why)
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
+	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
+	hud_data.set_feed_hidden(hud_settings.feed_hidden)
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1290,6 +1419,12 @@ func _setup_hud() -> void:
 	hud_view = HudView.new()
 	hud_view.data = hud_data
 	layer.add_child(hud_view)
+	classic = ClassicView.new()
+	layer.add_child(classic)
+	character = CharacterView.new()
+	character.data = character_data
+	character.opened.connect(_ask_character)
+	layer.add_child(character)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
@@ -1307,8 +1442,10 @@ func _setup_hud() -> void:
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
 	key_menu.hud_changed.connect(func() -> void:
+		hud_data.set_feed_hidden(hud_settings.feed_hidden)
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
+		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash)
@@ -1497,13 +1634,18 @@ static func _keys(actions: Array) -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible or inspect.visible:
-		return   # the inspect view takes Tab / Esc itself (InspectView._input)
+	if key_menu.visible or inspect.visible or character.visible:
+		return   # the inspect view and the character screen take their keys themselves (their _input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
 	if inspect.handle_key(event, _can_inspect()):
+		return
+	if character.handle_key(event, _can_open_character()):
+		return
+	if InputActions.pressed(event, &"classic_view"):
+		classic.toggle()
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return

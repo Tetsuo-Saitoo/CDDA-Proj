@@ -1,9 +1,10 @@
 extends SceneTree
-## Headless check of the bridge (CddaSim) in two Godot runs, since CDDA runs once per process.
+## Headless check of the bridge (CddaSim) in two Godot runs.
 ## Run 1 loads the extension, refuses bad input, lists worlds and saves from a crafted folder, boots a new CDDA
 ## game, reads a snapshot, the id tables and events, plays a turn through the action queue, saves while paused
-## (save_game) and plays on, stops a turn later, then starts run 2 (`-- --load`): it loads that save, checks the
-## turn and position, and stops.
+## (save_game) and plays on, stops a turn later, loads that save as a second game in the same process (other
+## folders refused, nothing of the first game shown), then starts run 2 (`-- --load`): it loads that save in a
+## fresh process, checks the turn and position, stops, deletes it and plays the test range as its second game.
 ## Needs the DLL (build target fp3d-cdda) and the game data in ../cdda. ~2 min. From the repo root:
 ##   godot --headless --path client --script res://tests/live_test.gd
 ## Exit code 0 = all passed.
@@ -81,7 +82,8 @@ func _run() -> void:
 			take.merged({"op": "put", "container": 6, "container_type": 3, "pocket": 256}, true),
 			take.merged({"op": "drop", "spot": Vector2(1.5, 0)}, true),
 			take.merged({"op": "drop", "spot": Vector2(NAN, 0)}, true)]
-	# place, spot and hold (item physics): `to` only and always with place, a pose only with a spot, a hand for hold.
+	# place, spot and hold (item physics): `to` only and always with place, a pose or shelf only with a spot, a hand
+	# for hold.
 	var place := {"op": "place", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "to": Vector3i(2, 2, 0)}
 	var spot := {"op": "spot", "item": 5, "type": 3, "pos": Vector3i(1, 2, 0), "spot": Vector2(0.5, 0.5)}
 	var hold := {"op": "hold", "item": 5, "type": 3, "hand": "main"}
@@ -94,9 +96,18 @@ func _run() -> void:
 			spot.merged({"side": 1}, true), take.merged({"spot": Vector2(0.5, 0.5), "yaw": 90}, true),
 			{"op": "hold", "item": 5, "type": 3}, hold.merged({"hand": "pack"}, true),
 			hold.merged({"hand": "tail"}, true), hold.merged({"tag": 0}, true), hold.merged({"tag": 1 << 31}, true),
-			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true)])
+			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true),
+			place.merged({"shelf": 2}, true), spot.merged({"shelf": 16}, true), spot.merged({"shelf": -1}, true),
+			spot.merged({"shelf": 1.0}, true), take.merged({"spot": Vector2(0.5, 0.5), "shelf": 2}, true),
+			{"op": "consume", "item": 0, "type": 3}, {"op": "consume", "item": 5},
+			{"op": "consume", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)},
+			{"op": "consume", "item": 5, "type": 3, "pos": Vector3(1, 2, 0)},
+			take.merged({"container": 7}, true), take.merged({"container_type": 3}, true),
+			take.merged({"container": 7, "container_type": 0}, true),
+			take.merged({"container": 0, "container_type": 3}, true)])
 	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
 			"rejects malformed item actions")
+	_check(_sim.query_character() == 0, "query_character: nothing while no game runs")
 	_check_listing()
 
 	var why: String = _sim.start(data_dir, user_dir, WORLD)
@@ -153,6 +164,20 @@ func _run() -> void:
 	_check(not _sim.queue_action_at("", Vector3i.ZERO) and not _sim.queue_action_at("open", Vector3i(1 << 30, 0, 0))
 			and not _sim.queue_action_at("open", Vector3i(0, 0, 1000)) and _sim.get_queued_actions() == queued_before,
 			"queue_action_at: malformed calls refused")
+	# G4: the character sheet, answered by the main loop while it waits.
+	var cq: int = _sim.query_character()
+	var sheet: Variant = null
+	var cq_until := Time.get_ticks_msec() + TURN_TIMEOUT_MS
+	while cq > 0 and Time.get_ticks_msec() < cq_until:
+		var cq_text: String = _sim.take_query_result(cq)
+		if not cq_text.is_empty():
+			sheet = JSON.parse_string(cq_text)
+			break
+		await create_timer(0.05).timeout
+	_check(cq > 0 and sheet is Dictionary and sheet.get("ok") == true and int(sheet.get("id", 0)) == cq
+			and sheet.get("kind") == "character" and (sheet.get("stats", []) as Array).size() == 4
+			and (sheet.get("skills", []) as Array).size() > 0,
+			"query_character: the sheet arrives (query %d)" % cq)
 	var clock: Dictionary = _sim.get_clock()
 	_check(clock.get("real_time") == false and clock.get("paused") == false, "turn-based, not paused")
 
@@ -208,6 +233,7 @@ func _run() -> void:
 	if saves.size() != 1:
 		_finish()
 		return
+	await _second_game(saves[0], saved_turn, saved_pos)
 
 	var expect := {"save": saves[0], "turn": saved_turn, "pos": [saved_pos.x, saved_pos.y, saved_pos.z]}
 	var f := FileAccess.open(user_dir.path_join(EXPECT_FILE), FileAccess.WRITE)
@@ -270,7 +296,46 @@ func _run_load() -> void:
 	_check(why.is_empty(), "delete_save deletes the character after its game (%s)" % why)
 	_check(_sim.list_saves(_user_dir, WORLD).is_empty() and not (WORLD in _sim.list_worlds(_user_dir)),
 			"and the world it leaves empty")
+	# A new game after a loaded one, in the same process: the test range.
+	why = _sim.start_test_range(_data_dir, _user_dir)
+	_check(why.is_empty(), "the test range starts as a second game (%s)" % why)
+	req = await _main_loop_request(0, BOOT_TIMEOUT_MS)
+	_check(not req.is_empty(), "and reaches the main loop (state %s %s)" % [_sim.get_state(), _sim.get_error()])
+	_check(_sim.get_range_info().get("range", false), "as a range game")
+	snap = Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	_check(snap.is_valid() and snap.player_pos != saved_pos, "with its own snapshot (%s)" % snap.player_pos)
+	_sim.stop()
+	_check(_sim.get_state() == "stopped", "the range stops")
 	_finish()
+
+
+## Run 1, once its first game stopped: a second game in the same process loads that game's save.
+func _second_game(save: String, saved_turn: int, saved_pos: Vector3i) -> void:
+	var last_seq: int = _sim.get_snapshot_seq()
+	var other := _user_dir + "-other"
+	DirAccess.make_dir_recursive_absolute(other)
+	var why: String = _sim.start(_data_dir, other, WORLD + "-other")
+	_check(why.contains("other folders"), "a second game refuses other folders (%s)" % why)
+	why = _sim.start_load(_data_dir, _user_dir, WORLD, save)
+	_check(why.is_empty(), "a second game starts in the same process (%s)" % why)
+	_check(_sim.get_snapshot_seq() == 0 and String(_sim.get_id_tables_json()).is_empty()
+			and int(_sim.get_held().get("turn", -1)) == 0 and not _sim.get_range_info().get("range", true),
+			"nothing of the first game shows while it boots")
+	_check(not String(_sim.start_load(_data_dir, _user_dir, WORLD, save)).is_empty(), "refuses a start while it boots")
+	var req := await _main_loop_request(0, BOOT_TIMEOUT_MS)
+	_check(not req.is_empty(), "the second game reaches the main loop (state %s %s)" % [_sim.get_state(),
+			_sim.get_error()])
+	if req.is_empty():
+		return
+	var snap := Snapshot.parse_text(_sim.get_snapshot_json(0, 0))
+	_check(snap.is_valid() and int(req["turn"]) == saved_turn and snap.player_pos == saved_pos,
+			"it loads the save: turn %d (saved %d), %s (saved %s)" % [req["turn"], saved_turn, snap.player_pos,
+			saved_pos])
+	_check(_sim.get_snapshot_seq() > last_seq, "snapshot seqs keep counting (%d after %d)" % [
+			_sim.get_snapshot_seq(), last_seq])
+	_check(not String(_sim.get_id_tables_json()).is_empty(), "with id tables")
+	_sim.stop()
+	_check(_sim.get_state() == "stopped", "the second game stops")
 
 
 ## Run 3, started by run 2 while its game holds the world: delete_save must refuse and touch nothing.

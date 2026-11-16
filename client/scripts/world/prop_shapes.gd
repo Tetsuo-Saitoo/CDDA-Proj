@@ -657,14 +657,17 @@ static func _bed(b: Builder, main: Color, accent: Color, links: int) -> void:
 
 
 ## A kitchen counter run: cabinets with doors, kick plate and a stone top. Joined neighbours (links)
-## share one top that runs on to them (round an L corner too) and lose the end panels' seams.
+## share one top that runs on to them (round an L corner too) and lose the end panels' seams. A tile joined
+## in front (an L's corner, which faces along its longer arm) is a blind corner: its body runs on into the
+## other arm, with no doors.
 static func _counter(b: Builder, main: Color, links: int) -> void:
-	var xl := links & X_LINKS
-	_jbox(b, xl, Vector3(-0.5, 0, -0.34), Vector3(0.5, 0.08, 0.5), DARK.lightened(0.1))
-	_jbox(b, xl, Vector3(-0.5, 0.08, -0.42), Vector3(0.5, 0.88, 0.5), main)
-	b.box(Vector3(-0.005, 0.12, -0.425), Vector3(0.005, 0.84, -0.42), main.darkened(0.3))
-	for x: float in [-0.08, 0.06]:
-		b.box(Vector3(x, 0.66, -0.44), Vector3(x + 0.02, 0.78, -0.42), METAL)
+	var body := links & (X_LINKS | 1)
+	_jbox(b, body, Vector3(-0.5, 0, -0.34), Vector3(0.5, 0.08, 0.5), DARK.lightened(0.1))
+	_jbox(b, body, Vector3(-0.5, 0.08, -0.42), Vector3(0.5, 0.88, 0.5), main)
+	if not (links & 1):
+		b.box(Vector3(-0.005, 0.12, -0.425), Vector3(0.005, 0.84, -0.42), main.darkened(0.3))
+		for x: float in [-0.08, 0.06]:
+			b.box(Vector3(x, 0.66, -0.44), Vector3(x + 0.02, 0.78, -0.42), METAL)
 	_jbox(b, links, Vector3(-0.5, 0.88, -0.47), Vector3(0.5, 0.93, 0.5), STONE_TOP, ALL)
 
 

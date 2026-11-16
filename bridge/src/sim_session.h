@@ -26,20 +26,26 @@ const char *state_name( state s );
 // debug.log under `user_dir`. With `save` empty: a new game in world `world` (an existing world of that name is
 // deleted first; `world` is 1-32 of A-Z a-z 0-9 _ -). Otherwise: loads the character `save` from the existing
 // world `world`, deleting nothing; both must be names list_saves() gives. Both paths must be absolute.
-// Once per process: CDDA's state is global. Returns "" when started, otherwise why not.
+// One game at a time; another may start once the last one is over (ended, failed or stopped), with the same two
+// folders as the process's first game (CDDA's paths, options and log are set up once). Returns "" when started,
+// otherwise why not.
 std::string start( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                    const std::string &save = "" );
 // A new game, like start() with no save, but: `fresh_world` false puts a new character into the existing world
 // `world` (one list_worlds() gives; nothing is deleted), and `chargen` asks the client for the character with a
 // `chargen` request (contracts/ui_requests.md) instead of a random one; `world_setup` (fresh worlds) asks
-// for the world's settings and mods with a `world_setup` request first. Cancelling it ends the session (failed).
+// for the world's settings and mods with a `world_setup` request first. Cancelling either ends the game (ended,
+// "cancelled") and deletes the world this start made, if any.
 std::string start_new_game( const std::string &data_dir, const std::string &user_dir, const std::string &world,
                             bool fresh_world, bool chargen, bool world_setup = false );
 // The test range (fork fp3d/test_range.h): a new game in FP3D's own throwaway world `fp3d-range` (or the next free
 // `fp3d-range-N` when someone else's world has that name), rebuilt on every start, with cheats allowed.
 std::string start_test_range( const std::string &data_dir, const std::string &user_dir );
-// Shuts the bridge down and waits for the game thread. While booting that wait lasts until loading finishes.
+// Ends the game (no save) and waits until it is over; the next start may follow. While booting that wait lasts
+// until loading finishes.
 void stop();
+// stop(), then ends the game thread (CDDA's teardown on it). Before the library unloads; no start afterwards.
+void unload();
 state get_state();
 std::string error();
 

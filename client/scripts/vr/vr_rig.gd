@@ -175,6 +175,7 @@ var hands: Hands:
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
+var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
@@ -300,6 +301,9 @@ func _build() -> void:
 	swing.rig = self
 	_vignette_node = _make_vignette()
 	camera.add_child(_vignette_node)
+	hurt = VrHurt.new()   # its own ring, behind the vignette and under its render priority
+	hurt.rig = self
+	camera.add_child(hurt)
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
