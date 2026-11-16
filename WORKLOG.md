@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-16 — ThreadSanitizer run of the fork tests clean in WSL (QA lead): the TSan preset keeps GCC 13's flow-based warnings non-fatal; fork f46b331 makes faults::all_of_type give the stored list; fork 15bacde stretches the tests' waits and time limits in a TSan build (`fp3d::slow_build`). The CI run on main is next.
+- 2026-11-15 — Live test: item physics passes over an item CDDA won't move by hand (a drink's liquid, frozen water) and places the next carried one (5a18178).
 - 2026-11-15 — Range test checks the weather cheat (QA lead, fork fp3d-qa ba1a727): a lightning storm and a wind hold over turns in a range game at 20 C, a flash arrives as an event, and an empty id gives back the range's clear sky and still air.
 - 2026-11-14 — Tester AppImage test-2026-11-14 (private test repo, not a release) from main f98e525 + fork 1cbe800, built in WSL after the QA lead's security sign-off of the range since test-2026-11-11; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range live tests). Notes ask the tester for the first headset script (docs/playtests/vr-01.md). Note: AppRun passes every argument to the game, so `--quit-after` doesn't stop it.
 - 2026-11-14 — Melee technique calls: the user kept the sure pick (an aimed call always uses a technique of that family when CDDA allows one); no code change.
