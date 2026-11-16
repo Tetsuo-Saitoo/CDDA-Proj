@@ -22,12 +22,15 @@ func run(root: Node, check: Callable) -> void:
 	_test_item_multi()
 	_test_popup()
 	_test_string()
+	_test_number()
 	_test_direction()
 	_test_target()
 	_test_hostile()
 	_test_chargen()
 	_test_main_menu()
 	_test_world_setup()
+	_test_game_over(root)
+	_test_options()
 	ui.free()
 	_test_hands_panel(root)
 
@@ -89,6 +92,9 @@ static func well_formed(a: Dictionary) -> bool:
 					return false
 			"entry":
 				if not v is int:
+					return false
+			"number":   # contracts/ui_requests.md: an int, never beyond the doubles' whole numbers
+				if not v is int or absi(v) > (1 << 53) - 1:
 					return false
 			"picks":
 				if not v is Array or (v as Array).size() > 4096:
@@ -377,7 +383,7 @@ func _test_popup() -> void:
 	_show(_req("popup", {"text": "You feel hungry.", "actions": PackedStringArray(["CONFIRM"]), "allow_cancel": false}))
 	_key(KEY_SPACE)
 	_expect({"id": 7, "action": "CONFIRM"}, "message popup: Space confirms")
-	_show(_req("number", {"title": "How many?"}))
+	_show(_req("not_a_kind", {"title": "How many?"}))
 	_check.call(ui.widget is PopupRequestWidget and (ui.widget as PopupRequestWidget).actions.is_empty(), "unknown kind: text only")
 	_key(KEY_ENTER)
 	_expect_none("unknown kind: Enter")
@@ -411,6 +417,59 @@ func _test_string() -> void:
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and (answers[0]["text"] as String).length() == 512,
 			"multi-byte text cut to 1024 bytes")
 	_test_text_keys()
+
+
+## `number` requests: the default in the field, Enter sends it as an int, Esc cancels; Up / Down and -1 / +1 step
+## within the range; a text that isn't a whole number in the range isn't sent and the line under the field says
+## so; the bridge's re-ask status is shown cleaned; a broken range is taken the right way round.
+func _test_number() -> void:
+	print("ui: number")
+	var req := _req("number", {"title": "How many?", "text": "Drop how many?", "min": 1, "max": 20, "default": 5})
+	_show(req)
+	var w := ui.widget as NumberRequestWidget
+	_check.call(w != null and w.edit.text == "5" and w.lo == 1 and w.hi == 20 and not w.problem.visible
+			and w.show_keys == ui.keyboard, "number: a NumberRequestWidget with the default and the range")
+	_key(KEY_UP)
+	_key(KEY_UP)
+	_key(KEY_DOWN)
+	_check.call(w.edit.text == "6" and answers.is_empty(), "number: Up / Down step it (%s)" % w.edit.text)
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 6}, "number: Enter sends it as an int")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	for bad: String in ["21", "0", "abc", "1.5", "", "- 3", "1e3", "12345678901234567"]:
+		w.edit.text = bad
+		_key(KEY_ENTER)
+	_check.call(answers.is_empty() and w.problem.visible and w.problem.text == "Enter a whole number from 1 to 20.",
+			"number: out of range or not a whole number isn't sent; it says why (%s)" % w.problem.text)
+	w.edit.text = " +20 "
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 20}, "number: a sign and spaces around are fine")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	w.edit.text = "x"
+	w.step(1)
+	w.step(100)
+	_check.call(w.edit.text == "20" and not w.problem.visible, "number: +1 from no number starts at the range, "
+			+ "stepping stops at max (%s)" % w.edit.text)
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "number: Esc cancels")
+	_show(_req("number", {"min": 50, "max": -50, "default": 9.5, "status": "<color_red>enter a whole</color>" + char(7) + " number"}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -50 and w.hi == 50 and w.edit.text == "0" and w.problem.visible
+			and w.problem.text == "enter a whole number", "number: a broken range turned round, a non-whole default "
+			+ "dropped, the status cleaned (%s)" % w.problem.text)
+	_show(_req("number", {"min": -1e300, "max": INF, "default": -(1 << 60)}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -NumberRequestWidget.LIMIT and w.hi == NumberRequestWidget.LIMIT
+			and w.edit.text == str(-NumberRequestWidget.LIMIT)
+			and NumberRequestWidget.range_text(-(1 << 31), (1 << 31) - 1) == "A whole number."
+			and NumberRequestWidget.range_text(1, 20) == "A whole number from 1 to 20.",
+			"number: huge or infinite limits held to the doubles' whole numbers; the range in words")
+	w.edit.text = str(NumberRequestWidget.LIMIT)
+	_key(KEY_ENTER)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["number"] == NumberRequestWidget.LIMIT,
+			"number: the largest whole number goes through")
 
 
 ## The on-screen keyboard under a text prompt: hidden on screen until the Keyboard button, shown from the start
@@ -810,6 +869,13 @@ func _test_main_menu() -> void:
 	_check.call(m.suggested_world() == "World2", "menu: suggests a free world name")
 	_check.call(MainMenu.world_name_ok("a_b-1") and not MainMenu.world_name_ok("../x")
 			and not MainMenu.world_name_ok(""), "menu: world name rule")
+	var opts := [0]
+	m.options_requested.connect(func() -> void: opts[0] += 1)
+	m.show_page("main")
+	for b: Node in m._box.get_children():
+		if b is Button and (b as Button).text == "Options (F1)":
+			(b as Button).pressed.emit()
+	_check.call(opts[0] == 1, "menu: the Options (F1) button asks for the F1 menu")
 	m.show_page("credits")
 	_check.call(m.page == "credits" and m._box.get_child_count() >= 4, "menu: credits page")
 	m.show_page("new")
@@ -955,6 +1021,76 @@ const WORLD_CATALOG := {
 	],
 	"default_mods": ["dda"],
 }
+
+
+## Back to the main menu after a game: what the menu says, and F1's "Save and quit to menu".
+## G7 options in HudSettings and the F1 menu: defaults, the controls save them, the file is clamped / ignored.
+func _test_options() -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_options.cfg")
+	var hs := HudSettings.new()
+	_check.call(hs.look_speed == 1.0 and hs.fov == HudSettings.DEFAULT_FOV and hs.render_scale == 1.0
+			and not hs.fullscreen and hs.vsync, "options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var seen := [0]
+	menu.hud_changed.connect(func() -> void: seen[0] += 1)
+	for sv: Array in [[menu.fov_slider, 90.0], [menu.look_slider, 2.0], [menu.scale_slider, 0.75]]:
+		var s := sv[0] as HSlider
+		s.value = sv[1]
+		s.value_changed.emit(s.value)   # a slider outside the tree doesn't emit it itself
+	menu.fullscreen_check.button_pressed = true
+	menu.vsync_check.button_pressed = false
+	var back := HudSettings.new()
+	var why := back.load_file(path)
+	_check.call(why == "" and back.fov == 90.0 and back.look_speed == 2.0 and back.render_scale == 0.75
+			and back.fullscreen and not back.vsync and seen[0] == 5,
+			"options: the F1 controls set and save each (%s, %s, %s, %s, %s; %d changes)"
+			% [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync, seen[0]])
+	var shown := [(menu._option_values[&"fov"] as Label).text, (menu._option_values[&"render_scale"] as Label).text]
+	_check.call(shown == ["90%s" % char(0xb0), "75 %"], "options: the values show next to the sliders (%s)" % [shown])
+	menu.set_option(&"debug_cheats", true)
+	_check.call(not hs.debug_cheats and seen[0] == 5, "options: set_option takes only the option fields")
+	hs.fov = 300.0   # out of range in memory: saved clamped
+	hs.save_file(path)
+	back = HudSettings.new()
+	back.load_file(path)
+	_check.call(back.fov == HudSettings.FOVS.y, "options: an out-of-range value is saved clamped (%s)" % back.fov)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\nfov=nan\n[display]\nscale=-3\nfullscreen=1\n"
+			+ "vsync=\"no\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	_check.call(junk.look_speed == HudSettings.LOOK_SPEEDS.y and junk.fov == HudSettings.DEFAULT_FOV
+			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync,
+			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
+			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
+	menu.free()
+
+
+func _test_game_over(root: Node) -> void:
+	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
+			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),
+			Main.game_over_text("failed", "boom"), Main.game_over_text("ended", "odd"),
+			Main.game_over_text("ended", "cancelled"), Main.game_over_text("failed", "character creation cancelled")]
+	_check.call(said == [["Game saved.", true], ["Your character died.", false], ["The game ended.", false],
+			["The game ended.", false], ["The game failed: boom", false], ["The game ended: odd", false],
+			["", false], ["", false]],
+			"game over: the menu's message per reason -> %s" % [said])
+	var long_text: String = Main.game_over_text("failed", "x".repeat(5000))[0]
+	_check.call(long_text.length() < 400, "game over: a long failure is cut (%d chars)" % long_text.length())
+	var m := KeyMenu.new()
+	root.add_child(m)
+	var fired := [0]
+	m.quit_to_menu.connect(func() -> void: fired[0] += 1)
+	var hidden_at_first := not m.quit_button.visible
+	m.show_quit_to_menu(true)
+	m.visible = true
+	m.quit_button.pressed.emit()
+	_check.call(hidden_at_first and m.quit_button.visible and fired[0] == 1 and not m.visible,
+			"F1: \"Save and quit to menu\" shows only for a live game, closes the menu and asks once (fired %d)"
+			% fired[0])
+	m.free()
 
 
 func _test_world_setup() -> void:

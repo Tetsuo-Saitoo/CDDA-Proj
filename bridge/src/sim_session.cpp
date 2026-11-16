@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
@@ -78,6 +79,17 @@ pthread_t sim_thread;
 bool sim_thread_running = false;
 #endif
 
+// The game thread lives from the first start to unload() and plays one game after another, as CDDA's main loop
+// does (its window and tilesets are made on it and stay there; fp3d/boot.h end_game). Between games it waits here.
+std::mutex game_mutex;
+std::condition_variable game_cv;
+bool game_wanted = false;     // start_impl set up the next game; the game thread hasn't taken it yet
+bool game_on = false;         // a game is wanted or the game thread is in one (boot to end_game)
+bool thread_exit = false;     // unload(): tear down and end the thread
+bool thread_made = false;     // client side: the game thread was started (its first game's folders are kept)
+// How long a start waits for the last game to finish closing (ended or failed on its own) before refusing.
+constexpr std::chrono::seconds closing_limit{ 10 };
+
 void set_state( state s )
 {
     cur_state.store( static_cast<int>( s ) );
@@ -124,8 +136,6 @@ std::mutex watch_mutex;
 uint64_t watch_steps = 0;
 std::chrono::steady_clock::time_point watch_since;
 std::atomic<bool> boot_abandoned{ false };
-// The game thread has finished (its teardown done) or never started: its files are closed.
-std::atomic<bool> sim_done{ false };
 
 // One process per world: a game holds an OS lock on its world's lock file (user_dir/fp3d_locks/...) until its game
 // thread is done; the OS lets go when the process ends, crashed or not. delete_save takes it while it deletes.
@@ -265,12 +275,29 @@ void teardown()
     }
 }
 
-void sim_main()
+// One game, boot to end, on the game thread. The paths are set for every game (start_impl keeps them the first
+// game's), CDDA's log is opened once.
+// After a start that never ran: the world it made, if any (only that one, only in the save folder, never one with a
+// character saved: fp3d::remove_new_world). Game thread.
+void drop_new_world()
 {
+    try {
+        fp3d::remove_new_world();
+    } catch( const std::exception & ) {
+    } catch( const fp3d::shutdown_signal & ) {
+    }
+}
+
+void play_game()
+{
+    static bool log_up = false;
     try {
         fp3d::note_boot_step( "Paths and log" );
         fp3d::init_paths( boot_data_dir, boot_user_dir );
-        setupDebug( DebugOutput::file );
+        if( !log_up ) {
+            setupDebug( DebugOutput::file );
+            log_up = true;
+        }
         rng_set_engine_seed( std::random_device{}() );
         if( boot_range ) {
             fp3d::boot_new_game_data( boot_world, true, true, false, true );
@@ -284,7 +311,7 @@ void sim_main()
                 if( boot_chargen ) {
                     fp3d::note_boot_step( "Character creation" );
                     if( !fp3d::run_chargen() ) {
-                        throw std::runtime_error( "character creation cancelled" );
+                        throw fp3d::start_cancelled();
                     }
                 } else {
                     get_avatar().create( character_type::NOW );
@@ -322,15 +349,71 @@ void sim_main()
             finish( state::ended, g->uquit == QUIT_DIED || g->uquit == QUIT_WATCH ? "the character died" :
                     g->uquit == QUIT_SAVED ? "saved and quit" : "the game ended" );
         }
+    } catch( const fp3d::start_cancelled & ) {
+        // The client cancelled the world setup or the character creation: an ending, not a failure. A world this
+        // start made goes with it.
+        drop_new_world();
+        finish( state::ended, "cancelled" );
     } catch( const fp3d::shutdown_signal & ) {
+        // Stopped before the game ran (closing the program during the world setup or the character creation): as a
+        // cancel, the world this start made goes too.
+        if( cur_state.load() == static_cast<int>( state::booting ) ) {
+            drop_new_world();
+        }
         finish( state::stopped, "" );
     } catch( const std::exception &e ) {
         finish( state::failed, with_last_cdda_error( e.what() ) );
     }
     fp3d::shutdown();
+    try {
+        fp3d::end_game();
+    } catch( const std::exception &e ) {
+        set_error( std::string( "end of game: " ) + e.what() );
+    } catch( const fp3d::shutdown_signal & ) {
+        // a polling loop in CDDA's cleanup saw the shutdown above: nothing left to unwind
+    }
+}
+
+void sim_main()
+{
+    for( ;; ) {
+        {
+            std::unique_lock<std::mutex> lk( game_mutex );
+            game_cv.wait( lk, [] {
+                return game_wanted || thread_exit;
+            } );
+            if( thread_exit ) {
+                game_wanted = false;
+                game_on = false;
+                lk.unlock();
+                game_cv.notify_all();
+                break;
+            }
+            game_wanted = false;
+        }
+        play_game();
+        release_game_lock();
+        {
+            std::lock_guard<std::mutex> lk( game_mutex );
+            game_on = false;
+        }
+        game_cv.notify_all();
+    }
     teardown();
-    release_game_lock();
-    sim_done.store( true );
+}
+
+// Waits until no game is on, at most `limit` (forever when zero); true when none is.
+bool wait_game_over( std::chrono::milliseconds limit )
+{
+    std::unique_lock<std::mutex> lk( game_mutex );
+    const auto over = [] {
+        return !game_on;
+    };
+    if( limit.count() == 0 ) {
+        game_cv.wait( lk, over );
+        return true;
+    }
+    return game_cv.wait_for( lk, limit, over );
 }
 
 #if defined(_WIN32)
@@ -613,8 +696,20 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
                         const std::string &save, bool fresh_world, bool chargen, bool world_setup, bool replace_world,
                         bool range )
 {
-    if( get_state() != state::idle ) {
-        return "already started (CDDA runs once per process)";
+    const state now = get_state();
+    if( now == state::booting || now == state::running ) {
+        return "a game is running (stop it first)";
+    }
+    // A game that ended or failed on its own may still be closing on the game thread; one stuck in a boot the
+    // watchdog gave up on never does.
+    if( !wait_game_over( closing_limit ) ) {
+        return "the last game is still closing";
+    }
+    {
+        std::lock_guard<std::mutex> lk( game_mutex );
+        if( thread_exit ) {
+            return "unloading";
+        }
     }
     std::string why;
     const std::string data = checked_dir( data_dir, false, why );
@@ -625,10 +720,14 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     if( !std::filesystem::is_directory( std::filesystem::u8path( data + "data/json" ), ec ) ) {
         return "no data/json in " + data_dir;
     }
-    // A load needs saves that are already there: don't make the folder for one.
-    const std::string user = checked_dir( user_dir, save.empty(), why );
+    // A load needs saves that are already there: don't make the folder for one. Nor for a later game (below).
+    const std::string user = checked_dir( user_dir, save.empty() && !thread_made, why );
     if( user.empty() ) {
         return why;
+    }
+    // CDDA's paths, options, log and tilesets are set up once, from the first game's folders.
+    if( thread_made && ( data != boot_data_dir || user != boot_user_dir ) ) {
+        return "another game in this process used other folders (restart the program to change them)";
     }
     if( save.empty() && fresh_world ) {
         if( !new_world_name_ok( world ) ) {
@@ -671,6 +770,9 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
         std::lock_guard<std::mutex> lk( game_lock_mutex );
         game_lock = l;
     }
+    // The last game's requests, events, snapshot and so on are gone before the next boot shows anything.
+    fp3d::reset_for_next_game();
+    set_error( "" );
     boot_data_dir = data;
     boot_user_dir = user;
     boot_world = world;
@@ -690,15 +792,31 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
     }
     boot_abandoned.store( false );
     set_state( state::booting );
+    {
+        std::lock_guard<std::mutex> lk( game_mutex );
+        game_wanted = true;
+        game_on = true;
+    }
+    if( thread_made ) {
+        game_cv.notify_all();
+        return "";
+    }
+    const auto no_thread = [] {
+        {
+            std::lock_guard<std::mutex> lk( game_mutex );
+            game_wanted = false;
+            game_on = false;
+        }
+        set_state( state::failed );
+        set_error( "cannot create the game thread" );
+        release_game_lock();
+        return std::string( "cannot create the game thread" );
+    };
 #if defined(_WIN32)
     sim_thread = reinterpret_cast<HANDLE>( _beginthreadex( nullptr, sim_stack_bytes, sim_entry, nullptr,
                                            STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr ) );
     if( sim_thread == nullptr ) {
-        set_state( state::failed );
-        set_error( "cannot create the game thread" );
-        release_game_lock();
-        sim_done.store( true );
-        return "cannot create the game thread";
+        return no_thread();
     }
 #else
     pthread_attr_t attr;
@@ -709,14 +827,11 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
         pthread_attr_destroy( &attr );
     }
     if( !started ) {
-        set_state( state::failed );
-        set_error( "cannot create the game thread" );
-        release_game_lock();
-        sim_done.store( true );
-        return "cannot create the game thread";
+        return no_thread();
     }
     sim_thread_running = true;
 #endif
+    thread_made = true;
     return "";
 }
 
@@ -725,8 +840,22 @@ std::string start_impl( const std::string &data_dir, const std::string &user_dir
 void stop()
 {
     fp3d::shutdown();
-    // A game thread stuck in a boot the watchdog gave up on may never return: wait for it only so long, then
-    // leave it to the process's exit (its own teardown can't run then).
+    // A game thread stuck in a boot the watchdog gave up on may never return: wait for it only so long.
+    wait_game_over( boot_abandoned.load() ? std::chrono::milliseconds( abandoned_join_limit ) :
+                    std::chrono::milliseconds( 0 ) );
+    finish( state::stopped, "" );
+}
+
+void unload()
+{
+    stop();
+    {
+        std::lock_guard<std::mutex> lk( game_mutex );
+        thread_exit = true;
+    }
+    game_cv.notify_all();
+    // A thread stuck in an abandoned boot: wait only so long, then leave it to the process's exit (its own
+    // teardown can't run then).
     const bool abandoned = boot_abandoned.load();
 #if defined(_WIN32)
     if( sim_thread != nullptr ) {
@@ -754,7 +883,6 @@ void stop()
         sim_thread_running = false;
     }
 #endif
-    finish( state::stopped, "" );
 }
 
 state get_state()
@@ -869,8 +997,11 @@ struct lock_guard_os {
 std::string delete_save( const std::string &user_dir, const std::string &world, const std::string &save,
                          bool delete_empty_world )
 {
-    if( get_state() != state::idle && !sim_done.load() ) {
-        return "not while a game runs";
+    {
+        std::lock_guard<std::mutex> lk( game_mutex );
+        if( game_on ) {
+            return "not while a game runs";
+        }
     }
     std::string why;
     const fs::path user = checked_path( user_dir, why );

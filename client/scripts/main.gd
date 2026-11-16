@@ -98,6 +98,15 @@ var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
 var _shot_refused := false   # a shot answer was refused (warned once)
+## Back to the main menu after a game (_on_game_over): this Main hands over to a fresh one (`replaced`, then it is
+## freed), so nothing of the ended game (state, timers, signals, workers) reaches the next. The fresh one opens on
+## the menu (`open_menu`, whatever the command line asked for) showing `menu_message` (green when `menu_ok`).
+signal replaced(fresh: Node3D)   # the fresh Main
+const SCENE := "res://scenes/main.tscn"
+var open_menu := false
+var menu_message := ""
+var menu_ok := false
+var _leaving := false
 
 
 ## Boot timing in the log: milliseconds since the engine started, so slow starts can be read from any log.
@@ -218,6 +227,8 @@ func _ready() -> void:
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
 		fp.set_process_unhandled_input(false))
@@ -345,8 +356,10 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
 	character_data.update(hud_data, snap, world.tables)
-	if character.visible:
-		_ask_character()   # each new turn while shown (refused while the last one is still out)
+	# Each new turn while shown (refused while the last one is still out); the Tab view shows what is carried from
+	# the same sheet.
+	if character.visible or inspect.visible:
+		_ask_character()
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -493,6 +506,8 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
+	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	add_child(vr)
@@ -609,6 +624,9 @@ func _start_live() -> void:
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
 	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
+	live.state_changed.connect(_on_game_over)   # died, saved and quit, failed: back to the main menu
+	key_menu.quit_to_menu.connect(_quit_to_menu)
+	key_menu.show_quit_to_menu(true)
 	cheat_panel.backend = live
 	live.range_changed.connect(cheat_panel.on_range_changed)
 	live.range_changed.connect(func(i: Dictionary) -> void: range_forces_cheats(i, key_menu, live))
@@ -644,6 +662,10 @@ func _start_live() -> void:
 	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
+	if open_menu:   # after a game: the menu, never the command line's quick start or save again
+		_show_main_menu(data_dir, user_dir)
+		main_menu.set_message(menu_message, menu_ok)
+		return
 	if _args.has("world") or _args.has("save"):
 		var w: String = _args.get("world", "")
 		if w.is_empty():
@@ -704,12 +726,75 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.options_requested.connect(func() -> void: open_ui("keys"))
 	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
 		_sync_cheats_allowed()
 		_menu_started(center, live.start_test_range(data_dir, user_dir)))
 	status = "main menu"
+
+
+## The game ended (the character died, CDDA's save and quit) or failed: back to the main menu, in a fresh Main
+## (deferred: this runs inside LiveSession's poll). Not while quitting (closing the window ends the program), in
+## a --screenshot or --vr-check run, or after a stop() of our own ("stopped").
+func _on_game_over(s: String) -> void:
+	if (s != "ended" and s != "failed") or _quitting or _saving_to_quit or _leaving or _args.has("screenshot") \
+			or _args.has("vr-check"):
+		return
+	var said := game_over_text(s, live.error)
+	_back_to_menu.call_deferred(said[0], said[1])
+
+
+## What the main menu says after a game: [text, ok]. `error` is LiveSession.error (CDDA's reason, plain text). A
+## cancelled character creation or world setup is no error: just the menu ("character creation cancelled" was the
+## bridge's word for it before the "cancelled" ending).
+static func game_over_text(state: String, error: String) -> Array:
+	match error:
+		"cancelled", "character creation cancelled":
+			return ["", false]
+		"saved and quit":
+			return ["Game saved.", true]
+		"the character died":
+			return ["Your character died.", false]
+		"the game ended", "":
+			return ["The game ended.", false]
+	return [("The game failed: %s" if state == "failed" else "The game ended: %s") % error.left(300), false]
+
+
+## Hands over to a fresh Main showing the main menu with `text`, in this one's place (the scene's current scene
+## too), and frees this one: its _exit_tree and its children's let the game's workers finish first (the snapshot
+## parse, the world's meshing; LiveSession.stop on a game that is over returns at once). The two caches shared
+## across Mains are emptied: item meshes and the wet ground.
+func _back_to_menu(text: String, ok: bool) -> void:
+	if _leaving or not is_inside_tree():
+		return
+	_leaving = true
+	var fresh := (load(SCENE) as PackedScene).instantiate() as Node3D
+	var fields := {"cdda_user_dir": cdda_user_dir, "open_menu": true, "menu_message": text, "menu_ok": ok}
+	for k: String in fields:   # by name: main.gd has no class_name to type `fresh` with
+		fresh.set(k, fields[k])
+	ItemVisual.clear_cache()
+	TerrainMesher.wet_ground(0.0)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE   # the game may have captured it; the menu needs it
+	var parent := get_parent()
+	var at := get_index()
+	var current := get_tree().current_scene == self
+	parent.remove_child(self)
+	parent.add_child(fresh)
+	parent.move_child(fresh, at)
+	if current:
+		get_tree().current_scene = fresh
+	print("live: back to the main menu (%s)" % text)
+	replaced.emit(fresh)
+	queue_free()
+
+
+## F1's "Save and quit to menu": CDDA's own save and quit (it asks "Save and quit?" first); once the game has
+## ended, _on_game_over brings the main menu back.
+func _quit_to_menu() -> void:
+	if live == null or live.state != "running" or not _in_main_loop() or not live.queue_action("save"):
+		status = "can't save and quit now (the game isn't waiting for a move)"
 
 
 func _menu_started(center: Control, ok: bool) -> void:
@@ -1290,6 +1375,32 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
+const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
+
+
+## G7 options: the look speed and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
+func _apply_options() -> void:
+	var o := hud_settings
+	for c: Camera3D in [fp, view_cam, camera]:
+		if c != null:
+			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
+	if fp != null:
+		fp.sensitivity = speed
+	if camera != null:
+		camera.sensitivity = speed
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if o.vsync else DisplayServer.VSYNC_DISABLED)
+	var full := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN,
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+	if full != o.fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if o.fullscreen
+				else DisplayServer.WINDOW_MODE_WINDOWED)
+
+
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -1320,6 +1431,7 @@ func _setup_hud() -> void:
 	hurt_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
+	_apply_options()
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1364,7 +1476,8 @@ func _setup_hud() -> void:
 		hurt_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		if viewmodel != null:
-			viewmodel.flashes = hud_settings.weather_flash)
+			viewmodel.flashes = hud_settings.weather_flash
+		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows

@@ -1241,6 +1241,9 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	var got := []
 	hf.hit_confirmed.connect(func(uid: int, part: String, amount: int, killed: bool) -> void:
 		got.append([uid, part, amount, killed]))
+	var shots := []   # shot_confirmed: the shots' hits only
+	hf.shot_confirmed.connect(func(uid: int, part: String, amount: int, killed: bool) -> void:
+		shots.append([uid, part, amount, killed]))
 	var me := hf.player_uid()
 	var head := tables.body_parts.find("head")
 	var torso := tables.body_parts.find("torso")
@@ -1255,8 +1258,9 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	# CDDA's order: the shot's damage, then its projectile event, in one batch
 	hf.on_events([dmg.call(z, 7, torso), shot_by.call(me, z)])
 	var cross := aim.crosshair
-	_check.call(got == [[z, "torso", 7, false]] and cross.marking() and cross.hit_color == AimController.Crosshair.HIT_WHITE
-			and cross.hit_scale == 1.0 and hf.ticks == 1, "hits: damage then the player's projectile in one batch confirms a hit (%s)" % [got])
+	_check.call(got == [[z, "torso", 7, false]] and shots == got and cross.marking()
+			and cross.hit_color == AimController.Crosshair.HIT_WHITE and cross.hit_scale == 1.0 and hf.ticks == 1,
+			"hits: damage then the player's projectile in one batch confirms a hit, a shot's (%s)" % [got])
 	aim.first_person = true
 	ui.clear()
 	aim.update(cam, false)
@@ -1340,12 +1344,13 @@ func _test_hits(aim: AimController, ui: RequestUI, cam: Camera3D, tables: IdTabl
 	var strikes := []
 	hf.strike_confirmed.connect(func(uid: int, part: String, amount: int, killed: bool) -> void:
 		strikes.append([uid, part, amount, killed]))
+	var shots0 := shots.size()
 	hf.on_events([strike.call(me, z + 6, 1), said, hurt_by.call(z + 6, 9, torso, me)])
 	var one := got == [[z + 6, "torso", 9, false]] and strikes == got
 	hf.on_events([strike.call(me, z + 6, 1), hurt_by.call(z + 6, 11, head, me), {"kind": "sound", "amount": 5},
 			death.call(z + 6), shot_by.call(me, z + 6)])
 	_check.call(one and got.size() == 3 and got[1] == [z + 6, "head", 11, false] and got[2] == [z + 6, "head", 11, true]
-			and strikes == got,
+			and strikes == got and shots.size() == shots0,
 			"hits: melee: the player's hit, then its damage and death confirm, never again for a shot (%s)" % [got])
 	got.clear()
 	hf.on_events([strike.call(me, z + 7, 0), hurt_by.call(z + 7, 5, torso, me)])

@@ -15,8 +15,10 @@ extends RefCounted
 ## or prompt is up, without a game, or from a hand that isn't tracked, holds a door or the open pack, steadies the
 ## other hand's two-handed item (that item's hand strikes), racks the gun's slide, is still pulling an item in, or
 ## is the gun hand with a finger on the trigger. A buzz when a strike goes out, a stronger one when CDDA says it hit
-## (HitFeedback.strike_confirmed for the creature struck, within HIT_KEEP_MS). Nothing here talks to the sim but
-## that one action.
+## (HitFeedback.strike_confirmed for the creature struck, within HIT_KEEP_MS), a faint one when it missed
+## (swing_resolved); only the hand that struck buzzes. A technique CDDA used for that strike (technique_used) shows
+## by that hand: one billboarded label at a time, LABEL_S, then it fades over LABEL_FADE_S. Nothing here talks to
+## the sim but that one action.
 
 ## A strike went out: CDDA's hand ("main" / "off"), the way (a direction name such as "LEFT", or "at": a knight's
 ## move, AimController.strike_square), the creature touched.
@@ -32,6 +34,12 @@ const MAX_TIP_M := 2.5     # no striking line is longer (a long spear)
 const MAX_NODES := 64      # nodes of a held copy looked at for its tip
 const HIT_KEEP_MS := 3000  # a hit confirmed this long after a strike is that strike's
 const AIM_MARK := "_aim_"  # in the action's name, before its way
+const MISS_AMP := 0.25     # a strike CDDA says missed: a faint buzz ...
+const MISS_S := 0.05
+const LABEL_S := 1.5       # a technique's name shows this long by the hand ...
+const LABEL_FADE_S := 0.5  # ... then fades over this
+const LABEL_LEN := 40      # characters of it at most (the name comes from the sim)
+const LABEL_UP := 0.19     # m over the hand (above VrRig.say's notes)
 
 var rig: VrRig
 ## The aim controller that picks the figure and answers the swing request; null: the gun's (main.gd sets that).
@@ -40,6 +48,9 @@ var aim: AimController
 var queue_action := Callable()
 var strikes := 0           # strikes sent (tests)
 var hits := 0              # strikes CDDA confirmed as hits (tests)
+var misses := 0            # strikes CDDA said missed (tests)
+var label: Label3D        # the technique's name by the hand that struck; null until one shows
+var _label_left := 0.0    # seconds before it is gone
 var _armed: Array[bool] = [true, true]
 var _cool: Array[float] = [0.0, 0.0]
 var _flight := 0.0         # > 0: a strike went out, seconds left before the next may
@@ -51,6 +62,7 @@ func update(delta: float) -> void:
 	if rig == null or rig.world == null:
 		return
 	var d := clampf(delta, 0.0, 1.0) if is_finite(delta) else 0.0
+	_fade_label(d)
 	var snap := rig.world.snapshot
 	if _flight > 0.0:
 		_flight = maxf(_flight - d, 0.0)
@@ -143,7 +155,7 @@ static func tip_of(node: Node3D, from: Vector3) -> Variant:
 ## CDDA confirmed a hit on creature `uid` (HitFeedback.strike_confirmed): when that is the creature the last strike
 ## went for, within HIT_KEEP_MS, the striking hand buzzes (longer for a kill). True if it was that strike's.
 func on_hit(uid: int, killed: bool) -> bool:
-	if _last.is_empty() or uid != _last["uid"] or Time.get_ticks_msec() - int(_last["time"]) > HIT_KEEP_MS:
+	if not _is_last(uid):
 		return false
 	var i: int = _last["hand"]
 	_last = {}
@@ -155,6 +167,71 @@ func on_hit(uid: int, killed: bool) -> bool:
 
 func _on_strike_confirmed(uid: int, _part: String, _amount: int, killed: bool) -> void:
 	on_hit(uid, killed)
+
+
+## CDDA says the player's strike at `uid` is over (HitFeedback.swing_resolved): a miss on the creature the last
+## strike went for, within HIT_KEEP_MS, buzzes the striking hand faintly and ends that strike (a hit waits for its
+## damage, on_hit). True if it was that strike's miss.
+func on_resolved(uid: int, hit: bool) -> bool:
+	if hit or not _is_last(uid):
+		return false
+	var i: int = _last["hand"]
+	_last = {}
+	misses += 1
+	if rig != null:
+		rig.feel(rig._ctrl(i), MISS_AMP, MISS_S)
+	return true
+
+
+## CDDA used `technique` for the last strike, at `uid` (HitFeedback.technique_used, before the hit's damage): its
+## name shows by the hand that struck (plain text, LABEL_LEN characters at most). True if it showed.
+func on_technique(uid: int, technique: String) -> bool:
+	var text := Snapshot.plain_text(technique, LABEL_LEN)
+	if text.is_empty() or not _is_last(uid) or rig == null:
+		return false
+	var c := rig._ctrl(_last["hand"])
+	if label == null or not is_instance_valid(label):
+		label = Label3D.new()
+		label.name = "Technique"
+		label.pixel_size = 0.0003
+		label.font_size = 32
+		label.outline_size = 8
+		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		label.no_depth_test = true
+		label.render_priority = 5
+		label.position = Vector3(0, LABEL_UP, 0.04)
+	if label.get_parent() != c:
+		if label.get_parent() != null:
+			label.get_parent().remove_child(label)
+		c.add_child(label)
+	label.text = text
+	label.modulate = Color(1.0, 0.9, 0.55)
+	label.visible = true
+	_label_left = LABEL_S + LABEL_FADE_S
+	return true
+
+
+## The last strike went for `uid`, within HIT_KEEP_MS.
+func _is_last(uid: int) -> bool:
+	return not _last.is_empty() and uid == _last["uid"] and Time.get_ticks_msec() - int(_last["time"]) <= HIT_KEEP_MS
+
+
+func _on_swing_resolved(uid: int, hit: bool) -> void:
+	on_resolved(uid, hit)
+
+
+func _on_technique_used(uid: int, technique: String, _family: int) -> void:
+	on_technique(uid, technique)
+
+
+## The technique's label counts down `d` seconds: full for LABEL_S, then fading, then hidden.
+func _fade_label(d: float) -> void:
+	if _label_left <= 0.0 or label == null or not is_instance_valid(label):
+		return
+	_label_left = maxf(_label_left - d, 0.0)
+	label.modulate.a = clampf(_label_left / LABEL_FADE_S, 0.0, 1.0)
+	label.outline_modulate.a = label.modulate.a
+	label.visible = _label_left > 0.0
 
 
 ## The line from a to b: when it meets a figure standing 1 - 2 squares off the player along one of the 8 ways
@@ -180,8 +257,13 @@ func _strike(i: int, a: Vector3, b: Vector3, snap: Snapshot) -> bool:
 	strikes += 1
 	_flight = FLIGHT_S
 	_last = {"hand": i, "uid": int(uid) if uid is int else 0, "time": Time.get_ticks_msec()}
-	if am.hits != null and not am.hits.strike_confirmed.is_connected(_on_strike_confirmed):
-		am.hits.strike_confirmed.connect(_on_strike_confirmed)
+	if am.hits != null:
+		if not am.hits.strike_confirmed.is_connected(_on_strike_confirmed):
+			am.hits.strike_confirmed.connect(_on_strike_confirmed)
+		if not am.hits.swing_resolved.is_connected(_on_swing_resolved):
+			am.hits.swing_resolved.connect(_on_swing_resolved)
+		if not am.hits.technique_used.is_connected(_on_technique_used):
+			am.hits.technique_used.connect(_on_technique_used)
 	rig.feel(rig._ctrl(i), 0.8, 0.1)
 	struck.emit(hand, act.get_slice(AIM_MARK, 1), _last["uid"])
 	return true
