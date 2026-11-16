@@ -61,3 +61,19 @@ func _test_shapes() -> void:
 		return solid.verts.size()
 	_check.call(count.call("cable", 1 | 4) < count.call("cable", 15) and count.call("cable", 0) > 0,
 			"shapes: a cable runs toward its joined neighbours")
+	# [the nearest it comes to its front (-z) under its top, how many corners its doors and handles have]
+	var front := func(links: int) -> Array:
+		var solid := TerrainMesher.Buf.new()
+		PropShapes.build("counter", PropShapes.Builder.new(solid, TerrainMesher.Buf.new()), Color.GRAY, Color.RED,
+				Color.GREEN, links, 1.0, RandomNumberGenerator.new())
+		var z := INF
+		var doors := 0
+		for v in solid.verts:
+			if v.y < 0.87:
+				z = minf(z, v.z)
+			doors += 1 if v.y > 0.1 and v.y < 0.86 else 0
+		return [z, doors]
+	var run: Array = front.call(2 | 8)
+	var corner: Array = front.call(1 | 8)
+	_check.call(run[0] > -0.45 and run[1] > 0 and is_equal_approx(corner[0], -0.5) and corner[1] == 0,
+			"shapes: an L's corner counter runs on into the arm in front of it, with no doors %s %s" % [run, corner])
