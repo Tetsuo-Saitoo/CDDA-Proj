@@ -5,6 +5,12 @@ extends Node3D
 ## scaled by its size class, tinted with its CDDA colour, and animated in code: idle sway, a walk cycle while
 ## it moves, an attack lunge, a hurt flinch, a fall when it dies. The origin is the floor under the creature;
 ## it faces -Z. CreatureView moves it between squares (move_to) and calls animate() every frame.
+##
+## With a registry model (CreatureView.model_for, docs/MODELS.md) the model is drawn instead of the shapes:
+## turned to face -Z, scaled and moved as its entry says (at most ModelLibrary.MAX_MODEL_SIZE a side), lifted
+## like the placeholder for flyers. The model doesn't bend: it bobs as it walks, lunges, flinches, falls,
+## sinks and lies. The placeholder is still built, hidden: its shapes are the hit zones when the model has no
+## `hit_` regions.
 
 enum Plan { HUMANOID, QUADRUPED, CRAWLER, SNAKE, FLYER, FISH, BLOB }
 
@@ -34,6 +40,10 @@ const SINK_AFTER_S := 2.0
 const GONE_AFTER_S := 3.5
 const TURN_RATE := 10.0   # rad/s
 const HOVER_M := 1.3
+## CDDA's body part ids: a model's `hit_` regions on a human-shaped body may use them (zone_of_hit).
+const BODY_PARTS := ["head", "eyes", "mouth", "torso", "arm_l", "arm_r", "hand_l", "hand_r", "leg_l", "leg_r",
+		"foot_l", "foot_r"]
+const BODY_ZONE := "torso"   # the zone of a part that is none of the others
 
 var plan := Plan.BLOB
 var scale_f := 1.0
@@ -61,9 +71,17 @@ var _clock := 0.0
 var _attack_t := -1.0
 var _hurt_t := -1.0
 var _die_t := -1.0
+var model: ModelLibrary.Model          # drawn instead of the shapes; null: the placeholder
+var _model_node: Node3D
+var _model_base := Transform3D.IDENTITY
+var _model_meshes: Array[MeshInstance3D] = []
+var _model_rest: Material              # the model's overlay between flinches (a corpse's darkening)
+var _hits: Array = []                  # [MeshInstance3D (hidden), zone] from the model's hit_ regions
 
 static var _mats := {}
 static var _hurt_mat: StandardMaterial3D
+static var _dead_mat: StandardMaterial3D
+static var _raw_mat: StandardMaterial3D
 
 
 static func plan_for(kind: int, def: IdTables.Def) -> int:
@@ -104,8 +122,10 @@ static func top_of(kind: int, def: IdTables.Def) -> float:
 	return 0.75 * s
 
 
-## A figure for a snapshot creature (kind, mtype definition or null).
-static func make(kind: int, def: IdTables.Def, build_key := "") -> CreatureFigure:
+## A figure for a snapshot creature (kind, mtype definition or null), drawn as `with_model` when given
+## (its registry entry's scale and offset; the offset in the model's own axes).
+static func make(kind: int, def: IdTables.Def, build_key := "", with_model: ModelLibrary.Model = null,
+		model_scale := 1.0, model_offset := Vector3.ZERO) -> CreatureFigure:
 	var f := CreatureFigure.new()
 	f.key = build_key
 	f.plan = plan_for(kind, def)
@@ -121,7 +141,51 @@ static func make(kind: int, def: IdTables.Def, build_key := "") -> CreatureFigur
 		main = SKIN
 		second = PLAYER_CLOTHES
 	f._build(main, second)
+	if with_model != null:
+		f._build_model(with_model, def, model_scale, model_offset)
 	return f
+
+
+## The zone of a model's `hit_<id>` region (docs/MODELS.md): the id when the monster's JSON lists it as a weak
+## point, or a CDDA body part id on a human-shaped body; anything else ("" included) is the body, BODY_ZONE.
+static func zone_of_hit(id: String, def: IdTables.Def, body_plan: int) -> String:
+	if id.is_empty():
+		return BODY_ZONE
+	if def != null and def.weakpoints.has(id):
+		return id
+	if body_plan == Plan.HUMANOID and id in BODY_PARTS:
+		return id
+	return BODY_ZONE
+
+
+func _build_model(m: ModelLibrary.Model, def: IdTables.Def, s: float, offset: Vector3) -> void:
+	model = m
+	for c in _body.get_children():
+		(c as Node3D).visible = false   # the placeholder's shapes: hit zones only
+	var side := maxf(m.aabb.size.x, maxf(m.aabb.size.y, m.aabb.size.z))
+	var sc := clampf(s if is_finite(s) else 1.0, 0.01, ModelLibrary.MAX_MODEL_SIZE / maxf(side, 0.01))
+	var turn := Basis(Vector3.UP, PI)   # the model's front (+Z) to the figure's (-Z)
+	var lift := Vector3(0, HOVER_M if plan == Plan.FLYER else 0.0, 0)
+	_model_base = Transform3D(turn.scaled(Vector3.ONE * sc), turn * offset.clamp(-Vector3.ONE * 10.0, Vector3.ONE * 10.0) + lift)
+	_model_node = Node3D.new()
+	_model_node.name = "model"
+	_model_node.transform = _model_base
+	_body.add_child(_model_node)
+	for p: Array in m.parts:
+		var mi := MeshInstance3D.new()
+		mi.mesh = p[0]
+		mi.transform = p[1]
+		_model_node.add_child(mi)
+		_model_meshes.append(mi)
+	for h: Array in m.hits:
+		var mi := MeshInstance3D.new()
+		mi.name = "hit_%d" % _hits.size()
+		mi.mesh = h[1]
+		mi.transform = h[2]
+		mi.visible = false
+		_model_node.add_child(mi)
+		_hits.append([mi, zone_of_hit(h[0], def, plan)])
+	top = maxf(_model_base.origin.y + m.aabb.end.y * sc, 0.1)
 
 
 ## CDDA's colour for the monster, toned down (CDDA's are terminal colours: light green is #00ff00).
@@ -189,6 +253,9 @@ func lie_dead() -> void:
 	_body.rotation.x = PI / 2.0
 	dying = false
 	_die_t = -1.0
+	if not _model_meshes.is_empty():
+		_model_rest = _dead_material()
+		_set_overlay(null)
 	for m in _parts:
 		var mat := m.material_override as StandardMaterial3D
 		if mat != null:
@@ -253,6 +320,9 @@ func _tint_of_parts() -> Color:
 
 
 func _recolour(c: Color) -> void:
+	if not _model_meshes.is_empty():
+		_model_rest = _raw_material()
+		_set_overlay(null)
 	for m in _parts:
 		var mat := m.material_override as StandardMaterial3D
 		if mat != null:
@@ -378,6 +448,9 @@ func _pose(walk: float, atk: float, hit: float) -> void:
 			var squash := 0.06 * idle + 0.15 * sw + 0.2 * atk - 0.15 * hit
 			_spine.scale = Vector3(1.0 - squash * 0.5, 1.0 + squash, 1.0 - squash * 0.5)
 			_spine.position.z = -0.2 * scale_f * atk
+	if _model_node != null:   # bob while walking, lunge forward (-Z), flinch back from the feet
+		_model_node.transform = Transform3D(Basis(Vector3.RIGHT, 0.15 * hit) * _model_base.basis,
+				_model_base.origin + Vector3(0, 0.03 * absf(sw) * scale_f, -0.25 * scale_f * atk))
 
 
 func _build(main: Color, second: Color) -> void:
@@ -469,10 +542,18 @@ func _build(main: Color, second: Color) -> void:
 
 ## Hit zones for client-side bullets: every visible body part as [MeshInstance3D, zone], zone one of head,
 ## eye, torso, arm_l, arm_r, leg_l, leg_r, leg (non-humanoid legs), wing. Parts keep their animated pose,
-## so a ray tested against them (BulletPhysics) hits what is drawn.
+## so a ray tested against them (BulletPhysics) hits what is drawn. A model figure gives its `hit_` regions
+## (hidden meshes, zone_of_hit: a weak point id, a body part id or BODY_ZONE), or without any the hidden
+## placeholder's shapes.
 func hit_zones() -> Array:
 	var out := []
 	if dying or not _body.visible:
+		return out
+	if model != null:
+		if not _hits.is_empty():
+			return _hits.duplicate()
+		for m in _parts:
+			out.append([m, _zone_of(m)])
 		return out
 	for m in _parts:
 		if not m.is_visible_in_tree():
@@ -541,6 +622,8 @@ func _eyes(head: Node3D, r: float, gap: float, z := 0.0) -> void:
 func _set_overlay(mat: Material) -> void:
 	for p in _parts:
 		p.material_overlay = mat
+	for p in _model_meshes:
+		p.material_overlay = mat if mat != null else _model_rest
 
 
 static func _capsule(radius: float, height: float) -> CapsuleMesh:
@@ -575,6 +658,28 @@ static func _material(c: Color) -> StandardMaterial3D:
 		m.roughness = 0.85
 		_mats[k] = m
 	return _mats[k]
+
+
+## A corpse's model, darker (its own materials stay as they are).
+static func _dead_material() -> StandardMaterial3D:
+	if _dead_mat == null:
+		_dead_mat = StandardMaterial3D.new()
+		_dead_mat.albedo_color = Color(0, 0, 0, 0.35)
+		_dead_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_dead_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_dead_mat.render_priority = WorldLighting.UNDER_PRIORITY
+	return _dead_mat
+
+
+## A skinned or pulped corpse's model: mostly raw flesh.
+static func _raw_material() -> StandardMaterial3D:
+	if _raw_mat == null:
+		_raw_mat = StandardMaterial3D.new()
+		_raw_mat.albedo_color = Color(RAW, 0.75)
+		_raw_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_raw_mat.roughness = 0.6
+		_raw_mat.render_priority = WorldLighting.UNDER_PRIORITY
+	return _raw_mat
 
 
 static func _hurt_material() -> StandardMaterial3D:

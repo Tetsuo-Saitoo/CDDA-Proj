@@ -1,7 +1,7 @@
 extends RefCounted
 ## Model loading (ModelLibrary, docs/MODELS.md): a tiny .glb built here with GLTFDocument, its markers,
 ## the caps, hostile files and paths, the strict glTF checks (one small file per rule), the cache, links,
-## registry fallbacks, model props and item piles on model surfaces.
+## registry fallbacks, model props and item piles on model surfaces, monster models and their hit regions.
 ## Run from run_tests.gd; files go to model_test in the run's own folder (tests/test_dir.gd) and are removed
 ## afterwards.
 
@@ -34,6 +34,7 @@ func run(check: Callable, data: Variant, tables: IdTables, scene: Callable, repo
 	_test_props(data, tables, scene, repo)
 	_test_joins(data, tables, scene, repo)
 	_test_terrain(glb, data, tables, scene, repo)
+	_test_creature_model()
 	_remove(_dir)
 
 
@@ -58,6 +59,23 @@ static func cupboard_glb() -> PackedByteArray:
 	var door := _box(root, "door_1", Vector3(0.38, 1.1, 0.02), Vector3(-0.2, 0.6, 0.26))
 	_box(door, "handle_1", Vector3(0.02, 0.1, 0.02), Vector3(0.15, 0, 0.02))
 	_box(root, "body-convcolonly", Vector3(0.8, 1.2, 0.5), Vector3(0, 0.6, 0))
+	return scene_glb(root)
+
+
+## A 1.7 m monster: body and head, and (with hits) hit regions for the head, both legs (two pieces of one
+## region), the left arm, a tail its JSON doesn't list and one with a bad name.
+static func ghoul_glb(hits := true) -> PackedByteArray:
+	var root := Node3D.new()
+	root.name = "ghoul"
+	_box(root, "body", Vector3(0.5, 1.4, 0.3), Vector3(0, 0.7, 0))
+	_box(root, "head", Vector3(0.25, 0.3, 0.25), Vector3(0, 1.55, 0.02))
+	if hits:
+		_box(root, "hit_head", Vector3(0.26, 0.3, 0.26), Vector3(0, 1.55, 0.02))
+		_box(root, "hit_leg_1", Vector3(0.2, 0.8, 0.2), Vector3(-0.12, 0.4, 0))
+		_box(root, "hit_leg_2", Vector3(0.2, 0.8, 0.2), Vector3(0.12, 0.4, 0))
+		_box(root, "hit_arm_l", Vector3(0.1, 0.6, 0.1), Vector3(0.3, 1.0, 0))
+		_box(root, "hit_tail", Vector3(0.1, 0.1, 0.4), Vector3(0, 0.6, -0.3))
+		_box(root, "hit_Bad", Vector3(0.1, 0.1, 0.1), Vector3(0, 1.2, 0))
 	return scene_glb(root)
 
 
@@ -914,6 +932,140 @@ static func _tris_in(mesh: ArrayMesh, x: int, y: int, min_y := -INF) -> int:
 			if c.x >= x - 0.001 and c.x <= x + 1.001 and c.z >= y - 0.001 and c.z <= y + 1.001 and c.y >= min_y:
 				n += 1
 	return n
+
+
+## Monster models (docs/MODELS.md): hit_ regions are hidden and kept by id; the registry's `monster` entries
+## by id, then looks_like (the figures: run_figures).
+func _test_creature_model() -> void:
+	var reg := _monster_registry()
+	var lib := _lib()
+	var m := lib.get_model("monsters/ghoul.glb")
+	if m == null:
+		_check.call(false, "creature model: loads " + str(lib.warnings))
+		return
+	var ids := []
+	for h: Array in m.hits:
+		ids.append(h[0])
+	ids.sort()
+	_check.call(m.parts.size() == 2 and ids == ["", "arm_l", "head", "leg", "leg", "tail"] and not m.has_marker("hit_head")
+			and is_equal_approx(m.aabb.end.y, 1.7), "creature model: body and head drawn; the hit_ regions hidden, kept by id "
+			+ "(pieces share one; a bad name has none) %s" % [ids])
+	var H := ModelLibrary
+	_check.call(H.hit_id("hit_leg_2") == "leg" and H.hit_id("hit_arm_l") == "arm_l" and H.hit_id("hit_leg_0") == "leg_0"
+			and H.hit_id("hit_") == "" and H.hit_id("hit_Head") == "" and H.hit_id("hit_" + "a".repeat(40)) == ""
+			and H.hit_id("head") == "" and H.hit_id("hit_eye_99") == "eye" and H.hit_id("hit_eye_100") == "eye_100",
+			"creature model: a region's id drops its piece number; only short lower-case ids")
+	var ghoul := _mon("mon_ghoul", "", "human", {"head": true, "leg": true})
+	var look := CreatureView.model_for(reg, ghoul)
+	var like := CreatureView.model_for(reg, _mon("mon_ghoul_fast", "mon_ghoul", "human", {}))
+	var fell := CreatureView.model_for(reg, _mon("mon_bad", "mon_plain", "dog", {}))
+	_check.call(look.size() == 2 and (look[0] as ModelLibrary.Model).path == "monsters/ghoul.glb" and like.size() == 2
+			and like[0] == look[0] and fell.size() == 2 and (fell[0] as ModelLibrary.Model).path == "monsters/plain.glb"
+			and CreatureView.model_for(reg, _mon("mon_zed", "", "", {})).is_empty() and CreatureView.model_for(reg, null).is_empty()
+			and CreatureView.model_for(null, ghoul).is_empty(), "creature model: a monster's own registry entry, else its "
+			+ "looks_like's; a model that doesn't load is passed over; none: the placeholder " + str(reg.all_warnings().slice(0, 2)))
+
+
+## The monster test models and a registry of them (in the test folder): mon_ghoul (with hit regions), mon_plain
+## (none, scale 2), mon_bad (not a model), mon_huge (scale 100).
+func _monster_registry() -> AssetRegistry:
+	DirAccess.make_dir_recursive_absolute(_dir.path_join("models/monsters"))
+	DirAccess.make_dir_recursive_absolute(_dir.path_join("registry_monster"))
+	_write("models/monsters/ghoul.glb", ghoul_glb())
+	_write("models/monsters/plain.glb", ghoul_glb(false))
+	_write("models/monsters/bad.glb", "not a model".to_utf8_buffer())
+	var entries := [
+		{"type": "fp3d_model", "kind": "monster", "id": "mon_ghoul", "model": "monsters/ghoul.glb"},
+		{"type": "fp3d_model", "kind": "monster", "id": "mon_plain", "model": "monsters/plain.glb", "scale": 2.0},
+		{"type": "fp3d_model", "kind": "monster", "id": "mon_bad", "model": "monsters/bad.glb"},
+		{"type": "fp3d_model", "kind": "monster", "id": "mon_huge", "model": "monsters/plain.glb", "scale": 100.0},
+	]
+	_write("registry_monster/monsters.json", JSON.stringify(entries).to_utf8_buffer())
+	var reg := AssetRegistry.new()
+	reg.load_dir(_dir.path_join("registry_monster"))
+	return reg
+
+
+## Figures drawn as monster models (run from run_tests.gd once the root is in the tree: rays need global
+## transforms): the model instead of the shapes, its hit regions as hit zones (weak points, body parts on a
+## human body, the rest the body), else the hidden shapes; how it moves; the scale bounded; corpses.
+func run_figures(root: Node, check: Callable) -> void:
+	_check = check
+	_dir = TestDir.global("model_test")
+	_remove(_dir)
+	var reg := _monster_registry()
+	var ghoul := _mon("mon_ghoul", "", "human", {"head": true, "leg": true})
+	var fig := CreatureView._figure(Snapshot.Creature.MONSTER, ghoul, "k", CreatureView.model_for(reg, ghoul))
+	root.add_child(fig)
+	fig.global_position = Vector3(100, 0, 100)
+	var model_node := fig.get_node_or_null("body/model") as Node3D
+	var hidden := model_node != null
+	var drawn := 0
+	if model_node != null:
+		for c in fig.get_node("body").get_children():
+			if c != model_node and (c as Node3D).visible:
+				hidden = false
+		for c in model_node.get_children():
+			drawn += int((c as Node3D).visible)
+	var zones := {}
+	for z: Array in fig.hit_zones():
+		zones[z[1]] = int(zones.get(z[1], 0)) + 1
+		drawn += 100 * int((z[0] as Node3D).visible)
+	_check.call(hidden and drawn == 2 and zones.size() == 4 and zones.get("head") == 1 and zones.get("leg") == 2
+			and zones.get("arm_l") == 1 and zones.get("torso") == 2 and is_equal_approx(fig.top, 1.7)
+			and model_node.transform.basis.z.z < -0.99, "creature model: drawn instead of the shapes (hidden), facing -Z, as tall "
+			+ "as the model; hit zones its hidden regions: weak points, body parts on a human body, the rest the body %s" % [zones])
+	var head := String(BulletPhysics._hit_figure(Vector3(100, 1.55, 90), Vector3(0, 0, 20), {7: fig}, 0).get("zone", ""))
+	var leg := String(BulletPhysics._hit_figure(Vector3(100.12, 0.3, 90), Vector3(0, 0, 20), {7: fig}, 0).get("zone", ""))
+	_check.call(head == "head" and leg == "leg", "creature model: a shot at the head hits its head region, one low its leg (%s, %s)" % [head, leg])
+	fig.attack(Vector3(100, 0, 90))
+	for i in 4:   # animate() takes at most 0.1 s a step
+		fig.animate(CreatureFigure.ATTACK_S / 8.0)
+	var lunged := model_node.position.z < -0.1
+	for i in 10:
+		fig.animate(0.05)
+	fig.hurt()
+	var mesh0 := model_node.get_child(0) as MeshInstance3D
+	var flinch := mesh0.material_overlay == CreatureFigure._hurt_material()
+	for i in 10:
+		fig.animate(0.05)
+	var calm := mesh0.material_overlay == null and model_node.transform.is_equal_approx(fig._model_base)
+	fig.die()
+	_check.call(lunged and flinch and calm and fig.hit_zones().is_empty(), "creature model: lunges, flinches red and settles; no hit "
+			+ "zones while it dies")
+	root.remove_child(fig)
+	fig.free()
+	var plain := CreatureView._figure(Snapshot.Creature.MONSTER, _mon("mon_plain", "", "human", {"head": true}), "k",
+			CreatureView.model_for(reg, _mon("mon_plain", "", "", {})))
+	var huge := CreatureView._figure(Snapshot.Creature.MONSTER, _mon("mon_huge", "", "", {}), "k",
+			CreatureView.model_for(reg, _mon("mon_huge", "", "", {})))
+	root.add_child(plain)
+	root.add_child(huge)
+	var shape_zones := {}
+	for z: Array in plain.hit_zones():
+		shape_zones[z[1]] = true
+	_check.call(is_equal_approx(plain.top, 3.4) and shape_zones.has("head") and shape_zones.has("torso")
+			and huge.top <= ModelLibrary.MAX_MODEL_SIZE + 0.01 and huge.top > 15.0, "creature model: the entry's scale; without "
+			+ "regions the hidden shapes are the zones %s; at most %d m a side (%.1f)" % [shape_zones.keys(), ModelLibrary.MAX_MODEL_SIZE, huge.top])
+	plain.lie_dead()
+	var dark := (plain.get_node("body/model").get_child(0) as MeshInstance3D).material_overlay == CreatureFigure._dead_material()
+	plain.show_corpse_state(Snapshot.CORPSE_SKINNED)
+	var raw := (plain.get_node("body/model").get_child(0) as MeshInstance3D).material_overlay == CreatureFigure._raw_material()
+	_check.call(dark and raw, "creature model: a corpse's model lies darker; skinned it is raw")
+	root.remove_child(plain)
+	root.remove_child(huge)
+	plain.free()
+	huge.free()
+	_remove(_dir)
+
+static func _mon(id: String, looks_like: String, bodytype: String, weak: Dictionary) -> IdTables.Def:
+	var d := IdTables.Def.new()
+	d.id = id
+	d.looks_like = looks_like
+	d.bodytype = bodytype
+	d.size = 3
+	d.weakpoints = weak
+	return d
 
 
 func _write(rel: String, bytes: PackedByteArray) -> void:

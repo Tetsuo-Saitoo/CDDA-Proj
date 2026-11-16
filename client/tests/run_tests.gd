@@ -39,6 +39,7 @@ func _initialize() -> void:
 	await process_frame   # the root is in the tree from here on: the VR rig needs global transforms
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/model_tests.gd").new().run_figures(root, _check)
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/part_tests.gd").new().run(root, _check, data, tables, _repo)
 	preload("res://tests/box_tests.gd").new().run(_check, data, tables, _scene, _repo)
