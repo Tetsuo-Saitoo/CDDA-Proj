@@ -138,6 +138,7 @@ const NAMES := ["chair", "stool", "armchair", "sofa", "bench", "park_bench", "ta
 		"barricade", "panel_wall", "groundsheet", "roof_vent", "vent_pipe", "antenna", "dish", "solar",
 		"tank", "machine", "vending", "arcade", "display_case", "glass_cabinet", "lamp", "coat_rack",
 		"exercise", "punching_bag", "clothesline", "birdbath", "bulletin", "pallet", "console", "block",
+		"rubble", "cable", "gravestone", "statue",
 		"trap_plate", "item_box", "item_book", "item_cloth", "item_bottle", "item_can", "item_long",
 		"item_tool", "item_small", "item_bag", "item_corpse"]
 
@@ -456,6 +457,36 @@ static func build(shape: String, b: Builder, main: Color, accent: Color, leaf: C
 			for y: float in [0.78, 1.28]:
 				b.pane(Vector3(-0.43, y - 0.01, -0.12), Vector3(0.43, y + 0.01, 0.41))
 			b.pane(Vector3(-0.45, 0.3, -0.14), Vector3(0.45, 1.8, -0.12))
+		"rubble":   # a heap of broken pieces, lower when TINY
+			var h := clampf(height, 0.3, 1.0) * 0.55
+			b.box(Vector3(-0.45, 0, -0.43), Vector3(0.43, h * 0.3, 0.45), main.darkened(0.1))
+			for i in 7:
+				var r := 0.3 - i * 0.04
+				var s := rng.randf_range(0.12, 0.24)
+				var c := Vector3(rng.randf_range(-r, r), h * (0.15 + i * 0.1), rng.randf_range(-r, r))
+				b.box(c - Vector3(s / 2, 0, s * 0.4), c + Vector3(s / 2, s * 0.6, s * 0.4),
+						main.darkened(rng.randf_range(0.0, 0.2)), ALL)
+		"cable":   # a cable or conduit on the floor, run toward joined neighbours (else across the tile)
+			var any := false
+			for d in 4:
+				if links & (1 << d):
+					any = true
+					_panel_toward(b, d, 0.08, main)
+			if not any:
+				b.box(Vector3(-0.5, 0, -0.025), Vector3(0.5, 0.08, 0.025), main, ALL)
+			b.box(Vector3(-0.07, 0, -0.07), Vector3(0.07, 0.12, 0.07), main.darkened(0.15))
+		"gravestone":
+			b.box(Vector3(-0.3, 0, -0.12), Vector3(0.3, 0.08, 0.16), main.darkened(0.1))
+			b.box(Vector3(-0.24, 0.08, -0.06), Vector3(0.24, 0.72, 0.06), main)
+			b.box(Vector3(-0.17, 0.72, -0.06), Vector3(0.17, 0.8, 0.06), main)
+		"statue":   # a figure on a plinth (statues, mannequins)
+			b.box(Vector3(-0.32, 0, -0.32), Vector3(0.32, 0.3, 0.32), main.darkened(0.12))
+			for x: float in [-0.1, 0.02]:
+				b.box(Vector3(x, 0.3, -0.07), Vector3(x + 0.08, 1.05, 0.07), main)
+			b.box(Vector3(-0.17, 1.05, -0.09), Vector3(0.17, 1.6, 0.09), main)
+			for x: float in [-0.24, 0.17]:
+				b.box(Vector3(x, 1.0, -0.06), Vector3(x + 0.07, 1.55, 0.06), main)
+			b.box(Vector3(-0.08, 1.6, -0.08), Vector3(0.08, 1.85, 0.09), main.lightened(0.05))
 		"lamp":
 			b.cyl(Vector3.ZERO, 0.15, 0.04, METAL_DARK)
 			b.box(Vector3(-0.015, 0.04, -0.015), Vector3(0.015, 1.5, 0.015), METAL_DARK)

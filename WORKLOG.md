@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Furniture registry entries (H1, lead-world): 47 often-placed furniture ids get fitting placeholders (rubble heaps, machinery, cables, dividers, statues, gravestones ...) instead of a dresser or block; furniture art coverage 65.5 -> 80.3% exact. Client tests pass.
 - 2026-11-15 — Light leftovers (C6, lead-world): the 4 nearest lamps cast shadows, so walls keep their light in the room; see-through parts of models darken at night like glass. Client tests pass; not seen live or in VR.
 - 2026-11-15 — VR stands on stair flights and ramps (C2 leftover, lead-world): the rig follows the ground under the head and the teleport arc lands on it, like the first-person camera. Client tests pass; not tried in a headset.
 - 2026-11-15 — Indoor fog cheaper (lead-qa's perf note): the roofed room around the player is followed again only on leaving it, a level change or every 10 turns, not on every step. Client tests pass.
