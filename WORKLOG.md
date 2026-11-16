@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-15 — Bridge: the off hand lets go of an item that has grown too heavy for one hand (it stays in its pocket, with a message).
+- 2026-11-15 — Bridge: item op `consume` (CDDA's eat, drink or first aid on one item, no menu; CDDA's own questions stay real popups); sim and live checks.
 - 2026-11-15 — Bridge, L8 slice 2: drop / place / spot keep a furniture `shelf` (0..15) with the item's spot, given back in the snapshot's `shelves`; the action queue checks reserved names after cleaning the text.
 - 2026-11-15 — Bridge: the fork's version string takes only plain characters (letters, digits, ._+-).
 - 2026-11-15 — Bridge, L8 slice 1: `CddaSim.queue_action_at(action, square)` makes CDDA's adjacent-square prompt (open, close, examine) take exactly the client's square, never the only other one CDDA would auto-pick; sim test checks furniture open/close and what a closed container shows from 1 and 2 squares.

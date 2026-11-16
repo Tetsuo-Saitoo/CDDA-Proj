@@ -97,7 +97,10 @@ func _run() -> void:
 			hold.merged({"hand": "tail"}, true), hold.merged({"tag": 0}, true), hold.merged({"tag": 1 << 31}, true),
 			hold.merged({"tag": 1.0}, true), take.merged({"tag": -5}, true),
 			place.merged({"shelf": 2}, true), spot.merged({"shelf": 16}, true), spot.merged({"shelf": -1}, true),
-			spot.merged({"shelf": 1.0}, true), take.merged({"spot": Vector2(0.5, 0.5), "shelf": 2}, true)])
+			spot.merged({"shelf": 1.0}, true), take.merged({"spot": Vector2(0.5, 0.5), "shelf": 2}, true),
+			{"op": "consume", "item": 0, "type": 3}, {"op": "consume", "item": 5},
+			{"op": "consume", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)},
+			{"op": "consume", "item": 5, "type": 3, "pos": Vector3(1, 2, 0)}])
 	_check(bad_items.all(func(d: Dictionary) -> bool: return not _sim.queue_item_action(d)),
 			"rejects malformed item actions")
 	_check_listing()
