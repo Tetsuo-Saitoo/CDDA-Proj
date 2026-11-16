@@ -172,7 +172,10 @@ var hands: Hands:
 			h.refused.connect(_on_refused)
 		if pack != null:
 			pack.hands = h
+		if tray != null:
+			tray.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
+var tray: ItemTray         # L8: a lying container's contents or a big pile laid out in front (built in _build)
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
@@ -292,6 +295,11 @@ func _build() -> void:
 	add_child(pack)
 	cook = VrCook.new()
 	cook.world = world
+	tray = ItemTray.new()
+	tray.world = world
+	tray.head = camera
+	tray.hands = hands
+	add_child(tray)
 	cook.head = camera
 	add_child(cook)
 	gun = VrGun.new()
@@ -465,10 +473,12 @@ func update_hands(delta: float, all_hands := false) -> void:
 	_tick_notes(delta)
 	if hands == null:
 		pack.close("gone")
+		tray.close("gone")
 		for i in 2:
 			_show_pull_ray(i, {})
 		return
 	pack.update()
+	tray.update()
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
 		var id: String = HAND_IDS[i]
@@ -485,21 +495,26 @@ func update_hands(delta: float, all_hands := false) -> void:
 		if held.is_empty():
 			_fly_t[i] = -1.0
 			var t := {}
-			var pt := {}   # the open pack goes first, then what the hand touches, then what its pull ray meets
+			var pt := {}   # the open pack goes first, the tray, then what the hand touches, then what its pull ray meets
+			var tt := {}
 			var pointing := false
 			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not ui_open() \
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
-				if pt.is_empty():
+				tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+				if tt.get("kind") == "item":
+					t = tt
+				elif pt.is_empty() and tt.is_empty():
 					t = hands.find_near(c.global_position, GRAB_REACH)
 				# (a finger resting on a gun's trigger points nothing)
-				pointing = pt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
+				pointing = pt.is_empty() and tt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
 				if pointing:
 					t = _point(i, c, delta)
 			if not pointing:   # the next pointing looks at once
 				_pointed[i] = {}
 				_ray_wait[i] = 0.0
 			pack.hover(i, pt)
+			tray.hover(i, tt)
 			hands.hover(id, t)
 			_show_pull_ray(i, t if pointing else {})
 			continue
@@ -574,6 +589,19 @@ func _show_pull_ray(i: int, t: Dictionary) -> void:
 		r.global_transform = _segment(_ctrl(i).global_position, to, POINTER_R)
 
 
+## L8: trigger on controller c with an empty hand touching a lying container the snapshot lists contents for, or an
+## item of a big pile (ItemTray.source_for): the tray opens in front of the head with them. False when the hand
+## holds something or touches nothing like that (the caller buzzes).
+func open_tray(c: XRController3D) -> bool:
+	if hands == null or world.snapshot == null or ui_open() or not hands.holding(hand_id(c)).is_empty():
+		return false
+	var t := hands.find_near(c.global_position, GRAB_REACH)
+	if t.get("kind") != "item":
+		return false
+	var src := ItemTray.source_for(world.snapshot, t["item"])
+	return not src.is_empty() and tray.open(src, camera.global_transform)
+
+
 ## Trigger on controller c with an empty hand touching nothing: the item it points at (pointed_item, looked for
 ## now) is taken at once into that hand like a grip (main controller: CDDA's main hand, the other: the off hand), and
 ## its copy flies from where it lay into the hand (_fly). False when nothing is pointed (the caller buzzes); a refusal
@@ -584,6 +612,7 @@ func pull_with(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var id: String = HAND_IDS[i]
 	if not hands.holding(id).is_empty() or pack.hand == i or not pack.target_at(c.global_position).is_empty() \
+			or not tray.target_at(c.global_position).is_empty() \
 			or not hands.find_near(c.global_position, GRAB_REACH).is_empty():
 		return false
 	var other := hands.proxy(HAND_IDS[1 - i])
@@ -686,12 +715,16 @@ func grab_with(c: XRController3D) -> bool:
 	var t := {}
 	var pt := {}
 	var looks := world.snapshot != null and not menu_open()
+	var tt := {}
 	if looks:
 		pt = pack.target_at(c.global_position)
-		if pt.is_empty():
+		tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+		if tt.get("kind") == "item":
+			t = tt
+		elif pt.is_empty() and tt.is_empty():
 			t = hands.find_near(c.global_position, GRAB_REACH)
 	# touching nothing else, the gun not in this hand (its grip just holds the gun) and the shoulder not reached: the other
-	if pt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
+	if pt.is_empty() and tt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
 			and not (looks and over_shoulder(camera.global_transform, c.global_position)):
 		var ok_over := hands.hand_over(HAND_IDS[1 - i], id, "main" if c == main_ctrl() else "off")   # hand's item
 		if ok_over:
@@ -703,6 +736,8 @@ func grab_with(c: XRController3D) -> bool:
 	var ok := false
 	if not pt.is_empty():
 		ok = pack.grip(i, pt)
+	elif not tt.is_empty() and t.is_empty():
+		ok = false   # the tray's frame or a page arrow: the trigger works those
 	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
 		var bag := shoulder_bag(hands.picker.worn_containers(), null, world.tables)
 		ok = bag != null and pack.open_in(i, bag)
@@ -1178,6 +1213,8 @@ func shift(d: Vector3) -> void:
 	position += d
 	if pack != null and is_instance_valid(pack):
 		pack.position += d
+	if tray != null and is_instance_valid(tray):
+		tray.shift(d)
 	for i in _fly_from.size():
 		_fly_from[i].origin += d
 
@@ -1321,6 +1358,11 @@ func toggle_menu() -> void:
 		menu.action.connect(_menu_action)
 		menu.cheats_backend = cheats_backend
 		menu.cheats_allowed = cheats_allowed
+		menu.spawn_where = func() -> Dictionary:   # K7 spawn rows: items at the feet, monsters ahead of the head
+			var s := world.snapshot
+			if s == null or world.tables == null:
+				return {}
+			return {"tables": world.tables, "feet": s.player_pos, "ahead": VrRange.ahead_of(s.player_pos, camera.global_basis)}
 		menu.cheat_refused.connect(func(_why: String) -> void: _feel(main_ctrl()))   # the reason shows on the page
 		menu.range_sent.connect(_on_range_sent)
 		menu.range_finished.connect(_on_range_finished)
@@ -1524,13 +1566,21 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			and (pack.hand == ci or pack.target_at(c.global_position).get("kind") == "frame"):
 		pack.close("closed")   # the trigger on the pack's frame (or holding it) closes it
 		return
+	if n == "trigger_click" and tray.is_open() and hands != null and hands.holding(hand_id(c)).is_empty():
+		var tt := tray.target_at(c.global_position)
+		if tt.get("kind") == "page":
+			tray.turn_page(tt["dir"])
+			return
+		if tt.get("kind") == "frame":
+			tray.close("closed")   # the trigger on the tray's frame closes it
+			return
 	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
 		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
 			use_stair(c, s)
-		elif not pull_with(c):
+		elif not pull_with(c) and not open_tray(c):
 			_feel(c)
 		return
 	if n == "grip_click":

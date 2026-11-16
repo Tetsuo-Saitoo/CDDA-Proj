@@ -485,7 +485,9 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 	var full := snap.carried.size() / Snapshot.CARRIED_STRIDE >= Snapshot.MAX_CARRIED
 	match e["op"]:
 		"take":
-			return Where.MOVED if row >= 0 else _on_square(snap, item)
+			if row >= 0:
+				return Where.MOVED
+			return _in_container(snap, item) if item.parent != 0 else _on_square(snap, item)
 		"drop":
 			if row >= 0:
 				return Where.STILL
@@ -537,6 +539,31 @@ func _on_square(snap: Snapshot, item: ItemRef) -> Where:
 	if sm == null or tile >= sm.vis.size() or sm.vis[tile] != 2:
 		return Where.UNKNOWN
 	return Where.STILL if handle_index(sm, tile, item.uid, item.type) >= 0 else Where.MOVED
+
+
+## L8: item `it` (its `parent` a container lying on its square) is still listed inside that container in `snap`.
+static func listed_inside(snap: Snapshot, it: ItemRef) -> bool:
+	if snap == null or it == null or it.parent <= 0 or lying_type(snap, it.parent, it.square) <= 0:
+		return false
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(it.square))
+	for r: Array in sm.inside.get(it.parent, []):
+		if r[0] == it.uid and r[1] == it.type:
+			return true
+	return false
+
+
+## L8: an item taken out of container item.parent lying on item.square: STILL while that container's `inside`
+## there still lists it; UNKNOWN when the square isn't seen, the container isn't listed there any more or its list
+## was cut short (`inside_more`); else MOVED (it left the container).
+func _in_container(snap: Snapshot, item: ItemRef) -> Where:
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(item.square))
+	var tile := tile_of(item.square)
+	if sm == null or tile >= sm.vis.size() or sm.vis[tile] != 2 or lying_type(snap, item.parent, item.square) <= 0:
+		return Where.UNKNOWN
+	for r: Array in sm.inside.get(item.parent, []):
+		if r[0] == item.uid and r[1] == item.type:
+			return Where.STILL
+	return Where.UNKNOWN if sm.inside_more.get(item.parent, 0) > 0 else Where.MOVED
 
 
 func _reason(e: Dictionary) -> String:

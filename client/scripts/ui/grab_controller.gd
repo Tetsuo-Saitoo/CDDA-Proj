@@ -27,6 +27,8 @@ const MAX_MOTION := 64          # motion samples kept
 const THROW_M := 30.0           # the pointer's ray looks this far for the square to throw at
 const CLICK_MS := 250           # a click on an item: let go this soon after the press ...
 const CLICK_PX := 6.0           # ... with the mouse moved less than this, the wheel untouched: take it (as E)
+const TRAY_M := 0.55            # the desktop tray opens this far in front of the camera ...
+const TRAY_LOW := 0.12          # ... and this far under it, in view
 
 var world: WorldView
 var look_ray: LookRay
@@ -49,6 +51,17 @@ var hands: Hands:
 				if id == "mouse":
 					flash(reason, true))
 var item_hover := {}         # the item target under the pointer (Hands target), {} if none
+## L8 (desktop): the tray the mouse looks into (ItemTray, made by main.gd). `loot_tray` on a lying container with
+## something listed in it, or on an item of a big pile, opens it in front of the camera; while it is open the mouse
+## is free (main.gd keeps the look still), a click on an item takes it into the pack (Hands.take: ItemActions.take,
+## a container take for one inside), a click on an arrow turns the page, and Esc or `loot_tray` closes it.
+var tray: ItemTray:
+	set(t):
+		tray = t
+		if t != null and not t.closed.is_connected(_on_tray_closed):
+			t.closed.connect(_on_tray_closed)
+var tray_hover := {}         # the tray target under the pointer
+var _tray_mouse := -1        # the mouse mode before the tray opened; -1 while it is shut
 var _reach_fn := Callable()  # what this controller gave hands.picker.reach
 var carry_m := 0.8           # how far in front of the camera a carried item floats
 var drop := {}               # carrying: what letting go does now (Hands.drop_on_ray)
@@ -330,6 +343,99 @@ func take_hovered(event: InputEvent) -> bool:
 	if not InputActions.pressed(event, &"use_held"):
 		return false
 	return take_hover()
+
+
+func tray_open() -> bool:
+	return tray != null and is_instance_valid(tray) and tray.is_open()
+
+
+## Opens the tray on lying item `it` (ItemTray.source_for) in front of the camera pose `cam_xf` and frees the
+## mouse. False, with a line under the pointer, when there is nothing to lay out.
+func open_tray_on(it: ItemRef, cam_xf: Transform3D) -> bool:
+	if tray == null or not is_instance_valid(tray) or tray_open() or world.snapshot == null or carrying():
+		return false
+	tray.rest_m = TRAY_M
+	tray.rest_low = TRAY_LOW
+	var src := ItemTray.source_for(world.snapshot, it)
+	if src.is_empty() or not tray.open(src, cam_xf):
+		flash("Nothing to lay out there.")
+		return false
+	_tray_mouse = Input.mouse_mode
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	return true
+
+
+func close_tray() -> void:
+	if tray_open():
+		tray.close("closed")   # _on_tray_closed gives the mouse back
+
+
+func _on_tray_closed(_why: String) -> void:
+	tray_hover = {}
+	if _tray_mouse >= 0:
+		Input.mouse_mode = _tray_mouse as Input.MouseMode
+		_tray_mouse = -1
+
+
+## The tray's keys and clicks: `loot_tray` on the item under the pointer opens it (`allowed`: first person, the
+## main loop, no menu, view or prompt up); while it is open, Esc or `loot_tray` closes it and a click goes to
+## tray_click. True when the event was the tray's.
+func tray_event(event: InputEvent, cam: Camera3D, pt: Vector2, allowed: bool) -> bool:
+	if tray_open():
+		var key := event as InputEventKey
+		if InputActions.pressed(event, &"loot_tray") \
+				or (key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE):
+			close_tray()
+			return true
+		if InputActions.pressed(event, &"click") and cam != null:
+			var ray := ray_from(cam, pt)
+			tray_click(ray[0], ray[1])
+			return true
+		return false
+	if not InputActions.pressed(event, &"loot_tray") or not allowed:
+		return false
+	if item_hover.is_empty() or cam == null:
+		flash("Point at a bag or a pile lying next to you.")
+		return true
+	open_tray_on(item_hover["item"], cam.global_transform)
+	return true
+
+
+## A click along a ray while the tray is open: "take" (the item under it, into the pack), "page" (an arrow) or ""
+## (nothing there; a refused take says why under the pointer).
+func tray_click(origin: Vector3, dir: Vector3) -> String:
+	if not tray_open() or hands == null:
+		return ""
+	var t := tray.target_on_ray(origin, dir)
+	match t.get("kind"):
+		"item":
+			if hands.take("mouse", t, "pack"):
+				return "take"
+			flash("You can't take that now.", true)
+		"page":
+			tray.turn_page(t["dir"])
+			return "page"
+	return ""
+
+
+## Per frame while the tray is open: it follows the snapshot (ItemTray.update), the item under the pointer grows
+## and shows its name; `blocked` (a menu, view or prompt came up) closes it.
+func update_tray(cam: Camera3D, pt: Vector2, blocked: bool) -> void:
+	if not tray_open():
+		return
+	if blocked:
+		close_tray()
+		return
+	tray.update()
+	if not tray_open() or cam == null:
+		return
+	var ray := ray_from(cam, pt)
+	tray_hover = tray.target_on_ray(ray[0], ray[1])
+	tray.hover(0, tray_hover)
+	if tray_hover.get("kind") == "item" and Time.get_ticks_msec() >= _flash_until:
+		icon.at = pt
+		icon.mode = GrabIcon.HAND
+		icon.text = "%s\n%s take   %s close" % [tray_hover["name"], InputActions.key_of(&"click"), InputActions.key_of(&"loot_tray")]
 
 
 ## Takes the item under the pointer into the pack (E's tap); false when there is none.

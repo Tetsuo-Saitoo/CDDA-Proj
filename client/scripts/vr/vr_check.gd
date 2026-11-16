@@ -7,7 +7,9 @@ extends Node
 ## There are no controllers under the null headset: the rig counts its hands as tracked and the scenario places them.
 ## Scenarios: "report" (the bug report row saves a text and a picture of the view); "loot" (mock mode: a dresser
 ## with a rock in it next to the player; the right hand pulls a drawer open by its handle, takes the rock and puts
-## it back in the drawer, L8).
+## it back in the drawer, L8); "tray" (mock mode: a bag with 14 things in it lying next to the player; the trigger
+## with the right hand on it opens the tray, the trigger on its arrow pages, a grip takes one out into the hand, the
+## trigger on its frame closes it, L8 slices 3-4).
 
 const LOG_PATH := "user://vr_check.log"
 const START_FRAMES := 30          # frames drawn before the first scenario
@@ -36,6 +38,8 @@ func run(names: String) -> void:
 				await _report()
 			"loot":
 				await _loot()
+			"tray":
+				await _tray()
 			var other:
 				_check(false, "unknown scenario '%s'" % Snapshot.plain_text(other, 40))
 	_line("vr check: %d ok, %d failed" % [oks, fails])
@@ -200,3 +204,105 @@ func _loot() -> void:
 
 func _reports() -> PackedStringArray:
 	return DirAccess.get_files_at(VrReport.DIR) if DirAccess.dir_exists_absolute(VrReport.DIR) else PackedStringArray()
+
+
+func _tray() -> void:
+	var w := rig.world
+	var snap := w.snapshot
+	var mock: MockItems = mock_of.call() if mock_of.is_valid() else null
+	var centre: Variant = rig.hands.picker.centre()
+	var e := Vector3i(-1073741824, 0, 0)
+	for d: Vector3i in [Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(0, -1, 0), Vector3i(1, 0, 0)]:
+		if centre is Vector3i and (centre as Vector3i) + d != snap.player_pos and rig.walk.can_stand((centre as Vector3i) + d):
+			e = (centre as Vector3i) + d
+			break
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(e)) if mock != null else null
+	var rock := w.tables.index_of("itype", "rock")
+	if sm == null or rock < 1:
+		_check(false, "tray: needs mock mode (no --live) and a free square within reach")
+		return
+	var tile := ItemActions.tile_of(e)
+	var bag := w.tables.index_of("itype", "bag_canvas")
+	bag = bag if bag > 0 else rock
+	var piles := PackedInt32Array()
+	for p in range(0, sm.items.size() - Snapshot.PILE_STRIDE + 1, Snapshot.PILE_STRIDE):
+		if sm.items[p] != tile:
+			piles.append_array(sm.items.slice(p, p + Snapshot.PILE_STRIDE))
+	var pile := PackedInt32Array()
+	pile.resize(Snapshot.PILE_STRIDE)
+	pile[0] = tile
+	pile[1] = 1
+	pile[2] = bag
+	piles.append_array(pile)
+	sm.items = piles
+	var hs := PackedInt64Array()
+	for i in range(0, sm.handles.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		if sm.handles[i] != tile:
+			hs.append_array(sm.handles.slice(i, i + Snapshot.HANDLE_STRIDE))
+	sm.handles = hs
+	mock.seed()
+	var c := -1
+	for i in range(0, sm.handles.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		if sm.handles[i] == tile:
+			c = sm.handles[i + 1]
+	var inside: Array = []
+	for k in 14:
+		inside.append([1_900_000 + k, rock, 0])
+	sm.inside[c] = inside
+	sm.detail_revision = (sm.detail_revision + 1) & Snapshot.MAX_REVISION
+	snap.seq += 1
+	mock.changed.emit(snap)
+	var at := Vector3.INF
+	for k in 300:
+		await get_tree().process_frame
+		var sl := w.item_slot(c)
+		if not sl.is_empty():
+			at = sl[3]
+			break
+	if not at.is_finite():
+		_check(false, "tray: the bag isn't drawn (uid %d)" % c)
+		return
+	var ctl := rig.right
+	var tracker := ctl.tracker
+	ctl.tracker = &"vr_check"
+	ctl.global_position = at
+	await get_tree().process_frame
+	rig.press(ctl, "trigger_click")
+	await get_tree().process_frame
+	var t := rig.tray
+	_check(t.is_open() and t.rows.size() == 14 and t.items.size() == ItemTray.PAGE,
+			"tray: the trigger on a bag lying next to you opens the tray with what is in it (%d of %d)" % [t.items.size(), t.rows.size()])
+	if not t.is_open():
+		ctl.tracker = tracker
+		return
+	ctl.global_position = t.global_transform * ItemTray.arrow_pos(1)
+	await get_tree().process_frame
+	rig.press(ctl, "trigger_click")
+	await get_tree().process_frame
+	var first: ItemRef = t.items[0]["item"] if not t.items.is_empty() else null
+	_check(t.page == 1 and first != null and first.uid == 1_900_000 + ItemTray.PAGE,
+			"tray: the trigger on its arrow turns the page (page %d)" % (t.page + 1))
+	if first == null:
+		ctl.tracker = tracker
+		return
+	ctl.global_position = t.global_transform * ItemTray.cell_pos(0)
+	await get_tree().process_frame
+	rig.press(ctl, "grip_click")
+	var row := -1
+	for k in 60:
+		await get_tree().process_frame
+		row = ItemActions.carried_row(w.snapshot, first.uid, first.type)
+		if row >= 0:
+			break
+	var held: Variant = rig.hands.holding("vr_r").get("item")
+	_check(row >= 0 and held is ItemRef and (held as ItemRef).uid == first.uid and t.rows.size() == 13,
+			"tray: a grip on an item takes it out of the bag into the hand (%d left)" % t.rows.size())
+	rig.release(ctl, "grip_click")
+	for k in 30:
+		await get_tree().process_frame
+	ctl.global_position = t.global_transform * Vector3(0, ItemTray.ROWS * ItemTray.CELL * 0.5 + ItemTray.TITLE_H * 0.5, 0)
+	await get_tree().process_frame
+	rig.press(ctl, "trigger_click")
+	await get_tree().process_frame
+	_check(not t.is_open() and not t.visible, "tray: the trigger on its frame closes it")
+	ctl.tracker = tracker

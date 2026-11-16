@@ -61,11 +61,12 @@ class Partial extends RefCounted:
 		return {"range": true, "zones": [{"name": "Hub", "built": true}], "zone": 0}
 
 
-func run(root: Node, check: Callable) -> void:
+func run(root: Node, check: Callable, tables: IdTables = null) -> void:
 	_check = check
 	print("vr range")
 	_test_rows()
 	_test_apply()
+	_test_spawn(tables)
 	_test_menu(root)
 	_test_follow(root)
 
@@ -399,3 +400,47 @@ func _test_follow(root: Node) -> void:
 	_check.call(early and _at(rig, p0), "vr range follow: no move seen: to the player after the wait")
 	rig.free()
 	world.free()
+
+
+## The spawn rows: only the ids the tables list, items at the feet with their count, monsters ahead; nothing sent
+## without tables, a square or a row that is there; ahead_of goes AHEAD squares the way the head looks.
+func _test_spawn(tables: IdTables) -> void:
+	var rows := VrRange.spawn_rows(tables)
+	var by_id := {}
+	for r: Dictionary in rows:
+		by_id[r["id"]] = r
+	var rock: Dictionary = by_id.get("rock", {})
+	var zed: Dictionary = by_id.get("mon_zombie", {})
+	_check.call(tables != null and VrRange.spawn_rows(null).is_empty() and not rock.is_empty()
+			and rock["type"] == tables.index_of("itype", "rock") and str(rock["label"]).begins_with("Spawn at feet: ")
+			and (zed.is_empty() or str(zed["label"]).begins_with("Spawn ahead: "))
+			and rows.all(func(r: Dictionary) -> bool: return int(r["type"]) > 0 and int(r["count"]) >= 1),
+			"vr range: spawn rows for the listed test items and monsters (%s)" % [by_id.keys()])
+	var all := _keys(VrRange.rows_from(_info(), tables))
+	_check.call(all.slice(0, FIXED.size()) == FIXED and all.slice(FIXED.size(), FIXED.size() + rows.size()) == _keys(rows)
+			and all.back() == "go_2", "vr range: spawn rows come after the set times, before the zones")
+	var b := Backend.new()
+	b.info = _info()
+	var where := {"tables": tables, "feet": Vector3i(5, 6, 0), "ahead": Vector3i(7, 6, 0)}
+	var id := VrRange.apply(b, rock.get("key", ""), where)
+	var item_call: Array = b.calls.back() if not b.calls.is_empty() else []
+	var mon_ok := true
+	if not zed.is_empty():
+		mon_ok = VrRange.apply(b, zed["key"], where) > 0 and b.calls.back() == ["monster", "mon_zombie", Vector3i(7, 6, 0)]
+	_check.call(id > 0 and item_call == ["item", tables.index_of("itype", "rock"), 1, Vector3i(5, 6, 0)] and mon_ok,
+			"vr range: an item spawns at the feet, a monster ahead")
+	var n := b.calls.size()
+	var bad: Array = [VrRange.apply(b, rock.get("key", ""), {}), VrRange.apply(b, rock.get("key", ""), {"tables": tables}),
+			VrRange.apply(b, rock.get("key", ""), {"tables": tables, "feet": "here"}), VrRange.apply(b, "item_99", where),
+			VrRange.apply(b, "item_x", where), VrRange.apply(b, "mon_-1", where)]
+	_check.call(bad.all(func(v: int) -> bool: return v == 0) and b.calls.size() == n,
+			"vr range: no spawn without tables, a square or a listed row (%s)" % [bad])
+	var u := VrRange.use(b, rock.get("key", ""), where)
+	_check.call(u["text"] == "Spawn rock" and u["id"] > 0, "vr range: use says what it spawns (%s)" % u["text"])
+	var p := Vector3i(10, 10, 0)
+	var down := Basis.looking_at(Vector3.DOWN, Vector3.FORWARD)
+	_check.call(VrRange.ahead_of(p, Basis.IDENTITY) == Vector3i(10, 8, 0)
+			and VrRange.ahead_of(p, Basis(Vector3.UP, -PI / 2)) == Vector3i(12, 10, 0)
+			and VrRange.ahead_of(p, Basis(Vector3.UP, -PI / 4)) == Vector3i(12, 8, 0)
+			and VrRange.ahead_of(p, down) == Vector3i(10, 8, 0),
+			"vr range: ahead is two squares the way the head looks (north, east, north-east, looking down)")
