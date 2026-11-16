@@ -7,6 +7,8 @@ extends SceneTree
 ## list or direction prompt is sure (KEYS). Last, F1 in the game: a free key goes in inventory's next key slot by
 ## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
 ## key opens the inventory. Then the screen HUD: body bars, needs, move line and message feed from the live game.
+## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
+## puts it away.
 ## Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
@@ -107,6 +109,7 @@ func _run() -> void:
 	if _live.state == "running":
 		await _rebind_live(&"cdda_inventory")
 		_hud_live()
+		await _hands_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -171,6 +174,68 @@ func _hud_live() -> void:
 	var last: String = _main.hud_data.messages.back()["text"] if not _main.hud_data.messages.is_empty() else ""
 	_check(said and not last.is_empty() and feed[feed.size() - 1] == last,
 			"HUD: CDDA's messages reach the feed, newest last (\"%s\")" % last)
+
+
+## The off hand in the live game: H asks which item to hold and one is picked as a player would (typed into the
+## list's filter, Enter): water when the kit's pours (else a knife), poured out by holding E; Shift+H puts it away.
+## The hands (HudData.held, from the bridge's held state) follow each step.
+func _hands_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"hold_off"))
+	var asked := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ListRequestWidget
+	if not await _until(asked, ASK_TIMEOUT_MS, false):
+		_check(false, "H: CDDA asks which item to hold (%s)" % [_live.request])
+		return
+	var w := _main.request_ui.widget as ListRequestWidget
+	var pick := ""   # a liquid that pours (the kit's water may be frozen or sealed), else a knife
+	for want: String in ["water", "knife"]:
+		for it: Dictionary in w.items:
+			var n := str(it.get("plain", ""))
+			var ok: bool = it.get("enabled", false) and not n.contains("frozen") and not n.contains("sealed")
+			if pick.is_empty() and ok and n.to_lower().contains(want):
+				pick = n
+	_check(not pick.is_empty(), "H: the hold list has something to hold (%d entries)" % w.items.size())
+	if pick.is_empty():
+		root.push_input(_esc_key())
+		return
+	w.set_filter(pick)   # typed into the list's filter, as a player would
+	var enter := InputEventKey.new()
+	enter.keycode = KEY_ENTER
+	enter.physical_keycode = KEY_ENTER
+	enter.pressed = true
+	root.push_input(enter)
+	var in_off := func() -> bool: return _main.hud_data.held.get("off") is ItemRef
+	_check(await _until(in_off, OP_TIMEOUT_MS, false), "H: \"%s\" held in the off hand" % pick)
+	if not in_off.call():
+		return
+	if str(_main.hud_data.held.get("off_liquid", "")).is_empty():
+		print("  (pour not tried: no liquid that pours in the kit; held %s)" % pick)
+	else:
+		await _pour_live()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	root.push_input(_key_of(&"stow_off"))
+	var empty := func() -> bool: return _main.hud_data.held.get("off") == null
+	_check(await _until(empty, OP_TIMEOUT_MS, false), "Shift+H puts it away: the off hand is empty (%s)"
+			% [_main.hud_data.held.get("off")])
+
+
+## Holding E with a liquid in the off hand pours it out on the square you face.
+func _pour_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	var hint := _main.pour.hint(_main.world.tables)
+	_check(hint.contains("pour"), "the HUD's hint says how to pour (%s)" % hint)
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	var msgs := _messages.size()
+	var e_key := _key_of(&"use_held")
+	root.push_input(e_key)
+	await create_timer(PourHold.HOLD_MS / 1000.0 + 0.3).timeout
+	var up := e_key.duplicate() as InputEventKey
+	up.pressed = false
+	root.push_input(up)
+	var poured := func() -> bool: return str(_main.hud_data.held.get("off_liquid", "?")).is_empty()
+	_check(await _until(poured, OP_TIMEOUT_MS, false), "holding E pours the water out on the square you face (%s)"
+			% " / ".join(_messages.slice(msgs)).left(160))
 
 
 ## Presses `action`'s key (`ev`, else its first binding) in the main loop; CDDA's answer must show (and be the

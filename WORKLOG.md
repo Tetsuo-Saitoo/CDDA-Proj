@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-15 — Off hand tried in a live game, headless: `actions_live_test` holds the kit's water with H, pours it out by holding E and puts the bottle away with Shift+H. Drinking from it and the too-heavy check asked of lead-bridge. L8: no contents list (PLAN.md: by hand, no lists), agreed with lead-vr.
 - 2026-11-15 — Screen HUD checked in a live game, headless (`actions_live_test`: body bars, needs, move line and CDDA's messages in the feed). HUD-in-view notes brought up to date (VR panel and wrist parts are done).
 - 2026-11-15 — F1 rebinding tried in a live game, headless: `actions_live_test` gives inventory a new key through the menu (saved in the test run's folder, not the player's) and that key opens the list. Keys notes brought up to date.
 - 2026-11-15 — CDDA action keys' menus tried in a live game, headless: new `tests/actions_live_test.gd` presses 17 action keys in the test range; every list and direction prompt shows and Esc cancels it. Passes.
