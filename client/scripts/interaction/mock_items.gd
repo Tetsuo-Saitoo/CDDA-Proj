@@ -207,6 +207,8 @@ func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), 
 	if flags & Snapshot.CARRIED_WIELDED:
 		snap.player_wielded = 0
 	_add_handle(sm, tile, u, t, sx, sy)
+	if shelf >= 0 and sx >= 0:
+		sm.shelves[u] = shelf   # as the bridge: kept with the spot (a drop without one forgets it)
 	_touch(sm)
 	return _captured()
 
@@ -620,6 +622,7 @@ static func _handles_on(sm: Snapshot.Submap, tile: int) -> int:
 
 
 func _remove_handle(sm: Snapshot.Submap, tile: int, h: int) -> void:
+	sm.shelves.erase(sm.handles[h * HS + 1])   # its shelf goes with it (the snapshot lists only handles' shelves)
 	var a := sm.handles
 	for k in HS:
 		a.remove_at(h * HS)

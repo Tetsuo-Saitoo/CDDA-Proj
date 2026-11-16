@@ -6,7 +6,8 @@ extends Node
 ## `vr check: N ok, M failed`, and the game quits (main.gd `_quit`). The lines also go to user://vr_check.log.
 ## There are no controllers under the null headset: the rig counts its hands as tracked and the scenario places them.
 ## Scenarios: "report" (the bug report row saves a text and a picture of the view); "loot" (mock mode: a dresser
-## with a rock in it next to the player; the right hand pulls a drawer open by its handle and takes the rock, L8).
+## with a rock in it next to the player; the right hand pulls a drawer open by its handle, takes the rock and puts
+## it back in the drawer, L8).
 
 const LOG_PATH := "user://vr_check.log"
 const START_FRAMES := 30          # frames drawn before the first scenario
@@ -178,7 +179,22 @@ func _loot() -> void:
 	var it: Variant = held.get("item")
 	_check(it is ItemRef and (it as ItemRef).uid == uid and (it as ItemRef).is_wielded(),
 			"loot: a grip inside the open drawer takes the rock into the hand (%s)" % Snapshot.plain_text(str(held.get("kind", "nothing")), 16))
+	# slice 2: letting go inside the drawer puts it back on that drawer's shelf, where the hand is
+	var at: Vector3 = c.global_position
 	rig.release(c, "grip_click")
+	var ride := ""
+	var drawn := Vector3.INF
+	for k in 120:
+		await get_tree().process_frame
+		var s: Array = w._slot_of.get(uid, [])
+		ride = str(s[1][6]) if not s.is_empty() and (s[1] as Array).size() >= 8 else ""
+		var sl := w.item_slot(uid)
+		drawn = sl[3] if not sl.is_empty() else Vector3.INF
+		if ride == g.id and rig.hands.holding("vr_r").is_empty():
+			break
+	_check(ride == g.id and sm.shelves.has(uid) and drawn.distance_to(at) < 0.15,
+			"loot: letting go inside the drawer puts the rock back in it, where the hand was (shelf %s, %.2f m off)"
+			% [sm.shelves.get(uid, -1), drawn.distance_to(at)])
 	c.tracker = tracker
 
 

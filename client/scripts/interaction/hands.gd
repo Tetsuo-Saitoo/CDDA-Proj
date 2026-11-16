@@ -289,27 +289,30 @@ func proxy(id: String) -> Node3D:
 	return h.proxy if h != null and is_instance_valid(h.proxy) else null
 
 
-## What letting go of `held` does when the crosshair ray is (origin, dir): DropTarget.resolve's answer.
+## What letting go of `held` does when the crosshair ray is (origin, dir): DropTarget.resolve's answer. A ray on
+## furniture puts it on the shelf there (L8: WorldView.shelf_at of the point it meets; tables and counter tops).
 func drop_on_ray(origin: Vector3, dir: Vector3, held: ItemRef, max_m := RAY_M) -> Dictionary:
 	var hit := look_ray.cast(origin, dir, max_m, false)
 	var under := picker.on_ray(origin, dir, max_m)
 	if under != null and held != null and under.uid == held.uid:
 		under = null
-	return _drop(hit, under, held)
+	var on_furniture: bool = hit.get("hit") == true and hit.get("what") == "furniture" and hit.get("point") is Vector3
+	return _drop(hit, under, held, world.shelf_at(hit["point"]) if on_furniture else {})
 
 
-## The same for a hand at `p` (VR): what is under it and the item it touches.
+## The same for a hand at `p` (VR): what is under it and the item it touches; a hand over a shelf, in an open
+## drawer or cupboard too, puts it on that shelf (L8: WorldView.shelf_at).
 func drop_at(p: Vector3, held: ItemRef) -> Dictionary:
 	var hit := look_ray.cast(p + Vector3.UP * 0.05, Vector3.DOWN, 2.0, false)
 	var under := picker.near(p, 0.12)
 	if under != null and held != null and under.uid == held.uid:
 		under = null
-	return _drop(hit, under, held)
+	return _drop(hit, under, held, world.shelf_at(p))
 
 
 ## DropTarget's answer plus `point`: where the ray met something (the carried item can rest there), or null.
-func _drop(hit: Dictionary, under: ItemRef, held: ItemRef) -> Dictionary:
-	var d := DropTarget.resolve(world.coords, hit, under, held, world.tables, world.snapshot, picker.in_reach)
+func _drop(hit: Dictionary, under: ItemRef, held: ItemRef, shelf := {}) -> Dictionary:
+	var d := DropTarget.resolve(world.coords, hit, under, held, world.tables, world.snapshot, picker.in_reach, shelf)
 	d["point"] = under.point if under != null and d.get("kind") == "container" else hit.get("point")
 	return d
 

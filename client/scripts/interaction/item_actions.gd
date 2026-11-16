@@ -30,7 +30,7 @@ const MAX_EVENTS := 4096           # the bridge's event queue
 const M_INFO := 4                  # CDDA's game_message_type m_info: every refusal of the bridge's item actions
 const HANDS := ["pack", "main", "off"]
 const SPOT_MAX := 0.999
-const MAX_SHELF := 15   # L8: a furniture shelf, the client's own numbering (WorldView.shelf_at); the bridge keeps 0..15
+const MAX_SHELF := Snapshot.MAX_SHELF   # L8: a furniture shelf (WorldView.shelf_at's numbering); the bridge keeps 0..15
 const DIDNT_WORK := "That didn't work."
 const NO_ANSWER := "No answer from the game."
 ## Ops judged by the carried rows around the item (see above).

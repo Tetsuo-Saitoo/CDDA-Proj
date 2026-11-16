@@ -162,6 +162,23 @@ func _test_vr() -> void:
 	t = _hands.find_near(mid)
 	_check.call(_uid(t) == hammer and _hands.grab("vr_r", t, "main") and (_hands.holding("vr_r")["item"] as ItemRef).is_wielded()
 			and _handle(E, _it["hammer"]) != hammer, "loot: VR: a grip inside the open drawer takes the hammer into the hand")
+	# slice 2: let go inside the open drawer again: it goes back onto that drawer's floor, where the hand was
+	var spot_at := mid + out * -0.05
+	var held: ItemRef = _hands.holding("vr_r").get("item")
+	var d := _hands.drop_at(spot_at, held)
+	var shelf: int = d.get("shelf", -1)
+	_check.call(d.get("kind") == "surface" and d.get("square") == E and shelf >= 0,
+			"loot: VR: letting go in an open drawer puts it on that drawer's shelf (%s)" % [d])
+	_hands.set_hand("vr_r", Transform3D(Basis.IDENTITY, spot_at))
+	var op := _hands.release("vr_r", d)
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var back := _drawer_of(hammer)
+	var at := _mid(hammer)
+	_check.call(op == "drop" and _handle(E, _it["hammer"]) == hammer and sm.shelves.get(hammer, -1) == shelf
+			and back != null and back.id == dr.id and at.is_finite() and at.distance_to(spot_at) < 0.12,
+			"loot: VR: it's back in that drawer, drawn where the hand let go (%s, %.2f m off)" % [op, at.distance_to(spot_at)])
+	back.set_amount(0.0)
+	_check.call(_world.item_slot(hammer).is_empty(), "loot: VR: the drawer pushed shut hides it again")
 
 
 ## An older DLL's CddaSim: no queue_action_at.
