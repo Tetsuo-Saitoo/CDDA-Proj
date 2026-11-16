@@ -962,9 +962,11 @@ const WORLD_CATALOG := {
 func _test_game_over(root: Node) -> void:
 	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
 			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),
-			Main.game_over_text("failed", "boom"), Main.game_over_text("ended", "odd")]
+			Main.game_over_text("failed", "boom"), Main.game_over_text("ended", "odd"),
+			Main.game_over_text("ended", "cancelled"), Main.game_over_text("failed", "character creation cancelled")]
 	_check.call(said == [["Game saved.", true], ["Your character died.", false], ["The game ended.", false],
-			["The game ended.", false], ["The game failed: boom", false], ["The game ended: odd", false]],
+			["The game ended.", false], ["The game failed: boom", false], ["The game ended: odd", false],
+			["", false], ["", false]],
 			"game over: the menu's message per reason -> %s" % [said])
 	var long_text: String = Main.game_over_text("failed", "x".repeat(5000))[0]
 	_check.call(long_text.length() < 400, "game over: a long failure is cut (%d chars)" % long_text.length())
