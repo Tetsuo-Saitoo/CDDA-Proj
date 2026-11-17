@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — An item held in a hand or shown in the VR tray can wear the same frost, heat, spoilage, liquid and grime look as one lying in the world, with one call from the hands and tray code (lead-world; those calls come next). Client tests pass.
 - 2026-11-17 — Frost, heat, spoilage, liquid and grime now show on items in reach too: those lie as physics bodies, and the look follows the body instead of hiding with the static copy (lead-world). Client tests pass.
 - 2026-11-17 — Off hand holds a second item: H takes the item under the crosshair or in the tray into your off hand; in the Tab view drag a carried item onto a hand to hold it there, or onto its own pocket to put it away; in VR an item you take out of the pack is held in that hand once you carry it away. Client tests pass.
 - 2026-11-17 — Tester AppImage test-2026-11-17 (private test repo, pre-release, not a release) from main 6b99094 + fork 5190675, after the QA lead's OK for the range since test-2026-11-16; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range/game-over live tests). An earlier build of the same day was dropped: appimage.sh writes BUILD_INFO from HEAD at the end, so merge nothing while it runs.

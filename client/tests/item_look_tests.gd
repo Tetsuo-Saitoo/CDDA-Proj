@@ -174,8 +174,49 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call((held.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"heat") == 1.0 and held.get_child_count() >= 1,
 			"item state: a shell can be made for an item in a hand too")
 	held.free()
+	_test_dress(root, world, snap, tables)
 	view.free()
 	world.free()
+
+
+## A copy made elsewhere (ItemVisual, as a hand holds it) dressed in a state: frost and a liquid level that stays
+## level as it moves, repainted in place, undressed when there is nothing to show; dress_from reads the snapshot.
+func _test_dress(root: Node, world: WorldView, snap: Snapshot, tables: IdTables) -> void:
+	var hammer := tables.index_of("itype", "hammer")
+	var water := maxi(tables.index_of("itype", "water"), 0)
+	var v := ItemVisual.make(hammer, world)
+	root.add_child(v)
+	var meshes := v.get_children().filter(func(c: Node) -> bool: return c is MeshInstance3D).size()
+	var on := ItemLookView.dress(v, PackedInt32Array([3, -1, 500, water, 1, 250, -1]), ItemLook.LIQUID_DEFAULT)
+	var held := v.get_node_or_null(ItemLookView.DRESS) as Node3D
+	var mat := held.get_meta(&"mat") as ShaderMaterial if held != null else null
+	_check.call(on and held != null and held.get_child_count() == meshes and mat.get_shader_parameter(&"frost") == 1.0
+			and is_equal_approx(float(held.get_meta(&"level", 0.0)), 0.5),
+			"item state: a copy in a hand wears the look over each of its meshes (%d of %d)" % [held.get_child_count() if held != null else -1, meshes])
+	v.position = Vector3(1.0, 2.0, 3.0)
+	v.rotation = Vector3(0.0, 0.0, 0.4)
+	if held != null:
+		held._process(0.0)
+	var wb := held.global_transform * (held.get_meta(&"box") as AABB) if held != null else AABB()
+	var ly: Variant = mat.get_shader_parameter(&"level_y") if mat != null else null
+	_check.call(ly is float and is_equal_approx(ly, wb.position.y + wb.size.y * 0.5),
+			"item state: its liquid stays at its level as the copy moves (%s in %s)" % [ly, wb])
+	var again := ItemLookView.dress(v, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+	_check.call(again and v.get_node_or_null(ItemLookView.DRESS) == held and mat.get_shader_parameter(&"heat") == 1.0
+			and mat.get_shader_parameter(&"frost") == 0.0, "item state: a new state repaints the same look")
+	var plain := ItemLookView.dress(v, PackedInt32Array([0, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+	var gone := v.get_node_or_null(ItemLookView.DRESS) == null
+	ItemLookView.dress(v, PackedInt32Array([3, -1, -1, 0, 0, -1, -1]))
+	var bad := not ItemLookView.dress(v, PackedInt32Array([3])) and not ItemLookView.dress(v, "x") and not ItemLookView.dress(null, PackedInt32Array([3, -1, -1, 0, 0, -1, -1]))
+	_check.call(not plain and gone and bad and v.get_node_or_null(ItemLookView.DRESS) == null,
+			"item state: nothing to show, or a malformed state, takes the look off")
+	var carried := ItemLookView.dress_from(v, 601, snap, tables)
+	var h2 := v.get_node_or_null(ItemLookView.DRESS)
+	_check.call(carried and h2 != null and is_equal_approx(GunGrime.level_of(h2), 0.25)
+			and (h2.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"frost") == 1.0
+			and not ItemLookView.dress_from(v, 999, snap, tables) and v.get_node_or_null(ItemLookView.DRESS) == null,
+			"item state: dress_from takes a carried item's state from the snapshot (frozen, fouled), none for an unknown one")
+	v.free()
 
 
 func _test_values() -> void:

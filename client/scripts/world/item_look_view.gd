@@ -11,11 +11,15 @@ extends Node3D
 ## the player's reach) through set_states; where an item lies, and whether it is shown (not in a hand, its
 ## drawer open), from WorldView.item_slot, so carried items get no shell here. Shells follow their items every
 ## frame (a drawer pulled out carries them) and are picked again a few times a second.
+## Copies of an item shown elsewhere (ItemVisual.make: in a hand, the VR tray or pack) wear the same look through
+## dress() / dress_from(): one call when the copy is made and on each new snapshot.
 
 const MAX_SHELLS := 64       # nearest items with a state that get a shell
 const PICK_EVERY_S := 0.25   # how often the nearest are picked again
 const COLD_FROST := 0.35     # frost strength on a cold (not frozen) item
 const LIQUID_ALPHA := 0.6    # how much a see-through container's liquid shows
+const DRESS := "ItemLook"    # dress(): the look's node, a child of the copy it dresses
+const MAX_DRESS_MESHES := 32 # dress(): meshes of one copy that get the look (an item has a handful)
 
 ## Snapshot index: [temp, rot, fill, fill_type, see_through, fill_ml, dirt] (after the uid; contracts/snapshot.md).
 enum { S_TEMP, S_ROT, S_FILL, S_TYPE, S_SEE, S_ML, S_DIRT, S_SIZE }
@@ -122,8 +126,7 @@ func _pick() -> void:
 			sh.set_meta(&"itype", slot[1])
 			add_child(sh)
 			_shells[uid] = sh
-		paint(sh, _states[uid], ItemLook.liquid_color(world.tables.def_at("itype", _states[uid][S_TYPE])
-				if world.tables != null and _states[uid][S_TYPE] > 0 else null))
+		paint(sh, _states[uid], liquid_of(_states[uid], world.tables))
 		keep[uid] = true
 	for uid: int in _shells.keys():
 		if not keep.has(uid):
@@ -146,13 +149,7 @@ func _place(sh: Node3D, slot: Array) -> void:
 ## share one ShaderMaterial (meta "mat"; its item-space box in meta "box"). Also for an item held in a hand:
 ## put it under the item's node with an identity transform, paint it, and set_level_y as it moves.
 static func make_shell(prop: PropCatalog.Prop, itype: int) -> Node3D:
-	if _shader == null:
-		_shader = load("res://shaders/item_state.gdshader")
-	var mat := ShaderMaterial.new()
-	mat.shader = _shader
-	mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the item under it
-	mat.set_shader_parameter(&"frost_color", ItemLook.FROST)
-	mat.set_shader_parameter(&"heat_color", ItemLook.HEAT)
+	var mat := _material()
 	var sh := Node3D.new()
 	sh.set_meta(&"mat", mat)
 	var box := PropMesher.item_box(prop, itype) if prop != null else PropMesher.ITEM_BOX_OTHER
@@ -188,6 +185,89 @@ static func paint(sh: Node3D, s: PackedInt32Array, liquid: Color) -> void:
 	sh.set_meta(&"level", lv)
 	mat.set_shader_parameter(&"liquid", Color(liquid.r, liquid.g, liquid.b, LIQUID_ALPHA if lv > 0.0 else 0.0))
 	GunGrime.apply(sh, grime_of(s))   # a grime shell under each of the shell's meshes; none when clean
+
+
+static func _material() -> ShaderMaterial:
+	if _shader == null:
+		_shader = load("res://shaders/item_state.gdshader")
+	var mat := ShaderMaterial.new()
+	mat.shader = _shader
+	mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the item under it
+	mat.set_shader_parameter(&"frost_color", ItemLook.FROST)
+	mat.set_shader_parameter(&"heat_color", ItemLook.HEAT)
+	return mat
+
+
+## The colour a state's contents show in (its fill_type's CDDA colour), else ItemLook.LIQUID_DEFAULT.
+static func liquid_of(s: PackedInt32Array, tables: IdTables) -> Color:
+	var t := s[S_TYPE] if s.size() == S_SIZE else 0
+	return ItemLook.liquid_color(tables.def_at("itype", t) if tables != null and t > 0 else null)
+
+
+## Dresses `visual`, a copy of an item made elsewhere (ItemVisual.make: in a hand, the VR tray or pack), in state
+## `s` (as set_states takes: S_SIZE values, anything else or nothing to show undresses it): a node named DRESS under
+## it with a shell over each of its own meshes (at most MAX_DRESS_MESHES, its direct MeshInstance3D children),
+## painted like the shells in the world, the liquid's surface kept level as the copy moves. Again on the same copy:
+## repainted, not rebuilt. True when it wears the look.
+static func dress(visual: Node3D, s: Variant, liquid := ItemLook.LIQUID_DEFAULT) -> bool:
+	if visual == null or not is_instance_valid(visual):
+		return false
+	var held := visual.get_node_or_null(DRESS) as Node3D
+	if not (s is PackedInt32Array and (s as PackedInt32Array).size() == S_SIZE and shows(s)):
+		if held != null:
+			visual.remove_child(held)
+			held.queue_free()
+		return false
+	if held == null:
+		held = _dress_shell(visual)
+		if held == null:
+			return false
+		visual.add_child(held)
+	paint(held, s, liquid)
+	return true
+
+
+## dress() with item `uid`'s state from a snapshot (Snapshot.item_states) and its contents' colour from `tables`.
+static func dress_from(visual: Node3D, uid: int, snap: Snapshot, tables: IdTables) -> bool:
+	var s: Variant = snap.item_states.get(uid) if snap != null else null
+	return dress(visual, s, liquid_of(s, tables) if s is PackedInt32Array else ItemLook.LIQUID_DEFAULT)
+
+
+static func _dress_shell(visual: Node3D) -> Node3D:
+	var mat := _material()
+	var held := HeldLook.new()
+	held.name = DRESS
+	held.set_meta(&"mat", mat)
+	var box := AABB()
+	var n := 0
+	for c: Node in visual.get_children():
+		var src := c as MeshInstance3D
+		if src == null or src.mesh == null or n >= MAX_DRESS_MESHES:
+			continue
+		var b := src.transform * src.mesh.get_aabb()
+		if not (b.position.is_finite() and b.size.is_finite()):
+			continue
+		box = b if n == 0 else box.merge(b)
+		var mi := MeshInstance3D.new()
+		mi.mesh = src.mesh
+		mi.transform = src.transform
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.layers = src.layers
+		held.add_child(mi)
+		n += 1
+	if n == 0:
+		held.free()
+		return null
+	held.set_meta(&"box", box)
+	return held
+
+
+## dress()'s node: keeps the liquid's surface level while the copy moves (a hand, the tray).
+class HeldLook extends Node3D:
+	func _process(_delta: float) -> void:
+		if get_meta(&"level", 0.0) > 0.0:
+			ItemLookView.set_level_y(self)
 
 
 ## For a shell that isn't placed by this view (in a hand): the liquid's surface from the shell's place now.
