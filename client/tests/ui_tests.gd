@@ -1266,6 +1266,20 @@ func _test_wheel() -> void:
 	_show(_req("menu", {"entries": sink}))
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "wheel: Esc cancels")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	var stick := InputEventJoypadMotion.new()
+	stick.axis = JOY_AXIS_LEFT_X
+	stick.axis_value = -1.0
+	ui.handle_input(stick)
+	var pad_a := InputEventJoypadButton.new()
+	pad_a.button_index = JOY_BUTTON_A
+	pad_a.pressed = true
+	ui.handle_input(pad_a)
+	_expect({"id": 7, "entry": 10}, "wheel: a pad's stick points left, A picks wash")
+	_check.call(InputActions.defaults(&"use_held").any(func(e: InputEvent) -> bool:
+			return e is InputEventJoypadButton and (e as InputEventJoypadButton).button_index == JOY_BUTTON_A),
+			"wheel: a pad's A is E by default")
 	ui.wheel_until = 0   # long past: a later menu is a list again
 	_show(_req("menu", {"entries": sink}))
 	_check.call(ui.widget is ListRequestWidget, "wheel: an old E press doesn't make a later menu a wheel")

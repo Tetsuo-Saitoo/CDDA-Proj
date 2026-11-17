@@ -2,6 +2,7 @@
 
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
+- 2026-11-17 — Radial menu, slice 2: with a gamepad, A works like E; hold it on an object, point with the stick and let go to pick. Client tests pass.
 - 2026-11-17 — Radial menu, slice 1: E on an object shows its choices as a wheel with a fixed place for each kind of action; point and let go of E (or click) to pick. The F1 menu can switch to a click wheel or the old list. Client tests pass.
 - 2026-11-16 — More hints: the first time something hostile is in sight, you get hungry or thirsty, or you bleed, a tip says which keys help. Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
