@@ -2024,9 +2024,7 @@ func _test_hurt_cue(root: Node, aim: AimController) -> void:
 	var back := HudSettings.new()
 	var why := back.load_file(path)
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string("[hurt]
-cues=\"no\"
-")
+	f.store_string("[hurt]\ncues=\"no\"\n")
 	f.close()
 	var odd := HudSettings.new()
 	var odd_why := odd.load_file(path)
