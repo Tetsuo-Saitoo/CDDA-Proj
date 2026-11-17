@@ -2,6 +2,9 @@
 
 Maps CDDA ids to 3D art. Lives in `assets/registry/**/*.json`, same style as CDDA JSON (a list of objects).
 Schema: [schema/fp3d_model.schema.json](schema/fp3d_model.schema.json). Mods can ship their own registry files.
+Files load in name order, a folder's files before its subfolders; an entry for an id and kind that an
+earlier file has replaces it. That is how `models_kenney.json` gives models to ids whose placeholder entries
+are in `furniture_core.json`.
 
 ```json
 [

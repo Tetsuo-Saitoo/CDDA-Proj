@@ -6,7 +6,8 @@ them, pour from them and cook with them, so models need a few named points besid
 
 Status: the client loads `.glb` models for furniture, traps, items, terrain and monsters (doors still use
 procedural shapes; NPCs and vehicle parts don't load models yet). Ids without a model show simple placeholder
-shapes (PLAN.md H1, TASKS.md). A model that breaks the limits below is skipped with a warning in the
+shapes (PLAN.md H1, TASKS.md). The first real models (41 items, 6 pieces of furniture) are from Kenney's
+CC0 kits, converted by `tools/models/kenney_convert.py` (credits: `assets/models/LICENSE.md`). A model that breaks the limits below is skipped with a warning in the
 console, and the placeholder shows instead.
 
 Art direction is still an open decision (PLAN.md: stylised low-poly or realistic). Agree on it with the project
@@ -215,6 +216,12 @@ Cooking and looting are the next VR features (PLAN.md L8, L9), so these CDDA ids
 - **Containers:** `jerrycan`, `bottle_plastic`, `can_beans`, `backpack`, `f_cupboard`, `f_dresser`,
   `f_fridge`, `f_counter`.
 - **Tools:** `hose`, `knife_butcher`.
+
+Done from Kenney's kits (2026-11-16, stylised low-poly): `pot`, `pan`, `f_oven`, `meat`, `meat_cooked`,
+`bottle_plastic`, `can_medium` (the can beans come in). Still wanted: `f_woodstove`, `f_fireplace`,
+`jerrycan`, `backpack`, `hose`, `knife_butcher`. `f_cupboard`, `f_dresser` and `f_fridge` (and counters,
+sinks, bookcases, crates, bins, workbenches) wait for models with their doors, drawers and shelves as markers:
+a model without them would lose the placeholder's opening by hand and its shelf heights.
 
 ## Licence and credit
 

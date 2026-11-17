@@ -7,7 +7,8 @@ extends Node
 ## joins it. The wind follows the wind on the player's square (calm indoors) with a little of the region's wind
 ## left. Thunder follows a lightning flash after a moment, and far rumbles come now and then during a thunderstorm.
 ## Not positional (the weather is everywhere), so the same on a flat screen and in VR. Loudness changes glide;
-## nothing plays and nothing is processed in still, dry weather.
+## nothing plays and nothing is processed in still, dry weather. Played on the Ambience bus (the F1 Weather sounds
+## volume; main makes it at start, HudSettings.AMBIENCE_BUS), else on Master.
 
 const RATE := 11025            # Hz, mono, 16 bit
 const RAIN_S := 2.0
@@ -26,6 +27,7 @@ const FAR_GAIN := 0.3          # a far rumble
 const THUNDER_DELAY := Vector2(0.4, 2.5)    # seconds from flash to thunder
 const RUMBLE_EVERY := Vector2(25.0, 70.0)   # seconds between far rumbles in a thunderstorm
 const SILENT_DB := -60.0
+const BUS := &"Ambience"       # HudSettings.AMBIENCE_BUS
 
 var rain := AudioStreamPlayer.new()      # the hiss in the open
 var roof := AudioStreamPlayer.new()      # the patter under a roof
@@ -55,6 +57,9 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	var bus := BUS if AudioServer.get_bus_index(BUS) >= 0 else &"Master"
+	for p: AudioStreamPlayer in [rain, roof, wind, thunder]:
+		p.bus = bus
 	_update_processing()   # a node with _process starts processing on its own
 
 
