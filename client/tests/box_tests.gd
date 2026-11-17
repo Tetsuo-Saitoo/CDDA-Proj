@@ -50,6 +50,7 @@ func _test_models() -> void:
 func _test_world(data: Variant, tables: IdTables, scene: Callable, repo: Callable) -> void:
 	var reg := AssetRegistry.new()
 	reg.load_dir(repo.call("assets/registry"))
+	reg.load_dir(repo.call("client/tests/pins"))   # PropBoxes' dresser and sealed crate, not the kit models
 	var terrain := TerrainCatalog.new()
 	terrain.registry = reg
 	terrain.set_tables(tables)

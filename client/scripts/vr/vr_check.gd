@@ -93,6 +93,7 @@ func _report() -> void:
 ## go; grip inside the open drawer takes the rock into the hand.
 func _loot() -> void:
 	var w := rig.world
+	w.catalog.load_registry_dir(ProjectSettings.globalize_path("res://tests/pins"))   # PropBoxes' dresser (its drawer_1), not the kit model
 	var snap := w.snapshot
 	var mock: MockItems = mock_of.call() if mock_of.is_valid() else null
 	var centre: Variant = rig.hands.picker.centre()
