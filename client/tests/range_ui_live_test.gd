@@ -2,8 +2,9 @@ extends SceneTree
 ## Headless smoke run of the test range through the client's own UI path: main in live mode shows the main menu,
 ## its "Test range" button starts the range (cheats allowed, the F1 Cheats page forced on), the Cheats page's
 ## range controls show the zones, and each control (heal, freeze, set time, wait an hour, spawn an item at the
-## feet and a monster ahead, go to a zone) comes back done from the game and shows in the client's world. Uses
-## this run's own CDDA folder, never the player's saves.
+## feet and a monster ahead, go to a zone) comes back done from the game and shows in the client's world. Before
+## those, stairs through the client: up and back down in the hub, each snapshot around the new level and no submap's
+## revisions running backwards. Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/range_ui_live_test.gd -- --live
@@ -70,6 +71,7 @@ func _run() -> void:
 			and _cp.zone_pick.selected == info.get("zone", -1) and info.get("zone", -1) == 0,
 			"zones listed, the hub picked (%d zones, at %d)" % [zones.size(), info.get("zone", -1)])
 	_check(info.get("ai_frozen", false) and _cp.freeze.button_pressed, "monsters start frozen, and the switch says so")
+	await _stairs_live()
 
 	_check(await _op(_cp.heal, "Heal") == "", "Heal: done")
 	var thawed := func() -> bool: return not _live.range_info().get("ai_frozen", true)
@@ -123,6 +125,99 @@ func _run() -> void:
 			"the zone reads built and the status line names it (%s / %s)" % [_cp.zone_pick.get_item_text(1), _cp.status.text])
 	await _stop()
 	_finish()
+
+
+## Stairs through the client, in the hub: the teleport cheat next to the stairs up, then main.use_stair up and back
+## down. After each change of level the snapshot is around the new level (every level the client asks for, whole)
+## and no submap's revisions run backwards, the level left out meanwhile included. Then back to the arrival square.
+func _stairs_live() -> void:
+	var start := _main.world.snapshot.player_pos
+	var st := _stair_near(start)
+	var z0 := st.z
+	var next := func() -> bool:
+		var p := _main.world.snapshot.player_pos
+		return p.z == z0 and maxi(absi(p.x - st.x), absi(p.y - st.y)) <= 1 and not _main.world.busy() \
+				and StairUse.find(_main.world, st, z0).get("dz", 0) == 1
+	var near := false
+	for d: Vector3i in [Vector3i(1, 0, 0), Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(0, -1, 0)]:
+		if await _cheat(_live.cheat_teleport(st + d)) == "" and await _until(next, SHOW_TIMEOUT_MS):
+			near = true
+			break
+	_check(near, "the teleport cheat puts the player next to the hub's stairs up at %s (player %s)"
+			% [st, _main.world.snapshot.player_pos])
+	if not near:
+		return
+	var seen := {}   # submap -> Vector2i(revision, detail revision), the highest seen
+	_levels_ok("by the stairs", seen)
+	var is_up := await _take_stair(st, z0, 1)
+	_check(is_up, "use_stair up: the player is on level %d (%s, \"%s\")" % [z0 + 1, _main.world.snapshot.player_pos, _main.status])
+	_levels_ok("upstairs", seen)
+	var is_down := is_up and await _take_stair(Vector3i(st.x, st.y, z0 + 1), z0 + 1, -1)
+	_check(is_down, "use_stair down again: the player is on level %d (%s, \"%s\")" % [z0, _main.world.snapshot.player_pos, _main.status])
+	_levels_ok("back down", seen)
+	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
+	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
+			"teleported back to the arrival square (%s)" % _main.world.snapshot.player_pos)
+
+
+## The stairs up nearest `from` on its level that the client knows of (within 16 squares); the hub's own (10 west,
+## 8 south of the arrival square, fork test_range.cpp) when none is in sight yet.
+func _stair_near(from: Vector3i) -> Vector3i:
+	var best := from + Vector3i(-10, 8, 0)
+	var best_d := 1 << 20
+	for dy in range(-16, 17):
+		for dx in range(-16, 17):
+			var sq := from + Vector3i(dx, dy, 0)
+			var d := maxi(absi(dx), absi(dy))
+			if d > 0 and d < best_d and StairUse.find(_main.world, sq, from.z).get("dz", 0) == 1:
+				best = sq
+				best_d = d
+	return best
+
+
+## main.use_stair on the stair at `sq` from level `z` (asked until main takes it), then the player on level z + dz
+## and the world showing it.
+func _take_stair(sq: Vector3i, z: int, dz: int) -> bool:
+	var asked := [false]
+	var there := func() -> bool:
+		if not asked[0]:
+			var s := StairUse.find(_main.world, sq, z)
+			asked[0] = s.get("dz", 0) == dz and _main.use_stair(s)
+		return asked[0] and _main.world.snapshot.player_pos.z == z + dz and not _main.world.busy()
+	return await _until(there, OP_TIMEOUT_MS)
+
+
+## The shown snapshot around the player's level: every level the client asks for (LiveSession.Z_BELOW / Z_ABOVE)
+## is there whole (121 submaps), and no submap's revision or detail revision is lower than the highest seen before
+## (`seen`, brought up to date).
+func _levels_ok(what: String, seen: Dictionary) -> void:
+	var snap: Snapshot = _main.world.snapshot
+	var pz := snap.player_pos.z
+	var count := {}
+	var back := []
+	for key: Vector3i in snap.submaps:
+		var sm: Snapshot.Submap = snap.submaps[key]
+		count[key.z] = int(count.get(key.z, 0)) + 1
+		var now := Vector2i(sm.revision, sm.detail_revision)
+		var was: Vector2i = seen.get(key, Vector2i.ZERO)
+		if now.x < was.x or now.y < was.y:
+			back.append([key, was, now])
+		seen[key] = Vector2i(maxi(now.x, was.x), maxi(now.y, was.y))
+	var want := range(pz - LiveSession.Z_BELOW, pz + LiveSession.Z_ABOVE + 1)
+	var whole := want.all(func(z: int) -> bool: return int(count.get(z, 0)) == 121)
+	_check(whole and count.size() == want.size(), "%s: the snapshot has levels %s whole, around the player's (submaps a level: %s)"
+			% [what, want, count])
+	_check(back.is_empty(), "%s: no submap's revisions ran backwards (%d submaps known) %s" % [what, seen.size(), back.slice(0, 4)])
+
+
+## Waits for range_done of a cheat op `id` sent past the panel (0 = refused before sending); "" when it was done.
+func _cheat(id: int) -> String:
+	if id < 1:
+		return "not sent"
+	var answered := func() -> bool: return _done.has(id)
+	if not await _until(answered, OP_TIMEOUT_MS):
+		return "no answer"
+	return _done[id]
 
 
 ## Presses a range control and waits for the game's answer: "" done, else the error (or why it wasn't sent).
