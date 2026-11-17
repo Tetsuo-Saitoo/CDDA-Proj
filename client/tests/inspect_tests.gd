@@ -59,10 +59,80 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_pending()
 	_test_toggle()
 	_test_carry()
+	_test_hotbar()
 	_view.free()
 	_hands.free()
 	_actions.free()
 	_world.free()
+
+
+## G2: the hotbar. Ids checked; the file hostile; a slot per type; the Tab view's key puts the one selected item's
+## type in a slot; the key in the game puts a carried one into the main hand (MockItems answers at once).
+func _test_hotbar() -> void:
+	var path := preload("res://tests/test_dir.gd").path("hotbar.cfg")
+	var hb := Hotbar.new()
+	hb.path = path
+	hb.world = _world
+	hb.actions = _actions
+	_check.call(Hotbar.id_ok("rock") and Hotbar.id_ok("bag_canvas") and Hotbar.id_ok("a-b_9") and not Hotbar.id_ok("")
+			and not Hotbar.id_ok("a b") and not Hotbar.id_ok("../x") and not Hotbar.id_ok("x".repeat(65))
+			and not Hotbar.id_ok(5), "hotbar: the id rule (letters, digits, _ and -, 1..64)")
+	var snap := _world.snapshot
+	_check.call(not hb.visible and Hotbar.state(snap, _tables, "rock") == "carried"
+			and Hotbar.state(snap, _tables, "hammer") == "none" and Hotbar.state(snap, _tables, "") == "empty"
+			and Hotbar.state(snap, _tables, "bag_canvas") == "none",
+			"hotbar: hidden with no slot set; states from the snapshot (a worn sack isn't one to take)")
+	var said := hb.use(0)
+	_check.call(said.contains("empty") and said.contains("Tab"), "hotbar: an empty slot says how to set it (%s)" % said)
+	_view.hotbar = hb
+	_view.open()
+	var key := InputEventKey.new()   # hotbar_1's default
+	key.keycode = KEY_3
+	key.physical_keycode = KEY_3
+	key.pressed = true
+	_view.clear_selection()
+	var none := _view.handle_key(key) and hb.slots[0] == "" and _view.status.contains("Select one item")
+	_view.select_only(ROCK)
+	var set_one := _view.handle_key(key) and hb.slots[0] == "rock" and hb.visible
+	_check.call(none and set_one, "hotbar: in the Tab view its key puts the one selected item's type in the slot (%s)"
+			% _view.status)
+	_view.close()
+	hb.assign(1, "rock")
+	var moved := hb.slots[0] == "" and hb.slots[1] == "rock"
+	hb.assign(1, "rock")
+	var emptied := hb.slots[1] == ""
+	var refused := hb.assign(2, "../x").contains("can't") and hb.slots[2] == ""
+	hb.assign(0, "rock")
+	hb.assign(3, "hammer")
+	var back := Hotbar.new()
+	back.path = path
+	var why := back.load_file()
+	_check.call(moved and emptied and refused and why == "" and back.slots[0] == "rock" and back.slots[3] == "hammer",
+			"hotbar: a type sits in one slot, the same again empties it, a bad id is refused, the slots are saved")
+	back.free()
+	said = hb.use(3)
+	_check.call(said.contains("aren't carrying"), "hotbar: a type not carried isn't sent (%s)" % said)
+	said = hb.use(0)
+	snap = _world.snapshot
+	_check.call(said == "" and Hotbar.state(snap, _tables, "rock") == "in_hand"
+			and hb.use(0).contains("already in your hand"),
+			"hotbar: the key puts a carried rock into the main hand (MockItems), then says it is there")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string('[hotbar]\nslots=["rock", "a b", 7, "rock", "hammer", "", "", "", "x", "y"]\n')
+	f.close()
+	why = hb.load_file()
+	var bad := Hotbar.new()
+	bad.path = path
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string('[hotbar]\nslots=[Object(Node,"x":1)]\n')
+	f.close()
+	var why_bad := bad.load_file()
+	_check.call(why == "" and hb.slots == PackedStringArray(["rock", "", "", "", "hammer", "", "", ""])
+			and why_bad.contains("Object(") and bad.slots.size() == Hotbar.SLOTS and bad.slots[0] == "",
+			"hotbar: from the file only good ids, each once, 8 slots; an Object( file is ignored (%s)" % [hb.slots])
+	bad.free()
+	_view.hotbar = null
+	hb.free()
 
 
 ## itype pockets from the id tables (contracts/id_tables.md): read strictly, decide what counts as a container, and

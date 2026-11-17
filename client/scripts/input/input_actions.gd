@@ -91,6 +91,15 @@ const ACTIONS := [
 	[&"cdda_butcher", "Act", "butcher", ["Shift+B"]],
 	[&"cdda_grab", "Act", "grab", ["Shift+G"]],
 	[&"cdda_safemode", "Act", "safe mode on / off", ["Shift+1"]],
+	# G2 hotbar (ui/hotbar.gd): 1 and 2 are the hand strikes, so the slots start at 3
+	[&"hotbar_1", "Hotbar", "slot 1: into the main hand (Tab view: put the selected item here)", ["3"]],
+	[&"hotbar_2", "Hotbar", "slot 2", ["4"]],
+	[&"hotbar_3", "Hotbar", "slot 3", ["5"]],
+	[&"hotbar_4", "Hotbar", "slot 4", ["6"]],
+	[&"hotbar_5", "Hotbar", "slot 5", ["7"]],
+	[&"hotbar_6", "Hotbar", "slot 6", ["8"]],
+	[&"hotbar_7", "Hotbar", "slot 7", ["9"]],
+	[&"hotbar_8", "Hotbar", "slot 8", ["0"]],
 ]
 ## Live game: action -> CDDA main-loop action. CDDA then asks what it needs (which item, which way) through
 ## the usual prompts. Left out: CDDA's own screens (map, crafting, character sheet, look around), which the

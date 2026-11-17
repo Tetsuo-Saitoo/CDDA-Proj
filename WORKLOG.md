@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Hotbar: keys 3 to 9 and 0 take a chosen item into your main hand; in the Tab view, select an item and press a key to put it there. Client tests pass.
 - 2026-11-16 — Options: a Weather sounds slider next to Volume (rain, wind and thunder on their own; it takes effect once the weather uses the new channel). Client tests pass.
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
