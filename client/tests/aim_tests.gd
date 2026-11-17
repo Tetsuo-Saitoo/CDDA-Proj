@@ -100,6 +100,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_misfires(root, aim, tables)
 	_test_queue_at()
 	_test_hurt_cue(root, aim)
+	_test_strain_cue(root)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -2033,3 +2034,55 @@ cues=\"no\"
 			and odd.hurt_cues and odd_why.contains("hurt tint"),
 			"hurt: on by default; the F1 box turns it off and saves it; a non-bool in the file leaves it on, with a warning")
 	m.free()
+
+
+## F3: pain and low stamina at the view's edges (StrainCue): the levels from CDDA's numbers, junk and unsent needs
+## show nothing, the cue fades in and out steadily (never jumps or pulses), and is dark when off.
+func _test_strain_cue(root: Node) -> void:
+	var pains := [StrainCue.pain_for(0), StrainCue.pain_for(StrainCue.PAIN_FROM), StrainCue.pain_for(35),
+			StrainCue.pain_for(StrainCue.PAIN_FULL), StrainCue.pain_for(32767), StrainCue.pain_for(-40)]
+	var junk := [StrainCue.pain_for("50"), StrainCue.pain_for(NAN), StrainCue.pain_for(INF), StrainCue.pain_for(null),
+			StrainCue.tired_for("0"), StrainCue.tired_for(NAN), StrainCue.tired_for(-INF), StrainCue.tired_for([])]
+	var tireds := [StrainCue.tired_for(100), StrainCue.tired_for(StrainCue.STAMINA_FROM), StrainCue.tired_for(12.5),
+			StrainCue.tired_for(0), StrainCue.tired_for(-5)]
+	_check.call(pains == [0.0, 0.0, 0.5, 1.0, 1.0, 0.0] and tireds == [0.0, 0.0, 0.5, 1.0, 1.0]
+			and junk.all(func(x: float) -> bool: return x == 0.0),
+			"strain: pain from %d to %d and stamina under %d%% become 0..1; junk is 0 (%s %s)"
+			% [StrainCue.PAIN_FROM, StrainCue.PAIN_FULL, StrainCue.STAMINA_FROM, pains, tireds])
+
+	var data := HudData.new()
+	var cue := StrainCue.new()
+	cue.data = data
+	root.add_child(cue)
+	data.needs = {"pain": {"value": 80, "word": "", "level": HudData.UNKNOWN}}   # not sent
+	cue.step(0.5)
+	var unsent := cue.pain_shown == 0.0 and cue.tired_shown == 0.0 and not cue.visible
+	data.needs = {"pain": {"value": StrainCue.PAIN_FULL, "word": "", "level": HudData.BAD},
+			"stamina": {"value": 0, "word": "", "level": HudData.BAD}}
+	var seen: Array[float] = []
+	for i in 60:   # 3 s
+		cue.step(0.05)
+		seen.append(cue.pain_shown)
+	var steady := true
+	for i in range(1, seen.size()):
+		steady = steady and seen[i] >= seen[i - 1] and seen[i] - seen[i - 1] <= StrainCue.FADE_PER_S * 0.05 + 1e-6
+	var m := cue.material as ShaderMaterial
+	var full := cue.pain_shown == 1.0 and cue.tired_shown == 1.0 and cue.visible \
+			and float(m.get_shader_parameter("pain")) == 1.0 and float(m.get_shader_parameter("tired")) == 1.0
+	_check.call(unsent and steady and full and seen[9] < 0.5,
+			"strain: unsent needs show nothing; severe pain and no stamina fade in over 2 s without jumps (%.2f at 0.5 s)"
+			% seen[9])
+	data.needs["stamina"] = {"value": 60, "word": "", "level": HudData.OK}
+	cue.step(0.5)
+	var resting := cue.tired_shown == 0.75 and cue.pain_shown == 1.0   # half a second down at FADE_PER_S
+	cue.enabled = false
+	for i in 30:
+		cue.step(0.1)
+	var off := cue.pain_shown == 0.0 and cue.tired_shown == 0.0 and not cue.visible
+	cue.data = null
+	cue.enabled = true
+	cue.step(NAN)
+	cue.step(1.0)
+	_check.call(resting and off and not cue.visible,
+			"strain: rested stamina fades out; off or without data it shows nothing")
+	cue.free()

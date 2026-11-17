@@ -54,7 +54,17 @@ func _test_hostiles(data: Variant) -> void:
 			_creature(13, M, p + Vector3i(0, 1, 0), 2),      # friendly dog
 			_creature(14, M, p + Vector3i(-1, 0, 0), 1),     # neutral cat
 			_creature(15, M, p + Vector3i(0, 10, 1), 0.0)]   # hostile, 10 south one level up (JSON numbers are floats)
+	d["creatures"][1]["name"] = "Rex"                                  # a monster's name isn't read
+	d["creatures"][2]["name"] = "Ann <color_red>Smith</color>\n"         # NPC names: tags and control characters go
+	d["creatures"][3]["name"] = "N".repeat(100)                          # capped
+	var junk: Dictionary = d.duplicate(true)
+	junk["creatures"][2]["name"] = 42
+	var js := Snapshot.from_data(junk)
 	var snap := Snapshot.from_data(d)
+	var names := snap.creatures.map(func(c: Snapshot.Creature) -> String: return c.name)
+	_check.call(names.slice(1, 4) == ["", "Ann Smith", "N".repeat(Snapshot.MAX_NPC_NAME)] and js.is_valid()
+			and js.creatures[2].name == "", "snapshot: NPC names read, cleaned and capped; a monster's or a junk one is \"\" %s"
+			% [names])
 	_check.call(snap.is_valid() and snap.creatures.size() == 7, "compass: creatures with attitudes read (%s)" % snap.error)
 	if not snap.is_valid():
 		return

@@ -135,9 +135,20 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			and (param.call(U_ICE, &"liquid") as Color).a > 0.0 and (param.call(U_OFF, &"liquid") as Color).a == 0.0
 			and ice.global_transform.is_equal_approx(slot[4]) and (model == null or ice.get_child_count() == model.parts.size()),
 			"item state: the see-through one shows its liquid a quarter up, over its own meshes; the opaque can none (%s in %s)" % [ly, wb])
+	var hot_slot := world.item_slot(U_HOT)
 	world.set_hidden_items({U_HOT: true})
 	view.tick(0.01)
 	_check.call(not view.shell(U_HOT).visible and view.shell(U_ICE).visible, "item state: an item taken into a hand loses its shell")
+	var body_xf := (hot_slot[4] as Transform3D).translated(Vector3(0.3, 0.4, 0.0)) if not hot_slot.is_empty() else Transform3D()
+	view.body_slot = func(uid: int) -> Array:
+		return [uid, hot_slot[1], hot_slot[2], body_xf.origin, body_xf, hot_slot[5]] if uid == U_HOT else []
+	view.tick(0.01)
+	var on_body := view.shell(U_HOT).visible and view.shell(U_HOT).global_transform.is_equal_approx(body_xf)
+	view.body_slot = func(uid: int) -> Array: return [uid, "x", 0, Vector3(NAN, 0, 0), body_xf, 1.0] if uid == U_HOT else []
+	view.tick(0.01)
+	_check.call(not hot_slot.is_empty() and on_body and not view.shell(U_HOT).visible,
+			"item state: an item drawn as a physics body (static copy hidden) keeps its shell, on the body; a malformed body entry hides it")
+	view.body_slot = Callable()
 	world.set_hidden_items({})
 	view.set_states({U_ICE: PackedInt32Array([3, -1, -1, 0, 0, -1, -1]), "x": PackedInt32Array([1, 0, 0, 0, 0, 0, 0]),
 			U_OFF: PackedInt32Array([1]), U_HOT: [1, -1, -1, 0, 0, -1, -1]})
@@ -153,18 +164,66 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, 99999])),
 			"item state: a fouled gun lying in the world gets GunGrime's grime (half at 5000) and nothing else; clean or bad dirt shows nothing")
 	if gun != null:
-		ItemLookView.paint(gun, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+		ItemLookView.paint(gun, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), tables)
 	_check.call(gun != null and GunGrime.level_of(gun) == 0.0, "item state: the grime goes when the gun is clean")
 	view.set_states({})
 	view.tick(0.01)
 	_check.call(view.shell_count() == 0 and view.get_child_count() == 0, "item state: no states, no shells")
 	var held := ItemLookView.make_shell(world.props.item(tables.index_of("itype", "hammer")), tables.index_of("itype", "hammer"))
-	ItemLookView.paint(held, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+	ItemLookView.paint(held, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), tables)
 	_check.call((held.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"heat") == 1.0 and held.get_child_count() >= 1,
 			"item state: a shell can be made for an item in a hand too")
 	held.free()
+	_test_dress(root, world, snap, tables)
 	view.free()
 	world.free()
+
+
+## A copy made elsewhere (ItemVisual, as a hand holds it) dressed in a state: frost and a liquid level that stays
+## level as it moves, repainted in place, undressed when there is nothing to show; dress_from reads the snapshot.
+func _test_dress(root: Node, world: WorldView, snap: Snapshot, tables: IdTables) -> void:
+	var hammer := tables.index_of("itype", "hammer")
+	var water := maxi(tables.index_of("itype", "water"), 0)
+	var v := ItemVisual.make(hammer, world)
+	root.add_child(v)
+	var meshes := v.get_children().filter(func(c: Node) -> bool: return c is MeshInstance3D).size()
+	var on := ItemLookView.dress(v, PackedInt32Array([3, -1, 500, water, 1, 250, -1]), tables)
+	var held := v.get_node_or_null(ItemLookView.DRESS) as Node3D
+	var mat := held.get_meta(&"mat") as ShaderMaterial if held != null else null
+	_check.call(on and held != null and held.get_child_count() == meshes and mat.get_shader_parameter(&"frost") == 1.0
+			and is_equal_approx(float(held.get_meta(&"level", 0.0)), 0.5),
+			"item state: a copy in a hand wears the look over each of its meshes (%d of %d)" % [held.get_child_count() if held != null else -1, meshes])
+	v.position = Vector3(1.0, 2.0, 3.0)
+	v.rotation = Vector3(0.0, 0.0, 0.4)
+	if held != null:
+		held._process(0.0)
+	var wb := held.global_transform * (held.get_meta(&"box") as AABB) if held != null else AABB()
+	var ly: Variant = mat.get_shader_parameter(&"level_y") if mat != null else null
+	_check.call(ly is float and is_equal_approx(ly, wb.position.y + wb.size.y * 0.5),
+			"item state: its liquid stays at its level as the copy moves (%s in %s)" % [ly, wb])
+	var again := ItemLookView.dress(v, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), tables)
+	_check.call(again and v.get_node_or_null(ItemLookView.DRESS) == held and mat.get_shader_parameter(&"heat") == 1.0
+			and mat.get_shader_parameter(&"frost") == 0.0, "item state: a new state repaints the same look")
+	var plain := ItemLookView.dress(v, PackedInt32Array([0, -1, -1, 0, 0, -1, -1]), tables)
+	var gone := v.get_node_or_null(ItemLookView.DRESS) == null
+	ItemLookView.dress(v, PackedInt32Array([3, -1, -1, 0, 0, -1, -1]))
+	var bad := not ItemLookView.dress(v, PackedInt32Array([3])) and not ItemLookView.dress(v, "x") and not ItemLookView.dress(null, PackedInt32Array([3, -1, -1, 0, 0, -1, -1]))
+	_check.call(not plain and gone and bad and v.get_node_or_null(ItemLookView.DRESS) == null,
+			"item state: nothing to show, or a malformed state, takes the look off")
+	var carried := ItemLookView.dress_from(v, 601, snap, tables)
+	var h2 := v.get_node_or_null(ItemLookView.DRESS)
+	_check.call(carried and h2 != null and is_equal_approx(GunGrime.level_of(h2), 0.25)
+			and (h2.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"frost") == 1.0
+			and not ItemLookView.dress_from(v, 999, snap, tables) and v.get_node_or_null(ItemLookView.DRESS) == null,
+			"item state: dress_from takes a carried item's state from the snapshot (frozen, fouled), none for an unknown one")
+	var beans := tables.index_of("itype", "can_beans")
+	var solid := PackedInt32Array([0, -1, 600, beans, 1, 150, -1])
+	var wet := PackedInt32Array([0, -1, 600, water, 1, 150, -1])
+	_check.call(not ItemLookView.dress(v, solid, tables) and ItemLookView.level_of(solid, tables) == 0.0
+			and not ItemLookView.shows(solid, tables) and is_equal_approx(ItemLookView.level_of(wet, tables), 0.6)
+			and ItemLookView.shows(wet, tables) and ItemLookView.dress(v, wet, tables),
+			"item state: a see-through container shows the level of a liquid only, not of solid contents")
+	v.free()
 
 
 func _test_values() -> void:
@@ -204,6 +263,14 @@ func _test_colours() -> void:
 			"item state: the 3D tint starts at %d and is full when rotten" % L.TINT_FROM)
 	var water := IdTables.Def.new()
 	water.color = "c_light_blue"
+	var defs := [["liquid", "!", true], ["", "~", true], ["solid", "~", false], ["gas", "~", false], ["", "%", false]].map(
+			func(e: Array) -> bool:
+				var d := IdTables.Def.new()
+				d.phase = e[0]
+				d.symbol = e[1]
+				return L.is_liquid(d) == e[2])
+	_check.call(not defs.has(false) and not L.is_liquid(null),
+			"item state: contents are a liquid by CDDA's phase, else (no phase) by the ~ symbol %s" % [defs])
 	var odd := IdTables.Def.new()
 	odd.color = "c_" + "x".repeat(500)
 	_check.call(L.liquid_color(water) == CddaPalette.NAMED["light_blue"] and L.liquid_color(odd) == L.LIQUID_DEFAULT

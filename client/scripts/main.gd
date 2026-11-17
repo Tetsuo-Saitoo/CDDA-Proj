@@ -39,6 +39,9 @@ var view_cam: ViewCamera       # C9: shoulder and top views, following the eyes
 var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
+var _stir_heading := NAN       # live item tiles: the view's heading last frame (a turn sloshes held liquids)
+var _stir_pos: Variant = null  # the player's square at the last snapshot (a step sloshes them)
+var _stir_step := 1.0          # each step rocks the other way
 var sun: DirectionalLight3D
 var weather: WeatherView       # C6 / I2: sky, sun and fog by CDDA's weather
 var hud: Label
@@ -75,6 +78,7 @@ var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold 
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
+var strain_cue: StrainCue         # the player's pain and low stamina at the view's edges (F3), under the hurt
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -131,6 +135,8 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
+	if not UserFiles.test_root().is_empty():   # a test or check run: its files aren't the player's
+		print("user files: " + UserFiles.test_root())
 	HudSettings.ensure_ambience_bus()   # G7: before the weather's players look for it
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
@@ -221,6 +227,7 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		item_looks.body_slot = item_bodies.slot   # items in reach are bodies: their state shells follow them
 		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
 		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
 		item_placer = ItemPlacer.new()
@@ -253,6 +260,7 @@ func _ready() -> void:
 	inspect.hotbar = hotbar
 	inspect.opened.connect(func() -> void:
 		hotbar.show_empty = true
+		ItemTileView.stir(ItemTileView.OPEN_STIR)   # the liquids in the rows settle as it opens
 		if vr == null and hints != null:
 			hints.trigger("inspect"))
 	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
@@ -392,6 +400,12 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		_ask_character()
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
+	if hands_panel != null:
+		hands_panel.refresh_tiles()   # the held items' states came with this snapshot
+	if _stir_pos != null and _stir_pos != snap.player_pos:   # a step: held liquids rock
+		_stir_step = -_stir_step
+		ItemTileView.stir(ItemTileView.STEP_STIR * _stir_step)
+	_stir_pos = snap.player_pos
 	if hints != null and vr == null and live != null and _in_main_loop():
 		hints.trigger("start")   # G6: once, ever (seen ids are kept)
 		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
@@ -542,6 +556,7 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.gun.flashes = hud_settings.weather_flash   # its muzzle flash follows the flash setting too
 	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
@@ -1480,6 +1495,9 @@ func _setup_hud() -> void:
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	strain_cue = StrainCue.new()   # pain and low stamina: over the mood's tint, under the hurt's
+	strain_cue.data = hud_data
+	layer.add_child(strain_cue)
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
@@ -1502,6 +1520,7 @@ func _setup_hud() -> void:
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
+	strain_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
@@ -1519,6 +1538,8 @@ func _setup_hud() -> void:
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
 	hands_panel.left_handed = hud_settings.left_handed()
+	hands_panel.tile_of = func(uid: int) -> Dictionary:   # live item tiles behind the held items
+		return ItemTile.for_item(world.snapshot, world.tables, uid)
 	layer.add_child(hands_panel)
 	hud_view = HudView.new()
 	hud_view.data = hud_data
@@ -1557,10 +1578,13 @@ func _setup_hud() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
+		strain_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash
+		if vr != null:
+			vr.gun.flashes = hud_settings.weather_flash
 			viewmodel.left_handed = hud_settings.left_handed()
 		if hands_panel != null:
 			hands_panel.left_handed = hud_settings.left_handed()
@@ -1669,6 +1693,9 @@ func _process(_delta: float) -> void:
 	_place_player_body()
 	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
+	if not is_nan(_stir_heading):   # a turn: held liquids lean against it
+		ItemTileView.stir(wrapf(compass.heading_deg - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
+	_stir_heading = compass.heading_deg
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))

@@ -26,6 +26,9 @@ func _get_drag_data(_at: Vector2) -> Variant:
 	if view == null or row.is_empty():
 		return null
 	var data: Variant = view.drag_data(row)
+	var tile := get_node_or_null(^"ItemTile") as ItemTileView
+	if data != null and tile != null:
+		tile.kick()   # picked up: its liquid sloshes
 	if data != null and is_inside_tree() and get_viewport().gui_is_dragging():
 		set_drag_preview(view.drag_preview(row))
 	return data

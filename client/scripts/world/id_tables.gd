@@ -33,6 +33,8 @@ const POCKET_AMMO_ONLY := 64
 const POCKET_RESTRICTED := 128
 const POCKET_FORBIDDEN := 256         # the player can't use it
 const POCKET_FLAGS := 511
+## An itype's `phase` as CDDA has it for the type (not the item's state now: frozen water is "liquid").
+const PHASES := ["solid", "liquid", "gas", "plasma"]
 
 
 class Def:
@@ -51,7 +53,11 @@ class Def:
 	var open := ""           # id of the open state (closed doors, windows)
 	var close := ""          # id of the closed state
 	var roof := ""           # ter: what is built on top of it
+	## ter/furn: CDDA's examine action id ("fireplace", "water_source", an actor's type like "cardreader"); ""
+	## when it has none, isn't sent (an older bridge) or isn't letters, digits and _.
+	var examine := ""
 	var category := ""       # itype
+	var phase := ""          # itype: one of PHASES; "" when not sent (an older bridge), not set or unknown
 	var gun_ammo := ""       # itype, guns: the first ammo type (9mm, 223, shot, arrow, ...)
 	var weakpoints := {}     # mtype: CDDA weak point ids (head, eye, arm, leg, ...) -> true
 	var gun := ""            # itype: the skill a gun uses (pistol, rifle, archery, ...), "" if not a gun
@@ -83,6 +89,8 @@ var mtype: Array[Def] = []
 var group_bits := {}     # connect group name -> bit index
 ## Some itype row has `pockets`: the bridge sends them, so a type without any holds nothing.
 var has_pockets := false
+## Some ter/furn row has `examine`: the bridge sends it, so "" means examining does nothing special there.
+var has_examine := false
 var _by_name := {}       # table -> {id -> index}
 ## Terrain ids built on top of a TREE (treetops) and of anything else (roofs).
 var _treetops := {}
@@ -175,6 +183,7 @@ func _clear() -> void:
 	_roofs.clear()
 	body_parts.clear()
 	move_modes.clear()
+	has_examine = false
 
 
 func _read(data: Variant) -> void:
@@ -260,8 +269,14 @@ func _read_table(table: String, v: Variant) -> void:
 			def.open = _str(r.get("open"), MAX_ID, what + ".open")
 			def.close = _str(r.get("close"), MAX_ID, what + ".close")
 			def.roof = _str(r.get("roof"), MAX_ID, what + ".roof")
+			if r.has("examine"):
+				has_examine = true
+				var ex := _str(r.get("examine"), MAX_ID, what + ".examine")
+				def.examine = ex if _is_word(ex) else ""
 		elif table == "itype":
 			def.category = _str(r.get("category"), MAX_FLAG_LEN, what + ".category")
+			var phase := _str(r.get("phase"), MAX_FLAG_LEN, what + ".phase")
+			def.phase = phase if phase in PHASES else ""
 			if r.has("gun"):
 				def.gun = _str(r.get("gun"), MAX_FLAG_LEN, what + ".gun")
 			def.gun_ammo = _str(r.get("gun_ammo"), MAX_FLAG_LEN, what + ".gun_ammo")
@@ -338,6 +353,15 @@ func _int(v: Variant, lo: int, hi: int, what: String) -> int:
 			return int(f)
 	_fail("%s: expected an integer in %d..%d" % [what, lo, hi])
 	return 0
+
+
+## Only ASCII letters, digits and _ (an id CDDA names an action by).
+static func _is_word(s: String) -> bool:
+	for i in s.length():
+		var c := s.unicode_at(i)
+		if not ((c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 95):
+			return false
+	return true
 
 
 func _str(v: Variant, cap: int, what: String) -> String:

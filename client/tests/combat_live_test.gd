@@ -19,6 +19,10 @@ extends SceneTree
 ##     (CreatureView) and its blood on the ground (GoreView). The player is invincible (the range's cheat) meanwhile:
 ##     CDDA's shrapnel kills in the open out to some 30 squares. Fire fields aren't tried: the range's only explosive
 ##     with a countdown is the plain grenade.
+##  7. Zombies next to the player, unfrozen, hit them (not invincible) until CDDA's pain (the snapshot's needs) passes
+##     StrainCue's threshold, or the player is down to 40% on a body part: damage events on the player, the pain
+##     rose, and StrainCue's pain edge shows. Monsters frozen again and the player healed (range_heal) after. Low
+##     stamina isn't tried: running burns about 1% a turn, too slow for this run (aim_tests covers the cue).
 ## Strikes go through main's own code (AimController.strike_action, main._queue_act) with the crosshair at the
 ## screen centre: headless has no captured mouse. A misfire isn't tried: nothing in the range fouls a gun (the sim
 ## test covers it). Uses this run's own CDDA folder, never the player's saves.
@@ -111,6 +115,8 @@ func _run() -> void:
 		await _smash_live()
 	if _live.state == "running":
 		await _explosion_live()
+	if _live.state == "running":
+		await _pain_live()
 	if _live.state != "running":
 		_check(false, "the game kept running (%s %s)" % [_live.state, _live.error])
 	await _stop()
@@ -366,6 +372,65 @@ func _explosion_live() -> void:
 			return int(e.get("uid", 0)) == _main.aim.hits.player_uid())
 	print("    the player took %d hit(s) from seven squares, unhurt (invincible)" % hurt.size())
 	_live.set_cheat("invincible", false)
+
+
+## 7: the player really hurt by zombies next to them, until the pain shows at the view's edges (StrainCue).
+func _pain_live() -> void:
+	var cue := _main.strain_cue
+	cue.enabled = true   # as with the default setting, whatever this machine's hud.cfg says (not saved)
+	var pain := func() -> int:
+		var n: Variant = _main.hud_data.needs.get("pain")
+		return int((n as Dictionary).get("value", 0)) if n is Dictionary else 0
+	var pain0: int = pain.call()
+	var me: Vector3i = _main.world.snapshot.player_pos
+	var near := 0
+	for off: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1), Vector2i(1, 1),
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1)]:
+		var sq := me + Vector3i(off.x, off.y, 0)
+		if near >= 3:
+			break
+		if _main.world.snapshot.creature_at(sq) != null or await _spawn_zombie(sq):
+			near += 1
+	_check(near > 0, "zombies next to the player (%d)" % near)
+	var vulnerable := func() -> bool: return not bool(_live.cheats().get("invincible", true))
+	_check(await _until(vulnerable, ASK_TIMEOUT_MS, false), "the player isn't invincible any more")
+	if near == 0:
+		return
+	_check(await _op(func() -> void: _cp.set_frozen(false), "Unfreeze") == "", "monsters move again")
+	_clear()
+	var turns := 0
+	while cue.pain_level() == 0.0 and turns < 80 and _live.state == "running" and _worst_part() > 0.4:
+		var t := _main.world.snapshot.turn
+		if not _live.queue_action("pause"):
+			await _until(_in_loop, ASK_TIMEOUT_MS, true)
+			continue
+		var next := func() -> bool: return _main.world.snapshot.turn > t and _in_loop()
+		await _until(next, ASK_TIMEOUT_MS, true)
+		turns += 1
+	_check(await _op(func() -> void: _cp.set_frozen(true), "Freeze") == "", "monsters frozen again")
+	var me_uid := _main.aim.hits.player_uid()
+	var hits := _events.filter(func(e: Dictionary) -> bool:
+			return e.get("kind") == "damage" and int(e.get("uid", 0)) == me_uid)
+	var lost := 0
+	for e: Dictionary in hits:
+		lost += int(e.get("amount", 0))
+	var level := cue.pain_level()
+	var shows := func() -> bool: return cue.pain_shown > 0.0 and cue.visible
+	var shown := await _until(shows, 3000, false)
+	_check(hits.size() > 0 and pain.call() > pain0 and level > 0.0 and shown,
+			("hurt for real: %d hit(s), %d HP, in %d turn(s); CDDA's pain %d -> %d; StrainCue's pain edge %.2f, shown %.2f"
+			+ " (worst body part at %d%%)") % [hits.size(), lost, turns, pain0, pain.call(), level, cue.pain_shown,
+			roundi(_worst_part() * 100.0)])
+	_check(await _op_id(_live.range_heal(), "Heal") == "", "the player healed after (range_heal)")
+
+
+## The lowest hp / hp_max over the player's body parts in the snapshot (1 when none is known).
+func _worst_part() -> float:
+	var worst := 1.0
+	for b: Snapshot.BodyPart in _main.world.snapshot.player_parts:
+		if b.hp_max > 0:
+			worst = minf(worst, float(b.hp) / b.hp_max)
+	return worst
 
 
 ## Piles holding a corpse within `r` squares of `sq` (same level) in the current snapshot.
