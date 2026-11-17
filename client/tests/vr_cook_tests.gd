@@ -81,6 +81,20 @@ class Firer extends RefCounted:
 		return true
 
 
+## LiveSession's cook and fire ops with its events_arrived (the bridge's events): records each op's tag.
+class Live extends Cooker:
+	signal events_arrived(events: Array)
+	var fire_tags: Array = []
+
+	func light_fire(_pos: Vector3i, _player: Vector3i, _uid := -1.0, _type := -1.0, tag := 0) -> bool:
+		fire_tags.append(tag)
+		return true
+
+	func extinguish_fire(_pos: Vector3i, _player: Vector3i, tag := 0) -> bool:
+		fire_tags.append(tag)
+		return true
+
+
 ## Only recipe_matches (no signal): VrCook polls it.
 class Polled extends RefCounted:
 	var calls := 0
@@ -120,7 +134,10 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_cook()
 	_test_resume()
 	_test_fire()
+	_test_results()
+	_test_cook_answer()
 	_test_rig()
+	_test_rig_answers()
 	if is_instance_valid(_cook):
 		_cook.free()
 	_head.free()
@@ -655,6 +672,77 @@ func _test_fire() -> void:
 	f.free()
 
 
+## VrResults: tags in their own range; CDDA's answer for a tag in flight: done, or refused with its text, else the
+## last message since, else "Not done."; junk, other tags and texts with control characters are handled; at most
+## MAX_OPS wait; unanswered ones are dropped after FORGET_S.
+func _test_results() -> void:
+	var r := VrResults.new()
+	var t1 := r.open({"kind": "fire", "hand": 1})
+	var t2 := r.open({"kind": "cook", "uid": 100})
+	var t3 := r.open({"kind": "fire", "hand": 0})
+	var ranged := t1 == VrResults.TAG_BASE and t2 == t1 + 1 and VrResults.TAG_END < ItemActions.TAG_BASE
+	var junk: Array = [null, 5, "x", {"kind": 7, "detail": t1}, {"kind": "item_result", "detail": float(t1) + 0.5, "amount": 1},
+			{"kind": "item_result", "detail": str(t1), "amount": 1}, {"kind": "item_result", "detail": t1 + 100, "amount": 1},
+			{"kind": "item_result", "detail": INF, "amount": 1}, {"kind": "message", "text": 42}]
+	var none := r.on_events(junk).is_empty() and r.on_events("junk").is_empty() and r.waiting() == 3
+	var got := r.on_events([{"kind": "message", "text": "You need a\nsource of flame!"},
+			{"kind": "item_result", "uid": 5, "amount": 0, "detail": float(t1), "text": ""},
+			{"kind": "item_result", "amount": 0, "detail": t2, "text": "You can't see to craft!\u0007"},
+			{"kind": "message", "text": "You light a fire."},
+			{"kind": "item_result", "amount": 1, "detail": t3, "text": ""},
+			{"kind": "item_result", "amount": 1, "detail": t3, "text": ""}])
+	_check.call(ranged and none and got.size() == 3 and got[0]["info"] == {"kind": "fire", "hand": 1} and not got[0]["done"]
+			and got[0]["why"] == "You need a source of flame!" and got[1]["why"] == "You can't see to craft!"
+			and got[2]["done"] and got[2]["why"] == "" and got[2]["said"] == "You light a fire." and r.waiting() == 0,
+			"vr results: CDDA's answers by tag: refused with its text or the last message, done with the last message; junk and answered tags skipped (%s)" % [got])
+	var t4 := r.open({})
+	var no_word := r.on_events([{"kind": "item_result", "amount": 0, "detail": t4, "text": "  "}])
+	var long := r.open({})
+	var cut := r.on_events([{"kind": "item_result", "amount": 0, "detail": long, "text": "x".repeat(500)}])
+	_check.call(no_word.size() == 1 and no_word[0]["why"] == VrResults.NOT_DONE and cut.size() == 1
+			and (cut[0]["why"] as String).length() == VrResults.TEXT_MAX,
+			"vr results: refused without a word: 'Not done.'; a long text is cut")
+	for k in VrResults.MAX_OPS + 3:
+		r.open({"k": k})
+	var capped := r.waiting() == VrResults.MAX_OPS
+	r.tick(VrResults.FORGET_S * 0.5)
+	r.open({})
+	for k in 300:
+		r.tick(1.0)
+	var forgot := r.waiting() == 0
+	r._tag = VrResults.TAG_END
+	_check.call(capped and forgot and r.open({}) == VrResults.TAG_BASE,
+			"vr results: at most MAX_OPS wait; unanswered ones are forgotten; the tags wrap within their range")
+
+
+## A cook sent with VrRig's tags: CDDA refusing it puts the reason on the pot's card for REFUSED_S, over the recipe
+## lines; nothing starts by itself again for those contents; done: no line.
+func _test_cook_answer() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	var r := VrResults.new()
+	_cook.results = r
+	_answered(b, _water_in(), [_m("Soup", 720, true)])
+	var tag: int = b.cooked[0][5] if b.cooked.size() == 1 else 0
+	var sent := tag >= VrResults.TAG_BASE and r.waiting() == 1 and _lines(100)[2] == "starting Soup..."
+	for a: Dictionary in r.on_events([{"kind": "item_result", "amount": 0, "detail": tag, "text": "You can't see to craft!"}]):
+		_cook.on_result(a["info"]["uid"], a["done"], a["why"])
+	_cook.refresh()
+	var said := _lines(100).slice(2)
+	_cook.update(VrCook.REFUSED_S + 0.1)
+	_cook.refresh()
+	_check.call(sent and said == PackedStringArray(["You can't see to craft!", "+ Soup — 12 min", VrCook.PICK_HINT])
+			and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min", VrCook.PICK_HINT]) and b.cooked.size() == 1,
+			"vr cook: CDDA refusing the cook: its reason on the card a while, over the recipe lines; not sent again by itself (%s)" % [said])
+	b.refuse_cook = true
+	var pressed := _cook.press_at(_line_pt(_cook.cards[100], 2))
+	b.refuse_cook = false
+	_cook.on_result(100, true, "")
+	_cook.refresh()
+	_check.call(not pressed and r.waiting() == 0 and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min", VrCook.PICK_HINT]),
+			"vr cook: a cook the backend didn't take gives its tag back; done: no line")
+
+
 func _test_rig() -> void:
 	var rig := VrRig.new(_world, {"blink": false, "hands": "boxes"})
 	_check.call(rig.cook != null and rig.cook.get_parent() == rig and rig.cook.head == rig.camera and rig.cook.world == _world,
@@ -666,4 +754,45 @@ func _test_rig() -> void:
 	_check.call(b.is_connected("recipes_matched", rig.cook._on_matched), "vr cook: the backend's signal is connected")
 	rig.cook.backend = null
 	_check.call(not b.is_connected("recipes_matched", rig.cook._on_matched), "vr cook: ... and let go when it changes")
+	rig.free()
+
+
+## The rig hears the backend's events: a fire op goes with a tag; CDDA refusing it buzzes the hand that pressed and
+## says why by it; done says CDDA's last message there; a cook's answer goes to its card; a new backend lets go.
+func _test_rig_answers() -> void:
+	var rig := VrRig.new(_world, {"blink": false, "hands": "boxes"})
+	_root.add_child(rig)
+	var b := Live.new()
+	rig.cook.backend = b
+	rig.hook_events()
+	var me := Vector3i(5, 5, 0)
+	var e := Vector3i(6, 5, 0)
+	_world.snapshot = _snap([_heat(6, 5, false, 1, -1, 0, 0)], [], me)
+	rig.right.global_position = _over(e)
+	var pressed := rig.fire_press(rig.right)
+	var tag: int = b.fire_tags[0] if b.fire_tags.size() == 1 else 0
+	var buzz := rig.buzzes[1]
+	b.events_arrived.emit([{"kind": "message", "text": "You need a source of flame!"},
+			{"kind": "item_result", "amount": 0, "detail": tag, "text": ""}])
+	var n: Label3D = rig.notes[1]
+	var refused := n != null and n.visible and n.text == "You need a source of flame!" and rig.buzzes[1] == buzz + 1
+	rig.fire.update(VrFire.PRESS_S + 0.1, [], [])
+	rig.fire_press(rig.right)
+	var tag2: int = b.fire_tags[1] if b.fire_tags.size() == 2 else 0
+	var buzz2 := rig.buzzes[1]
+	b.events_arrived.emit([{"kind": "message", "text": "You successfully light a fire."},
+			{"kind": "item_result", "amount": 1, "detail": tag2, "text": ""}])
+	var done := rig.notes[1].text == "You successfully light a fire." and rig.buzzes[1] == buzz2
+	_check.call(pressed and tag >= VrResults.TAG_BASE and tag2 == tag + 1 and refused and done,
+			"vr fire: CDDA's answer by the hand that pressed: refused, a buzz and why; done, its message (%s)" % [b.fire_tags])
+	var ct := rig.results.open({"kind": "cook", "uid": 100, "name": "Soup"})
+	rig.cook._sent[100] = {"sig": 0, "name": "Soup", "at": 0.0}
+	rig.on_events([{"kind": "item_result", "amount": 0, "detail": ct, "text": "You can't see to craft!"}])
+	var card := rig.cook.refusal(100) == "You can't see to craft!"
+	rig.results.open({"kind": "fire", "hand": 0})
+	rig.cook.backend = null
+	rig.hook_events()
+	_check.call(card and not b.is_connected("events_arrived", rig.on_events) and rig.results.waiting() == 0
+			and rig.fire.results == rig.results and rig.cook.results == rig.results,
+			"vr cook: a cook's answer goes to its card; a new backend lets go of the old one's events and answers")
 	rig.free()
