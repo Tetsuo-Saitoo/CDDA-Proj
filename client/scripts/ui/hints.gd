@@ -29,7 +29,7 @@ const TEXTS := {
 const HUNGRY_EFFECTS := ["hunger_hungry", "hunger_very_hungry", "hunger_near_starving", "hunger_starving",
 		"hunger_famished"]
 
-var path := FILE
+var path := UserFiles.at(FILE)   # a test run's own folder
 ## False: nothing is written (main, under a test runner's own SceneTree script: a test never uses up the player's
 ## hints).
 var persist := true

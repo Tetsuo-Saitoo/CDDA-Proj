@@ -129,6 +129,7 @@ static func feed_groups_from(v: Variant) -> PackedStringArray:
 
 ## Reads the file; returns "" or why it was ignored (missing is not an error).
 func load_file(path := FILE) -> String:
+	path = UserFiles.at(path)   # a test run's own folder
 	if not FileAccess.file_exists(path):
 		return ""
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -183,6 +184,7 @@ func load_file(path := FILE) -> String:
 
 
 func save_file(path := FILE) -> Error:
+	path = UserFiles.at(path)
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)

@@ -35,6 +35,7 @@ static func text(r: VrRig) -> String:
 ## Writes `body`, and `shot` as a PNG beside it when there is one, under `dir`; then only the newest MAX_KEPT
 ## reports stay. The text file's path, "" when it couldn't be written.
 static func save(body: String, shot: Image, dir := DIR) -> String:
+	dir = UserFiles.at(dir)   # a test run's own folder
 	if DirAccess.make_dir_recursive_absolute(dir) != OK:
 		return ""
 	var stamp := Time.get_datetime_string_from_system().replace("-", "").replace(":", "").replace("T", "-")
@@ -70,7 +71,7 @@ static func prune(dir: String) -> void:
 
 ## The last `n` lines of the file at `path` (at most MAX_TAIL_BYTES from its end), cleaned.
 static func tail(path: String, n: int) -> PackedStringArray:
-	var f := FileAccess.open(path, FileAccess.READ)
+	var f := FileAccess.open(UserFiles.at(path), FileAccess.READ)
 	if f == null:
 		return PackedStringArray(["(none)"])
 	var size := f.get_length()

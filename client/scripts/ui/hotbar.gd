@@ -17,7 +17,7 @@ const DIM := Color(1, 1, 1, 0.45)
 const LIT := Color(1.0, 0.85, 0.4)
 
 var slots := PackedStringArray()   # a CDDA item type id per slot, "" = empty
-var path := FILE
+var path := UserFiles.at(FILE)   # a test run's own folder
 var actions: ItemActions
 var world: WorldView          # its snapshot and id tables
 var show_empty := false:      # main: while the Tab view is open, the bar shows even with no slot set

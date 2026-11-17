@@ -384,6 +384,7 @@ static func binding_from(e: InputEvent) -> InputEvent:
 
 ## Writes the actions that differ from their defaults. Returns "" or an error.
 static func save_bindings(path := FILE) -> String:
+	path = UserFiles.at(path)   # a test run's own folder
 	var changed := {}
 	for a in names():
 		var now := _texts(InputMap.action_get_events(a) if InputMap.has_action(a) else [])
@@ -398,6 +399,7 @@ static func save_bindings(path := FILE) -> String:
 
 ## Applies a bindings file; a missing file is fine. Returns what was wrong with it (entries skipped).
 static func load_bindings(path := FILE) -> PackedStringArray:
+	path = UserFiles.at(path)
 	var bad := PackedStringArray()
 	if not FileAccess.file_exists(path):
 		return bad
