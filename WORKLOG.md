@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — An item in your hand shows its state too: frost, heat shimmer, spoilage, its liquid level and gun grime, updated as it warms or goes off (lead-world). Client tests pass.
 - 2026-11-17 — Targeting names people: when you aim or look around, an NPC shows by name instead of "someone". Client tests pass.
 - 2026-11-17 — Item tiles, slice 4: a glass jar or clear bottle shows as glass in the Tab view and the hands panel, and an empty one says "empty". Client tests pass.
 - 2026-11-17 — A see-through container in the 3D world shows the level of a liquid only, not of beans or flour, by the same rule as the item tiles (lead-world). Client tests pass.
