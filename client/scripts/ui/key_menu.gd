@@ -45,6 +45,10 @@ var ui_slider: HSlider
 var weather_pick: OptionButton
 var volume_slider: HSlider
 var ambience_slider: HSlider
+## G6 (add_hints): the hints and their on / off box.
+var hints: Hints
+var hints_check: CheckBox
+var hints_again: Button
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -288,6 +292,28 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	_show_options()
 
 
+## G6: the Hints row under the options: show hints on / off, and "Show hints again" (Hints.reset).
+func add_hints(h: Hints) -> void:
+	hints = h
+	var row := HBoxContainer.new()
+	hints_check = CheckBox.new()
+	hints_check.text = "Hints"
+	hints_check.tooltip_text = "Short tips the first time you meet something (each shows once)."
+	hints_check.focus_mode = Control.FOCUS_NONE
+	hints_check.button_pressed = h.enabled
+	hints_check.toggled.connect(func(on: bool) -> void: hints.set_enabled(on))
+	row.add_child(hints_check)
+	hints_again = Button.new()
+	hints_again.text = "Show hints again"
+	hints_again.focus_mode = Control.FOCUS_NONE
+	hints_again.pressed.connect(func() -> void:
+		hints.reset()
+		_status.text = "Each hint shows once more.")
+	row.add_child(hints_again)
+	_box.add_child(row)
+	_box.move_child(row, mini(6, _box.get_child_count() - 1))
+
+
 func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
 	var s := HSlider.new()
 	s.min_value = limits.x
@@ -460,6 +486,8 @@ func open() -> void:
 		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
 		volume_slider.set_value_no_signal(hud.volume)
 		ambience_slider.set_value_no_signal(hud.ambience_volume)
+	if hints_check != null:
+		hints_check.set_pressed_no_signal(hints.enabled)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()
