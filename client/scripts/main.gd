@@ -256,6 +256,7 @@ func _ready() -> void:
 	inspect.hotbar = hotbar
 	inspect.opened.connect(func() -> void:
 		hotbar.show_empty = true
+		ItemTileView.stir(ItemTileView.OPEN_STIR)   # the liquids in the rows settle as it opens
 		if vr == null and hints != null:
 			hints.trigger("inspect"))
 	inspect.closed.connect(func() -> void: hotbar.show_empty = false)

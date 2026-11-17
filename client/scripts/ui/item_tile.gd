@@ -13,6 +13,9 @@ enum { S_TEMP, S_ROT, S_FILL, S_TYPE, S_SEE, S_ML, S_DIRT, S_SIZE }
 const CLEAR := Color(0, 0, 0, 0)
 const MAX_TYPE := 1 << 30          # an itype index past this is no index (IdTables checks the real end)
 const MAX_CONTENTS := 40           # characters of the contents' name in the words
+## The symbol CDDA draws liquids with: contents drawn so slosh (ItemTileView). A stand-in until the itype table
+## carries CDDA's phase (categories don't tell: water is "food"; a few "~" things are wax or gas).
+const LIQUID_SYMBOL := "~"
 ## How strong the temperature edge is (its colour's alpha).
 const FROZEN_EDGE := 1.0
 const COLD_EDGE := 0.6
@@ -24,9 +27,11 @@ const HOT_EDGE := 0.9
 ## {level: 0..1 how full, -1 no container; amount: "250 ml", "1.5 L", "" none or empty; see_through: bool;
 ##  liquid: Color of the largest content; contents: its name, "" unknown; temp: ItemLook.Temp; temp_color: Color,
 ##  its alpha the edge's strength, clear when normal; rot: permille 0..ItemLook.ROT_MAX, -1 doesn't rot;
-##  rot_color: Color, clear when it doesn't rot; grime: 0..1 a gun's fouling, -1 not a gun}.
+##  rot_color: Color, clear when it doesn't rot; grime: 0..1 a gun's fouling, -1 not a gun; sloshes: the largest
+##  content is a liquid (LIQUID_SYMBOL)}.
 static func of(state: Variant, tables: IdTables) -> Dictionary:
 	var t := {"level": -1.0, "amount": "", "see_through": false, "liquid": ItemLook.LIQUID_DEFAULT, "contents": "",
+			"sloshes": false,
 			"temp": ItemLook.Temp.NORMAL, "temp_color": CLEAR, "rot": ItemLook.NO_ROT, "rot_color": CLEAR, "grime": -1.0}
 	if not (state is Array or state is PackedInt32Array) or state.size() != S_SIZE:
 		return t
@@ -52,6 +57,7 @@ static func of(state: Variant, tables: IdTables) -> Dictionary:
 		if def != null:
 			t["liquid"] = ItemLook.liquid_color(def)
 			t["contents"] = InventoryModel.clean(def.name if def.name != "" else def.id, MAX_CONTENTS)
+			t["sloshes"] = def.symbol == LIQUID_SYMBOL
 	var dirt := ItemLook.dirt_of(state[S_DIRT])
 	t["grime"] = GunGrime.grime_for(dirt) if dirt >= 0 else -1.0
 	return t

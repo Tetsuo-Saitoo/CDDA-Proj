@@ -1141,7 +1141,7 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	var uid: int = r["uid"]
 	var tile := tile_of(uid)
 	if not tile.is_empty():   # first: drawn behind the row
-		slot.add_child(ItemTileView.new(tile, INDENT * depth))
+		slot.add_child(ItemTileView.new(tile, INDENT * depth, uid))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 0)
 	slot.add_child(v)
