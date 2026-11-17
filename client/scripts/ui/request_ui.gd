@@ -41,6 +41,10 @@ var keyboard := false
 var ui_scale := 1.0
 var widget: RequestWidget
 var request_id := 0
+## Radial menus: until this time (Time.get_ticks_msec), the next request shows as a wheel if it can be one
+## (RadialRequestWidget.fits); main sets it when E asks CDDA about an object (want_wheel). Any request ends it.
+var wheel_until := -1
+var wheel_hold := false
 var _panel: PanelContainer
 var _bottom: Control
 
@@ -106,7 +110,15 @@ func show_request(req: Dictionary) -> bool:
 	if id == null or id <= 0 or not kind is String:
 		return false
 	request_id = id
-	widget = make_widget(kind, req)
+	var wheel := wheel_until >= 0 and Time.get_ticks_msec() <= wheel_until and RadialRequestWidget.fits(req)
+	wheel_until = -1
+	if wheel:
+		var r := RadialRequestWidget.new()
+		# E already let go (a quick tap): its release won't come, so the wheel waits for a click
+		r.hold = wheel_hold and InputMap.has_action(r.release_action) and Input.is_action_pressed(r.release_action)
+		widget = r
+	else:
+		widget = make_widget(kind, req)
 	widget.direction_mapper = direction_mapper
 	if widget is TargetRequestWidget:
 		(widget as TargetRequestWidget).world_state = world_state
@@ -142,6 +154,12 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 		"world_setup":
 			return WorldSetupRequestWidget.new()
 	return PopupRequestWidget.new()   # popup; unknown kinds get their text and Cancel
+
+
+## The next request within `wait_ms` shows as a wheel if it can be one; `hold`: letting go of E picks.
+func want_wheel(wait_ms: int, hold: bool) -> void:
+	wheel_until = Time.get_ticks_msec() + clampi(wait_ms, 0, 10000)
+	wheel_hold = hold
 
 
 ## Hides the request; its widget answers nothing more.

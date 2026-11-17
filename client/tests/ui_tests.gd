@@ -32,6 +32,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_game_over(root)
 	_test_options()
 	_test_hints()
+	_test_wheel()
 	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
@@ -1204,6 +1205,96 @@ func _test_hints() -> void:
 	big.path = path
 	_check.call(big.load_file().contains("over"), "hints: an oversized file is ignored")
 	big.free()
+
+
+func _test_wheel() -> void:
+	var sink := [{"id": 10, "label": "Wash your hands"}, {"id": 11, "label": "Drink from the sink"},
+			{"id": 12, "label": "<color_red>Empty</color> it", "enabled": false}, {"id": 13, "label": "Fill a container"},
+			{"id": 14, "label": "Admire the plumbing"}]
+	var placed := RadialRequestWidget.layout(RequestWidget.entries_of({"entries": sink}))
+	var ids := placed.map(func(e: Variant) -> Variant: return null if e == null else e["id"])
+	_check.call(ids == [11, 14, 13, null, 12, null, 10, null],
+			"wheel: drink at the top, fill right, empty below, wash left, the rest in the first free slot (%s)" % [ids])
+	var dirs := [Vector2(0, -90), Vector2(70, -70), Vector2(90, 0), Vector2(0, 90), Vector2(-90, 0), Vector2(5, 5),
+			Vector2(INF, 0)].map(func(v: Vector2) -> int: return RadialRequestWidget.slot_at(v))
+	_check.call(dirs == [0, 1, 2, 4, 6, -1, -1], "wheel: slot by direction, none at the centre (%s)" % [dirs])
+	var nine := []
+	for i in 9:
+		nine.append({"id": i, "label": "x%d" % i})
+	_check.call(RadialRequestWidget.fits(_req("menu", {"entries": sink}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": nine}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": []}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": sink, "actions": PackedStringArray(["HELP"])}))
+			and not RadialRequestWidget.fits(_req("popup", {"entries": sink})),
+			"wheel: only a menu of 1 to 8 entries without extra actions")
+	_show(_req("menu", {"entries": sink}))
+	var plain := ui.widget is ListRequestWidget
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink, "title": "Sink"}))
+	var w := ui.widget as RadialRequestWidget
+	_check.call(plain and w != null and not w.hold and ui.wheel_until == -1,
+			"wheel: a menu is a list unless E asked for a wheel; the wheel is used once")
+	w.aim(Vector2(0, -100))
+	var top := w.hovered
+	_key(KEY_ENTER)
+	_check.call(top == 0, "wheel: pointing up highlights the top slot")
+	_expect({"id": 7, "entry": 11}, "wheel: Enter picks it")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	w = ui.widget as RadialRequestWidget
+	_key(KEY_5)   # slot 5 (index 4): Empty, disabled
+	var refused := answers.is_empty()
+	_key(KEY_DOWN)
+	_key(KEY_LEFT)
+	_key(KEY_ENTER)
+	_check.call(refused and w.hovered == 6, "wheel: a greyed entry can't be picked; the arrows move to a slot")
+	_expect({"id": 7, "entry": 10}, "wheel: Left then Enter picks wash")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	w = ui.widget as RadialRequestWidget
+	w.hold = true
+	var kept := not w.release() and not w.done and not w.hold
+	w.hold = true
+	w.aim(Vector2(100, 0))
+	_check.call(kept and w.release(), "wheel: letting go at the centre keeps it open; pointing right, it picks")
+	_expect({"id": 7, "entry": 13}, "wheel: letting go of E picks fill")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	_key(KEY_3)
+	_expect({"id": 7, "entry": 13}, "wheel: 3 picks the third slot")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "wheel: Esc cancels")
+	ui.wheel_until = 0   # long past: a later menu is a list again
+	_show(_req("menu", {"entries": sink}))
+	_check.call(ui.widget is ListRequestWidget, "wheel: an old E press doesn't make a later menu a wheel")
+	ui.clear()
+	var path: String = preload("res://tests/test_dir.gd").path("hud_wheel.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	menu.set_option(&"context_menu", 7)
+	var refused_bad := hs.context_menu == HudSettings.MENU_HOLD
+	menu.menu_pick.select(HudSettings.MENU_LIST)
+	menu.menu_pick.item_selected.emit(HudSettings.MENU_LIST)
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(refused_bad and hs.context_menu == HudSettings.MENU_LIST and back.context_menu == HudSettings.MENU_LIST,
+			"wheel: the F1 option is checked, set and saved (%s)" % back.context_menu)
+	menu.free()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[controls]\ncontext_menu=\"wheel\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[controls]\ncontext_menu=9\n")
+	f.close()
+	var high := HudSettings.new()
+	high.load_file(path)
+	_check.call(junk.context_menu == HudSettings.MENU_HOLD and high.context_menu == HudSettings.MENU_LIST,
+			"wheel: a non-number in the file leaves hold, too high is clamped")
 
 ## Handedness (HudSettings.main_hand, flat screen): the F1 picker sets and saves it, a bad value is ignored there and
 ## in the file; keys 1 / 2 strike with the left / right hand whichever is main; the hands panel puts the main hand on
