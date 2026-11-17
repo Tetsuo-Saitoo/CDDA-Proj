@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Client tests keep to their own folder (QA lead): in a test run the game's files under user:// (settings, key bindings, hints, hotbar, VR settings and log, bug reports, CDDA's default folder) go to that run's own folder, so a test never reads or changes the player's files and runs from several checkouts at once share none (`UserFiles`). The fork's range test has its own user folder and its turn-time check measures again before failing under load.
 - 2026-11-17 — Live item state on 3D items (lead-world): items lying near you get frost when frozen (fainter when cold), a heat shimmer when hot, a brown tint as food goes off and, in see-through containers, the liquid up to its level, once the bridge sends the states; the values are shared with the item icons. Client tests pass.
 - 2026-11-17 — Gun grime on any model (combat lead, client): GunGrime puts CDDA's fouling as a grime shell over a gun model's meshes (any .glb or prop, its own materials untouched) and is the one dirt-to-grime mapping for the viewmodel, models and icons (Live item tiles, gun part). Client tests pass.
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
