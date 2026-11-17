@@ -51,6 +51,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_model()
 	_test_caps(data)
 	_test_rows()
+	_test_tiles()
 	_test_select()
 	_test_select_more()
 	_test_drops()
@@ -397,6 +398,38 @@ func _test_rows() -> void:
 	var data: Variant = rock._get_drag_data(Vector2.ZERO)
 	_check.call(data is Dictionary and data["inspect_uid"] == ROCK and _view.column_slot("hands")._get_drag_data(Vector2.ZERO) == null,
 			"inspect: rows drag, columns don't")
+
+
+## Live item tiles: a row whose item has a live state in the snapshot gets an ItemTileView behind it (first child,
+## no mouse), the amount and a tooltip line; a row with no state, nothing to show or a junk state gets none.
+func _test_tiles() -> void:
+	var snap := _world.snapshot
+	var keep := snap.item_states
+	snap.item_states = {BOTTLE: PackedInt32Array([ItemLook.Temp.COLD, -1, 500, _it["water_clean"], 1, 250, -1]),
+			ROCK: PackedInt32Array([0, -1, 0, 0, 0, 0, -1]),   # an empty container: nothing to show
+			STONE: "junk"}
+	_view.rebuild()
+	var bottle := _view.row_slot(BOTTLE)
+	var tv := bottle.get_node_or_null("ItemTile") as ItemTileView
+	var amount := bottle.find_child("Amount", true, false) as Label
+	_check.call(tv != null and bottle.get_child(0) == tv and tv.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and is_equal_approx(tv.tile["level"], 0.5) and tv.tile["temp"] == ItemLook.Temp.COLD
+			and amount != null and amount.text == "250 ml" and bottle.tooltip_text.contains("Cold")
+			and bottle.tooltip_text.contains("250 ml clean water, 50% full") and _view.tile_of(BOTTLE) == tv.tile,
+			"inspect: a row with a live state gets its tile behind it, the amount and words (%s)"
+			% bottle.tooltip_text.replace("\n", " | "))
+	var plain := []
+	for u: int in [ROCK, WATER, STONE]:
+		var s := _view.row_slot(u)
+		if s != null and s.get_node_or_null("ItemTile") == null and s.find_child("Amount", true, false) == null \
+				and _view.tile_of(u).is_empty():
+			plain.append(u)
+	_check.call(plain.size() == 3, "inspect: no state, nothing to show or a junk state: no tile %s" % [plain])
+	var data: Variant = bottle._get_drag_data(Vector2.ZERO)
+	_check.call(data is Dictionary and data["inspect_uid"] == BOTTLE, "inspect: a row with a tile still drags")
+	snap.item_states = keep
+	_view.rebuild()
+	_check.call(_view.row_slot(BOTTLE).get_node_or_null("ItemTile") == null, "inspect: the tile goes with the state")
 
 
 static func _button(down: bool, shift := false, ctrl := false) -> InputEventMouseButton:

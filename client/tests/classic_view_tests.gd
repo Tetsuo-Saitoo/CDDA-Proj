@@ -71,6 +71,14 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	var chair := tables.index_of("furn", "f_chair")
 	sm.furn[i] = chair
 	var on_furn: String = ch.call(q)
+	var k := InputActions.prompt_of(&"use_held")
+	var said := [ContextPrompt.text(snap, tables, q, HudSettings.MENU_HOLD),
+			ContextPrompt.text(snap, tables, q, HudSettings.MENU_LIST),
+			ContextPrompt.text(snap, tables, y, HudSettings.MENU_HOLD),
+			ContextPrompt.text(null, tables, q, HudSettings.MENU_HOLD)]
+	var cn := CddaText.plain(tables.def_at("furn", chair).name).capitalize()
+	_check.call(chair > 0 and said == ["%s\n%s use   hold %s: choices" % [cn, k, k], "%s\n%s use" % [cn, k], "", ""],
+			"context prompt: the furniture you face and what E does there, none on bare floor (%s)" % [said])
 	var rock := tables.index_of("itype", "rock")
 	sm.items.append_array(PackedInt32Array([i, 1, rock, 0, 0, 0, 0, 0]))
 	var on_item: String = ch.call(q)
