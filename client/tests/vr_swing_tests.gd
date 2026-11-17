@@ -87,6 +87,14 @@ func _test_static(root: Node) -> void:
 	_check.call(tip is Vector3 and is_equal_approx((tip as Vector3).y, 1.0) and absf((tip as Vector3).x) < 0.051
 			and VrSwing.tip_of(empty, Vector3.ZERO) == null,
 			"vr swing: a held copy's tip is its farthest point from the hand (%s); no meshes: none" % [tip])
+	# a copy's live look (ItemLookView.dress) isn't part of it: moved 1 m up, the tip stays the stick's
+	var look := ItemLookView.dress(holder, PackedInt32Array([3, -1, -1, 0, 0, -1, -1]))
+	var shell := holder.get_node_or_null(ItemLookView.DRESS) as Node3D
+	if shell != null:
+		shell.position = Vector3(0, 1, 0)
+	var tip2: Variant = VrSwing.tip_of(holder, Vector3.ZERO)
+	_check.call(look and shell != null and tip2 is Vector3 and is_equal_approx((tip2 as Vector3).y, 1.0),
+			"vr swing: a copy's live look doesn't count for the tip (%s)" % [tip2])
 	holder.global_position = Vector3(NAN, 0, 0)
 	_check.call(VrSwing.tip_of(holder, Vector3.ZERO) == null, "vr swing: a bad pose has no tip")
 	holder.free()

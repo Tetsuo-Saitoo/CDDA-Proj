@@ -233,6 +233,7 @@ func refresh(force := false) -> bool:
 	for it in rows:
 		sig.append_array([it.uid, it.type])
 	if not force and sig == _sig:
+		_dress_all()
 		return true
 	_sig = sig
 	_build()
@@ -405,8 +406,20 @@ func _item_node(e: Dictionary) -> Node3D:
 		for m in v.get_children():
 			if m is GeometryInstance3D:
 				(m as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		e["visual"] = v
+		ItemLookView.dress_from(v, it.uid, world.snapshot, world.tables)
 	_label(e["name"], Vector3(0, -MAX_ITEM_M * 0.5 - 0.008, 0), 0.0002, holder)
 	return holder
+
+
+## Each item model wears its live look as items lying in the world do (ItemLookView.dress_from: frost, heat,
+## spoilage, liquid level, grime): when it is made and again on each newer snapshot.
+func _dress_all() -> void:
+	var snap := world.snapshot if world != null and is_instance_valid(world) else null
+	for e: Dictionary in items:
+		var v: Variant = e.get("visual")
+		if is_instance_valid(v) and v is Node3D:
+			ItemLookView.dress_from(v, (e["item"] as ItemRef).uid, snap, world.tables if snap != null else null)
 
 
 func _scale_item(k: int, s: float) -> void:

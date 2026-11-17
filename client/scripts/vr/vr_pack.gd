@@ -211,6 +211,8 @@ func refresh(force := false) -> bool:
 	bag = c
 	var sig := signature(col)
 	if sig == _sig and _content != null:
+		for e in items:
+			_dress(e, snap, hands.world.tables)
 		return true
 	_sig = sig
 	_build(layout(col))
@@ -582,11 +584,21 @@ func _item_node(e: Dictionary, world: WorldView) -> Node3D:
 			(m as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			if e["pending"]:
 				(m as GeometryInstance3D).transparency = DIM
+	e["visual"] = v
+	_dress(e, world.snapshot, world.tables)
 	if e["named"]:
 		var l := _label(e["name"], Vector3(0, -float(e["size"]) * 0.5 - 0.007, 0), 0.0002, holder)
 		if e["pending"]:
 			l.modulate.a = 1.0 - DIM
 	return holder
+
+
+## Item model `e` wears its live look as items lying in the world do (ItemLookView.dress_from: frost, heat, spoilage,
+## liquid level, grime), made and on each newer snapshot; none while it is dimmed (pending).
+static func _dress(e: Dictionary, snap: Snapshot, tables: IdTables) -> void:
+	var v: Variant = e.get("visual")
+	if is_instance_valid(v) and v is Node3D:
+		ItemLookView.dress_from(v, int(e["uid"]), snap if not e["pending"] else null, tables)
 
 
 func _box(size: Vector3, pos: Vector3, mat: String) -> MeshInstance3D:
