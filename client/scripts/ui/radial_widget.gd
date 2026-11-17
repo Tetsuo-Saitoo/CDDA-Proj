@@ -9,6 +9,7 @@ extends RequestWidget
 ## main asked for it (E on an object) and fits() says it can be one; else CDDA's list as before.
 
 const SLOTS := 8
+const TAP_MS := 250                  # E let go this soon after its press: a tap, CDDA's default entry
 const RADIUS := 150.0
 const INNER := 42.0                  # the dead centre: nothing highlighted
 ## Slot -> the words that put an entry there; slot 0 is the top, then clockwise. Whole words or phrases, lower case.
@@ -33,10 +34,14 @@ const COLOR_GREY := Color(0.5, 0.5, 0.5)
 var slots: Array = []
 ## The highlighted slot, -1 none.
 var hovered := -1
-## Hold mode: letting go of `release_action` picks the highlighted slot (none highlighted: the wheel stays, as in
-## click mode).
+## Hold mode: letting go of `release_action` picks the highlighted slot; none highlighted, a tap (let go before
+## tap_until) picks CDDA's default (the request's `selected`), a longer hold leaves the wheel up as in click mode.
 var hold := false
 var release_action := &"use_held"
+## Until this Time.get_ticks_msec() letting go of E counts as a tap (RequestUI: the E press + TAP_MS).
+var tap_until := -1
+## The slot of the entry CDDA highlights (its Enter's pick), -1 none or disabled.
+var default_slot := -1
 var _aim := Vector2.ZERO
 var _wheel: Control
 var _about: Label
@@ -69,6 +74,16 @@ static func layout(entries: Array) -> Array:
 	return out
 
 
+## The id of the entry the request's `selected` (an index into its entries) names; null when missing, out of
+## range or malformed (an older bridge sends none).
+static func default_id(req: Dictionary) -> Variant:
+	var list: Variant = req.get("entries")
+	var i := int_of(req, "selected", -1, -1, MAX_ENTRIES)
+	if not list is Array or i < 0 or i >= (list as Array).size() or not list[i] is Dictionary:
+		return null
+	return id_value((list[i] as Dictionary).get("id"))
+
+
 ## The slot `label`'s words name (SLOT_WORDS), -1 none.
 static func slot_for(label: String) -> int:
 	var words := " %s " % _words(CddaText.plain(label).to_lower())
@@ -97,6 +112,10 @@ func setup(req: Dictionary) -> void:
 	super.setup(req)
 	add_header(req)
 	slots = layout(entries_of(req))
+	var d: Variant = default_id(req)
+	for s in SLOTS:
+		if d != null and slots[s] != null and slots[s]["id"] == d and slots[s]["enabled"]:
+			default_slot = s
 	_wheel = Control.new()
 	_wheel.custom_minimum_size = Vector2.ONE * (RADIUS * 2.0 + 8.0)
 	_wheel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -108,8 +127,9 @@ func setup(req: Dictionary) -> void:
 	_about.custom_minimum_size = Vector2(_wheel.custom_minimum_size.x, 0)
 	_about.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	add_child(_about)
-	add_hint("Point at a choice and %s; 1-%d pick, Esc cancels." % [
-			"let go of E" if hold else "click or press E", SLOTS])
+	add_hint("Point at a choice and %s; 1-%d pick, Esc cancels.%s" % [
+			"let go of E" if hold else "click or press E", SLOTS,
+			" A tap of E: %s." % CddaText.plain(str(slots[default_slot]["label"])).left(40) if default_slot >= 0 else ""])
 
 
 ## Moves the highlight to where `v` (from the centre) points.
@@ -126,9 +146,12 @@ func pick(s: int) -> bool:
 	return true
 
 
-## Hold mode's letting go: picks the highlighted slot; nothing highlighted, the wheel stays (click mode from now).
+## Hold mode's letting go: picks the highlighted slot; nothing highlighted, a tap picks the default, else the wheel
+## stays (click mode from now).
 func release() -> bool:
 	hold = false
+	if hovered < 0 and Time.get_ticks_msec() <= tap_until:
+		return pick(default_slot)
 	return pick(hovered)
 
 
@@ -212,6 +235,8 @@ func _draw_wheel() -> void:
 			pts.append(c + Vector2(cos(a), sin(a)) * INNER)
 		var col := COLOR_EMPTY if e == null else (COLOR_HOVER if s == hovered and e["enabled"] else COLOR_SLOT)
 		_wheel.draw_colored_polygon(pts, col)
+		if s == default_slot:   # what a tap of E picks
+			_wheel.draw_polyline(pts + PackedVector2Array([pts[0]]), COLOR_TEXT, 2.0)
 		var at := c + Vector2(cos(mid), sin(mid)) * (INNER + RADIUS) * 0.5
 		_wheel.draw_string(font, at + Vector2(-4, -18), str(s + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COLOR_GREY)
 		if e != null:

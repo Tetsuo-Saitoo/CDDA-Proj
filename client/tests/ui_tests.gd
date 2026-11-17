@@ -1266,6 +1266,27 @@ func _test_wheel() -> void:
 	_show(_req("menu", {"entries": sink}))
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "wheel: Esc cancels")
+	var picks := [RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": 1})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": 99})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": "1"}))]
+	_check.call(picks == [11, null, null, null], "wheel: `selected` names an entry by index; missing or bad: none (%s)"
+			% [picks])
+	ui.want_wheel(5000, true)   # E let go already (no key is down in the tests): a tap
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	_expect({"id": 7, "entry": 11}, "wheel: a tap of E picks CDDA's default without showing the wheel")
+	ui.want_wheel(5000, true)
+	_show(_req("menu", {"entries": sink, "selected": 2}))   # the default is greyed (hostile): no pick
+	w = ui.widget as RadialRequestWidget
+	_check.call(answers.is_empty() and w != null and w.default_slot == -1 and not w.done,
+			"wheel: a greyed or missing default leaves the wheel up for a click")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink, "selected": 3}))
+	w = ui.widget as RadialRequestWidget
+	w.hold = true
+	w.tap_until = Time.get_ticks_msec() + 10000
+	_check.call(w.default_slot == 2 and w.release(), "wheel: letting go at the centre soon after E picks the default")
+	_expect({"id": 7, "entry": 13}, "wheel: the tap's default is fill")
 	ui.want_wheel(5000, false)
 	_show(_req("menu", {"entries": sink}))
 	var stick := InputEventJoypadMotion.new()
