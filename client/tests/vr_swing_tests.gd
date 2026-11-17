@@ -7,7 +7,8 @@ extends RefCounted
 ## hand, a hand off the figure, with a menu open,
 ## from an untracked hand, the pack hand, a hand racking the gun or pulling an item in, the gun hand with a finger on
 ## the trigger or a hand steadying the other hand's two-handed item; a refused queue sends nothing on; a held plank
-## reaches where a fist doesn't, with either end. No XR runtime: the test places the controllers and sets their
+## reaches where a fist doesn't, with either end; a faster fist into furniture next to the player smashes its square.
+## No XR runtime: the test places the controllers and sets their
 ## speed.
 ## Run by run_tests.gd.
 
@@ -18,6 +19,7 @@ const ZUID := 8589934593
 const DT := 0.02
 const FAST := 3.0
 const SLOW := 0.5
+const SMASH := VrSwing.SMASH_SPEED + 0.5
 
 var _check: Callable
 var _it := {}
@@ -59,6 +61,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_feedback()
 	_test_hands()
 	_test_blocked()
+	_test_smash()
 	_test_held_item()
 	_test_steadying()
 	if _zdef != null:
@@ -316,6 +319,74 @@ func _test_hands() -> void:
 	_rig.settings["main_hand"] = "right"
 	_rig.left.global_position = Vector3(0, -50, 0)
 	_rest()
+
+
+## A fast fist whose line ends in furniture next to the player (no creature on it) smashes that square: SMASH_AT
+## through the queue with AimController.smash_square; not a strike-fast hand, a fist short of it or the bare floor;
+## one per swing; a refused queue leaves no square behind; none with a menu open.
+func _test_smash() -> void:
+	var up := P + Vector3i(0, -1, 0)   # away from the zombie
+	var sm: Snapshot.Submap = _world.snapshot.submaps.get(CddaCoords.ms_to_sm(up))
+	if sm == null:
+		_check.call(false, "vr swing: the square past the player is loaded")
+		return
+	var l := CddaCoords.ms_to_local(up)
+	var idx := l.y * CddaCoords.SEEX + l.x
+	var old: int = sm.furn[idx]
+	var from := _world.coords.ms_center_to_world(P) + Vector3(0, 0.5, 0)
+	var to := _world.coords.ms_center_to_world(up) + Vector3(0, 0.5, 0)
+	var dir := from.direction_to(to)
+	var edge := from.lerp(to, 0.5)   # between the two squares
+	var hand_at := func(back: float) -> void:   # the hand `back` before the edge, pointing over it
+		_rig.right.global_transform = Transform3D(Basis.looking_at(dir, Vector3.UP), edge - dir * back)
+	var n := _sent.size()
+	var strikes := _rig.swing.strikes
+	sm.furn[idx] = 0
+	hand_at.call(0.05)
+	_swing(1, SMASH)
+	var bare := _sent.size() == n
+	sm.furn[idx] = 1
+	_swing(1, VrSwing.SWING_SPEED + 0.2)
+	var slow := _sent.size() == n
+	hand_at.call(VrSwing.FIST_M + 0.1)
+	_swing(1, SMASH)
+	var short := _sent.size() == n
+	hand_at.call(0.05)
+	_swing(1, SMASH)
+	var sq: Variant = _aim.smash_square
+	_check.call(bare and slow and short and _sent.size() == n + 1 and _sent.back() == AimController.SMASH_AT
+			and sq == up and _rig.swing.smashes == 1 and _rig.swing.strikes == strikes,
+			"vr swing: a fast fist into furniture next to you smashes its square; not a strike-fast hand, a fist short of it or the bare floor (%s %s %s %s %s)"
+			% [bare, slow, short, _sent.slice(n), sq])
+	# smash_at's reach is bounded (a bad pose can't cast far): over MELEE_REACH_M it is that; not above 0 or not a
+	# number: nothing (the line from 0.5 m past MELEE_REACH_M is clear up to the furniture)
+	var near := edge - dir * 0.05
+	var o_in := edge - dir * (AimController.MELEE_REACH_M - 0.5)
+	var o_out := edge - dir * (AimController.MELEE_REACH_M + 0.5)
+	var path: Dictionary = _aim.look_ray.cast(o_out, dir, AimController.MELEE_REACH_M + 1.0, false, false)
+	var reach := [_aim.smash_at(o_in, dir, P, false, 100.0), _aim.smash_at(o_out, dir, P, false, 100.0),
+			_aim.smash_at(near, dir, P, false, 0.0), _aim.smash_at(near, dir, P, false, -1.0),
+			_aim.smash_at(near, dir, P, false, NAN), _aim.smash_at(near, dir, P, false, INF)]
+	_check.call(path.get("square") == up and path.get("what") == "furniture" and reach == [up, null, null, null, null, null],
+			"vr swing: smash_at's reach is capped at MELEE_REACH_M; 0, negative or not finite: nothing (%s %s)" % [path, reach])
+	_swing(1, SMASH)
+	var once := _sent.size() == n + 1
+	_aim.smash_square = null
+	_swing(1, SLOW, VrSwing.GAP_S + 0.01)
+	_accept = false
+	_swing(1, SMASH)
+	_accept = true
+	_check.call(once and _sent.size() == n + 2 and _aim.smash_square == null and _rig.swing.smashes == 1,
+			"vr swing: one smash per swing; the queue refusing it leaves no square behind")
+	_swing(1, SLOW, VrSwing.GAP_S + 0.01)
+	_rig.press(_rig.left, "menu_button")
+	_swing(1, SMASH)
+	var with_menu := _sent.size() == n + 2 and _rig.menu_open()
+	_rig.press(_rig.left, "menu_button")
+	_check.call(with_menu and not _rig.menu_open(), "vr swing: the settings menu open: no smash")
+	sm.furn[idx] = old
+	_aim.smash_square = null
+	_swing(1, SLOW, VrSwing.GAP_S + 0.01)
 
 
 func _test_blocked() -> void:

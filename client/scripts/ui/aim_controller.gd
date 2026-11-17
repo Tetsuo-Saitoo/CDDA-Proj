@@ -433,12 +433,14 @@ static func cdda_action(act: String) -> String:
 
 
 ## The square next to `me` (this level, one of the 8 around) whose wall, window, door or furniture (SMASH_WHAT) the
-## line from `origin` along `dir` meets first within MELEE_REACH_M, creatures left out; null when it meets
-## nothing, something else first (a floor, stairs) or a farther square. `skip_start` as LookRay.cast.
-func smash_at(origin: Vector3, dir: Vector3, me: Vector3i, skip_start := true) -> Variant:
-	if look_ray == null or not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 1e-12:
+## line from `origin` along `dir` meets first within `reach` (MELEE_REACH_M at most; VR's hand: its striking line),
+## creatures left out; null when it meets nothing, something else first (a floor, stairs) or a farther square, or
+## for a reach not above 0 or not finite. `skip_start` as LookRay.cast.
+func smash_at(origin: Vector3, dir: Vector3, me: Vector3i, skip_start := true, reach := MELEE_REACH_M) -> Variant:
+	if look_ray == null or not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 1e-12 \
+			or not is_finite(reach) or reach <= 0.0:
 		return null
-	var r := look_ray.cast(origin, dir.normalized(), MELEE_REACH_M, false, skip_start)
+	var r := look_ray.cast(origin, dir.normalized(), minf(reach, MELEE_REACH_M), false, skip_start)
 	if not r.get("hit", false) or not str(r.get("what", "")) in SMASH_WHAT or not r.get("square") is Vector3i:
 		return null
 	var d: Vector3i = (r["square"] as Vector3i) - me
