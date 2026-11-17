@@ -2,7 +2,7 @@ class_name ItemLookView
 extends Node3D
 ## Live item state on the 3D items lying in the world (block "Live item tiles"; values and colours: ItemLook):
 ## frost on cold and frozen items, a heat shimmer on hot ones, a spoilage tint on food going off, and the
-## liquid in a see-through container up to its level, grime on a fouled gun. Each such item near `focus` gets a
+## liquid in a see-through container up to its level (ItemLook.is_liquid), grime on a fouled gun. Each such item near `focus` gets a
 ## thin see-through shell over its own mesh (its model's meshes, or its placeholder's box) with
 ## shaders/item_state.gdshader, plus GunGrime's shells under those meshes for a fouled gun (lying guns are drawn
 ## as shared multimeshes, so the grime can't go on the gun's own meshes); items with nothing to show get none,
@@ -50,16 +50,27 @@ func set_states(states: Dictionary) -> void:
 	_states.clear()
 	for uid: Variant in states:
 		var s: Variant = states[uid]
-		if uid is int and s is PackedInt32Array and (s as PackedInt32Array).size() == S_SIZE and shows(s):
+		if uid is int and s is PackedInt32Array and (s as PackedInt32Array).size() == S_SIZE \
+				and shows(s, world.tables if world != null else null):
 			_states[uid] = s
 	_pick_in = 0.0
 
 
 ## Whether a state has anything to show on a 3D item: cold, frozen or hot, rot past ItemLook.TINT_FROM, or a
-## see-through container holding some liquid, or a fouled gun.
-static func shows(s: PackedInt32Array) -> bool:
+## see-through container holding some liquid (level_of), or a fouled gun.
+static func shows(s: PackedInt32Array, tables: IdTables = null) -> bool:
 	return ItemLook.temp_of(s[S_TEMP]) != ItemLook.Temp.NORMAL or ItemLook.rot_strength(ItemLook.rot_of(s[S_ROT])) > 0.0 \
-			or (s[S_SEE] == 1 and ItemLook.level(s[S_FILL]) > 0.0) or grime_of(s) > 0.0
+			or level_of(s, tables) > 0.0 or grime_of(s) > 0.0
+
+
+## How high a see-through container's contents show, 0..1: its fill when they are a liquid (ItemLook.is_liquid of
+## its fill_type in `tables`; without tables taken as one), else 0 (opaque, empty, solid contents).
+static func level_of(s: PackedInt32Array, tables: IdTables = null) -> float:
+	if s[S_SEE] != 1:
+		return 0.0
+	if tables != null and not ItemLook.is_liquid(tables.def_at("itype", s[S_TYPE]) if s[S_TYPE] > 0 else null):
+		return 0.0
+	return ItemLook.level(s[S_FILL])
 
 
 ## A gun's fouling as grime 0..1 (GunGrime, the held gun's mapping); 0 for a clean gun or anything else.
@@ -126,7 +137,7 @@ func _pick() -> void:
 			sh.set_meta(&"itype", slot[1])
 			add_child(sh)
 			_shells[uid] = sh
-		paint(sh, _states[uid], liquid_of(_states[uid], world.tables))
+		paint(sh, _states[uid], world.tables)
 		keep[uid] = true
 	for uid: int in _shells.keys():
 		if not keep.has(uid):
@@ -174,14 +185,16 @@ static func make_shell(prop: PropCatalog.Prop, itype: int) -> Node3D:
 	return sh
 
 
-## Sets a shell's look from a state (S_SIZE values as the snapshot sends them) and the liquid's colour.
-static func paint(sh: Node3D, s: PackedInt32Array, liquid: Color) -> void:
+## Sets a shell's look from a state (S_SIZE values as the snapshot sends them); `tables` tell what the contents are
+## (level_of) and their colour (liquid_of).
+static func paint(sh: Node3D, s: PackedInt32Array, tables: IdTables = null) -> void:
 	var mat := sh.get_meta(&"mat") as ShaderMaterial
 	var temp := ItemLook.temp_of(s[S_TEMP])
 	mat.set_shader_parameter(&"frost", 1.0 if temp == ItemLook.Temp.FROZEN else (COLD_FROST if temp == ItemLook.Temp.COLD else 0.0))
 	mat.set_shader_parameter(&"heat", 1.0 if temp == ItemLook.Temp.HOT else 0.0)
 	mat.set_shader_parameter(&"tint", ItemLook.rot_tint(ItemLook.rot_of(s[S_ROT])))
-	var lv := ItemLook.level(s[S_FILL]) if s[S_SEE] == 1 else 0.0
+	var lv := level_of(s, tables)
+	var liquid := liquid_of(s, tables)
 	sh.set_meta(&"level", lv)
 	mat.set_shader_parameter(&"liquid", Color(liquid.r, liquid.g, liquid.b, LIQUID_ALPHA if lv > 0.0 else 0.0))
 	GunGrime.apply(sh, grime_of(s))   # a grime shell under each of the shell's meshes; none when clean
@@ -205,15 +218,16 @@ static func liquid_of(s: PackedInt32Array, tables: IdTables) -> Color:
 
 
 ## Dresses `visual`, a copy of an item made elsewhere (ItemVisual.make: in a hand, the VR tray or pack), in state
-## `s` (as set_states takes: S_SIZE values, anything else or nothing to show undresses it): a node named DRESS under
+## `s` (as set_states takes: S_SIZE values, anything else or nothing to show undresses it; `tables` as paint takes
+## them): a node named DRESS under
 ## it with a shell over each of its own meshes (at most MAX_DRESS_MESHES, its direct MeshInstance3D children),
 ## painted like the shells in the world, the liquid's surface kept level as the copy moves. Again on the same copy:
 ## repainted, not rebuilt. True when it wears the look.
-static func dress(visual: Node3D, s: Variant, liquid := ItemLook.LIQUID_DEFAULT) -> bool:
+static func dress(visual: Node3D, s: Variant, tables: IdTables = null) -> bool:
 	if visual == null or not is_instance_valid(visual):
 		return false
 	var held := visual.get_node_or_null(DRESS) as Node3D
-	if not (s is PackedInt32Array and (s as PackedInt32Array).size() == S_SIZE and shows(s)):
+	if not (s is PackedInt32Array and (s as PackedInt32Array).size() == S_SIZE and shows(s, tables)):
 		if held != null:
 			visual.remove_child(held)
 			held.queue_free()
@@ -223,14 +237,13 @@ static func dress(visual: Node3D, s: Variant, liquid := ItemLook.LIQUID_DEFAULT)
 		if held == null:
 			return false
 		visual.add_child(held)
-	paint(held, s, liquid)
+	paint(held, s, tables)
 	return true
 
 
-## dress() with item `uid`'s state from a snapshot (Snapshot.item_states) and its contents' colour from `tables`.
+## dress() with item `uid`'s state from a snapshot (Snapshot.item_states).
 static func dress_from(visual: Node3D, uid: int, snap: Snapshot, tables: IdTables) -> bool:
-	var s: Variant = snap.item_states.get(uid) if snap != null else null
-	return dress(visual, s, liquid_of(s, tables) if s is PackedInt32Array else ItemLook.LIQUID_DEFAULT)
+	return dress(visual, snap.item_states.get(uid) if snap != null else null, tables)
 
 
 static func _dress_shell(visual: Node3D) -> Node3D:

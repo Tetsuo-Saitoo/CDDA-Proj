@@ -39,6 +39,8 @@ const FRESH_COLOR := Color(0.3, 0.72, 0.3)
 const OLD_COLOR := Color(0.82, 0.72, 0.24)
 const ROTTEN_COLOR := Color(0.38, 0.26, 0.12)
 const LIQUID_DEFAULT := Color(0.5, 0.64, 0.82)
+## The map symbol CDDA gives liquids: is_liquid's fallback for a bridge that sends no phase.
+const LIQUID_SYMBOL := "~"
 
 
 ## A temperature value from the snapshot: Temp, anything else NORMAL.
@@ -110,6 +112,13 @@ static func rot_tint(rot: int) -> Color:
 ## How full, 0..1, from a fill value (permille; NO_FILL and anything malformed is 0).
 static func level(fill: Variant) -> float:
 	return maxi(fill_of(fill), 0) / float(FILL_MAX)
+
+
+## Whether contents of item type `def` are a liquid (a see-through container shows their level, an icon's surface
+## sloshes): CDDA's phase for the type (IdTables.Def.phase), else, with no phase (an older bridge), its "~" symbol.
+## The type's phase: frozen water is still a liquid (the item's temp says it is frozen). null: no.
+static func is_liquid(def: IdTables.Def) -> bool:
+	return def != null and (def.phase == "liquid" or (def.phase == "" and def.symbol == LIQUID_SYMBOL))
 
 
 ## The colour a liquid shows in: its itype's CDDA colour (muted, CddaPalette), else LIQUID_DEFAULT.
