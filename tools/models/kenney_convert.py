@@ -83,7 +83,9 @@ GLBS = [
 # (file, out name, metres per unit up and front to back, metres per unit across, {OBJ group: part},
 #  [(N, height, x0, z0, x1, z1, part or None)] in metres from the bottom centre, x before the widening,
 #  optional {sy: metres per unit up, cut_above: drop faces reaching above (m), lid_above: faces wholly above
-#  (m) are the `lid`, inside: (height, x0, z0, x1, z1, material) a visible plane})
+#  (m) are the `lid`, inside: (height, x0, z0, x1, z1, material) a visible plane, turns: quarter turns about
+#  up (+X to -Z), fit: (x0, z0, x1, z1) the rect in metres about the tile centre the faces are stretched to,
+#  for a join piece that doesn't sit centred; then surfaces are in those metres too})
 KITCHEN_X = 0.995 / 4.3
 OBJS = [
     ('kitchenStove', 'f_oven', 0.2, KITCHEN_X, {}, []),
@@ -97,6 +99,11 @@ OBJS = [
         (1, 0.17, -0.36, -0.33, 0.36, 0.33, None),
         (2, 0.475, -0.36, -0.33, 0.36, 0.33, None)]),
     ('kitchenCabinet', 'f_counter', 0.2, KITCHEN_X, {}, [(1, 0.84, -0.41, -0.37, 0.41, 0.43, None)]),
+    # The counter's `corner` join piece (contracts/assets.md "Placement"): the kit's inner corner, turned so
+    # its walls are left and back, flush with the counters' backs (0.45 m behind the tile centre) and reaching
+    # the tile's right and front edges, where the two runs go on.
+    ('kitchenCabinetCornerInner', 'f_counter_corner', 0.2, 0.2, {}, [(1, 0.84, -0.37, -0.37, 0.47, 0.47, None)],
+     {'turns': 1, 'fit': (-0.45, -0.45, 0.4975, 0.4975)}),
     ('kitchenSink', 'f_sink', 0.2, KITCHEN_X, {}, [(1, 0.64, -0.27, -0.18, 0.27, 0.24, None)]),
     ('kitchenCabinetDrawer', 'f_dresser', 0.2, KITCHEN_X, {'drawerBottom': 'drawer_1', 'drawerTop': 'drawer_2'}, [
         (1, 0.115, -0.34, -0.18, 0.34, 0.24, 'drawer_1'),
@@ -491,10 +498,18 @@ def convert_obj(name, out, unit, sx, parts, surfaces, opts):
         raise ValueError('a part is missing')
     # Front -Z -> +Z (turn 180 about Y), metres, bottom centre at the origin (of the faces kept).
     pts = [[-v[0] * sx, v[1] * sy, -v[2] * unit] for v in vs]
+    for _ in range(opts.get('turns', 0)):   # a quarter turn about +Y: +X goes to -Z (handedness kept)
+        pts = [[q[2], q[1], -q[0]] for q in pts]
     lo, hi = bounds([pts[i] for t in faces.values() for f in t.values() for tri in f for i in tri])
-    c = [(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]
-    pts = [[q[0] - c[0], q[1] - c[1], q[2] - c[2]] for q in pts]
-    size = [round(hi[i] - lo[i], 4) for i in range(3)]
+    if opts.get('fit'):
+        x0, z0, x1, z1 = opts['fit']
+        fx, fz = (x1 - x0) / (hi[0] - lo[0]), (z1 - z0) / (hi[2] - lo[2])
+        pts = [[x0 + (q[0] - lo[0]) * fx, q[1] - lo[1], z0 + (q[2] - lo[2]) * fz] for q in pts]
+        size = [round(x1 - x0, 4), round(hi[1] - lo[1], 4), round(z1 - z0, 4)]
+    else:
+        c = [(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]
+        pts = [[q[0] - c[0], q[1] - c[1], q[2] - c[2]] for q in pts]
+        size = [round(hi[i] - lo[i], 4) for i in range(3)]
     binc = bytearray()
     j = {'asset': {'version': '2.0', 'generator': 'CDDA-3D Kenney conversion'}, 'scene': 0,
          'scenes': [{'name': out, 'nodes': [0]}], 'nodes': [{'name': out, 'children': []}],

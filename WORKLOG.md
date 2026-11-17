@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
 - 2026-11-16 — Kenney bin, chest, workbench and open crate (lead-world): the bin's and the chest's lids lift by hand like the placeholders' did, and items lie inside them, on the workbench and in the open crate. Client tests pass.

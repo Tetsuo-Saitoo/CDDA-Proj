@@ -960,7 +960,14 @@ func _test_repo_models(repo: Callable) -> void:
 				var why := model_fault(reg.models.get_model(e.model), e.kind)
 				if not why.is_empty():
 					bad.append("%s: %s" % [e.model, why])
-	_check.call(seen.size() >= 58 and bad.is_empty() and reg.all_warnings().is_empty(),
+				for piece: String in e.joins:
+					var p: String = e.joins[piece]
+					if not seen.has(p + "|join"):
+						seen[p + "|join"] = true
+						var pw := piece_fault(reg.models.get_model(p))
+						if not pw.is_empty():
+							bad.append("%s: %s" % [p, pw])
+	_check.call(seen.size() >= 59 and bad.is_empty() and reg.all_warnings().is_empty(),
 			"the game's %d models load, keep to the budgets and sit right %s %s" % [seen.size(), bad, reg.all_warnings()])
 	var fridge := reg.models.get_model("furniture/f_fridge.glb")
 	var cup := reg.models.get_model("furniture/f_cupboard.glb")
@@ -988,10 +995,28 @@ func _test_repo_models(repo: Callable) -> void:
 			and dresser.movers.all(func(v: ModelLibrary.Mover) -> bool: return v.axis.is_equal_approx(Vector3.BACK) and v.surfaces.size() == 1)
 			and sealed != null and kinds.call(sealed) == [] and sealed.surfaces.is_empty(),
 			"the dresser's two drawers slide to the front, an item surface in each; the sealed crate has no parts")
+	var corner := reg.models.get_model("furniture/f_counter_corner.glb")
+	var cb := corner.aabb if corner != null else AABB()
+	_check.call(reg.entry("f_counter", "furniture").joins.get("corner") == "furniture/f_counter_corner.glb" and corner != null
+			and cb.position.is_equal_approx(Vector3(-0.45, 0.0, -0.45)) and cb.end.x > 0.49 and cb.end.z > 0.49 and corner.surfaces.size() == 1,
+			"the counter's corner piece: flush with the counters' backs on its left and back, out to the tile's edges where the runs go on %s" % cb)
 
 
 ## Why a model breaks docs/MODELS.md ("" when it doesn't): triangle and texture budgets by kind, the bottom
 ## centre at the origin, items of a real size, furniture inside its 1 m tile and one storey.
+## A join piece (registry `joins`): the furniture budgets, standing on the floor inside its tile; unlike a
+## lone model it needn't be centred (a corner reaches the tile's edges only where its runs go on).
+static func piece_fault(m: ModelLibrary.Model) -> String:
+	if m == null:
+		return "doesn't load"
+	var box := m.aabb
+	if m.triangles > 15000 or m.image_bytes > 2048 * 2048 * 4:
+		return "over budget (%d triangles, %d bytes of texture)" % [m.triangles, m.image_bytes]
+	if absf(box.position.y) > 0.01 or box.position.x < -0.5 or box.position.z < -0.5 or box.end.x > 0.5 or box.end.z > 0.5 or box.size.y > 3.0:
+		return "not on the floor inside its tile %s" % box
+	return ""
+
+
 static func model_fault(m: ModelLibrary.Model, kind: String) -> String:
 	if m == null:
 		return "doesn't load"
