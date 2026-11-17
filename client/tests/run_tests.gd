@@ -475,6 +475,13 @@ func _test_id_tables(t: IdTables) -> void:
 	var base := {"generation": 3, "ter": [{"id": "t_null"}, {"id": "t_x", "flags": ["FLAT"], "connect_groups": ["WALL"]}],
 			"furn": [{"id": "f_null"}], "trap": [], "field": [], "itype": [{"id": ""}, {"id": "i_x", "volume_ml": 250}]}
 	_check(IdTables.from_data(base).is_valid(), "small tables valid")
+	var phased: Dictionary = base.duplicate(true)
+	phased["itype"].append_array([{"id": "i_water", "phase": "liquid"}, {"id": "i_odd", "phase": "lava"},
+			{"id": "i_gas", "phase": "gas"}])
+	var pt := IdTables.from_data(phased)
+	_check(pt.is_valid() and pt.def_named("itype", "i_water").phase == "liquid" and pt.def_named("itype", "i_gas").phase == "gas"
+			and pt.def_named("itype", "i_odd").phase == "" and pt.def_named("itype", "i_x").phase == "",
+			"itype phase: CDDA's four kept; unknown or missing: \"\"")
 	var bad := func(f: Callable, what: String) -> void:
 		var d: Dictionary = base.duplicate(true)
 		f.call(d)
@@ -488,6 +495,8 @@ func _test_id_tables(t: IdTables) -> void:
 	bad.call(func(d: Dictionary) -> void: d["ter"][1] = 5, "row not an object")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["id"] = "t".repeat(500), "id too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["id"] = 7, "id not a string")
+	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = 1, "phase not a string")
+	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = "p".repeat(500), "phase too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["name"] = "n".repeat(5000), "name too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = "FLAT", "flags not a list")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = [1], "flag not a string")

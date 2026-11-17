@@ -2,6 +2,7 @@
 
 - 2026-11-17 — Off hand holds a second item: H takes the item under the crosshair or in the tray into your off hand; in the Tab view drag a carried item onto a hand to hold it there, or onto its own pocket to put it away; in VR an item you take out of the pack is held in that hand once you carry it away. Client tests pass.
 - 2026-11-17 — Frost, heat, spoilage, liquid and grime now show on items in reach too: those lie as physics bodies, and the look follows the body instead of hiding with the static copy (lead-world). Client tests pass.
+- 2026-11-17 — The client reads each item type's phase (solid, liquid, gas, plasma) from the item table; in the Tab view only liquids slosh now, and frozen ones don't. Client tests pass.
 - 2026-11-17 — Item tiles, slice 2: in the Tab view the fill line of a liquid sloshes and settles when the view opens or you pick the item up to drag it. Client tests pass.
 - 2026-11-17 — Pain and stamina at the screen's edges (combat lead): pain greys and softly blurs the edges of the view, more the worse it is; low stamina darkens them. Both fade steadily and turn off with the Hurt tint box. Flat screen only. Client tests pass.
 - 2026-11-17 — VR muzzle flash (combat lead): a gun held in VR now flashes at its muzzle when a round goes off, like the flat screen's: under 3 times a second, none with a suppressor or with the flash setting off. Client tests pass.
