@@ -960,7 +960,7 @@ func _test_repo_models(repo: Callable) -> void:
 				var why := model_fault(reg.models.get_model(e.model), e.kind)
 				if not why.is_empty():
 					bad.append("%s: %s" % [e.model, why])
-	_check.call(seen.size() >= 52 and bad.is_empty() and reg.all_warnings().is_empty(),
+	_check.call(seen.size() >= 56 and bad.is_empty() and reg.all_warnings().is_empty(),
 			"the game's %d models load, keep to the budgets and sit right %s %s" % [seen.size(), bad, reg.all_warnings()])
 	var fridge := reg.models.get_model("furniture/f_fridge.glb")
 	var cup := reg.models.get_model("furniture/f_cupboard.glb")
@@ -974,6 +974,14 @@ func _test_repo_models(repo: Callable) -> void:
 			and kinds.call(reg.models.get_model("furniture/f_counter.glb")) == []
 			and reg.models.get_model("furniture/f_bookcase.glb").surfaces.size() == 4,
 			"the fridge's and the cupboard's doors open outward, the fridge's bins ride its door, shelves are surfaces; the counter's door stays shut")
+	var lifts := func(m: ModelLibrary.Model) -> bool:   # one lid, its middle rising as it opens
+		return m != null and kinds.call(m) == ["lid"] and m.movers.all(func(v: ModelLibrary.Mover) -> bool: return (Basis(v.axis, v.max_amount) * v.size.get_center()).y > v.size.get_center().y + 0.05)
+	var bin := reg.models.get_model("furniture/f_trashcan.glb")
+	var chest := reg.models.get_model("furniture/f_chest.glb")
+	_check.call(lifts.call(bin) and bin.surfaces.size() == 1 and lifts.call(chest) and chest.surfaces.size() == 1
+			and reg.models.get_model("furniture/f_workbench.glb").surfaces.size() == 1
+			and reg.models.get_model("furniture/f_crate_o.glb").surfaces.size() == 1,
+			"the bin's and the chest's lids lift; the bin, chest, workbench and open crate have a surface")
 
 
 ## Why a model breaks docs/MODELS.md ("" when it doesn't): triangle and texture budgets by kind, the bottom
