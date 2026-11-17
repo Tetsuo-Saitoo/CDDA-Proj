@@ -68,6 +68,7 @@ const MAX_EFFECT_NAME := 40
 const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
 const MAX_MORALE := 32                    # morale entries kept (the contract sends at most 12)
 const MAX_MORALE_NAME := 64
+const MAX_NPC_NAME := 40                  # creatures' `name` (NPCs only), the contract's 40 columns
 const MAX_MOOD_FACE := 16
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
@@ -227,6 +228,9 @@ class Creature:
 	var pos := Vector3i.ZERO
 	var hp_frac := 255   # 0..255
 	var attitude := UNKNOWN
+	## NPCs: CDDA's name for them (plain_text: tags and control characters removed, capped); "" for anyone else, or
+	## when the bridge sends none or something that isn't a string.
+	var name := ""
 
 	## Hostile to the player. Without an attitude from the bridge, monsters count as hostile and people don't.
 	func is_hostile() -> bool:
@@ -574,6 +578,8 @@ func _read_creatures(v: Variant) -> void:
 		c.hp_frac = _int(r.get("hp_frac", 255), 0, 255, what + ".hp_frac")
 		if r.has("attitude"):
 			c.attitude = _int(r["attitude"], Creature.HOSTILE, Creature.FRIENDLY, what + ".attitude")
+		if c.kind == Creature.NPC:
+			c.name = plain_text(r.get("name"), MAX_NPC_NAME)
 		if not is_valid():
 			return
 		creatures.append(c)

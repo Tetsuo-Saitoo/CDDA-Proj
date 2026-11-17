@@ -636,6 +636,16 @@ func _test_target_names(o: Vector3i) -> void:
 	_check.call(texts == ["zombie (hostile, uninjured)   1 E   (1)", odd + " (neutral, nearly dead)   2 S, 2 E   (2)",
 			"3 E   (3)", "someone (friendly, heavily injured)   2 N, 4 E   (4)", "creature (hostile, nearly dead)   5 W   (5)"],
 			"target names: name, attitude and health per creature; NPCs someone, unknown types creature %s" % [texts])
+	var ann := Snapshot.Creature.new()
+	ann.kind = Snapshot.Creature.NPC
+	ann.name = "Ann Smith"
+	ann.attitude = Snapshot.Creature.HOSTILE
+	var rex := Snapshot.Creature.new()
+	rex.type = 1
+	rex.name = "Rex"
+	var said := [TargetRequestWidget.creature_text(ann, tables), TargetRequestWidget.creature_text(rex, tables)]
+	_check.call(said[0] == "Ann Smith (hostile, uninjured)" and (said[1] as String).begins_with("zombie ("),
+			"target names: an NPC by the snapshot's name; a monster by its type %s" % [said])
 	var cols := []
 	for b in w.candidate_buttons:
 		cols.append(b.get_theme_color("font_color") if b.has_theme_color_override("font_color") else null)
@@ -817,6 +827,12 @@ func _test_item_tile() -> void:
 			and floats["temp"] == ItemLook.Temp.HOT and floats["rot"] == 100 and floats["level"] == 0.5
 			and floats["amount"] == "500 ml" and floats["see_through"] and floats["contents"] == "orange juice",
 			"tile: out of range or wrong types show nothing; whole floats count (%s, %s)" % [out_of_range, junk])
+	var jar := ItemTile.of(PackedInt32Array([0, -1, 0, 0, 1, 0, -1]), t)
+	var tin := ItemTile.of(PackedInt32Array([ItemLook.Temp.COLD, -1, 0, 0, 0, 0, -1]), t)
+	_check.call(ItemTile.shows(jar) and jar["level"] == 0.0 and jar["see_through"] and jar["amount"] == ItemTile.EMPTY_TEXT
+			and ItemTile.words(jar) == "Empty, see-through" and not jar["sloshes"] and tin["amount"] == ""
+			and ItemTile.words(tin) == "Cold\nEmpty" and ItemTile.shows(tin),
+			"tile: an empty see-through container shows its glass and \"empty\"; an empty opaque one only says so in words")
 	var sn := Snapshot.new()
 	sn.item_states = {5: PackedInt32Array([ItemLook.Temp.COLD, -1, 250, 1, 1, 250, -1]),
 			6: PackedInt32Array([0, -1, 0, 0, 0, 0, -1])}
