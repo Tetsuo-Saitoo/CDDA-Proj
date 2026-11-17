@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — rest_live_test (QA lead): a headless live run of CDDA's wait and sleep through the client in the test range. Both work and are quick (6 hours of waiting in 6 to 8 s, a night's sleep in about 10 s), but the client gets no snapshot until the stretch is over, so the screen stands still meanwhile (an open TASKS item).
 - 2026-11-17 — An item in your hand shows its state too: frost, heat shimmer, spoilage, its liquid level and gun grime, updated as it warms or goes off (lead-world). Client tests pass.
 - 2026-11-17 — The Tab view's rows and pockets show the game's own numbers when the bridge sends them: a stack's count next to its name ("rock (15)"), weight and volume with contents, nothing counted twice. Older bridges still show the type numbers. Client tests pass.
 - 2026-11-17 — Item tiles and items in the world now decide what is a liquid the same way (one shared check), so a tile sloshes exactly when the 3D item shows a liquid level. Client tests pass.
