@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — L8 tray sorted: the item tray (VR and K on the flat screen) lists a bag's or pile's items the way the game's inventory does, by category, then name, and keeps that order as the game sends updates. Client tests pass.
 - 2026-11-16 — L8 furniture feel: a VR hand feels a buzz when a drawer, cabinet door or lid it holds hits fully open, shut or a lock; a drawer or cupboard door let go while moving (mouse or hand) slides or swings on and can be shoved shut. Client tests pass.
 - 2026-11-16 — Left-handed option on the flat screen (F1, Look row): key 1 then strikes with your main hand, the gun rests on the left and the hands panel shows the main hand on the left. VR already had its own. Client tests pass.
 - 2026-11-16 — L9 VR fires by hand: with a hand low over a fire square next to you, the trigger puts out a burning fire or lights an unlit one (with the lighter you hold, else the game's pick), or lights the fuel lying on a plain square while you hold a lighter; a line by the hand says which. Client tests pass.
