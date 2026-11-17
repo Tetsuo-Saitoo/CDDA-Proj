@@ -136,6 +136,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_fire()
 	_test_results()
 	_test_cook_answer()
+	_test_refused_lines()
 	_test_rig()
 	_test_rig_answers()
 	_test_flat()
@@ -743,6 +744,56 @@ func _test_cook_answer() -> void:
 	_cook.refresh()
 	_check.call(not pressed and r.waiting() == 0 and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min", VrCook.PICK_HINT]),
 			"vr cook: a cook the backend didn't take gives its tag back; done: no line")
+
+
+## F1 (lead-qa): while CDDA's refusal shows over the recipe lines, each line still picks its own recipe: the reason
+## and the hint pick none, a "+" line starts that recipe and no other, by hand or by the flat screen's ray.
+func _test_refused_lines() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	_answered(b, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	_cook.face()
+	var soup := _cook.press_at(_line_pt(_cook.cards[100], 2))   # sent, and CDDA says no
+	_cook.on_result(100, false, "You can't see to craft!")
+	_cook.refresh()
+	_cook.face()
+	var c: VrCook.Card = _cook.cards.get(100)
+	if c == null:
+		_check.call(false, "vr cook: refused lines: the pot has a card")
+		return
+	var lines := _lines(100)
+	var names: Array[String] = []
+	var rays: Array[String] = []
+	var eye := _head.global_position
+	for k in lines.size():
+		var pt := _line_pt(c, k)
+		names.append(str((_cook.line_at(pt).get("match", {}) as Dictionary).get("name", "")))
+		rays.append(str((_cook.line_on_ray(eye, pt - eye).get("match", {}) as Dictionary).get("name", "")))
+	var want: Array[String] = ["", "", "", "Soup", "Stew", "Tea", ""]
+	var on_reason := _cook.can_press(_cook.line_at(_line_pt(c, 2)))
+	var reason := _cook.press_at(_line_pt(c, 2))
+	var stew := _cook.press_at(_line_pt(c, 4))
+	var tea := _cook.press_ray(eye, _line_pt(c, 5) - eye)
+	_check.call(soup and lines.size() == 7 and lines[2] == "You can't see to craft!" and c.match_from == 3 and names == want
+			and rays == want and not on_reason and not reason and not stew and tea and b.cooked.size() == 2
+			and b.cooked[1][3] == "tea",
+			"vr cook: with a refusal shown each line picks its own recipe; the reason picks none; '+ Tea' starts tea %s %s"
+			% [names, rays])
+	var b2 := Cooker.new()
+	_new_cook(b2)
+	_answered(b2, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	_cook.face()
+	_cook.press_at(_line_pt(_cook.cards[100], 2))
+	_cook.on_result(100, false, "No.")
+	_cook.refresh()
+	var shown_from: int = _cook.cards[100].match_from
+	_cook.update(VrCook.REFUSED_S + 0.1)
+	_cook.refresh()
+	_cook.face()
+	var after := _cook.line_at(_line_pt(_cook.cards[100], 2))
+	_check.call(shown_from == 3 and _cook.refusal(100) == "" and _cook.cards[100].match_from == 2
+			and (after.get("match", {}) as Dictionary).get("name") == "Soup",
+			"vr cook: the refusal gone, the recipe lines start on line 2 again (%s)" % [after.get("match")])
 
 
 func _test_rig() -> void:
