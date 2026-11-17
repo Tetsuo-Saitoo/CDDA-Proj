@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Fork tests: each test binary has its own user folder (`fp3d_user_sim`, `_events`, `_ids`, `_snapshot`, `_chargen`; the range test keeps `fp3d_user`), so the order tests run in no longer changes their results.
 - 2026-11-16 — Bridge: action allow-list for the main loop (only the actions the client sends; `debug` only with cheats allowed) and bounded polling (a CDDA screen that only polls is told to close after 256 polls, then asked). Sim test `actions` checks both.
 - 2026-11-16 — Bridge: character names, input validation for every source (random names, a name taken over in play); the save id is set once when a new game starts. Chargen test and sim test `names` check it.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
