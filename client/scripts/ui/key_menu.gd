@@ -43,8 +43,13 @@ var look_slider: HSlider
 var invert_check: CheckBox
 var ui_slider: HSlider
 var weather_pick: OptionButton
+var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
+## G6 (add_hints): the hints and their on / off box.
+var hints: Hints
+var hints_check: CheckBox
+var hints_again: Button
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -234,6 +239,17 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	look_slider.tooltip_text = "How far the view turns for a mouse move."
 	invert_check = _option_check(opt_row, "Invert Y", "Moving the mouse up looks down.", &"invert_y",
 			settings.invert_y)
+	main_pick = OptionButton.new()
+	for h: String in HudSettings.MAIN_HANDS:
+		main_pick.add_item("%s-handed" % h.capitalize())
+	main_pick.tooltip_text = ("Your main hand: the keys for the left and right hand strike with that hand, and the gun "
+			+ "rests on that side. The headset has its own in its menu.")
+	main_pick.focus_mode = Control.FOCUS_NONE
+	main_pick.select(maxi(HudSettings.MAIN_HANDS.find(settings.main_hand), 0))
+	main_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.MAIN_HANDS.size():
+			set_option(&"main_hand", HudSettings.MAIN_HANDS[i]))
+	opt_row.add_child(main_pick)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -288,6 +304,28 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	_show_options()
 
 
+## G6: the Hints row under the options: show hints on / off, and "Show hints again" (Hints.reset).
+func add_hints(h: Hints) -> void:
+	hints = h
+	var row := HBoxContainer.new()
+	hints_check = CheckBox.new()
+	hints_check.text = "Hints"
+	hints_check.tooltip_text = "Short tips the first time you meet something (each shows once)."
+	hints_check.focus_mode = Control.FOCUS_NONE
+	hints_check.button_pressed = h.enabled
+	hints_check.toggled.connect(func(on: bool) -> void: hints.set_enabled(on))
+	row.add_child(hints_check)
+	hints_again = Button.new()
+	hints_again.text = "Show hints again"
+	hints_again.focus_mode = Control.FOCUS_NONE
+	hints_again.pressed.connect(func() -> void:
+		hints.reset()
+		_status.text = "Each hint shows once more.")
+	row.add_child(hints_again)
+	_box.add_child(row)
+	_box.move_child(row, mini(6, _box.get_child_count() - 1))
+
+
 func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
 	var s := HSlider.new()
 	s.min_value = limits.x
@@ -320,7 +358,9 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand"]:
+		return
+	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
 		return
 	hud.set(key, v)
 	_show_options()
@@ -454,12 +494,15 @@ func open() -> void:
 		_show_compass_value()
 		look_slider.set_value_no_signal(hud.look_speed)
 		invert_check.set_pressed_no_signal(hud.invert_y)
+		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
 		ui_slider.set_value_no_signal(hud.ui_scale)
 		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
 		volume_slider.set_value_no_signal(hud.volume)
 		ambience_slider.set_value_no_signal(hud.ambience_volume)
+	if hints_check != null:
+		hints_check.set_pressed_no_signal(hints.enabled)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()

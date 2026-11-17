@@ -31,6 +31,8 @@ func run(root: Node, check: Callable) -> void:
 	_test_world_setup()
 	_test_game_over(root)
 	_test_options()
+	_test_hints()
+	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
 
@@ -1090,6 +1092,137 @@ func _test_options() -> void:
 			and junk.weather_quality == WeatherView.MINIMAL and junk.volume == 0.0 and junk.ambience_volume == 1.0,
 			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
 			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
+	menu.free()
+
+
+func _test_hints() -> void:
+	var dir := preload("res://tests/test_dir.gd")
+	var path: String = dir.path("hints.cfg")
+	var names := InputActions.names()
+	var unknown: Array[String] = []
+	var re := RegEx.create_from_string("\\{(\\w+)\\}")
+	for id: String in Hints.TEXTS:
+		for m in re.search_all(Hints.TEXTS[id]):
+			if not names.has(StringName(m.get_string(1))):
+				unknown.append(m.get_string(1))
+	_check.call(unknown.is_empty(), "hints: every {action} in the texts is a key action (unknown: %s)" % [unknown])
+	InputMap.add_action(&"hints_test_act")
+	var ev := InputEventKey.new()
+	ev.physical_keycode = KEY_Q
+	InputMap.action_add_event(&"hints_test_act", ev)
+	var key := InputActions.key_of(&"hints_test_act")
+	var filled := Hints.fill("press {hints_test_act} or {no_such_action}, {open")
+	InputMap.erase_action(&"hints_test_act")
+	_check.call(key != "-" and filled == "press %s or no_such_action, {open" % key,
+			"hints: {action} becomes its key, an unknown name stays bare, an open brace stays (%s)" % filled)
+	var h := Hints.new()
+	h.path = path
+	var fresh := h.load_file() == "" and h.enabled and h.seen.is_empty() and not h.visible
+	var first := h.trigger("start")
+	var twice := h.trigger("start")
+	var queued := h.trigger("prompt")
+	var odd := h.trigger("nope")
+	_check.call(fresh and first and not twice and queued and not odd and h.shown == "start" and h.visible
+			and h.queue.size() == 1 and h.queue[0] == "prompt" and not h._label.text.contains("{"),
+			"hints: each id once, the next waits, unknown ids refused (showing %s)" % h.shown)
+	h.tick(Hints.SHOW_S - 1.0)
+	var still := h.shown
+	h.tick(1.5)
+	var next := h.shown
+	h.dismiss()
+	_check.call(still == "start" and next == "prompt" and h.shown == "" and not h.visible,
+			"hints: one shows for SHOW_S seconds, then the next; dismiss hides the last")
+	var back := Hints.new()
+	back.path = path
+	_check.call(back.load_file() == "" and back.enabled and back.seen.has("start") and back.seen.has("prompt")
+			and not back.seen.has("inspect"), "hints: seen ids are saved (%s)" % [back.seen.keys()])
+	back.free()
+	var menu := KeyMenu.new()
+	menu.add_hints(h)
+	menu.hints_check.button_pressed = false
+	var off_refused := not h.trigger("inspect")
+	var off := Hints.new()
+	off.path = path
+	off.load_file()
+	_check.call(not h.enabled and off_refused and not h.seen.has("inspect") and not off.enabled,
+			"hints: the F1 Hints box off stops them and is saved")
+	off.free()
+	menu.hints_check.button_pressed = true
+	var on_shows := h.trigger("inspect") and h.shown == "inspect"
+	menu.hints_again.pressed.emit()
+	_check.call(on_shows and h.seen.is_empty() and h.trigger("start") and menu._status.text.contains("once more"),
+			"hints: on again shows; \"Show hints again\" lets each show once more")
+	menu.free()
+	h.free()
+	var t := Hints.new()
+	t.path = dir.path("hints_not_kept.cfg")
+	t.persist = false
+	_check.call(t.trigger("start") and not FileAccess.file_exists(t.path), "hints: persist off writes nothing")
+	t.free()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hints]\nenabled=2\nseen=[\"start\", \"nope\", 5, \"start\"]\n")
+	f.close()
+	var junk := Hints.new()
+	junk.path = path
+	_check.call(junk.load_file() == "" and junk.enabled and junk.seen.keys() == ["start"],
+			"hints: a non-bool leaves them on; only known ids are read (%s)" % [junk.seen.keys()])
+	junk.free()
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hints]\nenabled=false\nseen=[Object(Node,\"name\":\"x\")]\n")
+	f.close()
+	var evil := Hints.new()
+	evil.path = path
+	var why := evil.load_file()
+	_check.call(why.contains("Object(") and evil.enabled and evil.seen.is_empty(),
+			"hints: a file with Object( is ignored (%s)" % why)
+	evil.free()
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("#".repeat(Hints.MAX_FILE_BYTES + 1))
+	f.close()
+	var big := Hints.new()
+	big.path = path
+	_check.call(big.load_file().contains("over"), "hints: an oversized file is ignored")
+	big.free()
+
+## Handedness (HudSettings.main_hand, flat screen): the F1 picker sets and saves it, a bad value is ignored there and
+## in the file; keys 1 / 2 strike with the left / right hand whichever is main; the hands panel puts the main hand on
+## the left for a left-hander.
+func _test_main_hand(root: Node) -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_hands.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var right_first := hs.main_hand == "right" and not hs.left_handed() and menu.main_pick.selected == 0 \
+			and menu.main_pick.item_count == 2 and menu.main_pick.get_item_text(1) == "Left-handed"
+	menu.main_pick.select(1)
+	menu.main_pick.item_selected.emit(1)
+	menu.main_pick.item_selected.emit(7)
+	menu.set_option(&"main_hand", "both")
+	menu.set_option(&"main_hand", 1)
+	hs.main_hand = "LEFT"
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(right_first and hs.main_hand == "left" and back.main_hand == "left" and back.left_handed(),
+			"main hand: right unless picked; the F1 picker sets and saves left, bad values are ignored")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hands]\nmain=\"middle\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.main_hand = "left"
+	junk.load_file(path)
+	_check.call(junk.main_hand == "right", "main hand: anything else in the file is right")
+	_check.call(HudSettings.hand_for("left", false) == "off" and HudSettings.hand_for("right", false) == "main"
+			and HudSettings.hand_for("left", true) == "main" and HudSettings.hand_for("right", true) == "off",
+			"main hand: the left key strikes with the off hand, or the main one when left-handed")
+	var panel := HandsPanel.new()
+	root.add_child(panel)
+	panel.show_held({"seq": 1, "main": {"name": "knife"}, "off": {"name": "torch"}})
+	var right_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	panel.left_handed = true
+	var left_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	_check.call(right_rows == ["Left: torch", "Right: knife"] and left_rows == ["Left: knife", "Right: torch"],
+			"main hand: the hands panel shows a left-hander's main hand on the left (%s %s)" % [right_rows, left_rows])
+	panel.free()
 	menu.free()
 
 

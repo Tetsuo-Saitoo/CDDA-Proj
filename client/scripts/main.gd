@@ -65,6 +65,7 @@ var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
+var hints: Hints                  # G6: one-time tips at the top right (flat screen)
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -244,7 +245,10 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(hotbar)
 	request_ui.get_parent().move_child(hotbar, inspect.get_index())   # under the Tab view and the prompts
 	inspect.hotbar = hotbar
-	inspect.opened.connect(func() -> void: hotbar.show_empty = true)
+	inspect.opened.connect(func() -> void:
+		hotbar.show_empty = true
+		if vr == null and hints != null:
+			hints.trigger("inspect"))
 	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
 	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
@@ -259,6 +263,7 @@ func _ready() -> void:
 		hud_data.on_events([MockItems.message_event(t)]))
 	viewmodel = WeaponViewmodel.new()
 	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
+	viewmodel.left_handed = hud_settings.left_handed()   # a left-hander's gun rests on the left
 	fp.add_child(viewmodel)
 	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
 	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
@@ -380,6 +385,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		_ask_character()
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
+	if hints != null and vr == null and live != null and _in_main_loop():
+		hints.trigger("start")   # G6: once, ever (seen ids are kept)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -977,6 +984,8 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	if not request_ui.show_request(req):
 		push_warning("live: request without a usable id or kind: %s" % req)
+	elif vr == null and hints != null and not str(req.get("kind", "")) in ["chargen", "world_setup"]:
+		hints.trigger("prompt")   # G6: the first question from the game in play
 
 
 func _on_request_answered(a: Dictionary) -> void:
@@ -1050,9 +1059,10 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# strike with the left or right hand (main or off by HudSettings.main_hand): the creature under the crosshair when it is within
 		# reach (an aimed strike, AimController.strike_action), else the square you face
-		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
+		var hand := HudSettings.hand_for("left" if InputActions.pressed(event, &"hand_off") else "right",
+				hud_settings.left_handed())
 		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
 		var cam := get_viewport().get_camera_3d()
 		act = "fp3d_attack_%s_%s" % [hand, facing]
@@ -1486,6 +1496,7 @@ func _setup_hud() -> void:
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
+	hands_panel.left_handed = hud_settings.left_handed()
 	layer.add_child(hands_panel)
 	hud_view = HudView.new()
 	hud_view.data = hud_data
@@ -1509,6 +1520,13 @@ func _setup_hud() -> void:
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
 	key_menu.add_hud_settings(hud_settings)
+	hints = Hints.new()   # G6: one-time tips (the first turn, the first Tab view, the first question)
+	hints.persist = get_tree().get_script() == null   # a test runner's SceneTree script: never the player's file
+	var hints_why := hints.load_file()
+	if hints_why != "":
+		push_warning("hints: " + hints_why)
+	layer.add_child(hints)
+	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
@@ -1521,6 +1539,9 @@ func _setup_hud() -> void:
 		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash
+			viewmodel.left_handed = hud_settings.left_handed()
+		if hands_panel != null:
+			hands_panel.left_handed = hud_settings.left_handed()
 		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
@@ -1691,7 +1712,7 @@ func _act_help() -> String:
 	for a: StringName in InputActions.CDDA:
 		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
-	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
+	parts.append("%s use / examine what you face  %s/%s hold / put away (off hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
 	var p := pour.hint(world.tables)
 	if not p.is_empty():

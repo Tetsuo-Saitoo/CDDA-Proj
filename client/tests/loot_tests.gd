@@ -29,6 +29,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_shelf_ops()
 	_test_take_container()
 	_test_tray()
+	_test_tray_sort()
 	_test_desk_tray()
 	_hands.free()
 	_actions.free()
@@ -498,6 +499,49 @@ func _test_tray() -> void:
 	_check.call(not tray.is_open() and why.back() == "far", "tray: the head walking off closes it (%s)" % [why])
 	hd.free()
 	tray.free()
+
+
+## The tray sorts as CDDA's inventory does: by category (CDDA's sort_rank), then name, then uid; items the tables
+## don't know last; without tables, the snapshot's order. A refresh keeps the order.
+func _test_tray_sort() -> void:
+	var tb := _world.tables
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var rock: int = _it["rock"]
+	var apple := tb.index_of("itype", "apple")
+	var plank := tb.index_of("itype", "2x4")
+	var pot := tb.index_of("itype", "pot")
+	var ghost := 9_000_000
+	# snapshot order: ghost, rock 6, plank, apple, rock 5, pot, hammer
+	sm.inside[c] = [[424506, ghost, 0], [424505, rock, 0], [424504, plank, 0], [424503, apple, 0], [424502, rock, 0],
+			[424501, pot, 0], [424500, ham, 0]]
+	var src := ItemTray.source_for(_snap, ItemRef.on_square(c, ham, E))
+	var uids := func(l: Dictionary) -> Array:
+		return (l.get("rows", []) as Array).map(func(r: ItemRef) -> int: return r.uid)
+	var raw: Array = uids.call(ItemTray.list(_snap, src))
+	var sorted: Array = uids.call(ItemTray.list(_snap, src, tb))
+	# tools: hammer, pot (by name); food: apple; spare parts: plank, rock 5, rock 6 (by name, then uid); unknown last
+	_check.call(apple >= 0 and plank >= 0 and pot >= 0 and tb.def_at("itype", ghost) == null
+			and raw == [424506, 424505, 424504, 424503, 424502, 424501, 424500]
+			and sorted == [424500, 424501, 424503, 424504, 424502, 424505, 424506],
+			"tray sort: by CDDA's category order, then name, then uid; unknown last; no tables: snapshot order (%s)" % [sorted])
+	var tray := ItemTray.new()
+	tray.world = _world
+	_world.add_child(tray)
+	var head := Transform3D(Basis.IDENTITY, _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0))
+	var ok := tray.open(src, head)
+	var first: Array = tray.rows.map(func(r: ItemRef) -> int: return r.uid)
+	sm.inside[c] = (sm.inside[c] as Array).duplicate()
+	(sm.inside[c] as Array).reverse()
+	_snap.seq += 1
+	tray.update()
+	var again: Array = tray.rows.map(func(r: ItemRef) -> int: return r.uid)
+	_check.call(ok and first == sorted and again == sorted and (tray.items[0]["item"] as ItemRef).uid == 424500,
+			"tray sort: the tray shows that order, and a snapshot listing them otherwise doesn't reshuffle it (%s)" % [again])
+	tray.free()
+	sm.inside.erase(c)
+	_snap.seq += 1
 
 
 ## The desktop tray (GrabController, lead-ui's OK): opens on a lying bag in front of the camera with the mouse free,

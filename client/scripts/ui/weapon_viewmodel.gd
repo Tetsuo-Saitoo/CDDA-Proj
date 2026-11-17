@@ -61,6 +61,15 @@ var _kick := 0.0
 var _item := -1
 var _root: Node3D
 var _base := REST
+## Left-handed (HudSettings.main_hand, set by main.gd): the gun rests on the left, REST mirrored (rest()); aimed
+## stays in the middle. A change puts it there at once instead of gliding across the view.
+var left_handed := false:
+	set(v):
+		if v == left_handed:
+			return
+		left_handed = v
+		_base = rest()
+		position = _base
 var _sway := 0.0         # 0..1, eased toward sway_arcmin / SWAY_FULL_ARCMIN
 var _sway_t := 0.0
 var _grime_mats: Array[ShaderMaterial] = []
@@ -79,7 +88,12 @@ static var _click: AudioStreamWAV
 
 func _init() -> void:
 	name = "Viewmodel"
-	position = REST
+	position = rest()
+
+
+## Where the gun rests: REST, mirrored to the left when left_handed.
+func rest() -> Vector3:
+	return Vector3(-REST.x, REST.y, REST.z) if left_handed else REST
 
 
 ## The shape for an itype definition (null = empty hands).
@@ -263,7 +277,7 @@ func lit() -> bool:
 func _process(delta: float) -> void:
 	_tick_flash(delta)
 	_kick = move_toward(_kick, 0.0, KICK_RATE * delta * maxf(_kick, 0.2))
-	var goal := (AIMED if aimed and shape != "melee" else REST) + Vector3(0, 0, KICK_BACK * _kick)
+	var goal := (AIMED if aimed and shape != "melee" else rest()) + Vector3(0, 0, KICK_BACK * _kick)
 	_base = _base.lerp(goal, minf(RAISE_RATE * delta, 1.0))
 	_sway = move_toward(_sway, sway_arcmin / SWAY_FULL_ARCMIN, SWAY_RATE * delta)
 	_sway_t = fmod(_sway_t + delta, 1000.0 / SWAY_HZ)
