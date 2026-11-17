@@ -1301,6 +1301,32 @@ func _test_wheel() -> void:
 	_check.call(InputActions.defaults(&"use_held").any(func(e: InputEvent) -> bool:
 			return e is InputEventJoypadButton and (e as InputEventJoypadButton).button_index == JOY_BUTTON_A),
 			"wheel: a pad's A is E by default")
+	InputMap.add_action(&"prompt_test_act")
+	var qk := InputEventKey.new()
+	qk.physical_keycode = KEY_Q
+	var pb := InputEventJoypadButton.new()
+	pb.button_index = JOY_BUTTON_X
+	InputMap.action_add_event(&"prompt_test_act", qk)
+	InputMap.action_add_event(&"prompt_test_act", pb)
+	var was := InputActions.pad_last
+	var press := InputEventJoypadButton.new()
+	press.button_index = JOY_BUTTON_B
+	press.pressed = true
+	InputActions.note_device(press)
+	var on_pad := InputActions.prompt_of(&"prompt_test_act")
+	var small := InputEventMouseMotion.new()
+	small.relative = Vector2(1, 0)   # a jiggle: still the pad
+	InputActions.note_device(small)
+	var still_pad := InputActions.pad_last
+	var typed := InputEventKey.new()
+	typed.physical_keycode = KEY_W
+	typed.pressed = true
+	InputActions.note_device(typed)
+	var on_keys := InputActions.prompt_of(&"prompt_test_act")
+	InputMap.erase_action(&"prompt_test_act")
+	InputActions.pad_last = was
+	_check.call(on_pad == "X" and still_pad and on_keys == InputActions.event_label(qk),
+			"prompts: after a pad button they name the pad's (%s), after a key the key (%s)" % [on_pad, on_keys])
 	ui.wheel_until = 0   # long past: a later menu is a list again
 	_show(_req("menu", {"entries": sink}))
 	_check.call(ui.widget is ListRequestWidget, "wheel: an old E press doesn't make a later menu a wheel")

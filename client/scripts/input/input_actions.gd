@@ -173,6 +173,32 @@ static func slots(action: StringName) -> Array[InputEvent]:
 
 
 ## First key of an action as short text for the HUD ("-" when unbound).
+## The last input came from a pad (note_device): prompts name its buttons (prompt_of).
+static var pad_last := false
+
+
+## Keeps pad_last: a pad button or a stick past DEADZONE sets it, a key, a mouse button or a real mouse move clears it.
+static func note_device(e: InputEvent) -> void:
+	if e is InputEventJoypadButton and e.is_pressed():
+		pad_last = true
+	elif e is InputEventJoypadMotion and absf((e as InputEventJoypadMotion).axis_value) >= DEADZONE:
+		pad_last = true
+	elif (e is InputEventKey or e is InputEventMouseButton) and e.is_pressed():
+		pad_last = false
+	elif e is InputEventMouseMotion and (e as InputEventMouseMotion).relative.length() > 2.0:
+		pad_last = false
+
+
+## The key a prompt names for `action`: its first pad binding's button ("A") when the pad was used last and it
+## has one, else key_of.
+static func prompt_of(action: StringName) -> String:
+	if pad_last:
+		var p := pad_slots(action)
+		if not p.is_empty():
+			return event_label(p[0]).trim_prefix("Pad ")
+	return key_of(action)
+
+
 static func key_of(action: StringName) -> String:
 	var s := slots(action)
 	return event_label(s[0]) if not s.is_empty() else "-"

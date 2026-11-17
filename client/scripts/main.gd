@@ -190,6 +190,7 @@ func _ready() -> void:
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
 	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	grab.context = _context_line
 	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
@@ -1008,6 +1009,15 @@ func _on_live_events(events: Array) -> void:
 		_log = _log.slice(_log.size() - LOG_LINES)
 
 
+## Radial menus: the crosshair line for the furniture in the square you face (live, flat screen, in play).
+func _context_line() -> String:
+	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
+		return ""
+	var s: Vector2i = OCT_STEPS[_octant(Vector2(0, 1))]
+	return ContextPrompt.text(world.snapshot, world.tables, world.snapshot.player_pos + Vector3i(s.x, s.y, 0),
+			hud_settings.context_menu)
+
+
 func _octant(dir: Vector2) -> int:
 	return octant_for(_view().global_basis, dir)
 
@@ -1734,6 +1744,10 @@ static func _keys(actions: Array) -> String:
 		ks.append(InputActions.key_of(a))
 		short = short and ks[-1].length() == 1
 	return "".join(ks) if short else "/".join(ks)
+
+
+func _input(event: InputEvent) -> void:
+	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
 
 
 func _unhandled_input(event: InputEvent) -> void:

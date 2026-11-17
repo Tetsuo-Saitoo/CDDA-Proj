@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Radial menu, slice 4: the crosshair names the furniture you face and the key for it; with a gamepad the prompts show its buttons. Client tests pass.
 - 2026-11-17 — Radial menu, slice 3: a quick tap of E does the object's default action (the one the game highlights); hold E for the wheel. Client tests pass.
 - 2026-11-17 — Radial menu, slice 2: with a gamepad, A works like E; hold it on an object, point with the stick and let go to pick. Client tests pass.
 - 2026-11-17 — Radial menu, slice 1: E on an object shows its choices as a wheel with a fixed place for each kind of action; point and let go of E (or click) to pick. The F1 menu can switch to a click wheel or the old list. Client tests pass.
