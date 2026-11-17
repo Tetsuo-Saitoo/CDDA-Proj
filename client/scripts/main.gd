@@ -563,6 +563,9 @@ func _start_vr() -> void:
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
+	vr.wheel.request_ui = request_ui   # radial menus by hand: CDDA's menu as a wheel around the hand
+	vr.wheel.queue_action = vr.gun.queue_action
+	vr.wheel.list_only = func() -> bool: return hud_settings.context_menu == HudSettings.MENU_LIST
 	add_child(vr)
 	vr.camera.make_current()
 	world.lighting.min_brightness = 0.0

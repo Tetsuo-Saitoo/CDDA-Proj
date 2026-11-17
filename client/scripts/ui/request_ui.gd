@@ -45,6 +45,9 @@ var request_id := 0
 ## (RadialRequestWidget.fits); main sets it when E asks CDDA about an object (want_wheel). Any request ends it.
 var wheel_until := -1
 var wheel_hold := false
+## Whether the button that asked for the wheel is still down (want_wheel's `down`: VR's trigger, which isn't an
+## InputMap action); not valid: E's action (`use_held`). Anything but true counts as let go.
+var wheel_down := Callable()
 var wheel_pressed := -1   # when E went down (want_wheel): letting go within TAP_MS is a tap
 var _panel: PanelContainer
 var _bottom: Control
@@ -113,10 +116,15 @@ func show_request(req: Dictionary) -> bool:
 	request_id = id
 	var wheel := wheel_until >= 0 and Time.get_ticks_msec() <= wheel_until and RadialRequestWidget.fits(req)
 	wheel_until = -1
+	var down := wheel_down
+	wheel_down = Callable()   # this request's only: never a later one's
 	if wheel:
 		var r := RadialRequestWidget.new()
 		# E already let go (a quick tap): its release won't come, so the wheel waits for a click
-		r.hold = wheel_hold and InputMap.has_action(r.release_action) and Input.is_action_pressed(r.release_action)
+		var v: Variant = down.call() if down.is_valid() else null
+		var held: bool = v is bool and v if down.is_valid() \
+				else InputMap.has_action(r.release_action) and Input.is_action_pressed(r.release_action)
+		r.hold = wheel_hold and held
 		r.tap_until = wheel_pressed + RadialRequestWidget.TAP_MS if wheel_hold else -1
 		widget = r
 	else:
@@ -161,11 +169,13 @@ static func make_widget(kind: String, req: Dictionary) -> RequestWidget:
 	return PopupRequestWidget.new()   # popup; unknown kinds get their text and Cancel
 
 
-## The next request within `wait_ms` shows as a wheel if it can be one; `hold`: letting go of E picks.
-func want_wheel(wait_ms: int, hold: bool) -> void:
+## The next request within `wait_ms` shows as a wheel if it can be one; `hold`: letting go of E picks. `down`: () -> bool,
+## whether the button that asked is still down (VR's trigger); not given: E's action.
+func want_wheel(wait_ms: int, hold: bool, down := Callable()) -> void:
 	wheel_pressed = Time.get_ticks_msec()
 	wheel_until = wheel_pressed + clampi(wait_ms, 0, 10000)
 	wheel_hold = hold
+	wheel_down = down
 
 
 ## Hides the request; its widget answers nothing more.

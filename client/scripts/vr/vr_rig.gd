@@ -59,6 +59,10 @@ extends XROrigin3D
 ## with a hand low over a fire square next to you puts out a burning one, lights an unlit one (with the carried item
 ## the hand holds, else CDDA's pick), or lights the fuel lying there while the hand holds a carried item; a line by
 ## the hand says which.
+## Radial menus (VrWheel `wheel`): the trigger with an empty hand on furniture next to you (or terrain with an
+## examine action) uses it in CDDA: a tap does CDDA's default, held its choices show as a wheel around the hand (the
+## panel hidden, no moving), the hand's stick or a flick of the hand points, letting go picks; B / Y cancel.
+## main.gd sets `wheel.request_ui` and `wheel.queue_action`.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -189,6 +193,7 @@ var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature s
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
+var wheel: VrWheel         # radial menus: furniture used by hand, CDDA's choices around the hand (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -315,6 +320,9 @@ func _build() -> void:
 	fire = VrFire.new()
 	fire.world = world
 	add_child(fire)
+	wheel = VrWheel.new()
+	wheel.world = world
+	add_child(wheel)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -422,6 +430,7 @@ func _process(delta: float) -> void:
 	fire.backend = cook.backend
 	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
 			world.snapshot != null and not ui_open())
+	update_wheel()
 	follow_teleport(delta)
 
 
@@ -867,6 +876,8 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 
 
 func release(c: XRController3D, n: String) -> void:
+	if n == "trigger_click" and wheel.release(0 if c == left else 1):
+		return   # the trigger that opened a wheel: letting go picks
 	if n != "grip_click":
 		panel_button(c, n, false)   # a release always reaches the panel (a no-op when nothing there is held)
 		return
@@ -1203,6 +1214,8 @@ func step(delta: float, inp: Dictionary) -> void:
 			_settings_changed()
 	elif panel.shown:   # a CDDA menu or prompt: the sticks pick in it, no moving
 		panel.nav(inp.get("move", Vector2.ZERO), inp.get("turn", Vector2.ZERO), delta)
+	elif wheel.active():
+		pass   # a wheel around the hand: its stick points (update_wheel), no moving
 	elif world.snapshot != null:
 		var mv := _dead(inp.get("move", Vector2.ZERO))
 		if settings["move"] == "smooth" and mv != Vector2.ZERO:
@@ -1411,15 +1424,31 @@ func menu_open() -> bool:
 
 ## The CDDA panel this frame: its text size from the settings (`panel_text`), then shown / hidden and placed.
 func update_panel(delta: float) -> void:
+	panel.held_back = wheel != null and wheel.active()   # CDDA's menu shows as the wheel around the hand instead
 	var ts: Variant = settings.get("panel_text")
 	if ts is float or ts is int:
 		panel.text_scale = ts   # a no-op while unchanged
 	panel.update(delta, camera.transform)
 
 
-## The settings menu or a CDDA menu / prompt (panel) is up: the triggers and sticks work it, not the world.
+## The settings menu or a CDDA menu / prompt (panel, or a wheel around the hand) is up: the triggers and sticks
+## work it, not the world.
 func ui_open() -> bool:
-	return menu_open() or (panel != null and panel.shown)
+	return menu_open() or (panel != null and panel.shown) or (wheel != null and wheel.active())
+
+
+## Radial menus, per frame: the wheel's drawing and pointing (the stick of the hand that opened it, or that hand's
+## offset from its middle), else the line by each empty hand on something to use (not on a fire square: the
+## trigger works the fire there).
+func update_wheel() -> void:
+	wheel.live = live_stairs
+	var at: Array[Vector3] = [left.global_position, right.global_position]
+	var free: Array[bool] = [false, false]
+	for i in 2:
+		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
+				and not menu_open() and not panel.shown and fire.target_at(at[i], null).is_empty()
+	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
+	wheel.update(at, sticks, free, camera.global_transform)
 
 
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
@@ -1632,6 +1661,12 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return
 	if panel.shown and panel_button(c, n, true):
 		return
+	if wheel.active():   # a wheel around the hand: the trigger picks what it points at, B / Y cancel
+		if n == "trigger_click":
+			wheel.press(0 if c == left else 1, c.global_position)
+		elif n == "by_button" or (n == "menu_button" and c == right):
+			wheel.cancel()
+		return
 	if world.snapshot == null:
 		return
 	var ci := 0 if c == left else 1
@@ -1653,6 +1688,9 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click" and fire_press(c):
 		return   # L9: a hand low over a fire square lights or puts out that fire
+	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() \
+			and wheel.press(ci, c.global_position):
+		return   # radial menus: the furniture the hand is on, used in CDDA (a tap: its default; held: the wheel)
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
