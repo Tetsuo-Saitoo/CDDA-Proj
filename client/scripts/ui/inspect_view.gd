@@ -65,6 +65,8 @@ var character: CharacterData:
 			character.changed.connect(_show_carry)
 		_show_carry()
 var _carry_box: HBoxContainer
+## G2: the hotbar (main's): while the view is open, a hotbar key puts the one selected item's type in that slot.
+var hotbar: Hotbar
 ## The rows picked to act on together: uid -> itype.
 var selection := {}
 
@@ -233,6 +235,11 @@ func handle_key(event: InputEvent, allowed := true) -> bool:
 			and (k.physical_keycode == KEY_A or k.keycode == KEY_A):
 		select_all()
 		return true
+	if visible and hotbar != null:
+		for i in Hotbar.SLOTS:
+			if InputActions.pressed(event, Hotbar.action(i)):
+				_say(to_hotbar(i))
+				return true
 	var esc := k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE
 	var cancel := event is InputEventAction and event.is_pressed() and (event as InputEventAction).action == &"ui_cancel"
 	if visible and (esc or cancel):   # (ui_cancel: the VR panel's B / Y)
@@ -996,6 +1003,18 @@ func _update_head() -> void:
 		b.visible = some
 	_bar_stop.visible = _batch_total > 0
 	_bar.visible = some or _batch_total > 0
+
+
+## G2: the one selected item's type into hotbar slot `i` (Hotbar.assign); returns the line to show.
+func to_hotbar(i: int) -> String:
+	if hotbar == null:
+		return ""
+	if selection.size() != 1:
+		return "Select one item, then press a hotbar key (%s to %s)." % [Hotbar.key_name(0),
+				Hotbar.key_name(Hotbar.SLOTS - 1)]
+	var tables := hands.world.tables if hands != null and hands.world != null else null
+	var d := tables.def_at("itype", int(selection.values()[0])) if tables != null else null
+	return hotbar.assign(i, d.id) if d != null else "That item can't go on the hotbar."
 
 
 func _say(text: String) -> void:
