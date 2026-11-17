@@ -1383,7 +1383,8 @@ func _setup_environment() -> void:
 const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
 
 
-## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## G7 options: the volume on the Master bus (headset too); the look speed, invert Y and field of view on the
+## flat-screen cameras; the 3D render scale, vsync and
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
@@ -1397,6 +1398,9 @@ func _apply_options() -> void:
 	if camera != null:
 		camera.sensitivity = speed
 		camera.invert_y = o.invert_y
+	var vol := HudSettings.clamp_to(o.volume, HudSettings.VOLUMES, 1.0)   # every sound plays on Master (bus 0)
+	AudioServer.set_bus_mute(0, vol <= 0.0)
+	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(vol, 0.001)))
 	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
 		return
 	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
