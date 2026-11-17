@@ -69,6 +69,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
 var hints: Hints                  # G6: one-time tips at the top right (flat screen)
+var busy_note := BusyNote.new()   # "Time passes..." while the game runs on by itself (flat screen)
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -391,6 +392,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
 	item_looks.apply(snap)
+	if hands != null:
+		hands.dress_held()   # the copies in hands wear their items' states too
 	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
@@ -413,7 +416,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	_stir_pos = snap.player_pos
 	if hints != null and vr == null and live != null and _in_main_loop():
 		hints.trigger("start")   # G6: once, ever (seen ids are kept)
-		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
+		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding, tiredness
 			hints.trigger(id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
@@ -973,6 +976,7 @@ func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
 	if _first_live_snapshot:
 		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
+	busy_note.on_snapshot(snap)   # "Sleeping...", "Waiting..." while the game runs on
 	world.submit(snap)
 
 
@@ -991,6 +995,7 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
+	busy_note.on_request(req, Time.get_ticks_msec())
 	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
 		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
@@ -1583,6 +1588,7 @@ func _setup_hud() -> void:
 	if hints_why != "":
 		push_warning("hints: " + hints_why)
 	layer.add_child(hints)
+	layer.add_child(busy_note)
 	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
@@ -1689,6 +1695,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
+	busy_note.tick(Time.get_ticks_msec(), vr == null and live != null and live.state == "running")
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)

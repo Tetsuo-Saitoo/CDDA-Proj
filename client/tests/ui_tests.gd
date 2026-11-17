@@ -32,6 +32,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_game_over(root)
 	_test_options()
 	_test_hints()
+	_test_busy_note()
 	_test_wheel()
 	_test_main_hand(root)
 	ui.free()
@@ -1306,6 +1307,46 @@ func _test_options() -> void:
 	menu.free()
 
 
+## "Time passes..." while the game asks nothing (a long wait or sleep sends no snapshot until it is over).
+func _test_busy_note() -> void:
+	var a := BusyNote.AFTER_MS
+	var d := BusyNote.DOT_MS
+	_check.call(BusyNote.text_at(-1, 99999, true) == "" and BusyNote.text_at(1000, 1000 + a - 1, true) == ""
+			and BusyNote.text_at(1000, 1000 + a, true) == "Time passes." and BusyNote.text_at(1000, 1000 + a + d, true)
+			== "Time passes.." and BusyNote.text_at(1000, 1000 + a + 2 * d, true) == "Time passes..."
+			and BusyNote.text_at(1000, 1000 + a + 3 * d, true) == "Time passes." and BusyNote.text_at(1000, 99999, false)
+			== "", "busy note: after %d ms with no request while running, the dots move; nothing before or when not running"
+			% a)
+	var n := BusyNote.new()
+	n.tick(5000, true)
+	var none_yet := not n.visible
+	n.on_request({"id": 4}, 5000)
+	n.on_request({}, 6000)
+	n.on_request({}, 6500)   # still quiet: counts from the first
+	n.tick(6000 + a, true)
+	var shown := n.visible and n.text == "Time passes."
+	n.on_request({"id": 5}, 7000)
+	n.tick(7000, true)
+	var gone := not n.visible
+	n.on_request({}, 8000)
+	n.tick(8000 + a, false)
+	n.tick(8000 + a, true)
+	_check.call(none_yet and shown and gone and not n.visible and n.quiet_since == -1,
+			"busy note: shown once the game went quiet, gone with the next request; a stop forgets the quiet")
+	var s := Snapshot.new()
+	s.asleep = true
+	n.on_snapshot(s)
+	n.on_request({}, 9000)
+	n.tick(9000 + BusyNote.ACTIVITY_MS - 1, true)
+	var not_yet := not n.visible
+	n.tick(9000 + BusyNote.ACTIVITY_MS, true)
+	var sleeping := n.visible and n.text == "Sleeping."
+	n.tick(9000, false)
+	_check.call(not_yet and sleeping and n.word == "" and not n.visible, "busy note: with the snapshot's word it "
+			+ "shows after %d ms (%s); a stop forgets the word" % [BusyNote.ACTIVITY_MS, n.text])
+	n.free()
+
+
 func _test_hints() -> void:
 	var dir := preload("res://tests/test_dir.gd")
 	var path: String = dir.path("hints.cfg")
@@ -1342,11 +1383,18 @@ func _test_hints() -> void:
 	var every := Hints.due(snap, hud)
 	hud.needs["thirst"] = {"value": 50, "word": "Thirsty", "level": HudData.HURT}
 	var thirsty := Hints.due(Snapshot.new(), hud)
+	var rested := HudData.new()
+	rested.needs["sleepiness"] = {"value": HudData.TIRED - 1, "word": "", "level": HudData.need_level("sleepiness", HudData.TIRED - 1)}
+	var awake := Hints.due(null, rested)
+	rested.needs["sleepiness"] = {"value": HudData.TIRED, "word": "Tired", "level": HudData.need_level("sleepiness", HudData.TIRED)}
+	var tired := Hints.due(null, rested)
+	rested.needs["sleepiness"] = {"value": 1, "word": "", "level": "x"}
 	_check.call(calm.is_empty() and with_friend.is_empty() and engorged == (["hostile"] as Array[String])
 			and every == (["hostile", "eat", "bleed"] as Array[String])
-			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty(),
-			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding (%s, %s, %s)"
-			% [engorged, every, thirsty])
+			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty()
+			and awake.is_empty() and tired == (["tired"] as Array[String]) and Hints.due(null, rested).is_empty(),
+			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding, tiredness from "
+			+ "CDDA's Tired on (%s, %s, %s, %s)" % [engorged, every, thirsty, tired])
 	var h := Hints.new()
 	h.path = path
 	var fresh := h.load_file() == "" and h.enabled and h.seen.is_empty() and not h.visible

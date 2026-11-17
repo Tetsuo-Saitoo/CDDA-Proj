@@ -50,6 +50,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 		return
 	_test_model()
 	_test_caps(data)
+	_test_amounts(data)
 	_test_rows()
 	_test_tiles()
 	_test_select()
@@ -380,6 +381,67 @@ func _test_caps(data: Variant) -> void:
 	var long := InventoryModel.clean("x".repeat(500))
 	_check.call(long.length() == InventoryModel.MAX_NAME and InventoryModel.clean("a\nb\u0007c") == "a b c"
 			and InventoryModel.clean("<color_red>red</color> rock") == "red rock", "inspect: names capped, no control characters or colour tags")
+
+
+## G2: CDDA's own counts and totals (player.item_amounts). Read strictly; a stack's count in its name; a row with
+## them holds what is inside it, so its contents are listed but not counted twice; without them, the type numbers.
+func _test_amounts(data: Variant) -> void:
+	var known := {5: true, 6: true, 7: true}
+	var many := []
+	for i in Snapshot.MAX_ITEM_AMOUNTS:
+		many.append([999, 1, 1, 1])   # not known: skipped, but each counts toward the cap
+	many.append([5, 1, 1, 1])
+	var a := Snapshot.amounts_from([[5, 15.0, 150, 30], [5, 2, 2, 2], [999, 1, 1, 1], [6, 0, 1, 1], [7, 1, -1, 0],
+			[7, 1, 2.5, 0], [7, 1, 1, 1, 1], "x", [7.5, 1, 1, 1]], known)
+	var b := Snapshot.amounts_from([[6, Snapshot.MAX_COUNT, Snapshot.MAX_AMOUNT, 0], [7, 1, Snapshot.MAX_AMOUNT + 1, 0]],
+			known)
+	_check.call(a.keys() == [5] and a[5] == PackedInt32Array([15, 150, 30]) and b.keys() == [6]
+			and Snapshot.amounts_from(many, known).is_empty() and Snapshot.amounts_from({}, known).is_empty()
+			and Snapshot.amounts_from(null, known).is_empty(), "amounts: read strictly: known uids once, whole numbers in "
+			+ "range, four per entry, the first %d entries (%s)" % [Snapshot.MAX_ITEM_AMOUNTS, a])
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var p := d["player"] as Dictionary
+	p["items"] = [
+		[SACK, _it["bag_canvas"], 0, -1, Snapshot.CARRIED_WORN],
+		[ROCK, _it["rock"], SACK, 0, 0],
+		[BOTTLE, _it["bottle_plastic"], SACK, 1, 0],
+		[WATER, _it["water_clean"], BOTTLE, 0, 0],
+		[PACK, _it["backpack"], 0, -1, Snapshot.CARRIED_WORN],
+		[STONE, _it["bottle_plastic"], PACK, 0, 0],
+		[STONE + 100, _it["water_clean"], STONE, 0, 0],
+	]
+	p["item_amounts"] = [[ROCK, 15, 150, 30], [BOTTLE, 1, 600, 550], [WATER, 2, 500, 500], [STONE + 100, 3, 750, 750]]
+	var snap := Snapshot.from_data(d)
+	var keep := _world.snapshot
+	_world.snapshot = snap
+	var cols := _cols()
+	_world.snapshot = keep
+	var sack := InventoryModel.find_column(cols, "worn:%d" % SACK)
+	var rock := InventoryModel.find_row(cols, ROCK)
+	var water := InventoryModel.find_row(cols, WATER)
+	var p1 := _group(sack, 1)
+	_check.call(snap.is_valid() and snap.item_amounts.size() == 4 and rock["exact"] and rock["count"] == 15
+			and rock["weight_g"] == 150 and rock["volume_ml"] == 30 and InventoryModel.row_name(rock) == rock["name"] + " (15)"
+			and InventoryModel.row_name(water) == "clean water (2)" and _uids(p1) == [BOTTLE, WATER],
+			"amounts: a row takes CDDA's count, weight and volume; a stack's count in its name (%s)"
+			% InventoryModel.row_name(rock))
+	_check.call(sack["weight_g"] == 750 and sack["volume_ml"] == 580 and p1["weight_g"] == 600 and p1["used_ml"] == 550,
+			"amounts: the bottle's totals hold its water, so the water is listed but not counted again (%d g, %d ml)"
+			% [sack["weight_g"], sack["volume_ml"]])
+	var pack := InventoryModel.find_column(cols, "worn:%d" % PACK)
+	var stone := InventoryModel.find_row(cols, STONE)
+	var w: int = _tables.def_at("itype", _it["bottle_plastic"]).weight_g
+	_check.call(not stone["exact"] and stone["count"] == 1 and InventoryModel.row_name(stone) == stone["name"]
+			and pack["weight_g"] == w + 750, "amounts: an item without them keeps the type numbers; its contents with "
+			+ "them still count (%d g)" % pack["weight_g"])
+	p.erase("item_amounts")
+	snap = Snapshot.from_data(d)
+	_world.snapshot = snap
+	rock = InventoryModel.find_row(_cols(), ROCK)
+	_world.snapshot = keep
+	_check.call(snap.item_amounts.is_empty() and not rock["exact"] and rock["count"] == 1
+			and rock["weight_g"] == _tables.def_at("itype", _it["rock"]).weight_g,
+			"amounts: an older bridge sends none: the type numbers, one per row")
 
 
 func _test_rows() -> void:

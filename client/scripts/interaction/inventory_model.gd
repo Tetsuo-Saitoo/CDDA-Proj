@@ -16,7 +16,9 @@ extends RefCounted
 ##   volume_ml, used_ml (its direct contents only: what takes room in the pocket), max_ml and max_g (a worn
 ##   container's pocket limits from the id tables, 0 when not known)}], weight_g, volume_ml (everything listed in it, nested items too), rows (rows kept), cut (rows left
 ##   out by MAX_ROWS)}.
-## A row: {uid, item (ItemRef), name, weight_g, volume_ml (one item of the itype; a stack counts as one), pending
+## A row: {uid, item (ItemRef), name, count (a stack's charges, 1 when unknown), exact (CDDA's own numbers from
+##   Snapshot.item_amounts: the whole stack, weight with contents, volume as it takes room; else one item of the
+##   itype, a stack counting as one), weight_g, volume_ml, pending
 ##   (an action is in flight), depth (0 = right in the group; 1 = inside a carried container listed above it ...),
 ##   is_container, note ("" or why its contents aren't listed)}.
 
@@ -41,6 +43,7 @@ static func columns(picker: ItemPicker, tables: IdTables, actions: ItemActions) 
 	if picker == null or picker.world == null or picker.world.snapshot == null:
 		return out
 	var snap := picker.world.snapshot
+	var am := snap.item_amounts   # CDDA's own counts and totals per item, {} from an older bridge
 	var all := picker.carried()
 	var kids := {}   # parent uid -> Array[ItemRef], in carried order
 	for r in all:
@@ -59,19 +62,19 @@ static func columns(picker: ItemPicker, tables: IdTables, actions: ItemActions) 
 		worn_uids[c.uid] = true
 	for r: ItemRef in kids.get(0, []):
 		if r.is_wielded():
-			_add_tree(hands, main, r, 0, kids, tables, actions, seen)
+			_add_tree(hands, main, r, 0, kids, tables, actions, seen, am)
 		elif r.is_off_hand():
-			_add_tree(hands, off, r, 0, kids, tables, actions, seen)
+			_add_tree(hands, off, r, 0, kids, tables, actions, seen, am)
 		elif not r.is_worn() and not worn_uids.has(r.uid):
-			_add_tree(loose, on_body, r, 0, kids, tables, actions, seen)
+			_add_tree(loose, on_body, r, 0, kids, tables, actions, seen, am)
 	out.append(hands)
 	if worn.size() > MAX_COLUMNS:
 		push_warning("inspect: %d worn containers, listing the first %d" % [worn.size(), MAX_COLUMNS])
 	for i in mini(worn.size(), MAX_COLUMNS):
-		out.append(_worn_column(worn[i], kids, tables, actions, seen, snap.player_pos))
+		out.append(_worn_column(worn[i], kids, tables, actions, seen, snap.player_pos, am))
 	if loose["rows"] + loose["cut"] > 0:
 		out.append(loose)
-	out.append(_nearby_column(picker, tables, actions))
+	out.append(_nearby_column(picker, tables, actions, am))
 	return out
 
 
@@ -91,6 +94,12 @@ static func find_row(cols: Array, uid: int) -> Dictionary:
 				if r["uid"] == uid:
 					return r
 	return {}
+
+
+## A row's name as listed, with a stack's count as CDDA writes it: "9x19mm JHP (15)"; the name alone for one.
+static func row_name(row: Dictionary) -> String:
+	var n := int(row.get("count", 1)) if row.get("count") is int else 1
+	return str(row.get("name", "")) + (" (%d)" % n if n > 1 else "")
 
 
 ## "657 g", "1.25 kg".
@@ -131,7 +140,7 @@ static func _group(col: Dictionary, key: Variant, title: String) -> Dictionary:
 
 ## A worn container's column: its direct contents grouped by pocket (lowest first), each with what is inside it.
 static func _worn_column(c: ItemRef, kids: Dictionary, tables: IdTables, actions: ItemActions, seen: Dictionary,
-		at: Vector3i) -> Dictionary:
+		at: Vector3i, am := {}) -> Dictionary:
 	var col := _column("worn:%d" % c.uid, "worn", c.display_name(tables), at)
 	col["container"] = c
 	seen[c.uid] = true
@@ -158,13 +167,13 @@ static func _worn_column(c: ItemRef, kids: Dictionary, tables: IdTables, actions
 			g["max_ml"] = clampi(int(known[p].get("volume_ml", 0)), 0, MAX_ITEM)
 			g["max_g"] = clampi(int(known[p].get("max_weight_g", 0)), 0, MAX_ITEM)
 		for r: ItemRef in by_pocket[p]:
-			_add_tree(col, g, r, 0, kids, tables, actions, seen)
+			_add_tree(col, g, r, 0, kids, tables, actions, seen, am)
 	return col
 
 
 ## How full a group's pocket is, 0..1 and past 1 when over: the fuller of its room (used_ml / max_ml) and its weight
-## limit (weight_g / max_g); -1 when it has no known limit. Counted from item types (a stack counts as one item),
-## so it can read low.
+## limit (weight_g / max_g); -1 when it has no known limit. Exact with CDDA's numbers (Snapshot.item_amounts); from
+## an older bridge counted from item types (a stack counts as one item), so it can read low.
 static func fill(g: Dictionary) -> float:
 	var out := -1.0
 	if int(g.get("max_ml", 0)) > 0:
@@ -202,7 +211,7 @@ static func pocket_title(pocket: Dictionary, index: int) -> String:
 
 ## Ground items on the squares in reach, from the snapshot's handles (seen tiles only). A container lying there is
 ## listed with GROUND_NOTE: snapshots don't list what is inside it yet.
-static func _nearby_column(picker: ItemPicker, tables: IdTables, actions: ItemActions) -> Dictionary:
+static func _nearby_column(picker: ItemPicker, tables: IdTables, actions: ItemActions, am := {}) -> Dictionary:
 	var snap := picker.world.snapshot
 	var centre: Variant = picker.centre()
 	var col := _column("nearby", "nearby", "Nearby", centre if centre is Vector3i else snap.player_pos)
@@ -227,29 +236,31 @@ static func _nearby_column(picker: ItemPicker, tables: IdTables, actions: ItemAc
 			if g.is_empty():
 				g = _group(col, sq, s[1])
 			var r := ItemRef.on_square(hs[k + 1], int(hs[k + 2]), sq, int(hs[k + 3]), int(hs[k + 4]))
-			var row := _row(r, 0, tables, actions, false)
+			var row := _row(r, 0, tables, actions, false, am)
 			if row["is_container"]:
 				row["note"] = GROUND_NOTE
-			_add_row(col, g, row)
+			_add_row(col, g, row, true)
 	return col
 
 
-## Adds `r` and (carried) everything inside it, depth first. `seen` stops an item being listed twice.
+## Adds `r` and (carried) everything inside it, depth first. `seen` stops an item being listed twice. A row with
+## CDDA's own totals (`exact`) already holds what is inside it, so its contents are listed but not counted again
+## (`counted`: an outer row's totals hold this one).
 static func _add_tree(col: Dictionary, g: Dictionary, r: ItemRef, depth: int, kids: Dictionary, tables: IdTables,
-		actions: ItemActions, seen: Dictionary) -> void:
+		actions: ItemActions, seen: Dictionary, am := {}, counted := false) -> void:
 	if seen.has(r.uid) or depth > MAX_DEPTH:
 		return
 	seen[r.uid] = true
-	var row := _row(r, depth, tables, actions, kids.has(r.uid))
+	var row := _row(r, depth, tables, actions, kids.has(r.uid), am)
 	if depth == 0:   # what is nested sits inside this one's room
 		g["used_ml"] = mini(int(g["used_ml"]) + int(row["volume_ml"]), MAX_ITEM)
-	_add_row(col, g, row)
+	_add_row(col, g, row, not counted)
 	for c: ItemRef in kids.get(r.uid, []):
-		_add_tree(col, g, c, depth + 1, kids, tables, actions, seen)
+		_add_tree(col, g, c, depth + 1, kids, tables, actions, seen, am, counted or row["exact"])
 
 
-static func _add_row(col: Dictionary, g: Dictionary, row: Dictionary) -> void:
-	for d: Dictionary in [col, g]:
+static func _add_row(col: Dictionary, g: Dictionary, row: Dictionary, count: bool) -> void:
+	for d: Dictionary in [col, g] if count else []:
 		d["weight_g"] = mini(int(d["weight_g"]) + int(row["weight_g"]), MAX_ITEM)
 		d["volume_ml"] = mini(int(d["volume_ml"]) + int(row["volume_ml"]), MAX_ITEM)
 	if col["rows"] >= MAX_ROWS:
@@ -259,8 +270,12 @@ static func _add_row(col: Dictionary, g: Dictionary, row: Dictionary) -> void:
 	(g["rows"] as Array).append(row)
 
 
-static func _row(r: ItemRef, depth: int, tables: IdTables, actions: ItemActions, holds: bool) -> Dictionary:
+static func _row(r: ItemRef, depth: int, tables: IdTables, actions: ItemActions, holds: bool, am := {}) -> Dictionary:
+	var a: Variant = am.get(r.uid)
+	var exact := a is PackedInt32Array and (a as PackedInt32Array).size() == 3
 	return {"uid": r.uid, "item": r, "name": clean(r.display_name(tables)),
-			"weight_g": clampi(r.weight_g(tables), 0, MAX_ITEM), "volume_ml": clampi(r.volume_ml(tables), 0, MAX_ITEM),
+			"count": a[0] if exact else 1, "exact": exact,
+			"weight_g": clampi(a[1] if exact else r.weight_g(tables), 0, MAX_ITEM),
+			"volume_ml": clampi(a[2] if exact else r.volume_ml(tables), 0, MAX_ITEM),
 			"pending": actions != null and actions.pending(r.uid) != "", "depth": depth,
 			"is_container": holds or r.is_container(tables), "note": ""}

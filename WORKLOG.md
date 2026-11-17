@@ -1,6 +1,18 @@
 # WORKLOG
 
 - 2026-11-17 — Cooking on the flat screen: pots on the heat near you show the same recipe cards as in VR, bigger; put the crosshair on a "+" line and press E to start that recipe, and the game's answer shows on the card. Client tests pass.
+- 2026-11-17 — Art coverage tool: the reports' text cells stay plain text when a spreadsheet opens them. A normal run's output is unchanged.
+- 2026-11-17 — Bridge: the screen no longer stands still while you wait, craft or sleep: the game sends a snapshot about twice a second during those stretches (it sent none until they ended), and says what the character is doing (`player.activity`, `player.asleep`). A 6-hour wait takes as long as before. Fork tests pass on Windows and Linux, client tests pass.
+- 2026-11-17 — Bridge: the game library no longer loads tileset images it never draws (B2): it reads only the tile sizes. About 550 MB less memory on Windows and 525 MB on Linux, and about a second less at the first game load; turn times as before. All fork tests pass on both, client tests pass.
+- 2026-11-17 — Art coverage tool: `--ids` reads the ids, names and looks_like from the bridge's id tables file instead of the game's JSON (B6 follow-up); the JSON still gives the spawn weights. Same percentages as before for terrain and furniture; monsters and vehicle parts now list everything the game loads.
+- 2026-11-17 — The waiting line now says what you are doing: "Sleeping...", "Waiting..." or the game's own word for a longer task, once the bridge sends it. Client tests pass.
+- 2026-11-17 — While you wait or sleep, "Time passes..." shows under the crosshair, so the still screen doesn't look frozen. Client tests pass; not seen on screen yet.
+- 2026-11-17 — New keys: Shift+S sleeps and Shift+. waits longer (the game asks how long), and a one-time hint says so when you first get tired. Client tests pass; not tried in a live game yet.
+- 2026-11-17 — Waiting and sleeping no longer look hung: while the game runs on by itself the client now hears from it about every 0.7 s (1.0 s at most in a 6-hour wait) and the screen says "Waiting..."; rest_live_test (QA lead) checks both in a live game and passes. Its sleep step answers "keep trying?" and ends when the character is up again (the range's hub is lit, so CDDA wakes a sleeper at any hour).
+- 2026-11-17 — rest_live_test (QA lead): a headless live run of CDDA's wait and sleep through the client in the test range. Both work and are quick (6 hours of waiting in 6 to 8 s, a night's sleep in about 10 s), but the client gets no snapshot until the stretch is over, so the screen stands still meanwhile (an open TASKS item).
+- 2026-11-17 — An item in your hand shows its state too: frost, heat shimmer, spoilage, its liquid level and gun grime, updated as it warms or goes off (lead-world). Client tests pass.
+- 2026-11-17 — The Tab view's rows and pockets show the game's own numbers when the bridge sends them: a stack's count next to its name ("rock (15)"), weight and volume with contents, nothing counted twice. Older bridges still show the type numbers. Client tests pass.
+- 2026-11-17 — Item tiles and items in the world now decide what is a liquid the same way (one shared check), so a tile sloshes exactly when the 3D item shows a liquid level. Client tests pass.
 - 2026-11-17 — VR body slots: holsters and sheaths sit at your hips and pouches on your chest; reach there to draw what's inside, let go there to put something in, and let go of your gun at the holster to holster it. Client tests pass.
 - 2026-11-17 — In VR, when the game turns down lighting or putting out a fire, your hand buzzes and the reason shows by it; a refused cook shows the reason on the pot's card. Client tests pass.
 - 2026-11-17 — In VR, punching or swinging hard at a wall, window, door or furniture next to you smashes it, as the strike keys do on the flat screen. Client tests pass.
@@ -10,6 +22,8 @@
 - 2026-11-17 — Item tiles, slice 4: a glass jar or clear bottle shows as glass in the Tab view and the hands panel, and an empty one says "empty". Client tests pass.
 - 2026-11-17 — A see-through container in the 3D world shows the level of a liquid only, not of beans or flour, by the same rule as the item tiles (lead-world). Client tests pass.
 - 2026-11-17 — An item held in a hand or shown in the VR tray can wear the same frost, heat, spoilage, liquid and grime look as one lying in the world, with one call from the hands and tray code (lead-world; those calls come next). Client tests pass.
+- 2026-11-17 — Bridge: `player.item_amounts` in the snapshot: each carried or in-reach item's stack count, weight and volume as CDDA counts them (G2, exact numbers in the Tab view). Snapshot test checks a bottle with water and a stack of rounds.
+- 2026-11-17 — Bridge: a gun shot's `projectile` event names its ammo (`detail` = the ammo's itype), so the client can show what flies. Events test and sim test check it.
 - 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
 - 2026-11-17 — Radial menu, slice 5: the line by the crosshair says what E does at what you face (light, drink, craft, ... or examine), and names terrain you can do something with, like a water source. Client tests pass.

@@ -5,7 +5,16 @@ and reports which step of the fallback chain (contracts/assets.md) gives it art.
 spawn weight are what the art team should make next.
 
 Usage:
-    python -I tools/coverage/coverage.py --data cdda/data/json --registry assets/registry [--out tools/out]
+    python -I tools/coverage/coverage.py --ids contracts/mock/id_tables.json --data cdda/data/json
+        [--registry assets/registry] [--out tools/out]
+
+    --ids   the bridge's id tables file (contracts/id_tables.md): the ids, names and looks_like exactly as the
+            game loaded them, mods included. The mock is in contracts/mock; a fresh one comes from
+            `fp3d-headless <bubble.json> 1 2 <id_tables.json>` or the client's get_id_tables_json().
+    --data  CDDA's data/json (more --data for mods): the spawn weights. Without --ids it is also where the ids
+            come from, read straight from the JSON as before (it then follows copy-from as well as looks_like;
+            the client follows looks_like only).
+    One of the two is needed. With --ids alone there are no spawn weights and every id counts the same.
 
 Spawn weights are heuristics, good for ranking only:
     terrain/furniture  map squares placed by mapgen rows (via inline maps and palettes) + references
@@ -22,7 +31,20 @@ import os
 import sys
 
 MAX_FILE_BYTES = 64 * 1024 * 1024  # data is untrusted (mods): skip absurd files
+MAX_IDS_FILE_BYTES = 256 * 1024 * 1024  # id tables of a game with many mods: tens of MB; the mock is 3 MB
+MAX_IDS_ROWS = 1_000_000  # per table
+MAX_ID_CHARS = 256
+NULL_IDS = {"t_null", "f_null", "tr_null", "mon_null", "null"}  # the tables list CDDA's "nothing" ids too
 MAX_CHAIN = 16
+# id tables file: table name -> the kind this report uses
+ID_TABLES = {
+    "ter": "terrain",
+    "furn": "furniture",
+    "trap": "trap",
+    "itype": "item",
+    "mtype": "monster",
+    "vpart": "vehicle_part",
+}
 KINDS = {
     "terrain": "terrain",
     "furniture": "furniture",
@@ -59,6 +81,15 @@ def name_of(obj):
     if isinstance(n, dict):
         n = n.get("str") or n.get("str_sp") or ""
     return n if isinstance(n, str) else ""
+
+
+def csv_cell(value):
+    """A report cell as plain text: ids and names come from game data and mods, and a spreadsheet takes text
+    that starts with = + - @, a tab or a carriage return for a formula. Such text gets a leading quote; numbers
+    stay numbers."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
 
 
 def walk_strings(node, out, depth=0):
@@ -121,6 +152,43 @@ class Data:
             self.mon_groups.append(obj)
         elif t == "vehicle":
             self.vehicles.append(obj)
+
+
+def load_id_tables(path):
+    """Read the bridge's id tables file (contracts/id_tables.md) -> (kind -> id -> row, generation, rows skipped).
+
+    These are the ids the game itself loaded: mods included, abstract types gone, `looks_like` as the game has it.
+    The file is untrusted like any other input: its size is capped, and a table or row of the wrong shape is skipped.
+    """
+    if os.path.getsize(path) > MAX_IDS_FILE_BYTES:
+        raise ValueError(f"{path}: larger than {MAX_IDS_FILE_BYTES // (1024 * 1024)} MB")
+    with open(path, encoding="utf-8") as f:
+        tables = json.load(f)
+    if not isinstance(tables, dict):
+        raise ValueError(f"{path}: not an id tables file")
+    defs = {k: {} for k in KINDS.values()}
+    skipped = 0
+    for table, kind in ID_TABLES.items():
+        rows = tables.get(table)
+        if not isinstance(rows, list):
+            continue
+        for row in rows[:MAX_IDS_ROWS]:
+            cid = row.get("id") if isinstance(row, dict) else None
+            if not isinstance(cid, str) or not cid or len(cid) > MAX_ID_CHARS:
+                skipped += 0 if isinstance(row, dict) and cid == "" else 1  # index 0 is the empty "none" row
+                continue
+            if cid in NULL_IDS:
+                continue  # "nothing here": it needs no art
+            name = row.get("name")
+            looks = row.get("looks_like")
+            defs[kind][cid] = {
+                "id": cid,
+                "name": name if isinstance(name, str) else "",
+                "looks_like": looks if isinstance(looks, str) and looks else None,
+            }
+        skipped += max(0, len(rows) - MAX_IDS_ROWS)
+    gen = tables.get("generation")
+    return defs, gen if isinstance(gen, int) else 0, skipped
 
 
 def palette_lookup(data, palette_ids, key, char, seen=None, depth=0):
@@ -262,16 +330,33 @@ def resolve(data, kind, cid, reg):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data", required=True, help="CDDA data/json folder (add mods with more --data)", action="append")
+    ap.add_argument("--data", help="CDDA data/json folder (add mods with more --data); needed without --ids, and "
+                    "with --ids it gives the spawn weights", action="append")
+    ap.add_argument("--ids", help="the bridge's id tables file: the ids, names and looks_like the game loaded")
     ap.add_argument("--registry", default="assets/registry")
     ap.add_argument("--out", default="tools/out")
     ap.add_argument("--top", type=int, default=10)
     a = ap.parse_args()
+    if not a.data and not a.ids:
+        ap.error("give --ids, --data, or both")
 
     data = Data()
-    for root in a.data:
+    for root in a.data or []:
         for obj in load_objects(root):
             data.add(obj)
+    if a.ids:
+        try:
+            defs, generation, skipped = load_id_tables(a.ids)
+        except (OSError, ValueError, RecursionError) as e:
+            sys.exit(f"cannot read the id tables: {e}")
+        # The game's own list replaces what was read from JSON; the tables carry no abstract types and no
+        # copy-from, so the fallback chain follows looks_like only, as the client does.
+        data.defs = defs
+        data.abstracts = {}
+        print(f"ids: {sum(len(d) for d in defs.values())} from {a.ids} (generation {generation})"
+              + (f", {skipped} rows skipped" if skipped else ""))
+        if not a.data:
+            print("no --data: spawn weights are 0, so the percentages count every id the same")
     reg = load_registry(a.registry)
     weights = spawn_weights(data)
     os.makedirs(a.out, exist_ok=True)
@@ -288,14 +373,16 @@ def main():
             status, via = resolve(data, kind, cid, reg)
             rows.append((cid, name_of(obj), round(weights[kind][cid], 2), status, via))
         rows.sort(key=lambda r: -r[2])
-        total = sum(r[2] for r in rows) or 1.0
-        exact = sum(r[2] for r in rows if r[3] == "exact") / total * 100
-        anyc = sum(r[2] for r in rows if r[3] != "placeholder") / total * 100
+        # A kind with no spawn weights at all (no --data): every id counts the same.
+        weigh = (lambda r: r[2]) if any(r[2] for r in rows) else (lambda r: 1.0)
+        total = sum(weigh(r) for r in rows) or 1.0
+        exact = sum(weigh(r) for r in rows if r[3] == "exact") / total * 100
+        anyc = sum(weigh(r) for r in rows if r[3] != "placeholder") / total * 100
         print(f"{kind:<13}{len(rows):>7}{exact:>9.1f}{anyc:>14.1f}")
         with open(os.path.join(a.out, f"coverage_{kind}.csv"), "w", newline="", encoding="utf-8") as f:
             cw = csv.writer(f)
             cw.writerow(["id", "name", "spawn_weight", "status", "via"])
-            cw.writerows(rows)
+            cw.writerows([csv_cell(c) for c in r] for r in rows)
         todo = [r for r in rows if r[3] == "placeholder"][: a.top]
         if todo:
             print("    next to make: " + ", ".join(r[0] for r in todo))

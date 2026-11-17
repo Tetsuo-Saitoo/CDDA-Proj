@@ -50,6 +50,9 @@ const CARRIED_STRIDE := 5                 # carried: uid, itype, parent uid (0 o
 const MAX_CARRIED := 256
 const STATE_SIZE := 7                     # item_states: temp, rot, fill, fill_type, see_through, fill_ml, dirt (after the uid)
 const MAX_ITEM_STATES := 512
+const MAX_ITEM_AMOUNTS := 1024             # item_amounts: carried items, then in reach (the contract's cap)
+const MAX_COUNT := 2147483647              # an item_amounts count (charges), 1 at least
+const MAX_AMOUNT := 1_000_000_000          # an item_amounts weight in g / volume in ml
 const MAX_STATE_ML := 100000000           # 100 m3
 const MAX_DIRT := 10000                   # a gun's fouling, as wielded_gun.dirt
 const MAX_POCKET := 255
@@ -69,6 +72,8 @@ const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
 const MAX_MORALE := 32                    # morale entries kept (the contract sends at most 12)
 const MAX_MORALE_NAME := 64
 const MAX_NPC_NAME := 40                  # creatures' `name` (NPCs only), the contract's 40 columns
+const MAX_ACTIVITY_ID := 64               # player.activity id, bytes
+const MAX_ACTIVITY_VERB := 40             # player.activity verb, columns
 const MAX_MOOD_FACE := 16
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
@@ -148,6 +153,10 @@ var player_worn: Array[Worn] = []          # what the player wears, inner to out
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
 var item_states := {}                      # uid -> PackedInt32Array(STATE_SIZE): live state of a carried item or one lying in reach (ItemLook)
 var _item_states_sent: Variant             # player.item_states as sent, read once the submaps' handles are known
+## uid -> PackedInt32Array([count, weight_g, volume_ml]): CDDA's own numbers for a carried item or one in reach (the
+## whole stack; weight with contents, volume as it takes room where it is); {} from an older bridge (amounts_from).
+var item_amounts := {}
+var _item_amounts_sent: Variant
 var player_stamina := -1                   # -1: not sent
 var player_stamina_max := -1
 var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
@@ -165,6 +174,12 @@ var player_mood := {}
 ## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
 ## (HUD-only: never fails the snapshot).
 var player_move_mode := -1
+## player.activity while one runs (a long wait, a craft): CDDA's activity type id (letters, digits and _, up to
+## MAX_ACTIVITY_ID bytes, else "") and its verb ("waiting", cleaned, up to MAX_ACTIVITY_VERB); "" for none or not
+## sent. player.asleep: CDDA's sleep effect (not lying awake trying). HUD-only: never fails the snapshot.
+var activity_id := ""
+var activity_verb := ""
+var asleep := false
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -303,18 +318,29 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
-	if is_valid() and _item_states_sent != null:
-		var known := {}
-		for k in range(0, carried.size(), CARRIED_STRIDE):
-			known[carried[k]] = true
-		for sm: Submap in submaps.values():
-			for k in range(1, sm.handles.size(), HANDLE_STRIDE):
-				known[sm.handles[k]] = true
-			for c: int in sm.inside:
-				for e: Array in sm.inside[c]:
-					known[e[0]] = true   # what is in a container lying next to the player (its tray row)
-		item_states = states_from(_item_states_sent, known)
+	if is_valid() and (_item_states_sent != null or _item_amounts_sent != null):
+		var known := _known_uids()
+		if _item_states_sent != null:
+			item_states = states_from(_item_states_sent, known)
+		if _item_amounts_sent != null:
+			item_amounts = amounts_from(_item_amounts_sent, known)
 	_item_states_sent = null
+	_item_amounts_sent = null
+
+
+## The item uids per-item lists may name: carried items, the submaps' handles and what is in a container lying
+## next to the player (its tray row, `inside`).
+func _known_uids() -> Dictionary:
+	var known := {}
+	for k in range(0, carried.size(), CARRIED_STRIDE):
+		known[carried[k]] = true
+	for sm: Submap in submaps.values():
+		for k in range(1, sm.handles.size(), HANDLE_STRIDE):
+			known[sm.handles[k]] = true
+		for c: int in sm.inside:
+			for e: Array in sm.inside[c]:
+				known[e[0]] = true
+	return known
 
 
 ## [min, max]: the map's z range. It must hold z 0 and stay within CddaCoords.Z_LIMIT either way.
@@ -357,12 +383,22 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	_item_states_sent = (v as Dictionary).get("item_states")
+	_item_amounts_sent = (v as Dictionary).get("item_amounts")
 	player_effects = effects_from((v as Dictionary).get("effects"))
 	var md: Variant = (v as Dictionary).get("mood")
 	player_mood = mood_from(md)
 	player_morale = morale_from((md as Dictionary).get("entries") if md is Dictionary else null)
 	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
 	player_move_mode = mm if mm is int else -1
+	var act: Variant = (v as Dictionary).get("activity")
+	if act is Dictionary:
+		var id: Variant = (act as Dictionary).get("id")
+		# ASCII only, so its length is its size in bytes
+		if id is String and (id as String).length() <= MAX_ACTIVITY_ID and IdTables._is_word(id):
+			activity_id = id
+		activity_verb = plain_text((act as Dictionary).get("verb"), MAX_ACTIVITY_VERB)
+	var sl: Variant = (v as Dictionary).get("asleep")
+	asleep = sl is bool and sl
 
 
 ## player.effects, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).
@@ -957,6 +993,32 @@ static func states_from(v: Variant, known: Dictionary) -> Dictionary:
 			s.append(x)
 		if s.size() == STATE_SIZE and (s[2] == -1) == (s[5] == -1):
 			out[uid] = s
+	return out
+
+
+## player.item_amounts, cleaned like item_states (anything malformed is left out, it never fails a snapshot):
+## [[uid, count, weight_g, volume_ml], ...] -> uid -> PackedInt32Array([count, weight_g, volume_ml]), the first
+## MAX_ITEM_AMOUNTS, each uid one of `known`, the first of a repeat kept; count 1..MAX_COUNT, grams and ml
+## 0..MAX_AMOUNT.
+static func amounts_from(v: Variant, known: Dictionary) -> Dictionary:
+	var out := {}
+	if not v is Array:
+		return out
+	var hi := [MAX_COUNT, MAX_AMOUNT, MAX_AMOUNT]
+	for e: Variant in (v as Array).slice(0, MAX_ITEM_AMOUNTS):
+		if not e is Array or (e as Array).size() != 4:
+			continue
+		var uid: Variant = _whole(e[0], 1, MAX_UID - 1)
+		if uid == null or not known.has(uid) or out.has(uid):
+			continue
+		var a := PackedInt32Array()
+		for k in 3:
+			var x: Variant = _whole(e[k + 1], 1 if k == 0 else 0, hi[k])
+			if x == null:
+				break
+			a.append(x)
+		if a.size() == 3:
+			out[uid] = a
 	return out
 
 

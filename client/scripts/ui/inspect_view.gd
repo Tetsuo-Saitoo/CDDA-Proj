@@ -1159,7 +1159,7 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		_row_col[uid] = col_id
 		(_col_uids[col_id] as Array).append(uid)
 	var box: bool = r["is_container"]
-	var name_label := _label(("+ " if box else "") + str(r["name"]), BOX if box else Color.WHITE)
+	var name_label := _label(("+ " if box else "") + InventoryModel.row_name(r), BOX if box else Color.WHITE)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(name_label)
@@ -1174,7 +1174,7 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		var n := _label(note, DIM)
 		n.add_theme_font_size_override("font_size", 12)
 		v.add_child(n)
-	slot.tooltip_text = "%s\n%s, %s%s" % [r["name"], InventoryModel.weight_text(r["weight_g"]),
+	slot.tooltip_text = "%s\n%s, %s%s" % [InventoryModel.row_name(r), InventoryModel.weight_text(r["weight_g"]),
 			InventoryModel.volume_text(r["volume_ml"]), ("\n" + note) if note != "" else ""]
 	if not tile.is_empty():
 		slot.tooltip_text += "\n" + ItemTile.words(tile)
