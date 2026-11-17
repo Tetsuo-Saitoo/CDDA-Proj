@@ -112,6 +112,7 @@ struct player_view {
     std::vector<uint8> bleed, bandaged, disinfected, bite, infected;   // per body part, effect intensity (0 none)
     std::vector<worn_view> worn;             // inner to outer (CDDA's order), visible items only; cap 64
     std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
+    std::vector<item_state_view> item_states;   // live item tiles (2026-11-17): what items show of their state; cap 512
     optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
     std::vector<effect_view> effects;        // what CDDA's @ screen lists (effects with no display name left out); cap 64
     mood_view mood;                          // CDDA's morale screen (2026-11-12)
@@ -146,6 +147,21 @@ struct gun_view { uint32 type /* itype */; int16 dirt /* CDDA's fouling 0..10000
 struct worn_view { uint32 type /* itype */; uint8 layer /* highest layer_level */; uint8 damage /* damage_level 0..5 */;
                    uint8 degradation /* 0..255 of max */; std::vector<uint32> covers /* body_part indices */; };
 struct carried_view { uint64 uid; uint32 type; uint64 parent; int16 pocket; uint8 flags; };   // parent = container's uid (0 on the body); pocket = index into the parent's container pockets (as queue_item_action takes it), -1 on the body; flags: 1 worn, 2 wielded, 4 held in the off hand
+struct item_state_view { uint64 uid; uint8 temp; int16 rot; int16 fill; uint32 fill_type; bool see_through;
+                         int32 fill_ml; int16 dirt; };
+    // One entry for a carried item (`items`), then for an item lying on the player's square or one of the 8 around it
+    // (the handles the piles list there) and for what is directly inside such an item (`inside`). Sparse: an item
+    // with nothing to show (temp 0, rot -1, fill -1, dirt -1) has no entry. uid = the item's handle.
+    // temp: 0 normal, 1 hot, 2 cold, 3 frozen (CDDA's own HOT / COLD / FROZEN item flags).
+    // rot: CDDA's relative rot in permille, 0..2000 (1000 = rotten); -1 = it doesn't rot. For a container: the
+    // worst of what is directly inside it.
+    // fill: permille of its CONTAINER pockets' capacity in use, 0..1000; -1 = it has no such pocket.
+    // fill_type: itype index of the content with the largest volume, 0 = empty. see_through: one of those pockets
+    // is of a see-through material (the game data's `transparent`: glass, clear plastic; an open pot is not). fill_ml: the volume inside in ml (clamped to int32); -1 = no such pocket.
+    // dirt: a gun's fouling, 0..10000, the same unit as wielded_gun.dirt; -1 = not a gun, or one that doesn't foul.
+    // A fouling that a save spells as anything but a number reads as 0.
+    // JSON: player "item_states": [[uid, temp, rot, fill, fill_type, see_through (0/1), fill_ml, dirt], ...].
+    // Older bridges send no "item_states": read a missing one as empty.
 
 struct environment_view {
     int64 turn_of_day_s; uint8 season; float sun_alt_deg, sun_az_deg; uint8 moon_phase;
