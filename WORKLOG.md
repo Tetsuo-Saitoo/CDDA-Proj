@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Cooking on the flat screen: pots on the heat near you show the same recipe cards as in VR, bigger; put the crosshair on a "+" line and press E to start that recipe, and the game's answer shows on the card. Client tests pass.
 - 2026-11-17 — VR body slots: holsters and sheaths sit at your hips and pouches on your chest; reach there to draw what's inside, let go there to put something in, and let go of your gun at the holster to holster it. Client tests pass.
 - 2026-11-17 — In VR, when the game turns down lighting or putting out a fire, your hand buzzes and the reason shows by it; a refused cook shows the reason on the pot's card. Client tests pass.
 - 2026-11-17 — In VR, punching or swinging hard at a wall, window, door or furniture next to you smashes it, as the strike keys do on the flat screen. Client tests pass.

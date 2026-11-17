@@ -138,6 +138,8 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_cook_answer()
 	_test_rig()
 	_test_rig_answers()
+	_test_flat()
+	_test_flat_grab()
 	if is_instance_valid(_cook):
 		_cook.free()
 	_head.free()
@@ -755,6 +757,133 @@ func _test_rig() -> void:
 	rig.cook.backend = null
 	_check.call(not b.is_connected("recipes_matched", rig.cook._on_matched), "vr cook: ... and let go when it changes")
 	rig.free()
+
+
+## The flat screen (E6): bigger cards for pots farther from the eye; the crosshair's ray picks a "+" line and E
+## (press_ray) starts it; a ray off every card, behind the eye or junk picks nothing; standalone, the cards update
+## themselves and CDDA's answer to their cook shows on the card.
+func _test_flat() -> void:
+	var b := Live.new()
+	_new_cook(b)
+	_cook.card_scale = 2.5
+	_cook.range_m = 4.0
+	_cook.pick_hint = "E on a + line: cook it"
+	_answered(b, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	_cook.face()
+	var c: VrCook.Card = _cook.cards.get(100)
+	if c == null:
+		_check.call(false, "vr cook: flat: the pot has a card")
+		return
+	var sc := c.global_transform.basis.get_scale()
+	var top := _cook.pot_top(100, Vector3i(6, 5, 0))
+	var eye := _head.global_position
+	var tea := _line_pt(c, 4)
+	var hit := _cook.line_on_ray(eye, tea - eye)
+	var lines := _lines(100)
+	_check.call(sc.is_equal_approx(Vector3.ONE * 2.5) and is_equal_approx(c.position.y, top.y + VrCook.CARD_UP * 2.5)
+			and hit.get("uid") == 100 and hit.get("line") == 4 and (hit.get("match", {}) as Dictionary).get("name") == "Tea"
+			and lines[lines.size() - 1] == "E on a + line: cook it",
+			"vr cook: flat: a bigger card; the crosshair's ray on the '+ Tea' line finds it (%s)" % [hit])
+	var off := [_cook.line_on_ray(eye, Vector3.UP), _cook.line_on_ray(eye, eye - tea), _cook.line_on_ray(eye, Vector3.ZERO),
+			_cook.line_on_ray(Vector3(NAN, 0, 0), Vector3.FORWARD), _cook.line_on_ray(eye, Vector3(INF, 0, 0))]
+	var stew := _cook.press_ray(eye, _line_pt(c, 3) - eye)
+	var sent := _cook.press_ray(eye, tea - eye)
+	_check.call(off.all(func(h: Dictionary) -> bool: return h.is_empty()) and not stew and sent and b.cooked.size() == 1
+			and b.cooked[0][3] == "tea", "vr cook: flat: E on '+ Tea' starts tea; off the card, behind the eye, junk or a '-' line: nothing (%s)" % [off])
+	# range: a pot 3 m along from the eye shows with the screen's range, not VR's
+	_look(_snap([_heat(6, 5), _heat(8, 5)], [_pot_at(6, 5, 100, _water_in()), _pot_at(8, 5, 101, _water_in())]))
+	var far := _cook.cards.has(101)
+	_cook.range_m = VrCook.RANGE_M
+	_cook.refresh()
+	var near_only := not _cook.cards.has(101) and _cook.cards.has(100)
+	_check.call(far and near_only, "vr cook: flat: range_m reaches pots VR's range wouldn't")
+	# standalone: updates itself, tags its cooks and shows CDDA's refusal on the card
+	_new_cook(b)
+	_cook.standalone = true
+	_cook.update(0.016)
+	var hooked := b.is_connected("events_arrived", _cook.on_events) and _cook.is_processing() and _cook.results != null
+	_answered(b, _water_in(), [_m("Soup", 720, true)])
+	var tag: int = b.cooked.back()[5] if b.cooked.size() == 2 else 0
+	b.events_arrived.emit([{"kind": "item_result", "amount": 0, "detail": tag, "text": "You can't see to craft!"}])
+	var why := _cook.refusal(100)
+	_cook.standalone = false
+	_cook.backend = null
+	_cook.update(0.016)
+	_check.call(hooked and tag >= VrResults.TAG_BASE and why == "You can't see to craft!" and not _cook.is_processing()
+			and not b.is_connected("events_arrived", _cook.on_events),
+			"vr cook: flat: standalone it updates itself and shows CDDA's refusal of its cook on the card (%s)" % why)
+
+
+## The flat screen's crosshair (GrabController.cook, lead-ui's OK): on a "+" line it reads "<use_held's key> start
+## <recipe>" and E starts that recipe; on a "-" line, off the cards, with no cook or a freed one, E does what it did
+## (no item here: nothing). VrCook.flat makes the screen's cards.
+func _test_flat_grab() -> void:
+	var b := Live.new()
+	var flat := VrCook.flat(_world, _head, b)
+	_check.call(flat.standalone and flat.is_processing() and flat.range_m == VrCook.FLAT_RANGE_M
+			and flat.card_scale == VrCook.FLAT_SCALE and flat.pick_hint == VrCook.FLAT_HINT and flat.backend == b
+			and flat.head == _head, "vr cook: flat: VrCook.flat makes the screen's cards")
+	flat.free()
+	_new_cook(b)
+	_cook.card_scale = VrCook.FLAT_SCALE
+	_answered(b, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	_cook.face()
+	var c: VrCook.Card = _cook.cards.get(100)
+	if c == null:
+		_check.call(false, "vr cook: flat grab: the pot has a card")
+		return
+	var acts := ItemActions.new()
+	_root.add_child(acts)
+	var hs := Hands.new(_world, acts)
+	_root.add_child(hs)
+	var ctl := GrabController.new(_world)
+	_root.add_child(ctl)
+	ctl.reach = func() -> Variant: return null   # no item finding: the hand-built snapshot has no terrain for LookRay
+	ctl.hands = hs
+	ctl.cook = _cook
+	var cam := Camera3D.new()
+	_root.add_child(cam)
+	cam.make_current()
+	var mid := _root.get_viewport().get_visible_rect().size / 2
+	var eye := _head.global_position
+	var pad := InputActions.pad_last
+	InputActions.pad_last = false
+	var e_key := InputActions.slots(&"use_held")[0].duplicate() as InputEvent
+	if e_key is InputEventKey:
+		(e_key as InputEventKey).pressed = true
+	cam.look_at_from_position(eye, _line_pt(c, 4))
+	ctl.update(cam, mid, true, true)
+	var text := ctl.icon.text
+	var on_tea: bool = ctl.cook_hover.get("line") == 4 and ctl.icon.mode == GrabController.GrabIcon.HAND
+	var n0 := b.cooked.size()
+	var used := ctl.take_hovered(e_key)
+	_check.call(on_tea and text == "%s start Tea" % InputActions.key_of(&"use_held") and used
+			and b.cooked.size() == n0 + 1 and b.cooked.back()[3] == "tea",
+			"vr cook: flat grab: the crosshair on '+ Tea' reads '<key> start Tea' and E starts it (%s)" % text)
+	var n1 := b.cooked.size()
+	cam.look_at_from_position(eye, _line_pt(c, 3))   # "- Stew": CDDA can't start it
+	ctl.update(cam, mid, true, true)
+	var stew := ctl.cook_hover.is_empty() and not ctl.icon.text.contains("start") and not ctl.take_hovered(e_key)
+	cam.look_at_from_position(eye, eye + Vector3(-3.0, -0.5, 0.0))   # away from the pot
+	ctl.update(cam, mid, true, true)
+	var away := ctl.cook_hover.is_empty() and not ctl.take_hovered(e_key)
+	cam.look_at_from_position(eye, _line_pt(c, 4))
+	ctl.cook = null
+	ctl.update(cam, mid, true, true)
+	var none := ctl.cook_hover.is_empty() and not ctl.take_hovered(e_key)
+	var gone := VrCook.new()
+	ctl.cook = gone
+	gone.free()
+	ctl.update(cam, mid, true, true)
+	var freed := ctl.cook_hover.is_empty() and not ctl.take_hovered(e_key)
+	_check.call(stew and away and none and freed and b.cooked.size() == n1,
+			"vr cook: flat grab: a '-' line, off the cards, no cook or a freed one: E starts nothing (%s %s %s %s)"
+			% [stew, away, none, freed])
+	InputActions.pad_last = pad
+	cam.free()
+	ctl.free()
+	hs.free()
+	acts.free()
 
 
 ## The rig hears the backend's events: a fire op goes with a tag; CDDA refusing it buzzes the hand that pressed and

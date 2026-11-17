@@ -244,6 +244,10 @@ func _test_mouse(root: Node) -> void:
 	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
 	var rock := _handle(S, _it["rock"])
 	cam.look_at_from_position(eye, _mid(rock))
+	var cook := VrCook.new()   # E6's flat cooking cards (none here: no "+" line under the crosshair): items as before
+	cook.world = _world
+	cook.head = cam
+	ctl.cook = cook
 	ctl.update(cam, mid, true, true)
 	_check.call(_uid(ctl.item_hover) == rock and ctl.icon.mode == GrabController.GrabIcon.HAND
 			and ctl.icon.text.begins_with(str(ctl.item_hover["name"])), "hands: crosshair on an item: hand pointer, its name and keys")
@@ -311,6 +315,7 @@ func _test_mouse(root: Node) -> void:
 	_bump()
 	cam.free()
 	ctl.free()
+	cook.free()
 
 
 ## A door leaf freed while a hand hovers or holds it (its submap dropped): forgotten, no cast errors; also the

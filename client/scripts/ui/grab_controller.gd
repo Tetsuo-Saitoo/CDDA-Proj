@@ -63,6 +63,12 @@ var tray: ItemTray:
 		if t != null and not t.closed.is_connected(_on_tray_closed):
 			t.closed.connect(_on_tray_closed)
 var tray_hover := {}         # the tray target under the pointer
+## E6 (lead-vr's): the pots' cooking cards on the flat screen (VrCook.flat, made by main.gd in a live game); null:
+## none. The crosshair on a "+" line (a recipe CDDA can start now) wins over items: it reads "<use_held> start
+## <recipe>" and E (use_held) starts it; anywhere else E does what it did.
+var cook: VrCook
+var cook_hover := {}         # the "+" line under the pointer (VrCook.line_on_ray), {} if none
+var _cook_ray: Array = []    # the ray that found it; E presses along it
 var _tray_mouse := -1        # the mouse mode before the tray opened; -1 while it is shut
 var _reach_fn := Callable()  # what this controller gave hands.picker.reach
 var carry_m := 0.8           # how far in front of the camera a carried item floats
@@ -142,6 +148,7 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 		grabbed = null
 	icon.at = pt
 	var text := ""
+	cook_hover = {}
 	if hands != null and cam != null and carrying():
 		_carry(cam, pt)
 		icon.mode = GrabIcon.FIST
@@ -150,12 +157,18 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 		var t := {}
 		if grabbed == null and enabled and cam != null:
 			var ray := ray_from(cam, pt)
-			t = hands.find_on_ray(ray[0], ray[1], HOVER_M)
+			cook_hover = _cook_line(ray)
+			if cook_hover.is_empty():
+				t = hands.find_on_ray(ray[0], ray[1], HOVER_M)
 		hands.hover("mouse", t)
 		hover = t["node"] if not t.is_empty() and t["kind"] == "door" else null
 		item_hover = t if not t.is_empty() and t["kind"] == "item" else {}
 		if grabbed != null:
 			icon.mode = GrabIcon.FIST
+		elif not cook_hover.is_empty():
+			icon.mode = GrabIcon.HAND
+			var key := InputActions.prompt_of(&"use_held") if InputActions.pad_last else InputActions.key_of(&"use_held")
+			text = "%s start %s" % [key, str((cook_hover["match"] as Dictionary).get("name", ""))]
 		elif not t.is_empty():
 			icon.mode = GrabIcon.HAND
 			if not item_hover.is_empty() and InputActions.pad_last:
@@ -351,7 +364,22 @@ func take_hovered(event: InputEvent) -> bool:
 		return take_hover("off")
 	if not InputActions.pressed(event, &"use_held"):
 		return false
+	if not cook_hover.is_empty() and is_instance_valid(cook) and _cook_ray.size() >= 2 and not carrying():
+		if not cook.press_ray(_cook_ray[0], _cook_ray[1]):
+			flash("You can't start that now.", true)
+		return true
 	return take_hover()
+
+
+## The "+" line the ray meets that a press would start now ({} for none, or no cook).
+func _cook_line(ray: Array) -> Dictionary:
+	if not is_instance_valid(cook) or ray.size() < 2:
+		return {}
+	var hit := cook.line_on_ray(ray[0], ray[1])
+	if not cook.can_press(hit):
+		return {}
+	_cook_ray = ray
+	return hit
 
 
 func tray_open() -> bool:
