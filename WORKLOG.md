@@ -1,8 +1,17 @@
 # WORKLOG
 
 - 2026-11-17 — An item held in a hand or shown in the VR tray can wear the same frost, heat, spoilage, liquid and grime look as one lying in the world, with one call from the hands and tray code (lead-world; those calls come next). Client tests pass.
-- 2026-11-17 — Frost, heat, spoilage, liquid and grime now show on items in reach too: those lie as physics bodies, and the look follows the body instead of hiding with the static copy (lead-world). Client tests pass.
+- 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
+- 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
+- 2026-11-17 — Radial menu, slice 5: the line by the crosshair says what E does at what you face (light, drink, craft, ... or examine), and names terrain you can do something with, like a water source. Client tests pass.
+- 2026-11-17 — Item tiles, slice 3: the hands panel shows each held item's state behind its line (how full, frozen / cold / hot, spoilage, gun grime), and a held liquid sloshes as you turn and walk. Client tests pass.
+- 2026-11-17 — Pain shown live (combat lead): the live combat test lets zombies hurt the player for real and checks that the game's pain rises and the pain edge on screen picks it up. Live tests pass.
+- 2026-11-17 — VR muzzle flash (combat lead): a gun held in VR now flashes at its muzzle when a round goes off, like the flat screen's: under 3 times a second, none with a suppressor or with the flash setting off. Client tests pass.
+- 2026-11-17 — Pain and stamina at the screen's edges (combat lead): pain greys and softly blurs the edges of the view, more the worse it is; low stamina darkens them. Both fade steadily and turn off with the Hurt tint box. Flat screen only. Client tests pass.
 - 2026-11-17 — Off hand holds a second item: H takes the item under the crosshair or in the tray into your off hand; in the Tab view drag a carried item onto a hand to hold it there, or onto its own pocket to put it away; in VR an item you take out of the pack is held in that hand once you carry it away. Client tests pass.
+- 2026-11-17 — Frost, heat, spoilage, liquid and grime now show on items in reach too: those lie as physics bodies, and the look follows the body instead of hiding with the static copy (lead-world). Client tests pass.
+- 2026-11-17 — The client reads each item type's phase (solid, liquid, gas, plasma) from the item table; in the Tab view only liquids slosh now, and frozen ones don't. Client tests pass.
+- 2026-11-17 — Item tiles, slice 2: in the Tab view the fill line of a liquid sloshes and settles when the view opens or you pick the item up to drag it. Client tests pass.
 - 2026-11-17 — Tester AppImage test-2026-11-17 (private test repo, pre-release, not a release) from main 6b99094 + fork 5190675, after the QA lead's OK for the range since test-2026-11-16; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range/game-over live tests). An earlier build of the same day was dropped: appimage.sh writes BUILD_INFO from HEAD at the end, so merge nothing while it runs.
 - 2026-11-17 — VR checks keep to their own folder (QA lead): the game started with --vr-check (vr_check.sh) reads and writes its settings, log and bug reports in a run folder of its own instead of the player's, and says where at the start.
 - 2026-11-17 — Client tests keep to their own folder (QA lead): in a test run the game's files under user:// (settings, key bindings, hints, hotbar, VR settings and log, bug reports, CDDA's default folder) go to that run's own folder, so a test never reads or changes the player's files and runs from several checkouts at once share none (`UserFiles`). The fork's range test has its own user folder and its turn-time check measures again before failing under load.
@@ -37,6 +46,9 @@
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
+- 2026-11-17 — Sim test: a paused cooking craft survives a real save, quit and load (the pot keeps its handle, the craft its link and progress); the sim thread now reloads after every save-and-quit.
+- 2026-11-17 — Bridge: the item table gives each type's `phase` (solid, liquid, gas, plasma), for lead-ui's liquid tiles. Ids test checks it.
+- 2026-11-17 — Sim test: the real-time checks stretch their turn slot when a busy machine makes turns longer than it, instead of failing; passes on Linux under deliberate load.
 - 2026-11-17 — Bridge: `player.item_states` in the snapshot for live item tiles: temperature, rot, fill level and content, see-through and gun fouling of carried items and items lying in reach. Snapshot test checks each field.
 - 2026-11-17 — Bridge: menu requests carry `selected`, the entry CDDA highlights (for lead-ui's tap-E default action). Sim test `actions` checks it.
 - 2026-11-17 — Fork tests: each test binary has its own user folder (`fp3d_user_sim`, `_events`, `_ids`, `_snapshot`, `_chargen`; the range test keeps `fp3d_user`), so the order tests run in no longer changes their results.

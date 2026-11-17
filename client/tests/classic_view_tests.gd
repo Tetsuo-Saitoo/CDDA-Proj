@@ -79,6 +79,27 @@ func run(check: Callable, data: Variant, tables: IdTables) -> void:
 	var cn := CddaText.plain(tables.def_at("furn", chair).name).capitalize()
 	_check.call(chair > 0 and said == ["%s\n%s use   hold %s: choices" % [cn, k, k], "%s\n%s use" % [cn, k], "", ""],
 			"context prompt: the furniture you face and what E does there, none on bare floor (%s)" % [said])
+	# With the tables' examine ids (lead-bridge): E's word from the id; terrain only with an action.
+	var cd := tables.def_at("furn", chair)
+	var ya: Array = at.call(y)
+	var td := tables.def_at("ter", (ya[0] as Snapshot.Submap).ter[ya[1]])
+	var keep_known := tables.has_examine
+	tables.has_examine = true
+	cd.examine = "workbench"
+	var crafted := ContextPrompt.text(snap, tables, q, HudSettings.MENU_LIST)
+	cd.examine = ""
+	var plain := ContextPrompt.text(snap, tables, q, HudSettings.MENU_LIST)
+	var bare := ContextPrompt.text(snap, tables, y, HudSettings.MENU_LIST)
+	td.examine = "water_source"
+	var spring := ContextPrompt.text(snap, tables, y, HudSettings.MENU_HOLD)
+	td.examine = ""
+	tables.has_examine = keep_known
+	var tn := CddaText.plain(td.name).strip_edges().left(ContextPrompt.MAX_NAME).capitalize()
+	_check.call(crafted == "%s\n%s craft" % [cn, k] and plain == "%s\n%s examine" % [cn, k] and bare == ""
+			and spring == "%s\n%s drink   hold %s: choices" % [tn, k, k] and ContextPrompt.word_for("odd", true) == "examine"
+			and ContextPrompt.word_for("fireplace", false) == "use",
+			"context prompt: E's word from the examine id (else examine; no ids: use); terrain only with an action %s"
+			% [[crafted, plain, bare, spring]])
 	var rock := tables.index_of("itype", "rock")
 	sm.items.append_array(PackedInt32Array([i, 1, rock, 0, 0, 0, 0, 0]))
 	var on_item: String = ch.call(q)
