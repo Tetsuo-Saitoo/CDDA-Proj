@@ -1,8 +1,10 @@
 # WORKLOG
 
 - 2026-11-17 — Live item state on 3D items (lead-world): items lying near you get frost when frozen (fainter when cold), a heat shimmer when hot, a brown tint as food goes off and, in see-through containers, the liquid up to its level, once the bridge sends the states; the values are shared with the item icons. Client tests pass.
+- 2026-11-17 — Gun grime on any model (combat lead, client): GunGrime puts CDDA's fouling as a grime shell over a gun model's meshes (any .glb or prop, its own materials untouched) and is the one dirt-to-grime mapping for the viewmodel, models and icons (Live item tiles, gun part). Client tests pass.
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
+- 2026-11-17 — Radial menu, slice 2: with a gamepad, A works like E; hold it on an object, point with the stick and let go to pick. Client tests pass.
 - 2026-11-17 — Radial menu, slice 1: E on an object shows its choices as a wheel with a fixed place for each kind of action; point and let go of E (or click) to pick. The F1 menu can switch to a click wheel or the old list. Client tests pass.
 - 2026-11-16 — More hints: the first time something hostile is in sight, you get hungry or thirsty, or you bleed, a tip says which keys help. Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
@@ -24,6 +26,7 @@
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
+- 2026-11-17 — Fork tests: each test binary has its own user folder (`fp3d_user_sim`, `_events`, `_ids`, `_snapshot`, `_chargen`; the range test keeps `fp3d_user`), so the order tests run in no longer changes their results.
 - 2026-11-16 — Bridge: action allow-list for the main loop (only the actions the client sends; `debug` only with cheats allowed) and bounded polling (a CDDA screen that only polls is told to close after 256 polls, then asked). Sim test `actions` checks both.
 - 2026-11-16 — Bridge: character names, input validation for every source (random names, a name taken over in play); the save id is set once when a new game starts. Chargen test and sim test `names` check it.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
