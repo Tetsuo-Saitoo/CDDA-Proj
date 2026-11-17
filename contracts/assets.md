@@ -2,6 +2,9 @@
 
 Maps CDDA ids to 3D art. Lives in `assets/registry/**/*.json`, same style as CDDA JSON (a list of objects).
 Schema: [schema/fp3d_model.schema.json](schema/fp3d_model.schema.json). Mods can ship their own registry files.
+Files load in name order, a folder's files before its subfolders; an entry for an id and kind that an
+earlier file has replaces it. That is how `models_kenney.json` gives models to ids whose placeholder entries
+are in `furniture_core.json`.
 
 ```json
 [
@@ -61,8 +64,8 @@ allow. The checks run on the glTF JSON before Godot parses anything; results are
 
 Each model's named points (docs/MODELS.md) are read into a small info that other code queries
 (`ModelLibrary.Model`: `markers` name -> transform, `marker_parts` for moving parts, `surfaces`, `fill`,
-`colliders`). Drawn: every mesh except point markers (`grip`, `spout`, `burner_N`, ... drawn as a mesh by
-mistake), `surface_N`, `fill` and `*-convcolonly`. Moving parts (`lid`, `door_N`, `drawer_N`, `handle_N`,
+`colliders`, `hits`). Drawn: every mesh except point markers (`grip`, `spout`, `burner_N`, ... drawn as a mesh by
+mistake), `surface_N`, `fill`, `*-convcolonly` and monster hit regions (`hit_<id>`, `hit_<id>_N`). Moving parts (`lid`, `door_N`, `drawer_N`, `handle_N`,
 `knob_N`) are drawn in their rest pose for now. Models face +Z; the client turns them so that +Z faces
 where a placeholder's front would. Furniture, item and terrain models are drawn as one multimesh per model
 part per submap.
@@ -104,3 +107,13 @@ flight (a stairs model is drawn once per lane of a longer flight, stretched alon
 Floor, roof and water models replace the slab; trees, shrubs, ladders, fences and other standing things
 keep the ground slab under them. Doors, open air and the holes stairs come up through stay procedural (a
 door leaf is a grabbable node; door models come later).
+
+Monster models (`kind: monster`, block C4) replace the placeholder figure: the entry of the monster's id,
+else of its CDDA `looks_like` id (one step); a model that doesn't load falls through to the figure. The model
+stands on the creature's square at its feet, facing where it goes (model +Z turned to the creature's front),
+scaled by `scale` (its largest side kept within 20 m) and moved by `offset` in its own axes; flying monsters
+are lifted like their figure. It doesn't bend: it bobs, lunges, flinches and falls as a whole, and lies as a
+darker body in item piles. `hit_<id>` meshes are hidden hit regions (docs/MODELS.md): the zone is the id
+when the monster's JSON lists it as a weak point or, on a human-shaped body, a CDDA body part id, else the
+body (`torso`); a model without them keeps the figure's zones. Models load on first sight, on the main
+thread, and stay cached.

@@ -2,7 +2,7 @@ class_name ItemTray
 extends Node3D
 ## Block L8 slices 3-4: a tray in front of the player that lays out what a container lying next to the player holds
 ## (the snapshot's `inside`, one level) or the items of a big pile on a square next to the player (its handles: up
-## to Snapshot.MAX_HANDLES_NEAR there, more than PropMesher draws), PAGE at a time in CDDA's order, with page
+## to Snapshot.MAX_HANDLES_NEAR there, more than PropMesher draws), PAGE at a time in CDDA's inventory order (sort_rows), with page
 ## arrows and "+N more" for what the bridge didn't list. Looking is the client's own business (CDDA charges nothing
 ## to look): opening, paging and closing send nothing. Items on it are ordinary ItemRefs (one in a container:
 ## `parent` = the container, `pocket`, `square` = the container's square), taken through the shared Hands like any
@@ -28,6 +28,13 @@ const FOOT_H := 0.025         # band under the cells for "+N more"
 const ARROW_W := 0.05
 const ITEM_REACH := 0.06      # a hand grips an item within this of its cell centre
 const ARROW_REACH := 0.05
+## Item categories in CDDA's inventory order (data/json/item_category.json sort_rank, lowest first). A category not
+## listed sorts where CDDA's default rank 0 would (before chems, UNLISTED_RANK); an item with no definition last.
+const CATEGORY_ORDER: Array[String] = ["e_files", "software", "guns", "magazines", "ammo", "weapons", "tools", "food",
+		"drugs", "manuals", "books", "tool_magazine", "maps", "mods", "bionics", "mutagen", "currency", "veh_parts", "other",
+		"fuel", "seeds", "ma_manuals", "traps", "chems", "spare_parts", "container", "artifacts", "keys", "corpses",
+		"clothing", "armor", "exosuit"]
+const UNLISTED_RANK := 22.5   # between traps (22) and chems (23)
 const FRAME_DEPTH := 0.08     # a hand this near the board's plane (and over it) touches the frame
 const REST_M := 0.45          # opened this far in front of the head ...
 const REST_LOW := 0.4         # ... and this far under it
@@ -94,8 +101,9 @@ static func source_for(snap: Snapshot, it: ItemRef) -> Dictionary:
 
 
 ## What `src` shows in `snap`: {rows: Array[ItemRef], more: int}; {} when it is gone (the container no longer lying
-## there, the square no longer next to the player or not in the snapshot).
-static func list(snap: Snapshot, src: Dictionary) -> Dictionary:
+## there, the square no longer next to the player or not in the snapshot). With `tables` the rows are sorted
+## (sort_rows), else they stay in the snapshot's order.
+static func list(snap: Snapshot, src: Dictionary, tables: IdTables = null) -> Dictionary:
 	var sq: Variant = src.get("square")
 	if snap == null or not sq is Vector3i or not ItemActions.ok_square(sq):
 		return {}
@@ -123,14 +131,38 @@ static func list(snap: Snapshot, src: Dictionary) -> Dictionary:
 		n = sm.more.get(tile, 0)
 	else:
 		return {}
+	if tables != null:
+		sort_rows(out, tables)
 	return {"rows": out, "more": clampi(n, 0, MAX_COUNT)}
+
+
+## Sorts `rows` in place the way CDDA's inventory lists items: by category (CATEGORY_ORDER), then name (ignoring
+## case), then uid, so a refresh never shuffles them. Items the tables don't know go last.
+static func sort_rows(rows: Array[ItemRef], tables: IdTables) -> void:
+	var keyed: Array = []
+	for it in rows:
+		var d := it.def(tables)
+		var cat := d.category if d != null else ""
+		var r := float(CATEGORY_ORDER.find(cat))
+		if d == null:
+			r = CATEGORY_ORDER.size()
+		elif r < 0.0:
+			r = UNLISTED_RANK
+		keyed.append([r, cat, (d.name if not d.name.is_empty() else d.id).to_lower() if d != null else "", it.uid, it])
+	keyed.sort_custom(func(a: Array, b: Array) -> bool:
+		for k in 4:
+			if a[k] != b[k]:
+				return a[k] < b[k]
+		return false)
+	for k in keyed.size():
+		rows[k] = keyed[k][4]
 
 
 ## Opens the tray on `src` (source_for) in front of the head pose `head_xf`. False when there is nothing to show.
 func open(src: Dictionary, head_xf: Transform3D) -> bool:
 	if world == null or src.is_empty() or not head_xf.is_finite():
 		return false
-	var l := list(world.snapshot, src)
+	var l := list(world.snapshot, src, world.tables)
 	if l.is_empty() or ((l["rows"] as Array).is_empty() and l["more"] == 0):
 		return false
 	source = src.duplicate()
@@ -186,7 +218,7 @@ func refresh(force := false) -> bool:
 	if not is_open():
 		return false
 	var snap := world.snapshot if world != null else null
-	var l := list(snap, source)
+	var l := list(snap, source, world.tables if world != null else null)
 	if l.is_empty():
 		close("gone")
 		return false

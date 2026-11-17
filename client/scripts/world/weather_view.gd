@@ -1,8 +1,8 @@
 class_name WeatherView
 extends Node
 ## Blocks C6 / I2: shows the weather on the sky, the sun and the distance (clouds, darker days, fog), and runs the
-## rest of it: rain and snow (PrecipView), sound (WeatherSound), the lightning flash, the wet ground and snow lying
-## on it.
+## rest of it: rain and snow (PrecipView), sound (WeatherSound), the lightning flash, the wet ground, puddles on it
+## and snow lying on it.
 ##
 ## setup() takes the scene's Environment (a ProceduralSkyMaterial sky) and its sun; apply() shows a snapshot's
 ## weather (WeatherState). Only engine features: the procedural sky with a cloud cover texture, depth fog and the
@@ -12,7 +12,7 @@ extends Node
 ##
 ## `quality` (the player's setting) trims what the weather draws beyond what it means for play: HIGH all of it; LOW
 ## half the rain and snow particles and a change blended in 4 steps instead of 12; MINIMAL no rain or snow, no
-## cloud layer, no wet ground or snow lying on it, and a change shown at once. The darker light and the fog (CDDA's sight distance) stay
+## cloud layer, no wet ground, puddles or snow lying on it, and a change shown at once. The darker light and the fog (CDDA's sight distance) stay
 ## at every quality, and so do the lightning flash (its own setting) and the sound.
 
 const BLEND_S := 3.0
@@ -57,6 +57,8 @@ const MELT_S := 7200.0        # game seconds covered ground takes to melt at MEL
 const MELT_REF_C := 4.0
 const MELT_UNKNOWN_C := 2.0   # the air's temperature when the snapshot doesn't say
 const RAIN_MELT_S := 1800.0   # heavy rain melts it this fast besides
+const PUDDLE_IN_S := 900.0    # game seconds of heavy rain that fill the puddles (the first show after about 2 minutes)
+const PUDDLE_DRY_S := 7200.0  # game seconds full puddles take to dry up (they outlast the wet ground)
 const COVER_W := 512
 const COVER_H := 256
 const CLOUD_SCALE := 2.2      # cloud shapes per unit of the layer (its height above the eye is 1)
@@ -100,6 +102,8 @@ var snow_cover := 0.0              # how much of the open ground lies under snow
 var _snow_shown := -1.0
 var _snow_origin := Vector3i.ZERO  # the bubble's origin for the snow's patches
 var _snow_origin_shown := Vector3i.MAX
+var puddles := 0.0                 # how full the puddles on the open ground are, 0 none .. 1 full
+var _puddles_shown := -1.0
 var _wet_turn := -1                # the game turn `wet` is for, -1 none yet
 var _flash_t := -1.0               # seconds into the flash, -1 none
 var _flash_light := DirectionalLight3D.new()
@@ -140,6 +144,9 @@ func _exit_tree() -> void:
 	if _snow_shown > 0.0:   # and bare
 		_snow_shown = -1.0
 		TerrainMesher.snow_ground(0.0, Vector3i.ZERO)
+	if _puddles_shown > 0.0:   # and without puddles
+		_puddles_shown = -1.0
+		TerrainMesher.puddle_ground(0.0, get_tree())
 
 
 ## `env` and `sun` may be null (a test with only one of them).
@@ -202,21 +209,25 @@ func apply(snap: Snapshot, coords: CddaCoords, lighting_on: bool) -> void:
 	_soak(snap.turn, snap.temperature_c, coords.origin_ms if coords != null else _snow_origin)
 
 
-## The ground gets wet in rain and dries after it, in game time (waiting an hour dries it); snow lies on it while it
-## falls and melts after, faster when warmer or in rain, not at all at or below freezing. A game that starts or loads
-## in rain starts wet, one in snow covered. Snow doesn't wet. CDDA keeps neither: the client follows them.
+## The ground gets wet in rain and dries after it, in game time (waiting an hour dries it); puddles fill more slowly
+## and outlast it; snow lies on it while it falls and melts after, faster when warmer or in rain, not at all at or
+## below freezing. A game that starts or loads in rain starts wet, with puddles as full as the rain is heavy, one in
+## snow covered. Snow doesn't wet. CDDA keeps none of these: the client follows them.
 func _soak(turn: int, temp_c: float, origin: Vector3i) -> void:
 	var rain := 0.0 if target.snow else target.precip
 	var falling := target.precip if target.snow else 0.0
 	if _wet_turn < 0 or turn < _wet_turn:
 		wet = 1.0 if rain > 0.0 else 0.0
+		puddles = clampf(rain, 0.0, 1.0)
 		snow_cover = 1.0 if falling > 0.0 else 0.0
 	else:
 		var dt := turn - _wet_turn
 		if rain > 0.0:
 			wet = minf(1.0, wet + dt * rain / WET_IN_S)
+			puddles = minf(1.0, puddles + dt * rain / PUDDLE_IN_S)
 		else:
 			wet = maxf(0.0, wet - dt / DRY_IN_S)
+			puddles = maxf(0.0, puddles - dt / PUDDLE_DRY_S)
 		if falling > 0.0:
 			snow_cover = minf(1.0, snow_cover + dt * falling / SNOW_IN_S)
 		else:
@@ -227,7 +238,8 @@ func _soak(turn: int, temp_c: float, origin: Vector3i) -> void:
 	_show_wet()
 
 
-## Puts `wet` and `snow_cover` on the ground's material (dry and bare at MINIMAL quality), only by steps of WET_STEP.
+## Puts `wet` and `snow_cover` on the ground's material and `puddles` on the puddles' (dry, bare and none at MINIMAL
+## quality; snow hides the puddles as it covers the ground), only by steps of WET_STEP.
 func _show_wet() -> void:
 	var shown := wet if quality != MINIMAL else 0.0
 	if absf(shown - _wet_shown) >= WET_STEP or (shown != _wet_shown and (shown == 0.0 or shown == 1.0)):
@@ -239,6 +251,10 @@ func _show_wet() -> void:
 		_snow_shown = cover
 		_snow_origin_shown = _snow_origin
 		TerrainMesher.snow_ground(cover, _snow_origin)
+	var pools := puddles * (1.0 - cover) if quality != MINIMAL else 0.0
+	if absf(pools - _puddles_shown) >= WET_STEP or (pools != _puddles_shown and (pools == 0.0 or pools == 1.0)):
+		_puddles_shown = pools
+		TerrainMesher.puddle_ground(pools, get_tree() if is_inside_tree() else null)
 
 
 ## How long a change of weather blends: none at MINIMAL quality.

@@ -55,7 +55,8 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		if c.kind == Snapshot.Creature.PLAYER and not show_player:
 			continue
 		var d := def_of(world, c)
-		var key := "%d:%d:%d" % [c.kind, c.type, 1 if d != null else 0]
+		var look := model_for(world.catalog.registry, d)
+		var key := "%d:%d:%d:%s" % [c.kind, c.type, 1 if d != null else 0, _look_key(look)]
 		var f: CreatureFigure = _figs.get(c.uid)
 		if f == null and _gone.has(c.uid):   # back in sight before it was removed
 			f = _gone[c.uid][0]
@@ -65,7 +66,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		if f == null or f.key != key:
 			if f != null:
 				f.free()
-			f = _make(c, d, key)
+			f = _make(c, d, key, look)
 			f.place(target)
 		else:
 			f.move_to(target, dur if smooth else 0.0, SNAP_DIST_M)
@@ -81,7 +82,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 
 
 ## Bodies: a pile whose largest corpse is a known monster gets that monster's figure lying on the square.
-## Kept while the pile says so; a square where a creature is still falling waits for the next snapshot.
+## Kept while the pile says so; a square where a creature is still falling gets its body when the fall ends.
 func _apply_corpses(snap: Snapshot, world: WorldView) -> void:
 	var want := {}
 	for sm: Snapshot.Submap in snap.submaps.values():
@@ -103,7 +104,7 @@ func _apply_corpses(snap: Snapshot, world: WorldView) -> void:
 			continue
 		var mt := int(String(want[sq]).get_slice(":", 0))
 		var d: IdTables.Def = world.tables.def_at("mtype", mt) if world.tables != null else null
-		var f := CreatureFigure.make(Snapshot.Creature.MONSTER, d, "corpse:" + String(want[sq]))
+		var f := _figure(Snapshot.Creature.MONSTER, d, "corpse:" + String(want[sq]), model_for(world.catalog.registry, d))
 		f.name = "corpse_%d_%d_%d" % [sq.x, sq.y, sq.z]
 		add_child(f)
 		f.place(world.coords.ms_center_to_world(sq))
@@ -170,11 +171,15 @@ func tick(delta: float) -> void:
 		if g[1] <= 0.0:
 			(g[0] as CreatureFigure).free()
 			_gone.erase(uid)
+	var fell := false
 	for i in range(_dying.size() - 1, -1, -1):
 		_dying[i].animate(delta)
 		if _dying[i].done:
 			_dying[i].free()
 			_dying.remove_at(i)
+			fell = true
+	if fell and _snap != null and is_instance_valid(_world):   # the body it left, without waiting for a turn
+		_apply_corpses(_snap, _world)
 
 
 ## The origin moved (map shift): keep every figure on its square.
@@ -217,8 +222,8 @@ func _find(uid: Variant) -> CreatureFigure:
 	return null
 
 
-func _make(c: Snapshot.Creature, d: IdTables.Def, key: String) -> CreatureFigure:
-	var f := CreatureFigure.make(c.kind, d, key)
+func _make(c: Snapshot.Creature, d: IdTables.Def, key: String, look: Array) -> CreatureFigure:
+	var f := _figure(c.kind, d, key, look)
 	f.name = "creature_%d" % c.uid
 	if d != null and d.name != "":
 		var l := Label3D.new()
@@ -231,6 +236,38 @@ func _make(c: Snapshot.Creature, d: IdTables.Def, key: String) -> CreatureFigure
 		f.add_child(l)
 	add_child(f)
 	return f
+
+
+## A figure, drawn as the registry model when model_for found one.
+static func _figure(kind: int, d: IdTables.Def, key: String, look: Array) -> CreatureFigure:
+	if look.is_empty():
+		return CreatureFigure.make(kind, d, key)
+	var e: AssetRegistry.Entry = look[1]
+	return CreatureFigure.make(kind, d, key, look[0], e.scale, e.offset)
+
+
+## A monster's registry model (contracts/assets.md, kind `monster`; docs/MODELS.md): the entry of its own id,
+## else of its looks_like id, whose model loads, as [ModelLibrary.Model (tinted by the entry's material), the
+## entry]; [] for none (the placeholder figure). Models load on first use (on the main thread) and are cached.
+static func model_for(registry: AssetRegistry, d: IdTables.Def) -> Array:
+	if registry == null or d == null:
+		return []
+	for id: String in [d.id, d.looks_like]:
+		if id.is_empty():
+			continue
+		var e := registry.entry(id, "monster")
+		var m := registry.model_of(e)
+		if m != null:
+			return [m, e]
+	return []
+
+
+## What a figure's model is, for its build key: a different model or tint rebuilds the figure.
+static func _look_key(look: Array) -> String:
+	if look.is_empty():
+		return ""
+	var m: ModelLibrary.Model = look[0]
+	return m.path + "|" + m.tint
 
 
 ## The mtype definition of a monster, or null (NPCs, the player, tables of another session).

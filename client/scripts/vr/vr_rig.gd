@@ -50,8 +50,13 @@ extends XROrigin3D
 ## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
-## Cooking (block L9, VrCook `cook`, shows only): a card over each pot on a heat square near the head (heat, contents,
-## CDDA's craft progress or the recipes its contents match; main.gd sets `cook.backend`).
+## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
+## craft progress or the recipes its contents match; main.gd sets `cook.backend`). One recipe CDDA would start now
+## starts by itself; of several, the trigger with an empty hand on a "+" line starts that one; a paused craft goes on
+## when its pot is put back on a lit heat or its heat is lit. Fires (VrFire `fire`, the same backend): the trigger
+## with a hand low over a fire square next to you puts out a burning one, lights an unlit one (with the carried item
+## the hand holds, else CDDA's pick), or lights the fuel lying there while the hand holds a carried item; a line by
+## the hand says which.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -180,6 +185,7 @@ var gun: VrGun             # L2: the wielded gun in the main hand (built in _bui
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
+var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -302,6 +308,9 @@ func _build() -> void:
 	add_child(tray)
 	cook.head = camera
 	add_child(cook)
+	fire = VrFire.new()
+	fire.world = world
+	add_child(fire)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -406,6 +415,9 @@ func _process(delta: float) -> void:
 	place_compass()
 	place_hud(delta)
 	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
+	fire.backend = cook.backend
+	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
+			world.snapshot != null and not ui_open())
 	follow_teleport(delta)
 
 
@@ -526,7 +538,11 @@ func update_hands(delta: float, all_hands := false) -> void:
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
-				(n as Grabbable).drag_hand(c.global_position)
+				var g := n as Grabbable
+				var bumped := g.bumps
+				g.drag_hand(c.global_position)
+				if g.bumps != bumped:   # L8: it met a stop (open, shut, or a locked one's play): felt in the hand
+					feel(c, 0.6 if g.last_bump == "locked" else 0.3, 0.05)
 			else:
 				hands.cancel(id)
 		elif _fly_t[i] >= 0.0:
@@ -1030,6 +1046,34 @@ func refused_here(reason: String) -> void:
 	var i := 0 if main_ctrl() == left else 1
 	_feel(_ctrl(i))
 	say(i, reason)
+
+
+## The item hand i holds (ItemRef), null when it holds none.
+func held_item(i: int) -> ItemRef:
+	if hands == null:
+		return null
+	var h := hands.holding(HAND_IDS[i])
+	return h.get("item") as ItemRef if h.get("kind") == "item" and h.get("item") is ItemRef else null
+
+
+## L9: the trigger of controller c on a fire square (VrFire.press): a light buzz when sent, a buzz and why when
+## refused. True when the hand was on one.
+func fire_press(c: XRController3D) -> bool:
+	if world.snapshot == null:
+		return false
+	fire.backend = cook.backend
+	var i := 0 if c == left else 1
+	match fire.press(c.global_position, held_item(i)):
+		VrFire.LIGHT, VrFire.EXTINGUISH:
+			feel(c, 0.3, 0.05)
+			return true
+		"wait":
+			return true
+		"refused":
+			_feel(c)
+			say(i, "You can't do that now.")
+			return true
+	return false
 
 
 ## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
@@ -1574,8 +1618,12 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		if tt.get("kind") == "frame":
 			tray.close("closed")   # the trigger on the tray's frame closes it
 			return
+	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() and cook.press_at(c.global_position):
+		return   # L9: an empty hand on a cooking card's "+" line starts that recipe
 	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
 		return   # a gun in the main hand fires (VrGun)
+	if n == "trigger_click" and fire_press(c):
+		return   # L9: a hand low over a fire square lights or puts out that fire
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
