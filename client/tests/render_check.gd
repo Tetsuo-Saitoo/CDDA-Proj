@@ -47,6 +47,12 @@ const SHOTS := [
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
 	{"name": "snow_lying_top", "env": SNOW, "view": "top", "turn": 3600},
+	# Puddles on the open ground: none in the dry (back at the mock's turn: afresh), some after 7 minutes of heavy rain,
+	# all full after 20.
+	{"name": "puddles_dry", "env": CLEAR, "yaw": 45.0, "pitch": -25.0},
+	{"name": "puddles_filling", "env": RAIN, "yaw": 45.0, "pitch": -25.0, "turn": 400},
+	{"name": "puddles_full", "env": RAIN, "yaw": 45.0, "pitch": -25.0, "turn": 1200},
+	{"name": "puddles_full_top", "env": RAIN, "view": "top", "turn": 1200},
 	# Inside the building: the ceiling and the walls must read as a room, by day and by lamp light.
 	{"name": "room_day_window", "env": CLEAR, "yaw": -90.0, "pitch": 35.0, "move": Vector3i(-8, -6, 0), "roof": true},
 	{"name": "room_day_inward", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true},

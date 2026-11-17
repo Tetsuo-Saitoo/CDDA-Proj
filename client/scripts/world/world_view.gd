@@ -1,7 +1,7 @@
 class_name WorldView
 extends Node3D
 ## Shows the newest snapshot: one node per submap per z that has anything to draw (open sky gets none),
-## holding "terrain", "roof" and "caps" meshes and "terrain_models", "terrain_roof_models" (TerrainMesher)
+## holding "terrain", "roof", "caps" and "puddles" meshes and "terrain_models", "terrain_roof_models" (TerrainMesher)
 ## and "props", "roof_props", "models", "roof_models" and "glyphs" (PropMesher: furniture, traps, item
 ## piles); models are one MultiMeshInstance3D per model part. Door leaves (TerrainMesher doors) and furniture
 ## doors, drawers and lids (PropMesher parts) are Grabbable children of the submap's node (block L8).
@@ -492,8 +492,13 @@ func _build(pos: Vector3i, r: TerrainMesher.Result, snap: Snapshot) -> void:
 			or not r.models.is_empty() or not r.roof_models.is_empty()
 	var node := _node(pos, drawn)
 	if node != null:
-		for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps]]:
+		for part: Array in [["terrain", r.terrain], ["roof", r.roof], ["caps", r.caps], ["puddles", r.puddles]]:
 			_set_mesh(node, part[0], part[1])
+		var puddles := node.get_node_or_null("puddles") as MeshInstance3D
+		if puddles != null:   # shown by the weather (TerrainMesher.puddle_ground)
+			puddles.visible = TerrainMesher.puddles_shown
+			puddles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			puddles.add_to_group(TerrainMesher.PUDDLE_GROUP)
 		_set_models(node, "terrain_models", r.models)
 		_set_models(node, "terrain_roof_models", r.roof_models)
 		_build_doors(node, pos, r.doors)
