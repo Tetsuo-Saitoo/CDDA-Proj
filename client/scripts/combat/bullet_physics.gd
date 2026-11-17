@@ -35,15 +35,22 @@ const AMMO := [
 ]
 const DEFAULT := [500.0, 0.001]
 
-## Monster zones -> CDDA weak point ids to try, in order ("" = the body).
+## Monster zones -> CDDA weak point ids to try, in order ("" = the body). The placeholder figure's zones, and the
+## body part ids a humanoid monster's model regions may carry (CreatureFigure.zone_of_hit); a zone that is one of
+## the monster's own weak point ids is that weak point before any of these.
 const MONSTER_PARTS := {
 	"head": ["head"], "eye": ["eye", "head"], "torso": ["abdomen", "belly"], "arm_l": ["arm"], "arm_r": ["arm"],
 	"leg_l": ["leg", "hindleg"], "leg_r": ["leg", "hindleg"], "leg": ["leg"], "wing": ["wing"],
+	"eyes": ["eye", "head"], "mouth": ["head"], "hand_l": ["arm"], "hand_r": ["arm"], "foot_l": ["leg", "hindleg"],
+	"foot_r": ["leg", "hindleg"],
 }
-## Character (player, NPC) zones -> CDDA body parts.
+## CDDA's character body part ids: a model's hit region on a character names one directly (docs/MODELS.md).
+const BODY_PARTS: Array[String] = ["head", "eyes", "mouth", "torso", "arm_l", "arm_r", "hand_l", "hand_r", "leg_l",
+		"leg_r", "foot_l", "foot_r"]
+## Character (player, NPC) zones that aren't body part ids -> CDDA body parts (the placeholder's, weak point ids).
 const CHARACTER_PARTS := {
-	"head": "head", "eye": "eyes", "torso": "torso", "arm_l": "arm_l", "arm_r": "arm_r", "leg_l": "leg_l",
-	"leg_r": "leg_r", "leg": "leg_l", "wing": "torso",
+	"eye": "eyes", "leg": "leg_l", "wing": "torso", "arm": "arm_l", "hindleg": "leg_l", "abdomen": "torso",
+	"belly": "torso",
 }
 
 
@@ -221,10 +228,14 @@ static func _ray_box(xf: Transform3D, box: AABB, from: Vector3, dir: Vector3, ma
 	return {"d": from.distance_to(world_hit), "off": clampf(across, 0.0, 1.0)}
 
 
-## The CDDA part for a zone: a body part id for characters, a weak point id for monsters ("" = the body).
+## The CDDA part for a zone: a body part id for characters (a body part id zone is itself, others by
+## CHARACTER_PARTS, else the torso), a weak point id for monsters (a zone that is one of `weakpoints` is itself,
+## others the first of MONSTER_PARTS the monster has, else "" = the body).
 static func cdda_part(zone: String, is_monster: bool, weakpoints: Dictionary) -> String:
 	if not is_monster:
-		return CHARACTER_PARTS.get(zone, "torso")
+		return zone if zone in BODY_PARTS else CHARACTER_PARTS.get(zone, "torso")
+	if weakpoints.has(zone):
+		return zone
 	for w: String in MONSTER_PARTS.get(zone, []):
 		if weakpoints.has(w):
 			return w

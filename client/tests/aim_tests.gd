@@ -733,15 +733,35 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 		z = cv.figures()[uid]
 	var head := Vector3.ZERO
 	var leg := Vector3.ZERO
+	var torso: MeshInstance3D = null
 	for zz: Array in z.hit_zones():
 		if zz[1] == "head":
 			head = (zz[0] as MeshInstance3D).global_position
 		elif zz[1] == "leg_l":
 			leg = (zz[0] as MeshInstance3D).global_position
+		elif zz[1] == "torso" and torso == null:
+			torso = zz[0]
 	var eye := world.coords.ms_center_to_world(me) + Vector3(0, 1.6, 0)
 	for want: Array in [["head", head], ["leg_l", leg]]:
 		var r := B.fly(eye, B.launch_dir(eye.direction_to(want[1]), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
 		_check.call(r["hit"] == "creature" and r["zone"] == want[0], "bullets: aimed at the %s, hit the %s (%s)" % [want[0], r.get("zone"), r["hit"]])
+	# a model's hit region names a weak point (CreatureFigure.zone_of_hit): the zone is that id, and so is the part
+	var region := {}
+	if torso != null:
+		var arms: Array[MeshInstance3D] = []   # hidden for this shot: from here an arm covers the torso's middle
+		for zz: Array in z.hit_zones():
+			if zz[1] == "arm_l" or zz[1] == "arm_r":
+				arms.append(zz[0])
+				(zz[0] as MeshInstance3D).visible = false
+		torso.set_meta("zone", "abdomen")
+		var at := torso.global_position
+		region = B.fly(eye, B.launch_dir(eye.direction_to(at), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
+		torso.remove_meta("zone")
+		for m in arms:
+			m.visible = true
+	_check.call(region.get("hit") == "creature" and region.get("zone") == "abdomen"
+			and B.cdda_part(str(region.get("zone")), true, {"head": true, "abdomen": true}) == "abdomen",
+			"bullets: a model's `hit_abdomen` region is hit as the abdomen weak point (%s)" % [region.get("zone")])
 	# soft cover: furniture in front of the zombie's legs doesn't stop the client's bullet (CDDA's path decides)
 	var cover := zp - Vector3i(signi(zp.x - me.x), signi(zp.y - me.y), 0)
 	var csm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(cover))
@@ -759,6 +779,20 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 			"bullets: furniture is soft cover, the bullet flies through it (%s, %s)" % [stopped.get("what"), through.get("hit")])
 	_check.call(B.cdda_part("head", true, {"head": true}) == "head" and B.cdda_part("torso", true, {"head": true}) == ""
 			and B.cdda_part("arm_l", false, {}) == "arm_l", "bullets: zones map to weak points / body parts")
+	# a model's zones: weak point ids a monster has are themselves; body part ids on a humanoid monster try the
+	# placeholder's weak points; on a character, body part ids are themselves and anything else the nearest or torso
+	var wp := {"head": true, "arm": true, "hindleg": true, "belly": true}
+	var monster_ok := (B.cdda_part("belly", true, wp) == "belly" and B.cdda_part("hindleg", true, wp) == "hindleg"
+			and B.cdda_part("abdomen", true, wp) == "" and B.cdda_part("hand_l", true, wp) == "arm"
+			and B.cdda_part("foot_r", true, wp) == "hindleg" and B.cdda_part("mouth", true, wp) == "head"
+			and B.cdda_part("eyes", true, wp) == "head" and B.cdda_part("hand_r", true, {}) == ""
+			and B.cdda_part("wing", true, wp) == "" and B.cdda_part("", true, wp) == "")
+	var character_ok := (B.BODY_PARTS.all(func(bp: String) -> bool: return B.cdda_part(bp, false, {}) == bp)
+			and B.cdda_part("eye", false, {}) == "eyes" and B.cdda_part("hindleg", false, {}) == "leg_l"
+			and B.cdda_part("abdomen", false, {}) == "torso" and B.cdda_part("HEAD", false, {}) == "torso"
+			and B.cdda_part("x".repeat(500), false, {}) == "torso")
+	_check.call(monster_ok and character_ok, "bullets: a model's weak point and body part zones map to CDDA's parts (%s)"
+			% [[monster_ok, character_ok]])
 	# through the aim controller: a gun in hand answers FIRE with the shot
 	var gun := IdTables.Def.new()
 	gun.gun = "rifle"
@@ -858,20 +892,23 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 			% [[off_way, bad_hand, miss]])
 	# techniques: the zone a strike lands on calls a family, sent as the swing answer's `action`
 	var calls := {"head": "stun", "eye": "stun", "leg_l": "down", "leg_r": "down", "leg": "down", "arm_l": "disarm",
-			"arm_r": "disarm", "torso": "", "wing": ""}
-	var junk_zones := ["", "HEAD", "Head", "head ", "eyes", "legs", "arm", "stun", "x".repeat(500)]
+			"arm_r": "disarm", "torso": "", "wing": "", "eyes": "stun", "mouth": "stun", "hindleg": "down",
+			"foot_l": "down", "foot_r": "down", "arm": "disarm", "hand_l": "disarm", "hand_r": "disarm", "abdomen": "",
+			"belly": ""}
+	var junk_zones := ["", "HEAD", "Head", "head ", "Eyes", "legs", "hand", "foot", "stun", "x".repeat(500)]
 	var call_ok := calls.keys().all(func(zn: String) -> bool: return S.technique_call(zn) == calls[zn]) \
 			and junk_zones.all(func(zn: String) -> bool: return S.technique_call(zn) == "")
 	var fig: CreatureFigure = aim.creature_view.figures()[ZUID]
 	var leg := Vector3.ZERO
 	var zones_known := BulletPhysics.CHARACTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn)) \
-			and BulletPhysics.MONSTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn))
+			and BulletPhysics.MONSTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn)) \
+			and BulletPhysics.BODY_PARTS.all(func(zn: String) -> bool: return calls.has(zn))
 	for zz: Array in fig.hit_zones():
 		zones_known = zones_known and calls.has(zz[1])
 		if zz[1] == "leg_l":
 			leg = (zz[0] as MeshInstance3D).global_position
 	_check.call(call_ok and zones_known,
-			"melee: technique_call: head and eye stun, legs down, arms disarm; torso, wing and junk nothing (%s)"
+			"melee: technique_call: head, eyes, mouth stun; legs, feet down; arms, hands disarm; body, wing, junk nothing (%s)"
 			% [[call_ok, zones_known]])
 	var hm := aim.melee_from(near, dir)
 	var ha := aim.on_request({"kind": "swing", "id": 45, "cursor": zp, "origin": me, "range": 1, "mode": "main"})
@@ -886,6 +923,28 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 	_check.call(lm.get("want") == "down" and lm.get("part") == "" and la.get("action") == "down"
 			and la.get("shot", {}).get("part") == "" and _bridge_typed(la.get("shot")),
 			"melee: a strike at a leg with no weak point there still answers, calling a takedown (%s, %s)" % [lm, la])
+	# a model's `hit_hand_l` region on the zombie (CreatureFigure.zone_of_hit, a humanoid): a disarm, at its arm
+	var hand: MeshInstance3D = null
+	for zz: Array in fig.hit_zones():
+		if zz[1] == "arm_l":
+			hand = zz[0]
+	var hand_aim := {}
+	var hand_ans := {}
+	if hand != null:
+		hand.set_meta("zone", "hand_l")
+		var to_hand := eye.direction_to(hand.global_position)
+		hand_aim = aim.melee_from(hand.global_position - to_hand * 1.5, to_hand)
+		hand_ans = aim.on_request({"kind": "swing", "id": 48, "cursor": zp})
+		hand.remove_meta("zone")
+	var zd: IdTables.Def = null
+	for x: Snapshot.Creature in aim.world.snapshot.creatures:
+		if x.uid == ZUID:
+			zd = CreatureView.def_of(aim.world, x)
+	var arm_part := BulletPhysics.cdda_part("hand_l", true, zd.weakpoints if zd != null else {})
+	_check.call(hand_aim.get("want") == "disarm" and hand_aim.get("part") == arm_part
+			and hand_ans.get("action") == "disarm" and hand_ans.get("shot", {}).get("part") == arm_part
+			and _bridge_typed(hand_ans.get("shot")),
+			"melee: a strike at a model's hand region calls a disarm, at the arm's weak point or the body (%s)" % [hand_ans])
 	var by := func(part: String, want: Array) -> Dictionary:   # a melee aim set by hand; want [] = no `want` key
 		aim.melee_aim = {"square": zp, "uid": ZUID, "part": part, "quality": 0.5, "time": Time.get_ticks_msec()}
 		if not want.is_empty():
