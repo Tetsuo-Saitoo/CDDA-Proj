@@ -3,7 +3,9 @@ extends Node
 ## Automated checks inside a real VR session (`-- --vr --vr-check=<names>`, e.g. under SteamVR's null headset,
 ## TASKS "VR without a headset"): once the world is up and the session has drawn frames, each named scenario runs
 ## on the live rig and prints `vr check ok: ...` / `vr check FAIL: ...` lines, then a summary line
-## `vr check: N ok, M failed`, and the game quits (main.gd `_quit`). The lines also go to user://vr_check.log.
+## `vr check: N ok, M failed`, and the game quits (main.gd `_quit`). The lines also go to vr_check.log.
+## A check run keeps its files (that log, the reports it saves, settings) in its own folder, not the player's
+## user:// (UserFiles: --vr-check makes it one); main prints the folder at the start.
 ## There are no controllers under the null headset: the rig counts its hands as tracked and the scenario places them.
 ## Scenarios: "report" (the bug report row saves a text and a picture of the view); "loot" (mock mode: a dresser
 ## with a rock in it next to the player; the right hand pulls a drawer open by its handle, takes the rock and puts
@@ -24,7 +26,7 @@ var _log: FileAccess
 
 
 func run(names: String) -> void:
-	_log = FileAccess.open(LOG_PATH, FileAccess.WRITE)
+	_log = FileAccess.open(UserFiles.at(LOG_PATH), FileAccess.WRITE)
 	var t := 0.0
 	while rig.world.snapshot == null and t < MAX_WAIT_S:
 		await get_tree().process_frame
@@ -72,7 +74,7 @@ func _report() -> void:
 		await get_tree().process_frame
 		for n in _reports():
 			if n.ends_with(".png") and not before.has(n):
-				path = VrReport.DIR + "/" + n
+				path = UserFiles.at(VrReport.DIR) + "/" + n
 		if not path.is_empty():
 			break
 	var img: Image = Image.load_from_file(path) if not path.is_empty() else null
@@ -204,7 +206,8 @@ func _loot() -> void:
 
 
 func _reports() -> PackedStringArray:
-	return DirAccess.get_files_at(VrReport.DIR) if DirAccess.dir_exists_absolute(VrReport.DIR) else PackedStringArray()
+	var dir := UserFiles.at(VrReport.DIR)
+	return DirAccess.get_files_at(dir) if DirAccess.dir_exists_absolute(dir) else PackedStringArray()
 
 
 func _tray() -> void:
