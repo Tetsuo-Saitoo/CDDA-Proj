@@ -1115,6 +1115,27 @@ func _test_hints() -> void:
 	InputMap.erase_action(&"hints_test_act")
 	_check.call(key != "-" and filled == "press %s or no_such_action, {open" % key,
 			"hints: {action} becomes its key, an unknown name stays bare, an open brace stays (%s)" % filled)
+	var snap := Snapshot.new()
+	var hud := HudData.new()
+	var calm := Hints.due(snap, hud)
+	var friend := Snapshot.Creature.new()
+	friend.kind = Snapshot.Creature.NPC
+	friend.attitude = Snapshot.Creature.FRIENDLY
+	snap.creatures.append(friend)
+	var with_friend := Hints.due(snap, hud)
+	snap.creatures.append(Snapshot.Creature.new())   # a monster the bridge gives no attitude: hostile
+	snap.player_effects.append({"id": "hunger_engorged"})
+	var engorged := Hints.due(snap, hud)
+	snap.player_effects.append({"id": "hunger_hungry"})
+	hud.body.append({"part": "arm_l", "bleed": 1})
+	var every := Hints.due(snap, hud)
+	hud.needs["thirst"] = {"value": 50, "word": "Thirsty", "level": HudData.HURT}
+	var thirsty := Hints.due(Snapshot.new(), hud)
+	_check.call(calm.is_empty() and with_friend.is_empty() and engorged == (["hostile"] as Array[String])
+			and every == (["hostile", "eat", "bleed"] as Array[String])
+			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty(),
+			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding (%s, %s, %s)"
+			% [engorged, every, thirsty])
 	var h := Hints.new()
 	h.path = path
 	var fresh := h.load_file() == "" and h.enabled and h.seen.is_empty() and not h.visible
