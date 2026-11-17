@@ -4,8 +4,10 @@ extends SceneTree
 ## 1. `wait`: CDDA's "Wait for how long?" menu comes as a request (after its alarm clock question); 30 minutes is
 ##    picked and the game passes those 1800 turns by itself.
 ## 2. Three waits of 6 hours, so the character is tired: long stretches of turns the game passes by itself.
-## 3. `sleep`: CDDA's questions are answered (yes, no alarm, keep trying); hours pass and the character wakes.
-## 4. stop() ends the game.
+## 3. The range's clock is set to NIGHT_MINUTE: daylight wakes a sleeper, and by now it is close to dawn.
+## 4. `sleep`: CDDA's questions are answered (yes, no alarm, keep trying and don't ask again); an hour or more
+##    passes by itself, the character lying down or asleep (which one is CDDA's dice: printed, not checked).
+## 5. stop() ends the game.
 ## While the game runs on by itself the client must still hear from it: a snapshot with a new turn at least every
 ## SILENT_MS of real time, or the screen stands still (clock, light, needs) and looks hung.
 ## It prints how long a turn takes then, and what a night's sleep comes to at that rate.
@@ -23,10 +25,13 @@ const SLEEP_LIMIT_MS := 300000
 const SILENT_MS := 2000             # the longest the client may go without a snapshot with a new turn
 const STALL_MS := 60000             # no new turn for this long: a watch gives up
 const NIGHT_TURNS := 8 * 3600
+const NIGHT_MINUTE := 22 * 60       # the time of day the sleep starts at
+const OP_TIMEOUT_MS := 30000
 
 var _failed := 0
 var _main: Main
 var _live: LiveSession
+var _done := {}           # range op id -> error ("" = done), from LiveSession.range_done
 var _answered := 0
 var _hold := false        # true: requests are left to the step waiting for them
 
@@ -49,6 +54,7 @@ func _run() -> void:
 	root.add_child(_main)
 	await process_frame
 	_live = _main.live
+	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
 	var r := _find_button(_main.main_menu, "Test range") if _main.main_menu != null else null
 	_check(r != null, "the menu has \"Test range\"")
 	if r == null:
@@ -63,9 +69,21 @@ func _run() -> void:
 		for i in 3:
 			tired = tired and await _wait(8, "6 hours", 6 * 3600)
 		if tired:
+			await _settled()
+			var e := await _op(_live.range_set_time(NIGHT_MINUTE))
+			_check(e.is_empty(), "the range's clock is set to %d:00, the night ahead (%s)" % [NIGHT_MINUTE / 60, e])
 			await _sleep()
 	await _stop()
 	_finish()
+
+
+## Waits for range_done of op `id` (0 = refused before sending); "" when it was done.
+func _op(id: int) -> String:
+	if id < 1:
+		return "not sent"
+	if not await _until(func() -> bool: return _done.has(id), OP_TIMEOUT_MS):
+		return "no answer"
+	return _done[id]
 
 
 ## CDDA's wait for the menu entry `id` (or one whose label has `label`), `turns` long. False when it didn't pass.
@@ -107,15 +125,21 @@ func _sleep() -> void:
 	_hold = true   # the questions are this step's: _sleep_reply
 	_check(_live.queue_action("sleep"), "CDDA's \"sleep\" queued")
 	var asked := PackedStringArray()
-	var w: Dictionary = await _watch(turn0, 3600, SLEEP_LIMIT_MS, func() -> void: _sleep_reply(asked))
+	var slept := [false]
+	var look := func() -> void:
+		_sleep_reply(asked)
+		slept[0] = slept[0] or _asleep()
+	var w: Dictionary = await _watch(turn0, 3600, SLEEP_LIMIT_MS, look)
 	_hold = false
 	await _settled()
 	var passed: int = _main.world.snapshot.turn - turn0
 	print("  sleep: asked %s" % [asked])
+	print("  sleep: seen asleep in a snapshot: %s" % ["yes" if slept[0] or _asleep() else "no"])
 	print("  sleep: %d turns (%.1f h of game time) in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s"
 			% [passed, passed / 3600.0, w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0])
 	print("  at that rate a night (%d turns) takes %.0f s of real time" % [NIGHT_TURNS, NIGHT_TURNS * w["rate"] / 1000.0])
-	_check(w["done"], "the character sleeps: an hour or more passes by itself (%.1f h in %.0f s)" % [passed / 3600.0, w["ms"] / 1000.0])
+	_check(w["done"], "the character lies down to sleep: an hour or more passes by itself (%.1f h in %.0f s)"
+			% [passed / 3600.0, w["ms"] / 1000.0])
 	_check(w["silent"] <= SILENT_MS, "the client hears from the game while the character sleeps (longest silence %.1f s, limit %.1f)"
 			% [w["silent"] / 1000.0, SILENT_MS / 1000.0])
 	if w["ms"] > 3000 and _main.get("busy_note") != null:
@@ -193,8 +217,20 @@ func _stop() -> void:
 	await process_frame
 
 
-## Answers a pending question the way a player who wants to sleep does: "Yes." to "are you sure" and to "keep
-## trying?", no to an alarm.
+## The latest snapshot has the character asleep (CDDA's sleep effect; player.asleep on a client that reads it).
+func _asleep() -> bool:
+	var snap: Snapshot = _main.world.snapshot
+	if snap.get("asleep") == true:
+		return true
+	for e: Dictionary in snap.player_effects:
+		if str(e.get("id", "")) == "sleep":
+			return true
+	return false
+
+
+## Answers a pending question the way a player who wants to sleep does: "Yes." to "are you sure", no to an alarm,
+## and to "You have trouble sleeping, keep trying?" its "Continue trying ... and don't ask again." (cancelling
+## that one gets the character up).
 func _sleep_reply(asked: PackedStringArray) -> void:
 	var req := _live.request
 	var id := int(req.get("id", 0))
@@ -205,8 +241,15 @@ func _sleep_reply(asked: PackedStringArray) -> void:
 	var want_no := text.to_lower().contains("alarm")
 	var a := {"cancel": true}
 	if req.get("kind", "") == "menu":
-		var pick: Variant = _entry(req, func(_i: int, l: String) -> bool:
-			return l.to_lower().begins_with("no" if want_no else "yes"))
+		var go_on := func(_i: int, l: String) -> bool:
+			return l.to_lower().begins_with("continue") and l.to_lower().contains("ask again")
+		var go_on_once := func(_i: int, l: String) -> bool: return l.to_lower().begins_with("continue")
+		var yes_no := func(_i: int, l: String) -> bool: return l.to_lower().begins_with("no" if want_no else "yes")
+		var pick: Variant = _entry(req, go_on)
+		if pick == null:
+			pick = _entry(req, go_on_once)
+		if pick == null:
+			pick = _entry(req, yes_no)
 		if pick != null:
 			a = {"entry": pick}
 	elif req.get("kind", "") == "popup" and not acts.is_empty():
