@@ -57,6 +57,9 @@ const PARTS := ["Muzzle", "Grip", "MagWell", "Magazine", "Slide", "Bolt"]
 const CANT_CLEAR := "Not now: the game is busy."
 const CLEARING := "Clearing it..."
 const CLEAR_WAIT_S := 20.0    # after a rack asked to clear a jam, no other rack asks again until it's gone (or this)
+const COUNT_OFF := Vector3(0.0, 0.075, 0.02)   # the round count: this far over the Grip marker (model space)
+const COUNT_PX := 0.00025     # ... its letters (about 8 mm digits)
+const EMPTY_COLOR := Color(1.0, 0.35, 0.3)     # ... at 0
 
 var rig: VrRig
 ## (action: String) -> bool: queues one of CDDA's main-loop actions (main.gd: LiveSession, only in the main loop).
@@ -110,6 +113,7 @@ var shown := false            # the model shows in the main hand
 var flashes := true           # muzzle flashes at all (main.gd: the flash setting); off: shots only kick
 var suppressed := false       # the wielded gun has a suppressor (Snapshot.player_gun): no flash
 var flashed := 0              # muzzle flashes shown (tests)
+var count: Label3D            # the loaded rounds (player_gun.rounds) over the grip; hidden for a gun that takes none
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
 var misfires := 0             # misfire clicks felt (tests)
@@ -373,6 +377,7 @@ func _refresh(s: Snapshot) -> void:
 	grime = gr
 	gun_type = t
 	rounds = _int_of(g.get("rounds"), 0, MAX_ROUNDS, -1)
+	_sync_count()
 	var f: Variant = g.get("faults")
 	var j := WeaponViewmodel.jam_of((f as Array).slice(0, MAX_FAULTS)) if f is Array else ""
 	_find_rows(s, t)
@@ -388,6 +393,16 @@ func _refresh(s: Snapshot) -> void:
 	_sync_mag()
 
 
+## The round count over the grip: the loaded rounds CDDA sends (player_gun.rounds, its magazine's too), red at 0;
+## hidden for a gun that takes no ammo (no `rounds`) or a bad value.
+func _sync_count() -> void:
+	if count == null or not is_instance_valid(count):
+		return
+	count.visible = rounds >= 0
+	count.text = str(maxi(rounds, 0))
+	count.modulate = EMPTY_COLOR if rounds == 0 else Color.WHITE
+
+
 ## No gun wielded: the model goes (an item action in flight still lands through its signals).
 func _clear() -> void:
 	_drop_copy()
@@ -395,6 +410,7 @@ func _clear() -> void:
 		remove_child(model)
 		model.free()
 	model = null
+	count = null   # freed with the model
 	shape = ""
 	gun_type = 0
 	gun = null
@@ -423,6 +439,19 @@ func _build_model(sh: String, gr: float) -> void:
 	model = WeaponViewmodel.build(sh, gr)
 	add_child(model)
 	shape = sh
+	count = Label3D.new()   # goes with the model
+	count.name = "RoundCount"
+	count.pixel_size = COUNT_PX
+	count.font_size = 32
+	count.outline_size = 8
+	count.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	count.no_depth_test = true   # over the gun's own meshes
+	count.render_priority = 4
+	count.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var grip := model.get_node_or_null("Grip") as Node3D
+	count.position = (grip.position if grip != null else Vector3.ZERO) + COUNT_OFF
+	count.visible = false
+	model.add_child(count)
 	_flash = null   # the old one went with the old model
 	_flash_t = 0.0
 	var muzzle := model.get_node_or_null("Muzzle") as Node3D

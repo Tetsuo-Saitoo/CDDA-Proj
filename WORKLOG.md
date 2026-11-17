@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — In VR, the gun in your hand shows how many rounds are loaded over its grip, in red when it is empty. Client tests pass.
 - 2026-11-17 — In VR, item labels show the item's state too: the label over your hand says "Cold" or "Spoilage 95% (old)" with a level gauge in the drink's colour, and items on the tray and in the open pack say "500 ml, cold" or "frozen, rotten" under their names. Client tests pass.
 - 2026-11-17 — The Tab view's exact numbers checked in a live game (QA lead, actions_live_test): a carried stack lists the game's count ("9x19mm JHP (60)"), a full bottle of water weighs 513 g with its contents, and what is inside is not counted twice in the column.
 - 2026-11-17 — Checked in a live game: the Tab view's exact counts and weights are right (a stack reads "(60)", a bottle's water isn't counted twice), and the waiting line says "Waiting".
