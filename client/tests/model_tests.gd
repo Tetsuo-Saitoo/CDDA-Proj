@@ -960,8 +960,20 @@ func _test_repo_models(repo: Callable) -> void:
 				var why := model_fault(reg.models.get_model(e.model), e.kind)
 				if not why.is_empty():
 					bad.append("%s: %s" % [e.model, why])
-	_check.call(seen.size() >= 47 and bad.is_empty() and reg.all_warnings().is_empty(),
+	_check.call(seen.size() >= 52 and bad.is_empty() and reg.all_warnings().is_empty(),
 			"the game's %d models load, keep to the budgets and sit right %s %s" % [seen.size(), bad, reg.all_warnings()])
+	var fridge := reg.models.get_model("furniture/f_fridge.glb")
+	var cup := reg.models.get_model("furniture/f_cupboard.glb")
+	var kinds := func(m: ModelLibrary.Model) -> Array:
+		return [] if m == null else m.movers.map(func(v: ModelLibrary.Mover) -> String: return v.kind)
+	var outward := func(m: ModelLibrary.Model) -> bool:   # each door's middle swings toward the front (+z)
+		return m != null and m.movers.all(func(v: ModelLibrary.Mover) -> bool: return (Basis(v.axis, v.max_amount) * v.size.get_center()).z > v.size.get_center().z + 0.05)
+	_check.call(kinds.call(fridge) == ["door", "door"] and fridge.surfaces.size() == 5 and outward.call(fridge)
+			and fridge.movers.any(func(v: ModelLibrary.Mover) -> bool: return v.surfaces.size() == 3)
+			and kinds.call(cup) == ["door"] and cup.surfaces.size() == 2 and outward.call(cup)
+			and kinds.call(reg.models.get_model("furniture/f_counter.glb")) == []
+			and reg.models.get_model("furniture/f_bookcase.glb").surfaces.size() == 4,
+			"the fridge's and the cupboard's doors open outward, the fridge's bins ride its door, shelves are surfaces; the counter's door stays shut")
 
 
 ## Why a model breaks docs/MODELS.md ("" when it doesn't): triangle and texture budgets by kind, the bottom
