@@ -169,7 +169,8 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
 - CDDA's debug message prompts and "press any key" screens come as `key` requests with context `RAW_KEY` and no
   actions; answer `action: " "`. The message itself is in `debug.log`.
 - CDDA's window still exists, hidden, with SDL's software renderer (B2 tech debt); it is created and destroyed
-  on the game thread, which also calls `SDL_Quit()` before it ends (see TASKS.md "Bridge facts").
+  on the game thread, which also calls `SDL_Quit()` before it ends (see TASKS.md "Bridge facts"). It loads no
+  tileset images: the tile contexts read only a tileset's tile sizes, which the game's view sizes come from.
 - The DLL links everything statically (vcpkg `x64-windows-static`, static CRT): it imports only system DLLs.
 - `get_snapshot_json` builds the JSON on the calling thread (~tens of ms for 3 levels); call it only when the seq
   changes.
