@@ -154,6 +154,13 @@ func _test_user_files() -> void:
 	UserFiles.set_test_root("user://elsewhere")
 	UserFiles.set_test_root(UserFiles.TEST_RUNS + "/../elsewhere")
 	_check(UserFiles.test_root() == root, "a folder outside test-runs is refused as the run's folder")
+	_check(UserFiles.at("user://../hud.cfg") == "" and UserFiles.at("user://a/../../hud.cfg") == "",
+			"a path with .. opens nothing in a test run")
+	_check(UserFiles.script_run(PackedStringArray(["--headless", "--path", "client", "--script", "res://tests/run_tests.gd"]))
+			and UserFiles.script_run(PackedStringArray(["-s", "x.gd"]))
+			and not UserFiles.script_run(PackedStringArray(["--headless", "--path", "client"]))
+			and UserFiles.script_run(OS.get_cmdline_args()),
+			"a --script start is known as a test run from Godot's arguments, before the main loop exists")
 	# What keeps the player's files, saved under its own default path: all in the run's folder, the player's untouched.
 	var files: Array[String] = [HudSettings.FILE, InputActions.FILE, VrSettings.FILE, Hints.FILE, Hotbar.FILE]
 	var before := files.map(func(f: String) -> int: return FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else -1)

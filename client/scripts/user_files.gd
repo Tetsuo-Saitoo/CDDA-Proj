@@ -15,11 +15,14 @@ static var _decided := false
 
 
 ## `path` as it is opened: unchanged in the game, and for a path outside user:// or already under TEST_RUNS; in a
-## test run the same name in the run's folder ("user://hud.cfg" -> "<run>/user/hud.cfg").
+## test run the same name in the run's folder ("user://hud.cfg" -> "<run>/user/hud.cfg"). For the fixed names the
+## game uses: in a test run a path with ".." gives "" (nothing opens), so nothing leaves the run's folder.
 static func at(path: String) -> String:
 	var root := test_root()
 	if root.is_empty() or not path.begins_with("user://") or path == TEST_RUNS or path.begins_with(TEST_RUNS + "/"):
 		return path
+	if path.contains(".."):
+		return ""
 	DirAccess.make_dir_recursive_absolute(root)   # again each time: a test may have cleaned the run folder
 	return root.path_join(path.trim_prefix("user://"))
 
@@ -28,12 +31,18 @@ static func at(path: String) -> String:
 static func test_root() -> String:
 	if not _decided:
 		var loop := Engine.get_main_loop()
-		if loop == null:
-			return ""   # too early to tell: asked again on the next call
+		if loop == null and not script_run(OS.get_cmdline_args()):
+			return ""   # too early to tell, and not started with --script: asked again on the next call
 		_decided = true
-		if loop.get_script() != null:
+		if loop == null or loop.get_script() != null:
 			_root = TEST_RUNS.path_join("run-%d" % OS.get_process_id()).path_join("user")
 	return _root
+
+
+## Whether Godot's own arguments `args` start a script as the main loop (--script / -s): a test run, known before
+## the main loop exists.
+static func script_run(args: PackedStringArray) -> bool:
+	return args.has("--script") or args.has("-s")
 
 
 ## Points this test run's user files at `dir`, a folder under TEST_RUNS (a child run: its parent's). Anything else
