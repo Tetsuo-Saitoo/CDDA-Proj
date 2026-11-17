@@ -195,20 +195,29 @@ func _test_user_files() -> void:
 	var dropped := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not DirAccess.dir_exists_absolute(dead.path_join("user")) \
 			and DirAccess.dir_exists_absolute(dead)
 	_check(kept and refused and dropped, "a dead run's user files folder is removed, a newer one and anything else is not (%s %s %s)" % [kept, refused, dropped])
-	# A dead run's user files folder that is a link: the link goes, what it points at stays. Skipped where this
-	# account can't make links (Windows without developer mode).
+	# A dead run's user files folder that is a link: the link goes, what it points at stays. The link is a symlink,
+	# or on Windows a junction (any account can make one).
 	_check(not UserFiles.through_link(dead.path_join("user")) and UserFiles.through_link("user://elsewhere/x")
 			and not UserFiles.unlink(dead), "a plain folder under test-runs goes through no link and is none")
 	var target := TestDir.path("linked")
 	DirAccess.make_dir_recursive_absolute(target)
 	FileAccess.open(target.path_join("keep.txt"), FileAccess.WRITE).store_string("x")
 	var up := DirAccess.open(dead)
-	if up != null and up.create_link(ProjectSettings.globalize_path(target), "user") == OK and up.is_link("user"):
+	var link := func() -> bool:   # dead/user as a link to `target`
+		if up.create_link(ProjectSettings.globalize_path(target), "user") == OK and up.is_link("user"):
+			return true
+		if OS.get_name() != "Windows":
+			return false
+		OS.execute("cmd.exe", PackedStringArray(["/c", "mklink", "/J",
+				ProjectSettings.globalize_path(dead.path_join("user")).replace("/", "\\"),
+				ProjectSettings.globalize_path(target).replace("/", "\\")]))
+		return up.is_link("user")
+	if up != null and link.call():
 		var went := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not up.is_link("user") \
 				and not up.dir_exists("user")
 		_check(went and FileAccess.file_exists(target.path_join("keep.txt")),
 				"a dead run's user files folder that is a link: the link is removed, its target keeps its files")
-		up.create_link(ProjectSettings.globalize_path(target), "user")
+		link.call()
 		var inside := UserFiles.through_link(dead.path_join("user/sub"))
 		up.remove("user")
 		_check(inside, "a folder under a link goes through a link: nothing is deleted there")
