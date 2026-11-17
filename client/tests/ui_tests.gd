@@ -1497,6 +1497,27 @@ func _test_wheel() -> void:
 	w.tap_until = Time.get_ticks_msec() + 10000
 	_check.call(w.default_slot == 2 and w.release(), "wheel: letting go at the centre soon after E picks the default")
 	_expect({"id": 7, "entry": 13}, "wheel: the tap's default is fill")
+	# want_wheel's `down` (VR's trigger, not an InputMap action): still down: held; let go within TAP_MS: the default;
+	# anything but true counts as let go; it is the next request's only (no `down`: E's action as before)
+	ui.want_wheel(5000, true, func() -> bool: return true)
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	w = ui.widget as RadialRequestWidget
+	var down_held := answers.is_empty() and w != null and w.hold and not w.done
+	ui.want_wheel(5000, true, func() -> bool: return false)
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	var down_tap: Array = answers.duplicate()
+	ui.want_wheel(5000, true, func() -> String: return "yes")
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	var down_odd: Array = answers.duplicate()
+	ui.want_wheel(5000, true, func() -> bool: return true)
+	_show(_req("popup", {"text": "Something else."}))   # not a wheel: takes the `down` with it
+	ui.want_wheel(5000, true)
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	_check.call(down_held and down_tap == [{"id": 7, "entry": 11}] and down_odd == [{"id": 7, "entry": 11}]
+			and answers == [{"id": 7, "entry": 11}] and not ui.wheel_down.is_valid(),
+			"wheel: want_wheel's `down` true: held; false or not a bool: a tap picks the default; a later request doesn't keep it (%s %s %s)"
+			% [down_tap, down_odd, answers])
+	answers.clear()
 	ui.want_wheel(5000, false)
 	_show(_req("menu", {"entries": sink}))
 	var stick := InputEventJoypadMotion.new()

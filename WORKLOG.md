@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — VR radial menus: with an empty hand on a sink, stove or other furniture next to you, the trigger uses it; a quick press does the game's default, holding it shows the choices as a wheel around your hand, and you point with the stick or a flick of the hand and let go to pick. Client tests pass.
 - 2026-11-17 — In VR, items in the item tray and the backpack now show frost, heat, spoilage, the liquid level and gun grime the way items lying in the world do. Client tests pass.
 - 2026-11-17 — Targeting names people: when you aim or look around, an NPC shows by name instead of "someone". Client tests pass.
 - 2026-11-17 — Item tiles, slice 4: a glass jar or clear bottle shows as glass in the Tab view and the hands panel, and an empty one says "empty". Client tests pass.

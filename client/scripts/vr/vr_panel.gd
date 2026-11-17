@@ -43,6 +43,8 @@ const MAX_PX := 100000.0               # a laser point farther off than this is 
 var viewport: SubViewport
 var root: Control
 var shown := false
+## A request showing as a wheel around the hand instead (VrWheel, set by the rig every frame): the panel stays hidden.
+var held_back := false
 ## Everything on the panel this much bigger (root has PX / text_scale logical pixels). Bad values are ignored.
 var text_scale := 1.0:
 	set(v):
@@ -137,7 +139,7 @@ func has_content() -> bool:
 ## Every frame from the rig: shows or hides with root's content, and puts the panel back in front of the head (`head`,
 ## in the parent's space) once it has been out of view for AWAY_S. Also times the sticks' repeats.
 func update(delta: float, head: Transform3D) -> void:
-	var on := has_content()
+	var on := has_content() and not held_back
 	if on != shown:
 		_set_shown(on, head)
 	if not shown or not is_finite(delta) or delta < 0.0:
