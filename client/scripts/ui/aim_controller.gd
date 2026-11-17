@@ -361,16 +361,17 @@ func _melee_pick(origin: Vector3, seg: Vector3) -> Dictionary:
 	return {}
 
 
-## The technique family a strike at a figure's zone calls (the zone names of CreatureFigure.hit_zones): "head" and
-## "eye" call "stun"; "leg_l", "leg_r" and "leg" call "down"; "arm_l" and "arm_r" call "disarm"; "torso", "wing"
-## and anything else call nothing ("").
+## The technique family a strike at a figure's zone calls (CreatureFigure.hit_zones: the placeholder's zones, or a
+## model's weak point and body part ids): the head ("head", "eye", "eyes", "mouth") calls "stun"; a leg or foot
+## ("leg_l", "leg_r", "leg", "hindleg", "foot_l", "foot_r") "down"; an arm or hand ("arm_l", "arm_r", "arm",
+## "hand_l", "hand_r") "disarm"; the body ("torso", "abdomen", "belly"), "wing" and anything else nothing ("").
 static func technique_call(zone: String) -> String:
 	match zone:
-		"head", "eye":
+		"head", "eye", "eyes", "mouth":
 			return "stun"
-		"leg_l", "leg_r", "leg":
+		"leg_l", "leg_r", "leg", "hindleg", "foot_l", "foot_r":
 			return "down"
-		"arm_l", "arm_r":
+		"arm_l", "arm_r", "arm", "hand_l", "hand_r":
 			return "disarm"
 	return ""
 
