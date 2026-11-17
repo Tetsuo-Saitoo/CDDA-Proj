@@ -94,11 +94,13 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
 	_test_grime(root, tables)
+	_test_gun_grime(root)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
 	_test_misfires(root, aim, tables)
 	_test_queue_at()
 	_test_hurt_cue(root, aim)
+	_test_strain_cue(root)
 	_test_gun_state(d, tables)
 	_test_corpses(root, world, d, tables)
 	_test_explosions(root, world, tables, me)
@@ -152,6 +154,19 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm._process(0.02)
 	_check.call(nan_ok and absf(vm.rotation.y) < 1e-4 and vm.position.distance_to(vm._base) < 1e-4,
 			"viewmodel: no sway without dispersion, NaN is none (%s)" % [still])
+	vm.left_handed = true
+	var snapped := vm.position.is_equal_approx(Vector3(-WeaponViewmodel.REST.x, WeaponViewmodel.REST.y, WeaponViewmodel.REST.z))
+	for f in 50:
+		vm._process(0.02)
+	var left_rest := vm._base.is_equal_approx(vm.rest()) and vm.rest().x < 0.0
+	vm.aimed = true
+	for f in 100:
+		vm._process(0.02)
+	var aimed_mid := vm._base.distance_to(WeaponViewmodel.AIMED) < 0.01
+	vm.aimed = false
+	vm.left_handed = false
+	_check.call(snapped and left_rest and aimed_mid and vm.position.is_equal_approx(WeaponViewmodel.REST),
+			"viewmodel: left-handed rests mirrored on the left at once, aims in the middle; back to the right at once")
 	vm.free()
 
 
@@ -733,15 +748,35 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 		z = cv.figures()[uid]
 	var head := Vector3.ZERO
 	var leg := Vector3.ZERO
+	var torso: MeshInstance3D = null
 	for zz: Array in z.hit_zones():
 		if zz[1] == "head":
 			head = (zz[0] as MeshInstance3D).global_position
 		elif zz[1] == "leg_l":
 			leg = (zz[0] as MeshInstance3D).global_position
+		elif zz[1] == "torso" and torso == null:
+			torso = zz[0]
 	var eye := world.coords.ms_center_to_world(me) + Vector3(0, 1.6, 0)
 	for want: Array in [["head", head], ["leg_l", leg]]:
 		var r := B.fly(eye, B.launch_dir(eye.direction_to(want[1]), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
 		_check.call(r["hit"] == "creature" and r["zone"] == want[0], "bullets: aimed at the %s, hit the %s (%s)" % [want[0], r.get("zone"), r["hit"]])
+	# a model's hit region names a weak point (CreatureFigure.zone_of_hit): the zone is that id, and so is the part
+	var region := {}
+	if torso != null:
+		var arms: Array[MeshInstance3D] = []   # hidden for this shot: from here an arm covers the torso's middle
+		for zz: Array in z.hit_zones():
+			if zz[1] == "arm_l" or zz[1] == "arm_r":
+				arms.append(zz[0])
+				(zz[0] as MeshInstance3D).visible = false
+		torso.set_meta("zone", "abdomen")
+		var at := torso.global_position
+		region = B.fly(eye, B.launch_dir(eye.direction_to(at), rifle[0]), rifle[0], rifle[1], cv.figures(), aim.look_ray)
+		torso.remove_meta("zone")
+		for m in arms:
+			m.visible = true
+	_check.call(region.get("hit") == "creature" and region.get("zone") == "abdomen"
+			and B.cdda_part(str(region.get("zone")), true, {"head": true, "abdomen": true}) == "abdomen",
+			"bullets: a model's `hit_abdomen` region is hit as the abdomen weak point (%s)" % [region.get("zone")])
 	# soft cover: furniture in front of the zombie's legs doesn't stop the client's bullet (CDDA's path decides)
 	var cover := zp - Vector3i(signi(zp.x - me.x), signi(zp.y - me.y), 0)
 	var csm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(cover))
@@ -759,6 +794,20 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 			"bullets: furniture is soft cover, the bullet flies through it (%s, %s)" % [stopped.get("what"), through.get("hit")])
 	_check.call(B.cdda_part("head", true, {"head": true}) == "head" and B.cdda_part("torso", true, {"head": true}) == ""
 			and B.cdda_part("arm_l", false, {}) == "arm_l", "bullets: zones map to weak points / body parts")
+	# a model's zones: weak point ids a monster has are themselves; body part ids on a humanoid monster try the
+	# placeholder's weak points; on a character, body part ids are themselves and anything else the nearest or torso
+	var wp := {"head": true, "arm": true, "hindleg": true, "belly": true}
+	var monster_ok := (B.cdda_part("belly", true, wp) == "belly" and B.cdda_part("hindleg", true, wp) == "hindleg"
+			and B.cdda_part("abdomen", true, wp) == "" and B.cdda_part("hand_l", true, wp) == "arm"
+			and B.cdda_part("foot_r", true, wp) == "hindleg" and B.cdda_part("mouth", true, wp) == "head"
+			and B.cdda_part("eyes", true, wp) == "head" and B.cdda_part("hand_r", true, {}) == ""
+			and B.cdda_part("wing", true, wp) == "" and B.cdda_part("", true, wp) == "")
+	var character_ok := (B.BODY_PARTS.all(func(bp: String) -> bool: return B.cdda_part(bp, false, {}) == bp)
+			and B.cdda_part("eye", false, {}) == "eyes" and B.cdda_part("hindleg", false, {}) == "leg_l"
+			and B.cdda_part("abdomen", false, {}) == "torso" and B.cdda_part("HEAD", false, {}) == "torso"
+			and B.cdda_part("x".repeat(500), false, {}) == "torso")
+	_check.call(monster_ok and character_ok, "bullets: a model's weak point and body part zones map to CDDA's parts (%s)"
+			% [[monster_ok, character_ok]])
 	# through the aim controller: a gun in hand answers FIRE with the shot
 	var gun := IdTables.Def.new()
 	gun.gun = "rifle"
@@ -783,6 +832,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
 	_test_melee(aim, eye, head, me, zp)
 	_test_techniques(aim, ui, cam, eye, head, zp)
+	_test_smash(aim, world, cam, eye, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -790,6 +840,72 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 
 
 const ZUID := 8589934593   # the test zombie
+
+
+## Strike keys at things: with no creature under the crosshair, furniture (a wall, a door) next to you is smashed at
+## its square (SMASH_AT, CDDA's smash by queue_action_at); a floor, a farther square or junk gives no smash.
+func _test_smash(aim: AimController, world: WorldView, cam: Camera3D, eye: Vector3, me: Vector3i, zp: Vector3i) -> void:
+	var S := AimController
+	var away := Vector3i(-signi(zp.x - me.x), -signi(zp.y - me.y), 0)   # the side away from the zombie
+	if away == Vector3i.ZERO:
+		away = Vector3i(1, 0, 0)
+	var side := me + away
+	var two := me + away * 2
+	var set_furn := func(sq: Vector3i, f: int) -> int:
+		var sm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(sq))
+		if sm == null:
+			return -1
+		var l := CddaCoords.ms_to_local(sq)
+		var old: int = sm.furn[l.y * CddaCoords.SEEX + l.x]
+		sm.furn[l.y * CddaCoords.SEEX + l.x] = f
+		return old
+	var at_furn := func(sq: Vector3i) -> Vector3:
+		return world.coords.ms_center_to_world(sq) + Vector3(0, 0.5, 0)
+	var old_side: int = set_furn.call(side, 1)
+	var old_two: int = set_furn.call(two, 0)
+	var hit: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me)
+	cam.global_position = eye
+	cam.look_at(at_furn.call(side))
+	var act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	var kept: Variant = aim.smash_square
+	var off_act := aim.strike_action("off", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(old_side >= 0 and hit == side and act == S.SMASH_AT and kept == side and off_act == S.SMASH_AT
+			and aim.melee_aim.is_empty(), "smash: a strike key at furniture next to you smashes its square (%s %s %s)"
+			% [hit, act, kept])
+	var taken: Variant = aim.strike_square(S.SMASH_AT)
+	var again: Variant = aim.strike_square(S.SMASH_AT)
+	aim.smash_square = "junk"
+	var junk_sq: Variant = aim.strike_square(S.SMASH_AT)
+	_check.call(taken == side and again == null and junk_sq == null and S.cdda_action(S.SMASH_AT) == "smash"
+			and S.cdda_action(S.AT_ACTION) == S.AT_ACTION and S.cdda_action("smash") == "smash",
+			"smash: its square is taken once and the action goes to CDDA as smash")
+	# two squares off: out of a smash's reach (CDDA smashes only next to you)
+	set_furn.call(side, 0)
+	set_furn.call(two, 1)
+	var far: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(two)), me)
+	cam.look_at(at_furn.call(two))
+	var far_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	# the floor next to you: nothing to smash
+	set_furn.call(two, 0)
+	var floor_at := world.coords.ms_center_to_world(side)
+	var on_floor: Variant = aim.smash_at(eye, eye.direction_to(floor_at), me)
+	cam.look_at(floor_at)
+	var floor_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(far == null and far_act == "fp3d_attack_main_LEFT" and on_floor == null
+			and floor_act == "fp3d_attack_main_LEFT" and aim.smash_square == null,
+			"smash: furniture two squares off or a bare floor: a plain strike, no smash (%s %s %s %s)"
+			% [far, far_act, on_floor, floor_act])
+	set_furn.call(side, 1)
+	var ray := aim.look_ray
+	var junk := [aim.smash_at(Vector3(NAN, 0, 0), Vector3.FORWARD, me), aim.smash_at(eye, Vector3.ZERO, me),
+			aim.smash_at(eye, Vector3(INF, 0, 0), me)]
+	aim.look_ray = null
+	junk.append(aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me))
+	aim.look_ray = ray
+	_check.call(junk.all(func(x: Variant) -> bool: return x == null), "smash: junk lines or no look ray: no smash")
+	set_furn.call(side, old_side)
+	set_furn.call(two, old_two)
+	aim.melee_aim = {}
 
 
 ## Melee: an aimed strike picks the figure within reach (not past MELEE_REACH_M, not through a wall), names the
@@ -858,20 +974,23 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 			% [[off_way, bad_hand, miss]])
 	# techniques: the zone a strike lands on calls a family, sent as the swing answer's `action`
 	var calls := {"head": "stun", "eye": "stun", "leg_l": "down", "leg_r": "down", "leg": "down", "arm_l": "disarm",
-			"arm_r": "disarm", "torso": "", "wing": ""}
-	var junk_zones := ["", "HEAD", "Head", "head ", "eyes", "legs", "arm", "stun", "x".repeat(500)]
+			"arm_r": "disarm", "torso": "", "wing": "", "eyes": "stun", "mouth": "stun", "hindleg": "down",
+			"foot_l": "down", "foot_r": "down", "arm": "disarm", "hand_l": "disarm", "hand_r": "disarm", "abdomen": "",
+			"belly": ""}
+	var junk_zones := ["", "HEAD", "Head", "head ", "Eyes", "legs", "hand", "foot", "stun", "x".repeat(500)]
 	var call_ok := calls.keys().all(func(zn: String) -> bool: return S.technique_call(zn) == calls[zn]) \
 			and junk_zones.all(func(zn: String) -> bool: return S.technique_call(zn) == "")
 	var fig: CreatureFigure = aim.creature_view.figures()[ZUID]
 	var leg := Vector3.ZERO
 	var zones_known := BulletPhysics.CHARACTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn)) \
-			and BulletPhysics.MONSTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn))
+			and BulletPhysics.MONSTER_PARTS.keys().all(func(zn: String) -> bool: return calls.has(zn)) \
+			and BulletPhysics.BODY_PARTS.all(func(zn: String) -> bool: return calls.has(zn))
 	for zz: Array in fig.hit_zones():
 		zones_known = zones_known and calls.has(zz[1])
 		if zz[1] == "leg_l":
 			leg = (zz[0] as MeshInstance3D).global_position
 	_check.call(call_ok and zones_known,
-			"melee: technique_call: head and eye stun, legs down, arms disarm; torso, wing and junk nothing (%s)"
+			"melee: technique_call: head, eyes, mouth stun; legs, feet down; arms, hands disarm; body, wing, junk nothing (%s)"
 			% [[call_ok, zones_known]])
 	var hm := aim.melee_from(near, dir)
 	var ha := aim.on_request({"kind": "swing", "id": 45, "cursor": zp, "origin": me, "range": 1, "mode": "main"})
@@ -886,6 +1005,28 @@ func _test_melee(aim: AimController, eye: Vector3, head: Vector3, me: Vector3i, 
 	_check.call(lm.get("want") == "down" and lm.get("part") == "" and la.get("action") == "down"
 			and la.get("shot", {}).get("part") == "" and _bridge_typed(la.get("shot")),
 			"melee: a strike at a leg with no weak point there still answers, calling a takedown (%s, %s)" % [lm, la])
+	# a model's `hit_hand_l` region on the zombie (CreatureFigure.zone_of_hit, a humanoid): a disarm, at its arm
+	var hand: MeshInstance3D = null
+	for zz: Array in fig.hit_zones():
+		if zz[1] == "arm_l":
+			hand = zz[0]
+	var hand_aim := {}
+	var hand_ans := {}
+	if hand != null:
+		hand.set_meta("zone", "hand_l")
+		var to_hand := eye.direction_to(hand.global_position)
+		hand_aim = aim.melee_from(hand.global_position - to_hand * 1.5, to_hand)
+		hand_ans = aim.on_request({"kind": "swing", "id": 48, "cursor": zp})
+		hand.remove_meta("zone")
+	var zd: IdTables.Def = null
+	for x: Snapshot.Creature in aim.world.snapshot.creatures:
+		if x.uid == ZUID:
+			zd = CreatureView.def_of(aim.world, x)
+	var arm_part := BulletPhysics.cdda_part("hand_l", true, zd.weakpoints if zd != null else {})
+	_check.call(hand_aim.get("want") == "disarm" and hand_aim.get("part") == arm_part
+			and hand_ans.get("action") == "disarm" and hand_ans.get("shot", {}).get("part") == arm_part
+			and _bridge_typed(hand_ans.get("shot")),
+			"melee: a strike at a model's hand region calls a disarm, at the arm's weak point or the body (%s)" % [hand_ans])
 	var by := func(part: String, want: Array) -> Dictionary:   # a melee aim set by hand; want [] = no `want` key
 		aim.melee_aim = {"square": zp, "uid": ZUID, "part": part, "quality": 0.5, "time": Time.get_ticks_msec()}
 		if not want.is_empty():
@@ -1493,6 +1634,100 @@ func _test_strike_runs(aim: AimController, me: int, head: int, torso: int) -> vo
 
 
 ## A gun model's named parts (later models carry the same names as markers).
+## Gun fouling on any model (GunGrime): the one dirt mapping, CDDA's symbol steps, and grime shells over a model's
+## meshes that leave its own materials and overlay alone, come off at 0 and stay bounded.
+func _test_gun_grime(root: Node) -> void:
+	var same := true
+	for dd: int in [-99999, -1, 0, 1, 1000, 2000, 4999, 6000, 9999, 10000, 10001, 99999]:
+		same = same and GunGrime.grime_for(dd) == WeaponViewmodel.grime_for(dd)
+	var steps := [-1, 0, 1999, 2000, 3999, 4000, 9999, 10000, 99999].map(func(d: int) -> int: return GunGrime.step_for(d))
+	_check.call(same and GunGrime.grime_for(6000) == 0.6 and GunGrime.grime_for(-1) == 0.0
+			and steps == [0, 0, 0, 1, 1, 2, 4, 5, 5], "gun grime: one mapping for models, viewmodel and icons; CDDA's symbol steps (%s)" % [steps])
+
+	var sh: Shader = load("res://scripts/combat/grime_overlay.gdshader")
+	var names := []
+	if sh != null:
+		for u: Dictionary in sh.get_shader_uniform_list():
+			names.append(u.get("name"))
+	_check.call(sh != null and sh.get_mode() == Shader.MODE_SPATIAL
+			and ["grime", "box_centre", "half_extents", "push"].all(func(x: String) -> bool: return x in names),
+			"gun grime: the shell shader loads with its uniforms (%s)" % [names])
+
+	# A model: a box body, a barrel nested under it, a node with no mesh, an empty mesh; an outline overlay and own
+	# materials that must stay as they are.
+	var model := Node3D.new()
+	root.add_child(model)
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.04, 0.12, 0.2)
+	body.mesh = bm
+	var own := StandardMaterial3D.new()
+	body.material_override = own
+	var outline := StandardMaterial3D.new()
+	body.material_overlay = outline
+	model.add_child(body)
+	var barrel := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.01
+	cm.bottom_radius = 0.01
+	cm.height = 0.3
+	barrel.mesh = cm
+	barrel.position = Vector3(0, 0.04, -0.2)
+	body.add_child(barrel)
+	model.add_child(Node3D.new())
+	var empty := MeshInstance3D.new()
+	model.add_child(empty)
+	var shells := func() -> Array:
+		return GunGrime.meshes(model).map(func(mi: MeshInstance3D) -> Variant: return mi.get_node_or_null(GunGrime.SHELL))
+	var n := GunGrime.apply(model, 0.5)
+	var s: Array = shells.call()
+	var bs := body.get_node_or_null(GunGrime.SHELL) as MeshInstance3D
+	var bmat := bs.material_override as ShaderMaterial if bs != null else null
+	_check.call(n == 2 and s.size() == 2 and s.all(func(x: Variant) -> bool: return x is MeshInstance3D) and bs != null
+			and bs.mesh == bm and bmat != null and bmat.shader == sh and bmat.get_shader_parameter("grime") == 0.5
+			and bmat.get_shader_parameter("half_extents") == bm.get_aabb().size / 2.0
+			and bmat.get_shader_parameter("box_centre") == bm.get_aabb().get_center()
+			and bs.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			and bmat.render_priority == WorldLighting.UNDER_PRIORITY,
+			"gun grime: each mesh of a model wears a shell sized to its box, at the level (%d meshes)" % n)
+	_check.call(body.material_override == own and body.material_overlay == outline and bm.material == null
+			and barrel.material_overlay == null, "gun grime: the model's own materials and overlay are left alone")
+	var count_before := body.get_child_count()
+	n = GunGrime.apply(model, 0.8)
+	_check.call(n == 2 and body.get_child_count() == count_before and is_equal_approx(GunGrime.level_of(model), 0.8)
+			and ((barrel.get_node(GunGrime.SHELL) as MeshInstance3D).material_override as ShaderMaterial)
+					.get_shader_parameter("grime") == 0.8,
+			"gun grime: a new level changes the shells, adds none")
+	n = GunGrime.apply(model, 0.0)
+	_check.call(n == 0 and (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+			and GunGrime.level_of(model) == 0.0 and body.material_overlay == outline, "gun grime: level 0 takes the shells off")
+	GunGrime.apply(model, 0.6)
+	var junk := [GunGrime.apply(model, NAN), GunGrime.apply(model, -2.0), GunGrime.apply(null, 0.5)]
+	var cleaned := (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+	GunGrime.apply(model, 7.0)
+	_check.call(junk == [0, 0, 0] and cleaned and GunGrime.level_of(model) == 1.0,
+			"gun grime: NaN or below 0 is clean, above 1 is 1, no model is nothing")
+	model.free()
+
+	# Bounded: a huge model gets MAX_MESHES shells, a deep one only MAX_DEPTH levels down.
+	var wide := Node3D.new()
+	for i in GunGrime.MAX_MESHES + 40:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		wide.add_child(mi)
+	var deep := Node3D.new()
+	var at: Node = deep
+	for i in GunGrime.MAX_DEPTH + 4:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		at.add_child(mi)
+		at = mi
+	_check.call(GunGrime.apply(wide, 0.5) == GunGrime.MAX_MESHES and GunGrime.apply(deep, 0.5) == GunGrime.MAX_DEPTH,
+			"gun grime: at most %d meshes, %d levels deep" % [GunGrime.MAX_MESHES, GunGrime.MAX_DEPTH])
+	wide.free()
+	deep.free()
+
+
 func _test_gun_parts() -> void:
 	var VM := WeaponViewmodel
 	var want := {"pistol": ["Muzzle", "Grip", "MagWell", "Magazine", "Slide"], "long": ["Muzzle", "Grip", "MagWell",
@@ -1799,3 +2034,55 @@ cues=\"no\"
 			and odd.hurt_cues and odd_why.contains("hurt tint"),
 			"hurt: on by default; the F1 box turns it off and saves it; a non-bool in the file leaves it on, with a warning")
 	m.free()
+
+
+## F3: pain and low stamina at the view's edges (StrainCue): the levels from CDDA's numbers, junk and unsent needs
+## show nothing, the cue fades in and out steadily (never jumps or pulses), and is dark when off.
+func _test_strain_cue(root: Node) -> void:
+	var pains := [StrainCue.pain_for(0), StrainCue.pain_for(StrainCue.PAIN_FROM), StrainCue.pain_for(35),
+			StrainCue.pain_for(StrainCue.PAIN_FULL), StrainCue.pain_for(32767), StrainCue.pain_for(-40)]
+	var junk := [StrainCue.pain_for("50"), StrainCue.pain_for(NAN), StrainCue.pain_for(INF), StrainCue.pain_for(null),
+			StrainCue.tired_for("0"), StrainCue.tired_for(NAN), StrainCue.tired_for(-INF), StrainCue.tired_for([])]
+	var tireds := [StrainCue.tired_for(100), StrainCue.tired_for(StrainCue.STAMINA_FROM), StrainCue.tired_for(12.5),
+			StrainCue.tired_for(0), StrainCue.tired_for(-5)]
+	_check.call(pains == [0.0, 0.0, 0.5, 1.0, 1.0, 0.0] and tireds == [0.0, 0.0, 0.5, 1.0, 1.0]
+			and junk.all(func(x: float) -> bool: return x == 0.0),
+			"strain: pain from %d to %d and stamina under %d%% become 0..1; junk is 0 (%s %s)"
+			% [StrainCue.PAIN_FROM, StrainCue.PAIN_FULL, StrainCue.STAMINA_FROM, pains, tireds])
+
+	var data := HudData.new()
+	var cue := StrainCue.new()
+	cue.data = data
+	root.add_child(cue)
+	data.needs = {"pain": {"value": 80, "word": "", "level": HudData.UNKNOWN}}   # not sent
+	cue.step(0.5)
+	var unsent := cue.pain_shown == 0.0 and cue.tired_shown == 0.0 and not cue.visible
+	data.needs = {"pain": {"value": StrainCue.PAIN_FULL, "word": "", "level": HudData.BAD},
+			"stamina": {"value": 0, "word": "", "level": HudData.BAD}}
+	var seen: Array[float] = []
+	for i in 60:   # 3 s
+		cue.step(0.05)
+		seen.append(cue.pain_shown)
+	var steady := true
+	for i in range(1, seen.size()):
+		steady = steady and seen[i] >= seen[i - 1] and seen[i] - seen[i - 1] <= StrainCue.FADE_PER_S * 0.05 + 1e-6
+	var m := cue.material as ShaderMaterial
+	var full := cue.pain_shown == 1.0 and cue.tired_shown == 1.0 and cue.visible \
+			and float(m.get_shader_parameter("pain")) == 1.0 and float(m.get_shader_parameter("tired")) == 1.0
+	_check.call(unsent and steady and full and seen[9] < 0.5,
+			"strain: unsent needs show nothing; severe pain and no stamina fade in over 2 s without jumps (%.2f at 0.5 s)"
+			% seen[9])
+	data.needs["stamina"] = {"value": 60, "word": "", "level": HudData.OK}
+	cue.step(0.5)
+	var resting := cue.tired_shown == 0.75 and cue.pain_shown == 1.0   # half a second down at FADE_PER_S
+	cue.enabled = false
+	for i in 30:
+		cue.step(0.1)
+	var off := cue.pain_shown == 0.0 and cue.tired_shown == 0.0 and not cue.visible
+	cue.data = null
+	cue.enabled = true
+	cue.step(NAN)
+	cue.step(1.0)
+	_check.call(resting and off and not cue.visible,
+			"strain: rested stamina fades out; off or without data it shows nothing")
+	cue.free()

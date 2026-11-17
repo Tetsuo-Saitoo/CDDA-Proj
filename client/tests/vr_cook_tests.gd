@@ -49,6 +49,38 @@ class Backend extends RefCounted:
 			(c["callable"] as Callable).call(uid, result)
 
 
+## With LiveSession's cook_item: records what it took ([uid, type, pos, recipe, batch, tag]); `refuse_cook`: says no.
+class Cooker extends Backend:
+	var cooked: Array = []
+	var tries := 0
+	var refuse_cook := false
+
+	func cook_item(uid: float, type: float, pos: Vector3i, recipe: String, batch := 1, tag := 0) -> bool:
+		tries += 1
+		if refuse_cook:
+			return false
+		cooked.append([uid, type, pos, recipe, batch, tag])
+		return true
+
+
+## LiveSession's light_fire / extinguish_fire: records [op, pos, player, uid, type]; `refuse_fire`: says no.
+class Firer extends RefCounted:
+	var fires: Array = []
+	var refuse_fire := false
+
+	func light_fire(pos: Vector3i, player: Vector3i, uid := -1.0, type := -1.0, _tag := 0) -> bool:
+		if refuse_fire:
+			return false
+		fires.append(["light", pos, player, uid, type])
+		return true
+
+	func extinguish_fire(pos: Vector3i, player: Vector3i, _tag := 0) -> bool:
+		if refuse_fire:
+			return false
+		fires.append(["extinguish", pos, player, -1.0, -1.0])
+		return true
+
+
 ## Only recipe_matches (no signal): VrCook polls it.
 class Polled extends RefCounted:
 	var calls := 0
@@ -78,12 +110,16 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_head = Node3D.new()
 	_head.position = Vector3(5.5, 1.6, 5.5)
 	root.add_child(_head)
+	_test_ops()
 	_test_texts()
 	_test_cards()
 	_test_queries()
 	_test_limits()
 	_test_hostile()
 	_test_polled()
+	_test_cook()
+	_test_resume()
+	_test_fire()
 	_test_rig()
 	if is_instance_valid(_cook):
 		_cook.free()
@@ -159,6 +195,54 @@ func _water_in() -> Array:
 
 
 # --- tests ---
+
+## The bridge's L9 ops through LiveSession (lead-ui's OK): cook (also going on with a paused craft), light (with a
+## firestarter or CDDA's pick), extinguish, and pour from a pot; bad handles, squares, recipes, batches and tags send
+## nothing.
+func _test_ops() -> void:
+	var me := Vector3i(5, 5, 0)
+	var ls := LiveSession.new()
+	var off := ls.cook_item(7.0, 3.0, me, "soup")
+	var sim := OpSim.new()
+	ls._sim = sim
+	var e := me + Vector3i(1, 0, 0)
+	var ok: Array = [ls.cook_item(7.0, 3.0, e, "soup_veggy", 2), ls.cook_item(7.0, 3.0, e, "soup_veggy", 1, 9),
+			ls.light_fire(e, me), ls.light_fire(e, me, 11.0, 5.0, 12), ls.extinguish_fire(me, me), ls.extinguish_fire(e, me, 13),
+			ls.pour_item(7.0, 3.0, me), ls.pour_into(7.0, 3.0, 8.0, 4.0, 0)]
+	_check.call(not off and not ok.has(false) and sim.sent == [
+			{"op": "cook", "item": 7, "type": 3, "pos": e, "recipe": "soup_veggy", "batch": 2},
+			{"op": "cook", "item": 7, "type": 3, "pos": e, "recipe": "soup_veggy", "batch": 1, "tag": 9},
+			{"op": "light", "pos": e}, {"op": "light", "pos": e, "item": 11, "type": 5, "tag": 12},
+			{"op": "extinguish", "pos": me}, {"op": "extinguish", "pos": e, "tag": 13},
+			{"op": "pour", "item": 7, "type": 3, "pos": me},
+			{"op": "pour", "item": 7, "type": 3, "container": 8, "container_type": 4, "pocket": 0}],
+			"vr cook: LiveSession sends cook, light, extinguish and pour as the bridge takes them (%s)" % [sim.sent])
+	var far := me + Vector3i(2, 0, 0)
+	var bad: Array = [ls.cook_item(7.5, 3.0, e, "soup"), ls.cook_item(NAN, 3.0, e, "soup"), ls.cook_item(7.0, 0.0, e, "soup"),
+			ls.cook_item(7.0, 3.0, e, ""), ls.cook_item(7.0, 3.0, e, "soup veggy"), ls.cook_item(7.0, 3.0, e, "soup\"x"),
+			ls.cook_item(7.0, 3.0, e, "soup\\x"), ls.cook_item(7.0, 3.0, e, "sopa_\u00f1"), ls.cook_item(7.0, 3.0, e, "x".repeat(129)),
+			ls.cook_item(7.0, 3.0, e, "soup\n"), ls.cook_item(7.0, 3.0, e, "soup", 0), ls.cook_item(7.0, 3.0, e, "soup", 21),
+			ls.cook_item(7.0, 3.0, e, "soup", 1, -1), ls.cook_item(7.0, 3.0, e, "soup", 1, LiveSession.MAX_ITEM_TAG + 1),
+			ls.cook_item(7.0, 3.0, Vector3i(1 << 30, 0, 0), "soup"),
+			ls.light_fire(me, me), ls.light_fire(far, me), ls.light_fire(e + Vector3i(0, 0, 1), me), ls.light_fire(e, me, 11.0),
+			ls.light_fire(e, me, -1.0, 5.0), ls.light_fire(e, me, 0.0, 5.0), ls.light_fire(e, me, 11.0, 5.0, -2),
+			ls.extinguish_fire(far, me), ls.extinguish_fire(me + Vector3i(0, 0, 1), me), ls.extinguish_fire(e, me, -1),
+			ls.pour_item(0.0, 3.0, me), ls.pour_item(7.0, INF, me), ls.pour_into(7.0, 3.0, 7.0, 3.0),
+			ls.pour_into(7.0, 3.0, 8.5, 4.0), ls.pour_into(7.0, 3.0, 8.0, 4.0, -2), ls.pour_into(7.0, 3.0, 8.0, 4.0, 256)]
+	_check.call(not bad.has(true) and sim.sent.size() == 8,
+			"vr cook: bad handles, squares, recipe ids, batches, tags and pockets send nothing (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+
+
+## A stand-in for CddaSim's queue_item_action: records what it is given.
+class OpSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_item_action(d: Dictionary) -> bool:
+		sent.append(d.duplicate())
+		return true
+
 
 func _test_texts() -> void:
 	_check.call(VrCook.heat_text({"source": 1, "tool": _plate, "fire": 0, "charges": 120, "lit": true}, _tables)
@@ -411,10 +495,172 @@ func _test_polled() -> void:
 	_check.call(_lines(100).size() == 2 and not _cook.can_ask(), "vr cook: a backend without match_recipes: heat and contents only")
 
 
+## Pot 100 on a lit heat at (6, 5) with `contents`, asked and answered with `matches`.
+func _answered(b: Backend, contents: Array, matches: Array) -> void:
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, contents)]))
+	b.answer(100, b._next, matches)
+	_cook.refresh()
+
+
+## Where line `k` (0 = the top) of card `c` is, in the world.
+func _line_pt(c: VrCook.Card, k: int) -> Vector3:
+	var lh := ThemeDB.fallback_font.get_height(VrCook.FONT) * VrCook.PIXEL
+	var n := c.text.split("\n").size()
+	return c.global_transform * Vector3(0.0, c.label.position.y + (n - 1 - k + 0.5) * lh, 0.0)
+
+
+## L9 cooking through cook_item: the one recipe CDDA would start now starts by itself, once; what it leaves doesn't
+## start another; of several the hand on a "+" line picks one; a refused send goes again; bad recipe ids never go.
+func _test_cook() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	_answered(b, _water_in(), [_m("Soup", 720, true), _m("Stew", 3900, false, PackedStringArray(["boiling 1"]))])
+	_cook.refresh()
+	_check.call(b.cooked == [[100.0, float(_pot), Vector3i(6, 5, 0), "soup", 1, 0]] and _lines(100)[2] == "starting Soup...",
+			"vr cook: the one recipe CDDA would start now starts by itself, once: 'starting Soup...' (%s)" % [b.cooked])
+	_cook.update(VrCook.STARTING_S + 0.1)
+	_check.call(b.cooked.size() == 1 and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min",
+			"- Stew — needs boiling 1", VrCook.PICK_HINT]),
+			"vr cook: ... a while later its lines are back with the hint (CDDA may have said no), nothing sent again")
+	_answered(b, [906, _soup, 1], [_m("Broth", 60, true)])
+	_check.call(b.cooked.size() == 1 and _lines(100).slice(2) == PackedStringArray(["+ Broth — 1 min", VrCook.PICK_HINT]),
+			"vr cook: what that craft left doesn't start another by itself")
+	_answered(b, _water_in() + [902, _meat, 1], [_m("Soup", 720, true), _m("Stew", 60, false), _m("Tea", 30, true)])
+	var c: VrCook.Card = _cook.cards[100]
+	_cook.face()
+	var many := b.cooked.size() == 1 and c.matches.size() == 3
+	var top := _cook.press_at(_line_pt(c, 0))
+	var stew := _cook.press_at(_line_pt(c, 3))
+	var beside := _cook.press_at(_line_pt(c, 4) + c.global_transform.basis.x * 0.4)
+	var behind := _cook.press_at(_line_pt(c, 4) + c.global_transform.basis.z * 0.2)
+	var tea := _cook.press_at(_line_pt(c, 4))
+	_cook.refresh()
+	_check.call(many and not top and not stew and not beside and not behind and tea and b.cooked.size() == 2
+			and b.cooked[1][3] == "tea" and _lines(100)[2] == "starting Tea..." and c.matches.is_empty(),
+			"vr cook: several: none by itself; the hand on the '+ Tea' line starts tea, on the heat or a '-' line, beside or behind the text nothing (%s %s %s %s %s)"
+			% [top, stew, beside, behind, tea])
+	_new_cook(b)
+	b.refuse_cook = true
+	_answered(b, _water_in(), [_m("Soup", 720, true)])
+	var tried := b.tries
+	_cook.refresh()
+	b.refuse_cook = false
+	_cook.refresh()
+	_check.call(b.tries == tried + 2 and b.cooked.size() == 3 and _cook.cooks_sent == 1,
+			"vr cook: a send the backend refused goes again on the next look")
+	_new_cook(b)
+	var bad := _m("Soup", 720, true)
+	bad["recipe"] = "soup\" x"
+	_answered(b, _water_in(), [bad])
+	var pressed := _cook.press_at(_line_pt(_cook.cards[100], 2))
+	_check.call(b.cooked.size() == 3 and not pressed and _lines(100).slice(2) == PackedStringArray(["+ Soup — 12 min"]),
+			"vr cook: a recipe id LiveSession wouldn't take is shown but never sent (no hint)")
+	_new_cook(b)
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, _water_in())], Vector3i(20, 20, 0)))
+	_check.call(b.cooked.size() == 3, "vr cook: out of the player's reach: nothing")
+
+
+## A paused craft goes on when its heat is lit under it or the pot is put back from the hands, once; not when the
+## player walks up to it, nor with a recipe id LiveSession wouldn't take.
+func _test_resume() -> void:
+	var b := Cooker.new()
+	_new_cook(b)
+	var craft := [902, _meat, 1]
+	_look(_snap([_heat(6, 5, false)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	var cold := b.cooked.is_empty()
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	_cook.refresh()
+	_check.call(cold and b.cooked.size() == 1 and b.cooked[0][3] == "soup_meat" and b.calls.is_empty(),
+			"vr cook: its heat lit under a paused craft: it goes on, once (%s)" % [b.cooked])
+	_new_cook(b)
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	var walked := b.cooked.size() == 1
+	var held := _snap([_heat(6, 5)], [])
+	held.carried = PackedInt64Array([100, _pot, 0, 0, 0])
+	_look(held)
+	var holding := b.cooked.size() == 1
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup_meat")]))
+	_check.call(walked and holding and b.cooked.size() == 2 and b.cooked[1][3] == "soup_meat",
+			"vr cook: walking up to a paused craft: nothing; putting its pot back from the hands: it goes on")
+	_new_cook(b)
+	_look(_snap([_heat(6, 5, false)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup meat")]))
+	_look(_snap([_heat(6, 5)], [_pot_at(6, 5, 100, craft, 450, _soup, "soup meat")]))
+	_check.call(b.cooked.size() == 2, "vr cook: a paused craft whose recipe id LiveSession wouldn't take: nothing sent")
+
+
+## Square `sq`'s middle, `up` metres over its floor (where a hand would be).
+func _over(sq: Vector3i, up := 0.5) -> Vector3:
+	return _world.coords.ms_center_to_world(sq) + Vector3(0.0, up, 0.0)
+
+
+## Lighting and putting out fires by hand (VrFire): a hand low over a fire square next to the player; an unlit one
+## lights (the carried item held, else CDDA's pick), a burning one goes out (also the player's own square), the fuel
+## lying on a plain square lights only with a carried item held; vehicles, far squares, high hands, other levels and
+## a backend without the ops do nothing; one op a square per PRESS_S; the line by the hand says which.
+func _test_fire() -> void:
+	var f := VrFire.new()
+	f.world = _world
+	_root.add_child(f)
+	var me := Vector3i(5, 5, 0)
+	var e := Vector3i(6, 5, 0)
+	var s := _snap([_heat(6, 5, false, 1, -1, 0, 0), _heat(5, 5, true, 0, 0, 2, 0), _heat(4, 5, true, 1, -1, 3),
+			_heat(5, 6, true, 2, -1, 0), _heat(7, 5, true, 0, 0, 2, 0)], [], me)
+	s.submaps[SM].handles = PackedInt64Array([_at(5, 4), 950, _meat, -1, -1])
+	_world.snapshot = s
+	f.backend = RefCounted.new()
+	var none := f.target_at(_over(e), null).is_empty()
+	var b := Firer.new()
+	f.backend = b
+	var lighter := ItemRef.on_square(960, _plate, me)
+	lighter.carried = true
+	var lying := ItemRef.on_square(961, _plate, e)
+	var t := f.target_at(_over(e), null)
+	_check.call(none and t.get("op") == VrFire.LIGHT and t["pos"] == e and t["item"] == null
+			and t["text"] == "trigger: light the fire" and f.target_at(_over(e), lying)["item"] == null
+			and f.target_at(_over(e), lighter)["item"] == lighter
+			and f.target_at(_over(e), lighter)["text"] == "trigger: light it with hotplate",
+			"vr fire: an unlit fire square next to you: the trigger lights it, with the carried item held, else CDDA's pick")
+	_check.call(f.target_at(_over(Vector3i(4, 5, 0)), null).get("op") == VrFire.EXTINGUISH
+			and f.target_at(_over(me), null).get("op") == VrFire.EXTINGUISH
+			and f.target_at(_over(Vector3i(7, 5, 0)), null).is_empty(),
+			"vr fire: a burning one next to you or under you: the trigger puts it out; two squares off: nothing")
+	_check.call(f.target_at(_over(Vector3i(5, 6, 0)), null).is_empty() and f.target_at(_over(e, 1.5), null).is_empty()
+			and f.target_at(_over(e, -0.5), null).is_empty() and f.target_at(_over(e) + Vector3(0, 3.0, 0), null).is_empty()
+			and f.target_at(Vector3.INF, null).is_empty(),
+			"vr fire: a vehicle's heat, a hand too high or under the floor, another level: nothing")
+	var pile := Vector3i(5, 4, 0)
+	_check.call(f.target_at(_over(pile), null).is_empty() and f.target_at(_over(pile), lying).is_empty()
+			and f.target_at(_over(pile), lighter).get("op") == VrFire.LIGHT
+			and f.target_at(_over(Vector3i(6, 6, 0)), lighter).is_empty(),
+			"vr fire: fuel lying on a plain square lights only with a carried item held; an empty square: nothing")
+	var r1 := f.press(_over(e), lighter)
+	var r2 := f.press(_over(e), null)
+	var r3 := f.press(_over(Vector3i(4, 5, 0)), null)
+	var r4 := f.press(_over(Vector3i(7, 5, 0)), null)
+	f.update(VrFire.PRESS_S + 0.1, [], [])
+	var r5 := f.press(_over(e), null)
+	_check.call([r1, r2, r3, r4, r5] == [VrFire.LIGHT, "wait", VrFire.EXTINGUISH, "", VrFire.LIGHT] and b.fires == [
+			["light", e, me, 960.0, float(_plate)], ["extinguish", Vector3i(4, 5, 0), me, -1.0, -1.0],
+			["light", e, me, -1.0, -1.0]] and f.sent == 3,
+			"vr fire: presses send light / extinguish with the square and the player, one a square per second (%s %s)"
+			% [[r1, r2, r3, r4, r5], b.fires])
+	b.refuse_fire = true
+	_check.call(f.press(_over(Vector3i(4, 5, 0)), null) == "refused" and f.sent == 3, "vr fire: the backend says no: 'refused'")
+	f.update(0.016, [_over(e), _over(Vector3i(9, 9, 0))], [lighter, null])
+	var h0: Label3D = f.hints[0]
+	var shown := h0 != null and h0.visible and h0.text == "trigger: light it with hotplate" \
+			and h0.position.is_equal_approx(_over(e) + Vector3(0, VrFire.HINT_UP, 0)) and (f.hints[1] == null or not f.hints[1].visible)
+	f.update(0.016, [_over(e), null], [null, null], false)
+	_check.call(shown and not h0.visible, "vr fire: the line by the hand says what the trigger does; gone off the square or with a menu up")
+	f.free()
+
+
 func _test_rig() -> void:
 	var rig := VrRig.new(_world, {"blink": false, "hands": "boxes"})
 	_check.call(rig.cook != null and rig.cook.get_parent() == rig and rig.cook.head == rig.camera and rig.cook.world == _world,
 			"vr cook: the rig has one, on its head and world")
+	_check.call(rig.fire != null and rig.fire.get_parent() == rig and rig.fire.world == _world and rig.held_item(0) == null,
+			"vr fire: the rig has one on its world; empty hands hold nothing")
 	var b := Backend.new()
 	rig.cook.backend = b
 	_check.call(b.is_connected("recipes_matched", rig.cook._on_matched), "vr cook: the backend's signal is connected")

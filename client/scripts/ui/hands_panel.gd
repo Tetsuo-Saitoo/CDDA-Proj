@@ -12,6 +12,15 @@ const LEVEL_COLOR := Color(0.45, 0.7, 1.0)    # just showing how full
 
 var _rows: Array[Dictionary] = []   # per hand: {label: Label, bar: ProgressBar, fill: StyleBoxFlat}
 var _title: Label
+## Left-handed (HudSettings.main_hand, set by main.gd): the main hand shows as Left, the off hand as Right.
+var left_handed := false:
+	set(v):
+		if v == left_handed:
+			return
+		left_handed = v
+		if not _last.is_empty():
+			show_held(_last)
+var _last := {}   # the last get_held() result shown
 
 
 func _init() -> void:
@@ -50,7 +59,8 @@ func show_held(held: Dictionary) -> void:
 	var filling := str(held.get("activity", "")) == FILL_ACTIVITY
 	visible = not main.is_empty() or not off.is_empty()
 	_title.visible = filling
-	var hands := [["Left", off], ["Right", main]]
+	_last = held
+	var hands := [["Left", main], ["Right", off]] if left_handed else [["Left", off], ["Right", main]]
 	for i in 2:
 		var hand: Dictionary = hands[i][1]
 		var label: Label = _rows[i]["label"]

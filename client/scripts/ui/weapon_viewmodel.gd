@@ -27,7 +27,7 @@ const SWAY_FULL_ARCMIN := 900.0       # this much dispersion (15 degrees) or mor
 const SWAY_ROT := 0.02618             # full sway: rotation (radians, 1.5 degrees)
 const SWAY_POS := 0.01                # full sway: offset (m)
 const SWAY_RATE := 1.5                # how fast the sway grows / settles (per second)
-const DIRT_MAX := 10000               # CDDA's most fouling; its fouling symbol steps every 2000
+const DIRT_MAX := GunGrime.DIRT_MAX     # CDDA's most fouling (GunGrime: the one mapping)
 const GUN_SHAPES: Array[String] = ["pistol", "long", "launcher"]   # the shapes that show grime
 const GRIME_SHADER := preload("res://scripts/combat/grime.gdshader")
 ## CDDA's jams (fault type gun_mechanical_simple, data/json/faults/faults_guns.json) and how the label names them.
@@ -61,6 +61,15 @@ var _kick := 0.0
 var _item := -1
 var _root: Node3D
 var _base := REST
+## Left-handed (HudSettings.main_hand, set by main.gd): the gun rests on the left, REST mirrored (rest()); aimed
+## stays in the middle. A change puts it there at once instead of gliding across the view.
+var left_handed := false:
+	set(v):
+		if v == left_handed:
+			return
+		left_handed = v
+		_base = rest()
+		position = _base
 var _sway := 0.0         # 0..1, eased toward sway_arcmin / SWAY_FULL_ARCMIN
 var _sway_t := 0.0
 var _grime_mats: Array[ShaderMaterial] = []
@@ -79,7 +88,12 @@ static var _click: AudioStreamWAV
 
 func _init() -> void:
 	name = "Viewmodel"
-	position = REST
+	position = rest()
+
+
+## Where the gun rests: REST, mirrored to the left when left_handed.
+func rest() -> Vector3:
+	return Vector3(-REST.x, REST.y, REST.z) if left_handed else REST
 
 
 ## The shape for an itype definition (null = empty hands).
@@ -200,7 +214,7 @@ func _pose_jam() -> void:
 
 ## CDDA's `dirt` (0..DIRT_MAX, negative none) as the shader's grime, 0..1.
 static func grime_for(d: int) -> float:
-	return float(clampi(d, 0, DIRT_MAX)) / DIRT_MAX
+	return GunGrime.grime_for(d)   # the one mapping (icons, models)
 
 
 func kick() -> void:
@@ -263,7 +277,7 @@ func lit() -> bool:
 func _process(delta: float) -> void:
 	_tick_flash(delta)
 	_kick = move_toward(_kick, 0.0, KICK_RATE * delta * maxf(_kick, 0.2))
-	var goal := (AIMED if aimed and shape != "melee" else REST) + Vector3(0, 0, KICK_BACK * _kick)
+	var goal := (AIMED if aimed and shape != "melee" else rest()) + Vector3(0, 0, KICK_BACK * _kick)
 	_base = _base.lerp(goal, minf(RAISE_RATE * delta, 1.0))
 	_sway = move_toward(_sway, sway_arcmin / SWAY_FULL_ARCMIN, SWAY_RATE * delta)
 	_sway_t = fmod(_sway_t + delta, 1000.0 / SWAY_HZ)
@@ -285,10 +299,17 @@ func _tick_flash(delta: float) -> void:
 	if _flash == null:
 		return
 	_flash_t = maxf(_flash_t - delta, 0.0) if flashes else 0.0
-	var f := _flash_t / FLASH_S
-	_flash.visible = f > 0.0
-	_flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
-	var light := _flash.get_node_or_null("Light") as OmniLight3D
+	show_flash(_flash, _flash_t / FLASH_S)
+
+
+## Draws a build_flash() flash at `f` of its strength (1 just fired .. 0 gone: hidden), star and light; VrGun's too.
+static func show_flash(flash: Node3D, f: float) -> void:
+	if flash == null:
+		return
+	f = clampf(f, 0.0, 1.0) if is_finite(f) else 0.0
+	flash.visible = f > 0.0
+	flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
+	var light := flash.get_node_or_null("Light") as OmniLight3D
 	if light != null:
 		light.visible = f > 0.0
 		light.light_energy = FLASH_ENERGY * f

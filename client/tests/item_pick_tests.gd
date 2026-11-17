@@ -30,6 +30,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 		return
 	var world := WorldView.new()
 	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://tests/pins"))   # PropBoxes' dresser and sealed crate, not the kit models
 	world.set_id_tables(tables)
 	world.apply_snapshot(snap)
 	_test_mesher(world, snap, _scene(data, false))

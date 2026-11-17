@@ -51,6 +51,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_model()
 	_test_caps(data)
 	_test_rows()
+	_test_tiles()
 	_test_select()
 	_test_select_more()
 	_test_drops()
@@ -58,10 +59,81 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_bar()
 	_test_pending()
 	_test_toggle()
+	_test_carry()
+	_test_hotbar()
 	_view.free()
 	_hands.free()
 	_actions.free()
 	_world.free()
+
+
+## G2: the hotbar. Ids checked; the file hostile; a slot per type; the Tab view's key puts the one selected item's
+## type in a slot; the key in the game puts a carried one into the main hand (MockItems answers at once).
+func _test_hotbar() -> void:
+	var path := preload("res://tests/test_dir.gd").path("hotbar.cfg")
+	var hb := Hotbar.new()
+	hb.path = path
+	hb.world = _world
+	hb.actions = _actions
+	_check.call(Hotbar.id_ok("rock") and Hotbar.id_ok("bag_canvas") and Hotbar.id_ok("a-b_9") and not Hotbar.id_ok("")
+			and not Hotbar.id_ok("a b") and not Hotbar.id_ok("../x") and not Hotbar.id_ok("x".repeat(65))
+			and not Hotbar.id_ok(5), "hotbar: the id rule (letters, digits, _ and -, 1..64)")
+	var snap := _world.snapshot
+	_check.call(not hb.visible and Hotbar.state(snap, _tables, "rock") == "carried"
+			and Hotbar.state(snap, _tables, "hammer") == "none" and Hotbar.state(snap, _tables, "") == "empty"
+			and Hotbar.state(snap, _tables, "bag_canvas") == "none",
+			"hotbar: hidden with no slot set; states from the snapshot (a worn sack isn't one to take)")
+	var said := hb.use(0)
+	_check.call(said.contains("empty") and said.contains("Tab"), "hotbar: an empty slot says how to set it (%s)" % said)
+	_view.hotbar = hb
+	_view.open()
+	var key := InputEventKey.new()   # hotbar_1's default
+	key.keycode = KEY_3
+	key.physical_keycode = KEY_3
+	key.pressed = true
+	_view.clear_selection()
+	var none := _view.handle_key(key) and hb.slots[0] == "" and _view.status.contains("Select one item")
+	_view.select_only(ROCK)
+	var set_one := _view.handle_key(key) and hb.slots[0] == "rock" and hb.visible
+	_check.call(none and set_one, "hotbar: in the Tab view its key puts the one selected item's type in the slot (%s)"
+			% _view.status)
+	_view.close()
+	hb.assign(1, "rock")
+	var moved := hb.slots[0] == "" and hb.slots[1] == "rock"
+	hb.assign(1, "rock")
+	var emptied := hb.slots[1] == ""
+	var refused := hb.assign(2, "../x").contains("can't") and hb.slots[2] == ""
+	hb.assign(0, "rock")
+	hb.assign(3, "hammer")
+	var back := Hotbar.new()
+	back.path = path
+	var why := back.load_file()
+	_check.call(moved and emptied and refused and why == "" and back.slots[0] == "rock" and back.slots[3] == "hammer",
+			"hotbar: a type sits in one slot, the same again empties it, a bad id is refused, the slots are saved")
+	back.free()
+	said = hb.use(3)
+	_check.call(said.contains("aren't carrying"), "hotbar: a type not carried isn't sent (%s)" % said)
+	said = hb.use(0)
+	snap = _world.snapshot
+	_check.call(said == "" and Hotbar.state(snap, _tables, "rock") == "in_hand"
+			and hb.use(0).contains("already in your hand"),
+			"hotbar: the key puts a carried rock into the main hand (MockItems), then says it is there")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string('[hotbar]\nslots=["rock", "a b", 7, "rock", "hammer", "", "", "", "x", "y"]\n')
+	f.close()
+	why = hb.load_file()
+	var bad := Hotbar.new()
+	bad.path = path
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string('[hotbar]\nslots=[Object(Node,"x":1)]\n')
+	f.close()
+	var why_bad := bad.load_file()
+	_check.call(why == "" and hb.slots == PackedStringArray(["rock", "", "", "", "hammer", "", "", ""])
+			and why_bad.contains("Object(") and bad.slots.size() == Hotbar.SLOTS and bad.slots[0] == "",
+			"hotbar: from the file only good ids, each once, 8 slots; an Object( file is ignored (%s)" % [hb.slots])
+	bad.free()
+	_view.hotbar = null
+	hb.free()
 
 
 ## itype pockets from the id tables (contracts/id_tables.md): read strictly, decide what counts as a container, and
@@ -328,6 +400,46 @@ func _test_rows() -> void:
 			"inspect: rows drag, columns don't")
 
 
+## Live item tiles: a row whose item has a live state in the snapshot gets an ItemTileView behind it (first child,
+## no mouse), the amount and a tooltip line; a row with no state, nothing to show or a junk state gets none.
+func _test_tiles() -> void:
+	var snap := _world.snapshot
+	var keep := snap.item_states
+	snap.item_states = {BOTTLE: PackedInt32Array([ItemLook.Temp.COLD, -1, 500, _it["water_clean"], 1, 250, -1]),
+			ROCK: PackedInt32Array([0, -1, 0, 0, 0, 0, -1]),   # an empty container: nothing to show
+			STONE: "junk"}
+	_view.rebuild()
+	var bottle := _view.row_slot(BOTTLE)
+	var tv := bottle.get_node_or_null("ItemTile") as ItemTileView
+	var amount := bottle.find_child("Amount", true, false) as Label
+	_check.call(tv != null and bottle.get_child(0) == tv and tv.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and is_equal_approx(tv.tile["level"], 0.5) and tv.tile["temp"] == ItemLook.Temp.COLD
+			and amount != null and amount.text == "250 ml" and bottle.tooltip_text.contains("Cold")
+			and bottle.tooltip_text.contains("250 ml clean water, 50% full") and _view.tile_of(BOTTLE) == tv.tile,
+			"inspect: a row with a live state gets its tile behind it, the amount and words (%s)"
+			% bottle.tooltip_text.replace("\n", " | "))
+	var plain := []
+	for u: int in [ROCK, WATER, STONE]:
+		var s := _view.row_slot(u)
+		if s != null and s.get_node_or_null("ItemTile") == null and s.find_child("Amount", true, false) == null \
+				and _view.tile_of(u).is_empty():
+			plain.append(u)
+	_check.call(plain.size() == 3, "inspect: no state, nothing to show or a junk state: no tile %s" % [plain])
+	var data: Variant = bottle._get_drag_data(Vector2.ZERO)
+	_check.call(data is Dictionary and data["inspect_uid"] == BOTTLE, "inspect: a row with a tile still drags")
+	var sl := tv.slosh
+	var water_def := _tables.def_at("itype", _it["water_clean"])
+	_check.call(sl != null and sl.moving(), "inspect: water sloshes; picking its row up to drag shoves it (symbol '%s')"
+			% (water_def.symbol if water_def != null else "?"))
+	_view.rebuild()
+	var tv2 := _view.row_slot(BOTTLE).get_node_or_null("ItemTile") as ItemTileView
+	_check.call(tv2 != null and tv2 != tv and tv2.slosh == sl, "inspect: the surface goes on moving in the rebuilt row")
+	ItemTileView._carried.clear()
+	snap.item_states = keep
+	_view.rebuild()
+	_check.call(_view.row_slot(BOTTLE).get_node_or_null("ItemTile") == null, "inspect: the tile goes with the state")
+
+
 static func _button(down: bool, shift := false, ctrl := false) -> InputEventMouseButton:
 	var e := InputEventMouseButton.new()
 	e.button_index = MOUSE_BUTTON_LEFT
@@ -581,12 +693,7 @@ func _test_drops() -> void:
 	_view.column_slot("hands")._drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO))
 	row = _carried(stone)
 	_check.call(row.size() == 5 and row[4] == Snapshot.CARRIED_WIELDED and row[2] == 0, "inspect: ground -> hands: into the main hand")
-	_view.rebuild()
-	var before := _snap.carried.duplicate()
-	var seq := _snap.seq
-	_view.column_slot("hands")._drop_data(Vector2.ZERO, _view.row_slot(WATER)._get_drag_data(Vector2.ZERO))
-	_check.call(_view.status == InspectView.NOT_YET and _snap.seq == seq and _snap.carried == before
-			and _actions.pending_count() == 0, "inspect: carried -> hands: 'not yet', nothing sent")
+	_test_hold_drops(stone, sack_id)
 	_view.rebuild()
 	_view.group_slot("hands", "main")._drop_data(Vector2.ZERO, _view.row_slot(bag)._get_drag_data(Vector2.ZERO))
 	_check.call(_view.status.begins_with("Your hand is full") and _view.find_children("*", "Label", true, false).any(
@@ -594,6 +701,47 @@ func _test_drops() -> void:
 			"inspect: a refusal shows CDDA's reason (%s)" % _view.status)
 	_hands.refused.emit("mouse", {}, "Not for this view.")
 	_check.call(_view.status.begins_with("Your hand is full"), "inspect: other hands' refusals aren't shown")
+
+
+## Carried items dragged onto a hand are held there (Hands.hold: CDDA's wield / off-hand hold); a held one goes to
+## the other hand when that one is free, a full hand refuses (a swap puts nothing away); onto the column: the free
+## hand, nothing new for one in a hand already; the off-hand item onto its own pocket is put away (out of the
+## hand, still there). After it: the stone wielded, the bottle in the sack's first pocket.
+func _test_hold_drops(stone: int, sack_id: String) -> void:
+	var drag := func(uid: int, key: Variant) -> String:
+		_view.rebuild()
+		var d: Variant = _view.row_slot(uid)._get_drag_data(Vector2.ZERO)
+		if key == null:
+			return _view.drop(d, _view.column_slot("hands").target)
+		return _view.drop(d, {"kind": "group", "column": "hands", "key": key})
+	var flags := func(uid: int) -> int:
+		var r := _carried(uid)
+		return int(r[4]) if r.size() == 5 else -1
+	_view.rebuild()
+	_check.call(not _view.column_slot("hands")._can_drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO))
+			and not _view.group_slot("hands", "main")._can_drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO)),
+			"inspect: the wielded item onto the hands or its own hand: nothing to do")
+	var to_off: String = drag.call(stone, "off")
+	var off_ok: bool = flags.call(stone) == Snapshot.CARRIED_OFFHAND and _view.status == ""
+	var to_main: String = drag.call(stone, "main")
+	_check.call(to_off == "hold" and off_ok and to_main == "hold" and flags.call(stone) == Snapshot.CARRIED_WIELDED
+			and _actions.pending_count() == 0, "inspect: a held item goes to the other hand when that one is free, and back")
+	var bottle: String = drag.call(BOTTLE, null)
+	var row := _carried(BOTTLE)
+	_check.call(bottle == "hold" and row[4] == Snapshot.CARRIED_OFFHAND and row[2] == SACK and row[3] == 0 and _carried(WATER)[2] == BOTTLE,
+			"inspect: carried -> hands: into the free hand (the off hand; it stays in its pocket) (%s)" % [row])
+	var swap: String = drag.call(BOTTLE, "main")
+	var full_main: bool = _view.status.begins_with("Your hand is full") and flags.call(BOTTLE) == Snapshot.CARRIED_OFFHAND \
+			and flags.call(stone) == Snapshot.CARRIED_WIELDED
+	var back: String = drag.call(stone, "off")
+	_check.call(swap == "hold" and back == "hold" and full_main and _view.status == "Your off hand is full."
+			and flags.call(stone) == Snapshot.CARRIED_WIELDED and _actions.pending_count() == 0,
+			"inspect: into a full hand: sent, CDDA's refusal shown, nothing put away (%s %s %s %s)" % [swap, back, full_main, _view.status])
+	_view.rebuild()
+	var away := _view.drop(_view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO), {"kind": "group", "column": sack_id, "key": 0})
+	row = _carried(BOTTLE)
+	_check.call(away == "put" and row[4] == 0 and row[2] == SACK and row[3] == 0 and _actions.pending_count() == 0 and _view.status == "",
+			"inspect: the off-hand item onto its own pocket: put away, out of the hand (%s %s)" % [away, row])
 
 
 ## Dragging a selected row moves the whole selection, one item after another. After _test_drops: the bottle (with
@@ -797,3 +945,17 @@ func _test_toggle() -> void:
 	_view.close_button.pressed.emit()
 	_check.call(closed_ignores and by_action and not _view.visible and _view.close_button.text == "Close",
 			"inspect: ui_cancel and the Close button close it without a keyboard")
+
+
+## G2: the top line's carried weight and volume bars follow the character sheet (CharacterData.carry).
+func _test_carry() -> void:
+	var cd := CharacterData.new()
+	_view.character = cd
+	var box := _view.find_child("Carry", true, false) as HBoxContainer
+	var hidden_at_first := box != null and not box.visible
+	cd.set_sheet({"ok": true, "weight_g": 1290, "weight_max_g": 49000, "volume_ml": 250, "volume_max_ml": 35510})
+	_check.call(hidden_at_first and box.visible and box.get_child_count() == 2,
+			"inspect: the carried weight and volume bars show once the sheet has them")
+	_view.character = null
+	_check.call(not box.visible and cd.changed.get_connections().is_empty(),
+			"inspect: no character data, no bars, nothing left connected")

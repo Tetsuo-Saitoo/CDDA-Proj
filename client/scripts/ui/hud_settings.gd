@@ -1,6 +1,15 @@
 class_name HudSettings
 extends RefCounted
 ## Flat-screen HUD settings, picked in the F1 menu (KeyMenu) and saved in user://hud.cfg (ConfigFile).
+func left_handed() -> bool:
+	return main_hand == "left"
+
+
+## The CDDA hand ("main" / "off") the key for hand `side` ("left" / "right") strikes with.
+static func hand_for(side: String, left_hand_main: bool) -> String:
+	return "main" if (side == "left") == left_hand_main else "off"
+
+
 ## The file is treated as hostile: size-capped, no object constructors, wrong types and NaN ignored, values
 ## clamped. A missing or bad file leaves the defaults.
 
@@ -28,10 +37,81 @@ const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnin
 ## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
 ## of group names (anything but known names ignored).
 var feed_hidden := PackedStringArray()
+## G7 options (flat screen; the headset has its own, VrSettings): the mouse look speed (times the cameras' own),
+## inverted up-down look, the field of view in degrees, the 3D render scale, fullscreen, vsync and the size of the
+## menus and HUD (the window's content scale). Saved as [look] speed, invert, fov and [display] scale, fullscreen,
+## vsync, ui_scale; numbers out of range are clamped, anything else leaves the default.
+const LOOK_SPEEDS := Vector2(0.25, 4.0)
+const FOVS := Vector2(60.0, 110.0)
+const RENDER_SCALES := Vector2(0.5, 1.0)
+const UI_SCALES := Vector2(0.75, 2.0)
+const DEFAULT_FOV := 75.0   # Camera3D's own
+var look_speed := 1.0
+var invert_y := false
+## The flat-screen main hand (the headset has its own, VrSettings `main_hand`): "right", or "left" for a left-hander.
+## Keys 1 / 2 strike with the left / right hand, so a left-hander's 1 is the main hand (hand_for); the gun rests on
+## the left (WeaponViewmodel.left_handed) and the hands panel shows the main hand on the left. CDDA's main hand is
+## the wielding one either way. Saved as [hands] main; anything but MAIN_HANDS is ignored (the file: "right").
+const MAIN_HANDS: Array[String] = ["right", "left"]
+var main_hand := "right":
+	set(v):
+		if v is String and v in MAIN_HANDS:
+			main_hand = v
+var fov := DEFAULT_FOV
+var render_scale := 1.0
+var fullscreen := false
+var vsync := true
+var ui_scale := 1.0
+## lead-world's weather detail (WeatherView.quality: MINIMAL, LOW, HIGH), flat screen and headset alike. Saved as
+## [weather] quality; anything but a whole number leaves HIGH, a number out of range is clamped.
+var weather_quality := WeatherView.HIGH
+## How E shows an object's menu (radial menus, user 2026-11-16): MENU_HOLD a wheel, releasing E picks; MENU_CLICK a
+## wheel that stays until a click; MENU_LIST CDDA's list. Saved as [controls] context_menu; anything but a whole
+## number leaves MENU_HOLD, a number out of range is clamped.
+enum { MENU_HOLD, MENU_CLICK, MENU_LIST }
+const MENU_NAMES := ["E: wheel (hold)", "E: wheel (click)", "E: list"]
+var context_menu := MENU_HOLD
+## G7: the game's loudness, 0 (silent) .. 1 (as made), on the Master bus where every sound plays. Saved as [sound]
+## volume, clamped like the other numbers.
+const VOLUMES := Vector2(0.0, 1.0)
+var volume := 1.0
+## G7: the background sound's loudness (lead-world's weather: rain, roof, wind, thunder) on its own bus, AMBIENCE_BUS,
+## which sends to Master (so the volume above still covers it). Saved as [sound] ambience.
+const AMBIENCE_BUS := &"Ambience"
+var ambience_volume := 1.0
+
+
+## The index of the AMBIENCE_BUS, added (sending to Master) when it isn't there yet. main calls it first thing, so
+## the players that look for the bus when they are made find it.
+static func ensure_ambience_bus() -> int:
+	var i := AudioServer.get_bus_index(AMBIENCE_BUS)
+	if i >= 0:
+		return i
+	AudioServer.add_bus()
+	i = AudioServer.bus_count - 1
+	AudioServer.set_bus_name(i, AMBIENCE_BUS)
+	AudioServer.set_bus_send(i, &"Master")
+	return i
+
+
+## Sets bus `i` to linear loudness `v` (0..1): muted at 0, else in dB.
+static func set_bus_loudness(i: int, v: float) -> void:
+	if i < 0 or i >= AudioServer.bus_count:
+		return
+	var vol := clamp_to(v, VOLUMES, 1.0)
+	AudioServer.set_bus_mute(i, vol <= 0.0)
+	AudioServer.set_bus_volume_db(i, linear_to_db(maxf(vol, 0.001)))
 
 
 static func clamp_opacity(v: float) -> float:
 	return clampf(v, MIN_COMPASS_OPACITY, 1.0) if is_finite(v) else DEFAULT_COMPASS_OPACITY
+
+
+## `v` as a number within `limits` (x..y), or `fallback` when it isn't a finite number.
+static func clamp_to(v: Variant, limits: Vector2, fallback: float) -> float:
+	if not (v is float or v is int) or not is_finite(float(v)):
+		return fallback
+	return clampf(float(v), limits.x, limits.y)
 
 
 ## The known FEED_GROUPS names in `v` (an Array or PackedStringArray), each once, in FEED_GROUPS order; anything
@@ -49,6 +129,7 @@ static func feed_groups_from(v: Variant) -> PackedStringArray:
 
 ## Reads the file; returns "" or why it was ignored (missing is not an error).
 func load_file(path := FILE) -> String:
+	path = UserFiles.at(path)   # a test run's own folder
 	if not FileAccess.file_exists(path):
 		return ""
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -75,6 +156,24 @@ func load_file(path := FILE) -> String:
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
+	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
+	var iy: Variant = cfg.get_value("look", "invert", false)
+	invert_y = iy if iy is bool else false
+	var mh: Variant = cfg.get_value("hands", "main", "right")
+	main_hand = mh if mh is String and mh in MAIN_HANDS else "right"
+	fov = clamp_to(cfg.get_value("look", "fov", DEFAULT_FOV), FOVS, DEFAULT_FOV)
+	render_scale = clamp_to(cfg.get_value("display", "scale", 1.0), RENDER_SCALES, 1.0)
+	var fs: Variant = cfg.get_value("display", "fullscreen", false)
+	fullscreen = fs if fs is bool else false
+	var vs: Variant = cfg.get_value("display", "vsync", true)
+	vsync = vs if vs is bool else true
+	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
+	var wq: Variant = cfg.get_value("weather", "quality", WeatherView.HIGH)
+	weather_quality = clampi(wq, WeatherView.MINIMAL, WeatherView.HIGH) if wq is int else WeatherView.HIGH
+	var cm: Variant = cfg.get_value("controls", "context_menu", MENU_HOLD)
+	context_menu = clampi(cm, MENU_HOLD, MENU_LIST) if cm is int else MENU_HOLD
+	volume = clamp_to(cfg.get_value("sound", "volume", 1.0), VOLUMES, 1.0)
+	ambience_volume = clamp_to(cfg.get_value("sound", "ambience", 1.0), VOLUMES, 1.0)
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -85,6 +184,7 @@ func load_file(path := FILE) -> String:
 
 
 func save_file(path := FILE) -> Error:
+	path = UserFiles.at(path)
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)
@@ -93,4 +193,16 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
+	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
+	cfg.set_value("look", "invert", invert_y)
+	cfg.set_value("hands", "main", main_hand if main_hand in MAIN_HANDS else "right")
+	cfg.set_value("look", "fov", roundf(clamp_to(fov, FOVS, DEFAULT_FOV)))
+	cfg.set_value("display", "scale", snappedf(clamp_to(render_scale, RENDER_SCALES, 1.0), 0.01))
+	cfg.set_value("display", "fullscreen", fullscreen)
+	cfg.set_value("display", "vsync", vsync)
+	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
+	cfg.set_value("weather", "quality", clampi(weather_quality, WeatherView.MINIMAL, WeatherView.HIGH))
+	cfg.set_value("controls", "context_menu", clampi(context_menu, MENU_HOLD, MENU_LIST))
+	cfg.set_value("sound", "volume", snappedf(clamp_to(volume, VOLUMES, 1.0), 0.01))
+	cfg.set_value("sound", "ambience", snappedf(clamp_to(ambience_volume, VOLUMES, 1.0), 0.01))
 	return cfg.save(path)

@@ -27,6 +27,10 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_vr()
 	_test_open_at()
 	_test_shelf_ops()
+	_test_take_container()
+	_test_tray()
+	_test_tray_sort()
+	_test_desk_tray()
 	_hands.free()
 	_actions.free()
 	_world.free()
@@ -52,6 +56,7 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 	_mock = mock
 	_world = WorldView.new()
 	_world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	_world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://tests/pins"))   # PropBoxes' dresser and sealed crate, not the kit models
 	_world.set_id_tables(tables)
 	root.add_child(_world)
 	_world.apply_snapshot(_snap)
@@ -285,3 +290,330 @@ func _test_shelf_ops() -> void:
 	var none := odd.all(func(o: Dictionary) -> bool:
 		return DropTarget.resolve(_world.coords, {}, null, held, _world.tables, _world.snapshot, reach, o)["shelf"] == -1)
 	_check.call(none, "loot: shelf: a malformed or out-of-reach shelf counts as none")
+
+
+## Stands in for an ItemActions backend: keeps each take_item call's arguments.
+class TakeBackend extends RefCounted:
+	var calls: Array = []
+
+	func take_item(uid: float, type: float, pos: Vector3i, hand := "pack", container := -1.0,
+			container_type := -1.0) -> bool:
+		calls.append([int(uid), int(type), pos, hand, container, container_type])
+		return true
+
+	func queued_actions() -> int:
+		return 0
+
+
+## L8 slice 3, taking out of a lying container (the bridge's take `container` + `container_type`): LiveSession
+## sends the pair only when both are good handles (else nothing), a take without one exactly as before; ItemActions
+## takes the container only from the item's own lying parent, with its itype from the snapshot.
+func _test_take_container() -> void:
+	var ls := LiveSession.new()
+	var sim := ItemSim.new()
+	ls._sim = sim
+	var ok := ls.take_item(5.0, 3.0, E, "pack", 9.0, 4.0) and ls.take_item(5.0, 3.0, E)
+	var sent := sim.sent.duplicate()
+	var plain := {"op": "take", "item": 5, "type": 3, "pos": E, "hand": "pack"}
+	_check.call(ok and sent.size() == 2 and sent[0].get("container") == 9 and sent[0].get("container_type") == 4
+			and sent[1] == plain, "loot: container take: LiveSession sends the pair; without one, the take as before (%s)" % [sent])
+	var bad: Array[bool] = [ls.take_item(5.0, 3.0, E, "pack", NAN, 4.0), ls.take_item(5.0, 3.0, E, "pack", 9.0, NAN),
+			ls.take_item(5.0, 3.0, E, "pack", 0.0, 4.0), ls.take_item(5.0, 3.0, E, "pack", -3.0, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", 9.0, 0.0), ls.take_item(5.0, 3.0, E, "pack", 9.0),
+			ls.take_item(5.0, 3.0, E, "pack", -1.0, 4.0), ls.take_item(5.0, 3.0, E, "pack", 9.5, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", INF, 4.0), ls.take_item(5.0, 3.0, E, "pack", 1e30, 4.0),
+			ls.take_item(5.0, 3.0, E, "pack", 5.0, 3.0)]
+	_check.call(not bad.has(true) and sim.sent.size() == 2,
+			"loot: container take: a bad, half or self pair is refused, nothing sent (%s)" % [bad])
+	ls._sim = null
+	ls.free()
+	var acts := ItemActions.new()
+	var be := TakeBackend.new()
+	acts.backend = be
+	var c := _handle(E, _it["hammer"])   # lying on E; the client doesn't judge what's a container, CDDA does
+	var inside := func(u: int, parent: int) -> ItemRef:
+		var r := ItemRef.on_square(u, _it["rock"], E)
+		r.parent = parent
+		r.pocket = 0
+		return r
+	ok = not acts.take(inside.call(424240, c))   # no snapshot yet: no container known
+	acts.on_snapshot(_snap)
+	ok = ok and acts.take(inside.call(424241, c)) and acts.take(ItemRef.on_square(424242, _it["rock"], E))
+	_check.call(c > 0 and ok and be.calls.size() == 2 and be.calls[0].slice(4) == [float(c), float(_it["hammer"])]
+			and be.calls[1].size() == 6 and be.calls[1].slice(4) == [-1.0, -1.0],
+			"loot: container take: ItemActions sends the item's lying parent and its type from the snapshot (%s)" % [be.calls])
+	var worn := int(_snap.carried[0]) if _snap.carried.size() > 0 else 999999
+	var away: ItemRef = inside.call(424246, c)
+	away.square = P   # the container lies on E, not where this item claims to be
+	var refused: Array[bool] = [acts.take(inside.call(424243, worn)), acts.take(inside.call(424244, -7)),
+			acts.take(inside.call(424245, 424245)), acts.take(away), acts.take(inside.call(424247, 31337))]
+	_check.call(not refused.has(true) and be.calls.size() == 2,
+			"loot: container take: a carried, negative, own, elsewhere or unknown parent is refused, nothing sent (%s)" % [refused])
+	_test_take_judged(acts, be, c)
+	acts.free()
+	_test_mock_take_container(c)
+
+
+## A container take is judged by the container's `inside` (the item was never a handle on the square): still
+## listed there = not done (refused after two looks), cut short = unknown, gone from it = done.
+func _test_take_judged(acts: ItemActions, be: TakeBackend, c: int) -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var r := ItemRef.on_square(424260, rock, E)
+	r.parent = c
+	r.pocket = 0
+	sm.inside[c] = [[424260, rock, 0]]
+	acts.on_snapshot(_snap)
+	var sent := acts.take(r)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	var after_one := acts.pending(424260)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	_check.call(sent and after_one == "take" and acts.pending(424260) == "" and be.calls.size() == 3,
+			"loot: container take: still in the container is not done; a second look refuses it (%s)" % after_one)
+	var r2 := r.duplicate_ref()
+	r2.uid = 424261
+	sm.inside[c] = [[424261, rock, 0]]
+	acts.on_snapshot(_snap)
+	sent = acts.take(r2)
+	sm.inside[c] = []
+	sm.inside_more[c] = 3
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	var cut := acts.pending(424261)
+	sm.inside_more.erase(c)
+	_snap.seq += 1
+	acts.on_snapshot(_snap)
+	_check.call(sent and cut == "take" and acts.pending(424261) == "",
+			"loot: container take: a cut list is unknown; gone from the container is done (%s)" % cut)
+	sm.inside.erase(c)
+
+
+## MockItems answers a container take the bridge's way: out of `inside` only for that container on that square.
+func _test_mock_take_container(c: int) -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock := float(_it["rock"])
+	var ham := float(_it["hammer"])
+	sm.inside[c] = [[424250, _it["rock"], 0], [424251, _it["rock"], 0]]
+	var said: Array[String] = []
+	var hear := func(t: String) -> void: said.append(t)
+	_mock.message.connect(hear)
+	var seq := _snap.seq
+	# refused, nothing moves: another square, the wrong container type, not in it, a half pair, itself
+	var bad := [_mock.take_item(424250, rock, P, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", c, rock), _mock.take_item(424259, rock, E, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", c), _mock.take_item(c, ham, E, "pack", c, ham),
+			_mock.take_item(424250, rock, E, "pack", NAN, ham)]
+	_check.call(bad == [true, true, true, false, false, false] and said.size() == 3
+			and said.all(func(t: String) -> bool: return t == "That isn't there any more.")
+			and (sm.inside[c] as Array).size() == 2 and ItemActions.carried_row(_snap, 424250, _it["rock"]) < 0,
+			"loot: mock container take: elsewhere, wrong or missing is refused; bad args return false (%s %s)" % [bad, said])
+	var ok := _mock.take_item(424250, rock, E, "pack", c, ham)
+	_check.call(ok and _snap.seq > seq and (sm.inside[c] as Array).size() == 1 and ItemActions.carried_row(_snap, 424250, _it["rock"]) >= 0
+			and _handle(E, _it["hammer"]) == c,
+			"loot: mock container take: the item leaves the container for the pack, the container stays")
+	ok = _mock.take_item(424251, rock, E, "pack", c, ham)
+	_check.call(ok and not sm.inside.has(c) and ItemActions.carried_row(_snap, 424251, _it["rock"]) >= 0, "loot: mock container take: the last one empties its list")
+	_mock.message.disconnect(hear)
+
+
+## L8 slices 3-4: ItemTray lays out a lying container's contents (or a big pile) in front of the head, paged, as
+## ItemRefs; a hand takes one out through Hands (the container take); it closes when the container goes.
+func _test_tray() -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var cref := ItemRef.on_square(c, ham, E)
+	_check.call(c > 0 and ItemTray.source_for(_snap, cref).is_empty(),
+			"tray: a lying item with nothing listed in it, in a small pile, opens nothing")
+	var inside: Array = []
+	for k in 14:
+		inside.append([424300 + k, rock, 0])
+	sm.inside[c] = inside
+	sm.inside_more[c] = 5
+	var src := ItemTray.source_for(_snap, cref)
+	var carried := cref.duplicate_ref()
+	carried.carried = true
+	var bad: Array[Dictionary] = [ItemTray.source_for(_snap, carried),
+			ItemTray.source_for(_snap, ItemRef.on_square(c, ham, E + Vector3i(3, 0, 0))),
+			ItemTray.source_for(_snap, ItemRef.on_square(c, rock, E)), ItemTray.source_for(null, cref)]
+	_check.call(src == {"kind": "container", "uid": c, "type": ham, "square": E} and bad.all(func(d: Dictionary) -> bool: return d.is_empty()),
+			"tray: a lying container with contents opens; carried, elsewhere, another itype or no snapshot don't (%s)" % [src])
+	var tray := ItemTray.new()
+	tray.world = _world
+	tray.hands = _hands
+	_world.add_child(tray)
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	var head := Transform3D(Basis.IDENTITY, eye)   # looking north (-z)
+	var ok := tray.open(src, head)
+	var first: ItemRef = tray.items[0]["item"] if not tray.items.is_empty() else null
+	_check.call(ok and tray.rows.size() == 14 and tray.items.size() == ItemTray.PAGE and tray.pages() == 2 and tray.more == 5
+			and first != null and first.uid == 424300 and first.parent == c and first.pocket == 0 and first.square == E
+			and tray.title.ends_with("1/2") and tray.global_position.distance_to(eye + Vector3(0, -ItemTray.REST_LOW, -ItemTray.REST_M)) < 0.01,
+			"tray: opens in front of the head, a page of the container's contents with its parent, 2 pages, +5 more (%s, %d rows)" % [tray.title, tray.rows.size()])
+	var p0 := tray.global_transform * ItemTray.cell_pos(0)
+	var t := tray.target_at(p0 + Vector3(0.01, 0, 0))
+	var ray := tray.target_on_ray(eye, p0 - eye)
+	var arrow := tray.target_at(tray.global_transform * ItemTray.arrow_pos(1))
+	var none := tray.target_at(p0 + Vector3(0, 0.5, 0))
+	_check.call(t.get("kind") == "item" and (t["item"] as ItemRef).uid == 424300 and (t["item"] as ItemRef).point.distance_to(p0) < 0.001
+			and ray.get("kind") == "item" and (ray["item"] as ItemRef).uid == 424300 and arrow == {"kind": "page", "dir": 1} and none.is_empty(),
+			"tray: a hand at a cell or a ray onto it finds that item; the arrow pages; away from it nothing (%s %s)" % [t.get("kind"), ray.get("kind")])
+	_check.call(tray.turn_page(1) and tray.items.size() == 2 and (tray.items[0]["item"] as ItemRef).uid == 424300 + ItemTray.PAGE
+			and tray.turn_page(1) and tray.page == 0, "tray: pages turn and wrap")
+	# a VR hand grips the first item: the container take goes out (MockItems answers), the tray drops it
+	_hands.set_hand_pose("vr_r", Transform3D(Basis.IDENTITY, p0), true)
+	var took := _hands.grab("vr_r", tray.target_at(p0), "pack")
+	tray.update()
+	var gone := tray.rows.all(func(r: ItemRef) -> bool: return r.uid != 424300)
+	_check.call(took and gone and ItemActions.carried_row(_snap, 424300, rock) >= 0 and tray.rows.size() == 13,
+			"tray: a grip on an item takes it out of the container into the hand; the tray lists the rest (%d)" % tray.rows.size())
+	_hands.release("vr_r", {})
+	# the container goes (taken away): the tray closes
+	var why := []
+	tray.closed.connect(func(w: String) -> void: why.append(w))
+	sm.inside.erase(c)
+	sm.inside_more.erase(c)
+	_snap.seq += 1
+	tray.update()
+	_check.call(not tray.is_open() and why == ["empty"] and not tray.visible, "tray: emptied, it closes (%s)" % [why])
+	# a big pile: MIN_PILE items on a square next to the player
+	var pile := ItemRef.on_square(c, ham, E)
+	var hs := sm.handles
+	var tile := ItemActions.tile_of(E)
+	for k in ItemTray.MIN_PILE:
+		hs.append_array(PackedInt64Array([tile, 424400 + k, rock, -1, -1]))
+	sm.handles = hs
+	src = ItemTray.source_for(_snap, pile)
+	ok = Snapshot.HANDLE_STRIDE == 5 and src == {"kind": "pile", "square": E} and tray.open(src, head)
+	_check.call(ok and tray.rows.size() >= ItemTray.MIN_PILE and tray.rows[0].parent == 0,
+			"tray: a big pile opens with its items, lying ones (%s)" % [src])
+	head.origin += Vector3(0, 0, 3)
+	var hd := Node3D.new()
+	_world.add_child(hd)
+	hd.global_transform = head
+	tray.head = hd
+	tray.update()
+	_check.call(not tray.is_open() and why.back() == "far", "tray: the head walking off closes it (%s)" % [why])
+	hd.free()
+	tray.free()
+
+
+## The tray sorts as CDDA's inventory does: by category (CDDA's sort_rank), then name, then uid; items the tables
+## don't know last; without tables, the snapshot's order. A refresh keeps the order.
+func _test_tray_sort() -> void:
+	var tb := _world.tables
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var rock: int = _it["rock"]
+	var apple := tb.index_of("itype", "apple")
+	var plank := tb.index_of("itype", "2x4")
+	var pot := tb.index_of("itype", "pot")
+	var ghost := 9_000_000
+	# snapshot order: ghost, rock 6, plank, apple, rock 5, pot, hammer
+	sm.inside[c] = [[424506, ghost, 0], [424505, rock, 0], [424504, plank, 0], [424503, apple, 0], [424502, rock, 0],
+			[424501, pot, 0], [424500, ham, 0]]
+	var src := ItemTray.source_for(_snap, ItemRef.on_square(c, ham, E))
+	var uids := func(l: Dictionary) -> Array:
+		return (l.get("rows", []) as Array).map(func(r: ItemRef) -> int: return r.uid)
+	var raw: Array = uids.call(ItemTray.list(_snap, src))
+	var sorted: Array = uids.call(ItemTray.list(_snap, src, tb))
+	# tools: hammer, pot (by name); food: apple; spare parts: plank, rock 5, rock 6 (by name, then uid); unknown last
+	_check.call(apple >= 0 and plank >= 0 and pot >= 0 and tb.def_at("itype", ghost) == null
+			and raw == [424506, 424505, 424504, 424503, 424502, 424501, 424500]
+			and sorted == [424500, 424501, 424503, 424504, 424502, 424505, 424506],
+			"tray sort: by CDDA's category order, then name, then uid; unknown last; no tables: snapshot order (%s)" % [sorted])
+	var tray := ItemTray.new()
+	tray.world = _world
+	_world.add_child(tray)
+	var head := Transform3D(Basis.IDENTITY, _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0))
+	var ok := tray.open(src, head)
+	var first: Array = tray.rows.map(func(r: ItemRef) -> int: return r.uid)
+	sm.inside[c] = (sm.inside[c] as Array).duplicate()
+	(sm.inside[c] as Array).reverse()
+	_snap.seq += 1
+	tray.update()
+	var again: Array = tray.rows.map(func(r: ItemRef) -> int: return r.uid)
+	_check.call(ok and first == sorted and again == sorted and (tray.items[0]["item"] as ItemRef).uid == 424500,
+			"tray sort: the tray shows that order, and a snapshot listing them otherwise doesn't reshuffle it (%s)" % [again])
+	tray.free()
+	sm.inside.erase(c)
+	_snap.seq += 1
+
+
+## The desktop tray (GrabController, lead-ui's OK): opens on a lying bag in front of the camera with the mouse free,
+## a click takes an item into the pack, a click on an arrow pages, Esc closes it and gives the mouse back; a view
+## coming up closes it; something with nothing listed opens nothing.
+func _test_desk_tray() -> void:
+	var sm: Snapshot.Submap = _snap.submaps[CddaCoords.ms_to_sm(E)]
+	var rock: int = _it["rock"]
+	var ham: int = _it["hammer"]
+	var c := _handle(E, ham)
+	var inside: Array = []
+	for k in 14:
+		inside.append([424500 + k, rock, 0])
+	sm.inside[c] = inside
+	_snap.seq += 1
+	var g := GrabController.new(_world)
+	g.reach = func() -> Variant: return P
+	g.hands = _hands
+	var tray := ItemTray.new()
+	tray.world = _world
+	tray.hands = _hands
+	_world.add_child(tray)
+	g.tray = tray
+	var eye := _world.coords.ms_center_to_world(P) + Vector3(0, 1.6, 0)
+	var cam := Transform3D(Basis.IDENTITY, eye)
+	var mouse := Input.mouse_mode
+	var none := g.open_tray_on(ItemRef.on_square(424999, rock, P), cam)
+	var ok := g.open_tray_on(ItemRef.on_square(c, ham, E), cam)
+	_check.call(not none and ok and g.tray_open() and Input.mouse_mode == Input.MOUSE_MODE_VISIBLE
+			and tray.global_position.distance_to(eye + Vector3(0, -GrabController.TRAY_LOW, -GrabController.TRAY_M)) < 0.01,
+			"desk tray: opens on a lying bag in front of the camera, the mouse free; nothing listed opens nothing")
+	var p0 := tray.global_transform * ItemTray.cell_pos(0)
+	var took := g.tray_click(eye, p0 - eye)
+	var stale := g.tray_click(eye, p0 - eye)   # the tray not refreshed yet: that one isn't listed in the bag any more
+	var paged := g.tray_click(eye, tray.global_transform * ItemTray.arrow_pos(1) - eye)
+	var miss := g.tray_click(eye, Vector3.UP)
+	_check.call(took == "take" and ItemActions.carried_row(_snap, 424500, rock) >= 0 and stale == "" and paged == "page"
+			and tray.page == 1 and miss == "",
+			"desk tray: a click takes an item into the pack (not twice), on the arrow pages, off it nothing (%s %s %s %s)" % [took, stale, paged, miss])
+	tray.refresh()
+	var q0 := tray.global_transform * ItemTray.cell_pos(0)
+	var qt := tray.target_at(q0)
+	var qu: int = (qt["item"] as ItemRef).uid if qt.get("kind") == "item" else -1
+	var held := g.tray_click(eye, q0 - eye, "off")
+	var qrow := ItemActions.carried_row(_snap, qu, rock)
+	_check.call(held == "take" and qrow >= 0 and (_snap.carried[qrow * Snapshot.CARRIED_STRIDE + 4] & Snapshot.CARRIED_OFFHAND) != 0,
+			"desk tray: H takes the item under the pointer into the off hand (%s %d)" % [held, qu])
+	# H on an item under the crosshair (no tray): into the off hand; that hand full: CDDA's refusal flashes; nothing
+	# under the crosshair: not H's to use (CDDA's hold prompt goes on)
+	var h_key := InputActions.slots(&"hold_off")[0].duplicate() as InputEvent
+	if h_key is InputEventKey:
+		(h_key as InputEventKey).pressed = true
+	g.flash("")   # the stale click's line above
+	g.item_hover = {"kind": "item", "item": _hands.picker.by_uid(424400)}
+	var lying: bool = g.item_hover["item"] != null
+	var used := lying and g.take_hovered(h_key)
+	var sent: Variant = (_actions._pending.get(424400, {}) as Dictionary).get("target")
+	_snap.seq += 1
+	_mock.changed.emit(_snap)   # MockItems' message isn't wired to the actions here: a second look refuses it
+	var said := [g._flash, g._flash_bad]
+	g.item_hover = {}
+	_check.call(used and sent == "off" and not _carried(424400) and _actions.pending(424400) == ""
+			and said == [ItemActions.DIDNT_WORK, true] and not g.take_hovered(h_key),
+			"desk tray: H on the item under the crosshair: sent into the off hand; that hand full: the refusal flashes; nothing there: CDDA's prompt (%s %s %s %s)" % [lying, used, sent, said])
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	var closed := g.tray_event(esc, null, Vector2.ZERO, true)
+	_check.call(closed and not g.tray_open() and Input.mouse_mode == mouse, "desk tray: Esc closes it and gives the mouse back")
+	ok = g.open_tray_on(ItemRef.on_square(c, ham, E), cam)
+	g.update_tray(null, Vector2.ZERO, true)
+	_check.call(ok and not g.tray_open() and Input.mouse_mode == mouse, "desk tray: a view or menu coming up closes it")
+	sm.inside.erase(c)
+	tray.free()
+	g.free()

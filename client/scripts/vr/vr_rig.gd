@@ -47,11 +47,18 @@ extends XROrigin3D
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
 ## (Hands.adopt) and lets it go the usual way; letting go of any held item over a compartment puts it into that
-## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
+## pocket. Quick switch: an item taken out of the pack and carried SWITCH_M from it goes into that hand in CDDA too
+## (main: wielded; off: held), when that hand holds nothing there (quick_switch), so a hose and a can, a weapon or
+## a drink in hand work at once; the off-hand item let go over its own pocket is just put away. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
-## Cooking (block L9, VrCook `cook`, shows only): a card over each pot on a heat square near the head (heat, contents,
-## CDDA's craft progress or the recipes its contents match; main.gd sets `cook.backend`).
+## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
+## craft progress or the recipes its contents match; main.gd sets `cook.backend`). One recipe CDDA would start now
+## starts by itself; of several, the trigger with an empty hand on a "+" line starts that one; a paused craft goes on
+## when its pot is put back on a lit heat or its heat is lit. Fires (VrFire `fire`, the same backend): the trigger
+## with a hand low over a fire square next to you puts out a burning one, lights an unlit one (with the carried item
+## the hand holds, else CDDA's pick), or lights the fuel lying there while the hand holds a carried item; a line by
+## the hand says which.
 ## A tunnel vignette darkens the edges while moving or turning smoothly; a blink hides jumps.
 ## Nothing here talks to the sim: the viewer is a ghost beside the player's body (VR-ready rule: the camera
 ## rig is separate from the body).
@@ -160,6 +167,7 @@ const VEL_RATE := 25.0     # 1/s: hand speed smoothing (about the last 40 ms)
 const MAX_HAND_SPEED := 15.0   # m/s: a faster reading is a tracking jump, not a throw
 const THROW_FLAT_SPEED := 1.5  # m/s: a throw needs at least this much level speed (else a slam down: put down)
 const HAND_OVER_M := 0.2       # a grip this near the other hand's item's grip point takes it over
+const SWITCH_M := 0.3          # an item taken out of the open pack and carried this far from it: into that CDDA hand
 const GRAVITY := 9.8
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
@@ -172,11 +180,15 @@ var hands: Hands:
 			h.refused.connect(_on_refused)
 		if pack != null:
 			pack.hands = h
+		if tray != null:
+			tray.hands = h
 var pack: VrPack           # L8: the worn bag opened in front of the player (built in _build)
+var tray: ItemTray         # L8: a lying container's contents or a big pile laid out in front (built in _build)
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
+var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
 var buzzes: Array[int] = [0, 0]            # haptic pulses asked of each hand (tests count them)
@@ -196,6 +208,7 @@ var _pointed: Array[Dictionary] = [{}, {}]     # the item each hand's pull ray m
 var _ray_wait: Array[float] = [0.0, 0.0]       # seconds to the next look
 var _fly_from: Array[Transform3D] = [Transform3D(), Transform3D()]   # where a pulled copy lay
 var _fly_t: Array[float] = [-1.0, -1.0]        # seconds into its flight; < 0: none
+var _from_pack: Array[int] = [-1, -1]          # uid each hand took out of the open pack, until quick_switch; -1 none
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -292,8 +305,16 @@ func _build() -> void:
 	add_child(pack)
 	cook = VrCook.new()
 	cook.world = world
+	tray = ItemTray.new()
+	tray.world = world
+	tray.head = camera
+	tray.hands = hands
+	add_child(tray)
 	cook.head = camera
 	add_child(cook)
+	fire = VrFire.new()
+	fire.world = world
+	add_child(fire)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -398,6 +419,9 @@ func _process(delta: float) -> void:
 	place_compass()
 	place_hud(delta)
 	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
+	fire.backend = cook.backend
+	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
+			world.snapshot != null and not ui_open())
 	follow_teleport(delta)
 
 
@@ -465,10 +489,12 @@ func update_hands(delta: float, all_hands := false) -> void:
 	_tick_notes(delta)
 	if hands == null:
 		pack.close("gone")
+		tray.close("gone")
 		for i in 2:
 			_show_pull_ray(i, {})
 		return
 	pack.update()
+	tray.update()
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
 		var id: String = HAND_IDS[i]
@@ -484,22 +510,28 @@ func update_hands(delta: float, all_hands := false) -> void:
 		var held := hands.holding(id)
 		if held.is_empty():
 			_fly_t[i] = -1.0
+			_from_pack[i] = -1
 			var t := {}
-			var pt := {}   # the open pack goes first, then what the hand touches, then what its pull ray meets
+			var pt := {}   # the open pack goes first, the tray, then what the hand touches, then what its pull ray meets
+			var tt := {}
 			var pointing := false
 			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not ui_open() \
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
-				if pt.is_empty():
+				tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+				if tt.get("kind") == "item":
+					t = tt
+				elif pt.is_empty() and tt.is_empty():
 					t = hands.find_near(c.global_position, GRAB_REACH)
 				# (a finger resting on a gun's trigger points nothing)
-				pointing = pt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
+				pointing = pt.is_empty() and tt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
 				if pointing:
 					t = _point(i, c, delta)
 			if not pointing:   # the next pointing looks at once
 				_pointed[i] = {}
 				_ray_wait[i] = 0.0
 			pack.hover(i, pt)
+			tray.hover(i, tt)
 			hands.hover(id, t)
 			_show_pull_ray(i, t if pointing else {})
 			continue
@@ -508,10 +540,15 @@ func update_hands(delta: float, all_hands := false) -> void:
 		_pointed[i] = {}
 		_ray_wait[i] = 0.0
 		pack.show_drop(i, c.global_position if held.get("kind") == "item" else Vector3.INF)
+		quick_switch(i)
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
-				(n as Grabbable).drag_hand(c.global_position)
+				var g := n as Grabbable
+				var bumped := g.bumps
+				g.drag_hand(c.global_position)
+				if g.bumps != bumped:   # L8: it met a stop (open, shut, or a locked one's play): felt in the hand
+					feel(c, 0.6 if g.last_bump == "locked" else 0.3, 0.05)
 			else:
 				hands.cancel(id)
 		elif _fly_t[i] >= 0.0:
@@ -519,6 +556,27 @@ func update_hands(delta: float, all_hands := false) -> void:
 		elif drawn[i] is Transform3D:
 			_weigh(i, drawn[i], delta)
 	_sync_held()
+
+
+## Hand i holds an item it took out of the open pack and has carried it SWITCH_M from the pack (or the pack closed):
+## CDDA moves it into that hand (Hands.hold: main = wield, off = held), once, and only when that hand holds nothing
+## in CDDA (nothing is put away to make room; it stays a carried copy as before). Returns the hand asked for, "" if
+## none. A refusal buzzes and shows CDDA's reason (Hands.refused); the copy stays in the hand.
+func quick_switch(i: int) -> String:
+	if _from_pack[i] < 0 or hands == null:
+		return ""
+	var c := _ctrl(i)
+	var it: ItemRef = hands.holding(HAND_IDS[i]).get("item")
+	if it == null or it.uid != _from_pack[i] or not it.carried:
+		_from_pack[i] = -1
+		return ""
+	if pack.near(c.global_position, SWITCH_M):
+		return ""   # still at the pack
+	_from_pack[i] = -1
+	if cdda_holds(c) != null:
+		return ""
+	var into := "main" if c == main_ctrl() else "off"
+	return into if hands.hold(HAND_IDS[i], it, into) else ""
 
 
 ## Hand i is the main hand and a gun shows in it (VrGun).
@@ -574,6 +632,19 @@ func _show_pull_ray(i: int, t: Dictionary) -> void:
 		r.global_transform = _segment(_ctrl(i).global_position, to, POINTER_R)
 
 
+## L8: trigger on controller c with an empty hand touching a lying container the snapshot lists contents for, or an
+## item of a big pile (ItemTray.source_for): the tray opens in front of the head with them. False when the hand
+## holds something or touches nothing like that (the caller buzzes).
+func open_tray(c: XRController3D) -> bool:
+	if hands == null or world.snapshot == null or ui_open() or not hands.holding(hand_id(c)).is_empty():
+		return false
+	var t := hands.find_near(c.global_position, GRAB_REACH)
+	if t.get("kind") != "item":
+		return false
+	var src := ItemTray.source_for(world.snapshot, t["item"])
+	return not src.is_empty() and tray.open(src, camera.global_transform)
+
+
 ## Trigger on controller c with an empty hand touching nothing: the item it points at (pointed_item, looked for
 ## now) is taken at once into that hand like a grip (main controller: CDDA's main hand, the other: the off hand), and
 ## its copy flies from where it lay into the hand (_fly). False when nothing is pointed (the caller buzzes); a refusal
@@ -584,6 +655,7 @@ func pull_with(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var id: String = HAND_IDS[i]
 	if not hands.holding(id).is_empty() or pack.hand == i or not pack.target_at(c.global_position).is_empty() \
+			or not tray.target_at(c.global_position).is_empty() \
 			or not hands.find_near(c.global_position, GRAB_REACH).is_empty():
 		return false
 	var other := hands.proxy(HAND_IDS[1 - i])
@@ -686,12 +758,16 @@ func grab_with(c: XRController3D) -> bool:
 	var t := {}
 	var pt := {}
 	var looks := world.snapshot != null and not menu_open()
+	var tt := {}
 	if looks:
 		pt = pack.target_at(c.global_position)
-		if pt.is_empty():
+		tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+		if tt.get("kind") == "item":
+			t = tt
+		elif pt.is_empty() and tt.is_empty():
 			t = hands.find_near(c.global_position, GRAB_REACH)
 	# touching nothing else, the gun not in this hand (its grip just holds the gun) and the shoulder not reached: the other
-	if pt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
+	if pt.is_empty() and tt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
 			and not (looks and over_shoulder(camera.global_transform, c.global_position)):
 		var ok_over := hands.hand_over(HAND_IDS[1 - i], id, "main" if c == main_ctrl() else "off")   # hand's item
 		if ok_over:
@@ -703,6 +779,10 @@ func grab_with(c: XRController3D) -> bool:
 	var ok := false
 	if not pt.is_empty():
 		ok = pack.grip(i, pt)
+		if ok and pt.get("kind") == "item" and pt.get("item") is ItemRef:
+			_from_pack[i] = (pt["item"] as ItemRef).uid
+	elif not tt.is_empty() and t.is_empty():
+		ok = false   # the tray's frame or a page arrow: the trigger works those
 	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
 		var bag := shoulder_bag(hands.picker.worn_containers(), null, world.tables)
 		ok = bag != null and pack.open_in(i, bag)
@@ -997,6 +1077,34 @@ func refused_here(reason: String) -> void:
 	say(i, reason)
 
 
+## The item hand i holds (ItemRef), null when it holds none.
+func held_item(i: int) -> ItemRef:
+	if hands == null:
+		return null
+	var h := hands.holding(HAND_IDS[i])
+	return h.get("item") as ItemRef if h.get("kind") == "item" and h.get("item") is ItemRef else null
+
+
+## L9: the trigger of controller c on a fire square (VrFire.press): a light buzz when sent, a buzz and why when
+## refused. True when the hand was on one.
+func fire_press(c: XRController3D) -> bool:
+	if world.snapshot == null:
+		return false
+	fire.backend = cook.backend
+	var i := 0 if c == left else 1
+	match fire.press(c.global_position, held_item(i)):
+		VrFire.LIGHT, VrFire.EXTINGUISH:
+			feel(c, 0.3, 0.05)
+			return true
+		"wait":
+			return true
+		"refused":
+			_feel(c)
+			say(i, "You can't do that now.")
+			return true
+	return false
+
+
 ## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
 func say(i: int, text: String) -> void:
 	if notes[i] == null or not is_instance_valid(notes[i]):
@@ -1178,6 +1286,8 @@ func shift(d: Vector3) -> void:
 	position += d
 	if pack != null and is_instance_valid(pack):
 		pack.position += d
+	if tray != null and is_instance_valid(tray):
+		tray.shift(d)
 	for i in _fly_from.size():
 		_fly_from[i].origin += d
 
@@ -1321,6 +1431,11 @@ func toggle_menu() -> void:
 		menu.action.connect(_menu_action)
 		menu.cheats_backend = cheats_backend
 		menu.cheats_allowed = cheats_allowed
+		menu.spawn_where = func() -> Dictionary:   # K7 spawn rows: items at the feet, monsters ahead of the head
+			var s := world.snapshot
+			if s == null or world.tables == null:
+				return {}
+			return {"tables": world.tables, "feet": s.player_pos, "ahead": VrRange.ahead_of(s.player_pos, camera.global_basis)}
 		menu.cheat_refused.connect(func(_why: String) -> void: _feel(main_ctrl()))   # the reason shows on the page
 		menu.range_sent.connect(_on_range_sent)
 		menu.range_finished.connect(_on_range_finished)
@@ -1524,13 +1639,25 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			and (pack.hand == ci or pack.target_at(c.global_position).get("kind") == "frame"):
 		pack.close("closed")   # the trigger on the pack's frame (or holding it) closes it
 		return
+	if n == "trigger_click" and tray.is_open() and hands != null and hands.holding(hand_id(c)).is_empty():
+		var tt := tray.target_at(c.global_position)
+		if tt.get("kind") == "page":
+			tray.turn_page(tt["dir"])
+			return
+		if tt.get("kind") == "frame":
+			tray.close("closed")   # the trigger on the tray's frame closes it
+			return
+	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() and cook.press_at(c.global_position):
+		return   # L9: an empty hand on a cooking card's "+" line starts that recipe
 	if n == "trigger_click" and c == main_ctrl() and gun.trigger():
 		return   # a gun in the main hand fires (VrGun)
+	if n == "trigger_click" and fire_press(c):
+		return   # L9: a hand low over a fire square lights or puts out that fire
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
 			use_stair(c, s)
-		elif not pull_with(c):
+		elif not pull_with(c) and not open_tray(c):
 			_feel(c)
 		return
 	if n == "grip_click":

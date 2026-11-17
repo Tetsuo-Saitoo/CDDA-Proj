@@ -19,6 +19,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_actions()
 	_test_look(world)
 	_test_walk(world)
+	_test_invert_y(world)
 	_test_follow(world)
 	_test_octants(world)
 	_test_compass()
@@ -96,6 +97,29 @@ func _find_west_free(world: WorldView, w: VrWalk, kind: int) -> Variant:
 			if w.can_stand(p - Vector3i(1, 0, 0)):
 				return p
 	return null
+
+
+## G7: invert_y turns one mouse move's pitch the other way, on the first-person and the fly camera; yaw stays.
+func _test_invert_y(world: WorldView) -> void:
+	var fp := FirstPersonCamera.new(world)
+	var fly := FlyCamera.new()
+	var got := []
+	for on: bool in [false, true]:
+		fp.set_look(0.0, 0.0)
+		fp.invert_y = on
+		fp.look(Vector2(10, 20))   # right and down
+		fly.invert_y = on
+		fly.look(Vector2.ZERO)   # the rotation now shows its pitch
+		var fly_from := fly.rotation
+		fly.look(Vector2(10, 20))
+		got.append([fp.pitch, fp.yaw, fly.rotation.x - fly_from.x, fly.rotation.y - fly_from.y])
+	var plain: Array = got[0]
+	var inv: Array = got[1]
+	_check.call(plain[0] < 0.0 and is_equal_approx(inv[0], -plain[0]) and is_equal_approx(inv[1], plain[1])
+			and plain[2] < 0.0 and is_equal_approx(inv[2], -plain[2]) and is_equal_approx(inv[3], plain[3]),
+			"fp: invert_y pitches a mouse move the other way, yaw unchanged (first person %s, fly %s)" % [got[0], got[1]])
+	fp.free()
+	fly.free()
 
 
 func _test_walk(world: WorldView) -> void:
@@ -567,6 +591,27 @@ func _test_creatures(root: Node, world: WorldView, data: Variant, tables: IdTabl
 	_check.call(cv.get_child_count() == 0, "creatures: then it is gone")
 	cv.view_z_max = zp.z - 1
 	cv.free()
+	# A death whose body is already in the pile: it lies there once the fall ends, with no new snapshot.
+	var cv2 := CreatureView.new()
+	root.add_child(cv2)
+	d["creatures"] = [me, zombie]
+	zombie["pos"] = [zp.x, zp.y, zp.z]
+	cv2.apply(Snapshot.from_data(d), world)
+	cv2.on_events([{"kind": "death", "uid": zuid}])
+	var zsm := CddaCoords.ms_to_sm(zp)
+	var zb := CddaCoords.sm_to_ms(zsm)
+	for sm: Dictionary in d["submaps"]:
+		if Vector3i(int(sm["pos"][0]), int(sm["pos"][1]), int(sm["pos"][2])) == zsm:
+			sm["items"] = [[(zp.y - zb.y) * CddaCoords.SEEX + zp.x - zb.x, 1, [maxi(tables.index_of("itype", "corpse"), 1)], zi]]
+	d["creatures"] = [me]
+	var dead := Snapshot.from_data(d)
+	cv2.apply(dead, world)
+	var during := cv2.corpse_count()
+	for i in 80:
+		cv2.tick(0.05)
+	_check.call(dead.is_valid() and during == 0 and cv2.dying_count() == 0 and cv2.corpse_count() == 1,
+			"creatures: a body waits for its fall, then lies there without another turn (%d, %d)" % [during, cv2.corpse_count()])
+	cv2.free()
 	for bad: Variant in [[{"uid": 2, "kind": 7, "pos": pp}], [{"uid": -1, "kind": 2, "pos": pp}],
 			[{"uid": 2, "kind": 2, "pos": [1, 2]}], ["zombie"], {"uid": 2}]:
 		d["creatures"] = bad

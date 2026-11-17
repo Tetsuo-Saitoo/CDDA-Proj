@@ -72,6 +72,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	fv.apply(snap, world)
 	_check.call(fv.count() == 0 and fv.get_node_or_null("flame") == null, "fields: cut away above the view level")
 	fv.view_z_max = CddaCoords.Z_LIMIT
+	_cutaway(world, fv, gv, snap, int(sm0["pos"][2]))
 	fv.max_per_look = 1
 	fv.apply(snap, world)
 	_check.call(fv.count(L.GAS) == 1 and fv.count(L.SWARM) == 1, "fields: instances per look are capped")
@@ -90,6 +91,39 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_stairs_settled()
 	_needs(data)
 	_heat_cookware(data)
+
+
+## A cutaway change (PgUp / PgDn, top-down following the player) redraws fields and gore from the world's
+## snapshot at once; nothing is redrawn while it stays put.
+func _cutaway(world: WorldView, fv: FieldView, gv: GoreView, snap: Snapshot, z: int) -> void:
+	world.snapshot = snap
+	world.z_max_content = z
+	world.view_z_max = CddaCoords.Z_LIMIT
+	fv.apply(snap, world)
+	gv.apply(snap, world)
+	var full := [fv.count(), gv.count()]
+	world.view_z_max = z - 1   # the fields' level cut away (blood and acid lie there too)
+	fv.refresh()
+	gv.refresh()
+	var cut := [fv.count(), gv.count()]
+	world.view_z_max = CddaCoords.Z_LIMIT
+	fv.refresh()
+	gv.refresh()
+	var back := [fv.count(), gv.count()]
+	fv.max_per_look = 0   # a redraw now would draw nothing
+	fv.refresh()
+	var kept := fv.count()
+	fv.max_per_look = FieldView.MAX_PER_LOOK
+	_check.call(full[0] > 0 and cut[0] == 0 and cut[1] <= full[1] - 2 and back == full and kept == full[0],
+			"fields: a cutaway change redraws fields and gore at once, nothing while it stays %s %s %s" % [full, cut, back])
+	var gone := WorldView.new()
+	fv.apply(snap, gone)
+	gone.free()
+	fv.refresh()   # the world it followed is gone: nothing happens
+	world.snapshot = null
+	world.z_max_content = 0
+	world.view_z_max = CddaCoords.Z_LIMIT
+	fv.view_z_max = CddaCoords.Z_LIMIT
 
 
 ## The meshing job has catalogs of its own (it runs on a worker while the main thread looks styles up).

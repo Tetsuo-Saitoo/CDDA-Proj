@@ -22,6 +22,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_item_multi()
 	_test_popup()
 	_test_string()
+	_test_number()
 	_test_direction()
 	_test_target()
 	_test_hostile()
@@ -29,8 +30,14 @@ func run(root: Node, check: Callable) -> void:
 	_test_main_menu()
 	_test_world_setup()
 	_test_game_over(root)
+	_test_options()
+	_test_hints()
+	_test_wheel()
+	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
+	_test_item_tile()
+	_test_slosh()
 
 
 func _req(kind: String, fields: Dictionary, id := 7) -> Dictionary:
@@ -90,6 +97,9 @@ static func well_formed(a: Dictionary) -> bool:
 					return false
 			"entry":
 				if not v is int:
+					return false
+			"number":   # contracts/ui_requests.md: an int, never beyond the doubles' whole numbers
+				if not v is int or absi(v) > (1 << 53) - 1:
 					return false
 			"picks":
 				if not v is Array or (v as Array).size() > 4096:
@@ -378,7 +388,7 @@ func _test_popup() -> void:
 	_show(_req("popup", {"text": "You feel hungry.", "actions": PackedStringArray(["CONFIRM"]), "allow_cancel": false}))
 	_key(KEY_SPACE)
 	_expect({"id": 7, "action": "CONFIRM"}, "message popup: Space confirms")
-	_show(_req("number", {"title": "How many?"}))
+	_show(_req("not_a_kind", {"title": "How many?"}))
 	_check.call(ui.widget is PopupRequestWidget and (ui.widget as PopupRequestWidget).actions.is_empty(), "unknown kind: text only")
 	_key(KEY_ENTER)
 	_expect_none("unknown kind: Enter")
@@ -412,6 +422,59 @@ func _test_string() -> void:
 	_check.call(answers.size() == 1 and well_formed(answers[0]) and (answers[0]["text"] as String).length() == 512,
 			"multi-byte text cut to 1024 bytes")
 	_test_text_keys()
+
+
+## `number` requests: the default in the field, Enter sends it as an int, Esc cancels; Up / Down and -1 / +1 step
+## within the range; a text that isn't a whole number in the range isn't sent and the line under the field says
+## so; the bridge's re-ask status is shown cleaned; a broken range is taken the right way round.
+func _test_number() -> void:
+	print("ui: number")
+	var req := _req("number", {"title": "How many?", "text": "Drop how many?", "min": 1, "max": 20, "default": 5})
+	_show(req)
+	var w := ui.widget as NumberRequestWidget
+	_check.call(w != null and w.edit.text == "5" and w.lo == 1 and w.hi == 20 and not w.problem.visible
+			and w.show_keys == ui.keyboard, "number: a NumberRequestWidget with the default and the range")
+	_key(KEY_UP)
+	_key(KEY_UP)
+	_key(KEY_DOWN)
+	_check.call(w.edit.text == "6" and answers.is_empty(), "number: Up / Down step it (%s)" % w.edit.text)
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 6}, "number: Enter sends it as an int")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	for bad: String in ["21", "0", "abc", "1.5", "", "- 3", "1e3", "12345678901234567"]:
+		w.edit.text = bad
+		_key(KEY_ENTER)
+	_check.call(answers.is_empty() and w.problem.visible and w.problem.text == "Enter a whole number from 1 to 20.",
+			"number: out of range or not a whole number isn't sent; it says why (%s)" % w.problem.text)
+	w.edit.text = " +20 "
+	_key(KEY_ENTER)
+	_expect({"id": 7, "number": 20}, "number: a sign and spaces around are fine")
+	_show(req)
+	w = ui.widget as NumberRequestWidget
+	w.edit.text = "x"
+	w.step(1)
+	w.step(100)
+	_check.call(w.edit.text == "20" and not w.problem.visible, "number: +1 from no number starts at the range, "
+			+ "stepping stops at max (%s)" % w.edit.text)
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "number: Esc cancels")
+	_show(_req("number", {"min": 50, "max": -50, "default": 9.5, "status": "<color_red>enter a whole</color>" + char(7) + " number"}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -50 and w.hi == 50 and w.edit.text == "0" and w.problem.visible
+			and w.problem.text == "enter a whole number", "number: a broken range turned round, a non-whole default "
+			+ "dropped, the status cleaned (%s)" % w.problem.text)
+	_show(_req("number", {"min": -1e300, "max": INF, "default": -(1 << 60)}))
+	w = ui.widget as NumberRequestWidget
+	_check.call(w.lo == -NumberRequestWidget.LIMIT and w.hi == NumberRequestWidget.LIMIT
+			and w.edit.text == str(-NumberRequestWidget.LIMIT)
+			and NumberRequestWidget.range_text(-(1 << 31), (1 << 31) - 1) == "A whole number."
+			and NumberRequestWidget.range_text(1, 20) == "A whole number from 1 to 20.",
+			"number: huge or infinite limits held to the doubles' whole numbers; the range in words")
+	w.edit.text = str(NumberRequestWidget.LIMIT)
+	_key(KEY_ENTER)
+	_check.call(answers.size() == 1 and well_formed(answers[0]) and answers[0]["number"] == NumberRequestWidget.LIMIT,
+			"number: the largest whole number goes through")
 
 
 ## The on-screen keyboard under a text prompt: hidden on screen until the Keyboard button, shown from the start
@@ -662,6 +725,159 @@ func _test_hands_panel(root: Node) -> void:
 	vh.free()
 
 
+## Live item tiles, slice 1: ItemTile from a state [temp, rot, fill, fill_type, see_through, fill_ml, dirt] (values
+## and colours as ItemLook / GunGrime say); a missing or hostile state shows nothing; ItemTileView takes no mouse.
+func _test_item_tile() -> void:
+	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "juice", "name": "orange <color_red>juice</color>", "color": "c_yellow"},
+			{"id": "odd"}]})
+	_check.call(t.is_valid(), "tile: test tables load (%s)" % t.error)
+	var jug := ItemTile.of(PackedInt32Array([ItemLook.Temp.COLD, -1, 250, 1, 1, 250, -1]), t)
+	var cold: Color = jug["temp_color"]
+	_check.call(is_equal_approx(jug["level"], 0.25) and jug["amount"] == "250 ml" and jug["see_through"]
+			and jug["liquid"] == CddaPalette.NAMED["yellow"] and jug["contents"] == "orange juice"
+			and jug["temp"] == ItemLook.Temp.COLD and Color(cold, 1.0) == Color(ItemLook.COLD_TINT, 1.0) and cold.a > 0.0
+			and jug["rot"] == -1 and (jug["rot_color"] as Color).a == 0.0 and jug["grime"] == -1.0 and ItemTile.shows(jug),
+			"tile: a cold jug a quarter full of juice, 250 ml, in the juice's colour (%s)" % [jug])
+	_check.call(ItemTile.words(jug) == "Cold\n250 ml orange juice, 25% full", "tile: in words (%s)" % ItemTile.words(jug).replace("\n", " | "))
+	var big := ItemTile.of(PackedInt32Array([0, -1, 1000, 2, 0, 1500, -1]), t)
+	var plain := ItemTile.of([0, -1, 600, 1, 0, 600, -1], null)
+	_check.call(big["level"] == 1.0 and big["amount"] == "1.5 L" and not big["see_through"]
+			and big["liquid"] == ItemLook.LIQUID_DEFAULT and big["contents"] == "odd" and big["temp"] == ItemLook.Temp.NORMAL
+			and (big["temp_color"] as Color).a == 0.0 and plain["liquid"] == ItemLook.LIQUID_DEFAULT
+			and plain["contents"] == "" and plain["amount"] == "600 ml",
+			"tile: full, litres; no colour or no tables: the default liquid colour (%s)" % [big])
+	var texts := [0, -5, 1, 999, 1000, 1049, 1050, 1949, 10000, 123456, ItemLook.ML_MAX, ItemLook.ML_MAX + 1].map(
+			func(ml: int) -> String: return ItemTile.amount_text(ml))
+	_check.call(texts == ["", "", "1 ml", "999 ml", "1 L", "1 L", "1.1 L", "1.9 L", "10 L", "123.5 L", "100000 L", ""],
+			"tile: amount text in ml below a litre, then to a tenth of a litre %s" % [texts])
+	var frozen := ItemTile.of(PackedInt32Array([ItemLook.Temp.FROZEN, 0, -1, 0, 0, -1, -1]), t)
+	var hot := ItemTile.of(PackedInt32Array([ItemLook.Temp.HOT, -1, -1, 0, 0, -1, -1]), t)
+	_check.call(frozen["temp"] == ItemLook.Temp.FROZEN and Color(frozen["temp_color"], 1.0) == Color(ItemLook.FROST, 1.0)
+			and hot["temp"] == ItemLook.Temp.HOT and Color(hot["temp_color"], 1.0) == Color(ItemLook.HEAT, 1.0)
+			and (frozen["temp_color"] as Color).a > cold.a and frozen["level"] == -1.0 and frozen["amount"] == ""
+			and ItemTile.words(hot) == "Hot", "tile: frozen and hot edges in ItemLook's colours, frozen the strongest")
+	var old := ItemTile.of(PackedInt32Array([0, 950, -1, 0, 0, -1, -1]), t)
+	_check.call(frozen["rot"] == 0 and frozen["rot_color"] == ItemLook.FRESH_COLOR and old["rot"] == 950
+			and old["rot_color"] == ItemLook.rot_color(950) and ItemTile.shows(old)
+			and ItemTile.words(old) == "Spoilage 95% (old)" and ItemTile.words(frozen) == "Frozen\nSpoilage 0% (fresh)",
+			"tile: spoilage in rot_color for things that rot (%s)" % ItemTile.words(old))
+	var gun := ItemTile.of(PackedInt32Array([0, -1, -1, 0, 0, -1, 4000]), t)
+	var clean := ItemTile.of(PackedInt32Array([0, -1, -1, 0, 0, -1, 0]), t)
+	_check.call(is_equal_approx(gun["grime"], GunGrime.grime_for(4000)) and is_equal_approx(gun["grime"], 0.4)
+			and ItemTile.shows(gun) and ItemTile.words(gun) == "Fouling 40%" and clean["grime"] == 0.0
+			and not ItemTile.shows(clean), "tile: a fouled gun's grime as its model shows it; a clean one shows nothing")
+	var none := ItemTile.of(null, null)
+	var empty_pack := ItemTile.of(PackedInt32Array([0, -1, 0, 0, 0, 0, -1]), t)
+	var missing := [ItemTile.of(PackedInt32Array(), t), ItemTile.of({}, t), ItemTile.of("x", t),
+			ItemTile.of(PackedInt32Array([1, 2, 3]), t), ItemTile.of([0, -1, 500, 1, 1, 500, -1, 9], t)]
+	_check.call(none["level"] == -1.0 and none["amount"] == "" and none["rot"] == -1 and none["grime"] == -1.0
+			and none["temp"] == ItemLook.Temp.NORMAL and not ItemTile.shows(none) and ItemTile.words(none) == ""
+			and missing.all(func(m: Dictionary) -> bool: return m == none)
+			and empty_pack["level"] == 0.0 and empty_pack["amount"] == "" and not ItemTile.shows(empty_pack),
+			"tile: no state, or the wrong size: nothing; an empty container: level 0, no amount, nothing drawn")
+	var out_of_range := ItemTile.of(PackedInt32Array([9, 5000, 1500, 0x7fffffff, 3, 250, 20000]), t)
+	var bad_type := ItemTile.of([0, -1, 500, -4, 0, ItemLook.ML_MAX + 1, -1], t)
+	var junk := ItemTile.of(["hot", 1.5, "250", [1], {}, INF, NAN], t)
+	var floats := ItemTile.of([1.0, 100.0, 500.0, 1.0, 1.0, 500.0, -1.0], t)
+	_check.call(out_of_range == none and junk == none and bad_type["level"] == 0.5 and bad_type["amount"] == ""
+			and bad_type["liquid"] == ItemLook.LIQUID_DEFAULT and bad_type["contents"] == ""
+			and floats["temp"] == ItemLook.Temp.HOT and floats["rot"] == 100 and floats["level"] == 0.5
+			and floats["amount"] == "500 ml" and floats["see_through"] and floats["contents"] == "orange juice",
+			"tile: out of range or wrong types show nothing; whole floats count (%s, %s)" % [out_of_range, junk])
+	var tv := ItemTileView.new(gun, -INF)
+	_check.call(tv.mouse_filter == Control.MOUSE_FILTER_IGNORE and tv.focus_mode == Control.FOCUS_NONE and tv.inset == 0.0,
+			"tile: the view takes no mouse input or focus")
+	tv.free()
+
+
+## Live item tiles, slice 2: Slosh is a damped spring back to level; a liquid's tile (drawn "~") sloshes from
+## stir() and kick(), anything else doesn't; stirs while hidden aren't saved up; a surface still moving when its
+## row goes carries on in the item's next row (soon after only).
+func _test_slosh() -> void:
+	var s := Slosh.new()
+	s.push(NAN)
+	s.push(INF)
+	_check.call(not s.moving() and s.tilt == 0.0 and s.vel == 0.0, "slosh: still at first; NaN or infinite shoves ignored")
+	s.push(3.0)
+	var peak := 0.0
+	var frames := 0
+	while s.step(1.0 / 60.0) and frames < 600:
+		peak = maxf(peak, absf(s.tilt))
+		frames += 1
+	_check.call(peak > 0.1 and peak <= 1.0 and s.tilt == 0.0 and s.vel == 0.0 and frames < 600,
+			"slosh: a shove tilts it, then it settles back to level (%d frames, peak %.2f)" % [frames, peak])
+	s.push(1000.0)
+	_check.call(s.vel == Slosh.MAX_VEL, "slosh: speed capped")
+	var a := Slosh.new()
+	var b := Slosh.new()
+	a.push(3.0)
+	b.push(3.0)
+	a.step(10.0)
+	b.step(Slosh.MAX_DT)
+	var held := a.tilt
+	a.step(NAN)
+	a.step(-1.0)
+	_check.call(a.tilt == b.tilt and a.tilt != 0.0 and a.tilt == held, "slosh: a long frame counts as MAX_DT; NaN or negative steps do nothing")
+	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "juice", "symbol": "~", "category": "drinks"}, {"id": "water", "symbol": "!",
+			"category": "food", "phase": "liquid"}, {"id": "flour", "symbol": "%", "category": "food"},
+			{"id": "wax", "symbol": "~", "phase": "solid"}]})
+	var juice := ItemTile.of(PackedInt32Array([0, -1, 500, 1, 1, 250, -1]), t)
+	var water := ItemTile.of(PackedInt32Array([0, -1, 500, 2, 0, 250, -1]), t)
+	var flour := ItemTile.of(PackedInt32Array([0, -1, 500, 3, 0, 250, -1]), t)
+	var dry := ItemTile.of(PackedInt32Array([0, -1, 0, 1, 1, 0, -1]), t)
+	var wax := ItemTile.of(PackedInt32Array([0, -1, 500, 4, 0, 250, -1]), t)
+	var ice := ItemTile.of(PackedInt32Array([ItemLook.Temp.FROZEN, -1, 500, 2, 0, 250, -1]), t)
+	_check.call(juice["sloshes"] and water["sloshes"] and not flour["sloshes"] and not dry["sloshes"] and not wax["sloshes"]
+			and not ice["sloshes"] and not ItemTile.of(null, t)["sloshes"],
+			"slosh: liquids by phase (no phase: drawn \"~\") slosh, whatever the category; a solid \"~\", frozen water, "
+			+ "flour, an empty jug or no state don't")
+	var jv := ItemTileView.new(juice)
+	var fv := ItemTileView.new(flour)
+	var full_but_flagged := ItemTileView.new({"sloshes": true, "level": 0.0})
+	_check.call(jv.slosh != null and fv.slosh == null and full_but_flagged.slosh == null,
+			"slosh: only a liquid with something in it gets a surface")
+	var before := ItemTileView.stirred
+	ItemTileView.stir(NAN)
+	ItemTileView.stir(1000.0)
+	_check.call(ItemTileView.stirred == before + ItemTileView.STIR_MAX, "slosh: a stir is capped; NaN ignored")
+	jv.tick(1.0 / 60.0)
+	fv.tick(1.0 / 60.0)
+	_check.call(jv.slosh.moving() and absf(jv.slosh.tilt) > 0.0, "slosh: a stir moves a liquid's surface")
+	var hidden := ItemTileView.new(juice)
+	ItemTileView.stir(2.0)
+	hidden._process(1.0 / 60.0)   # not in the tree: hidden
+	hidden.tick(1.0 / 60.0)
+	_check.call(not hidden.slosh.moving(), "slosh: stirs while hidden are not saved up")
+	hidden.kick(NAN)
+	_check.call(not hidden.slosh.moving(), "slosh: a NaN kick does nothing")
+	hidden.kick()
+	fv.kick()
+	_check.call(hidden.slosh.moving() and fv.slosh == null, "slosh: a kick shoves that tile alone; nothing for one that doesn't slosh")
+	ItemTileView._carried.clear()
+	var moving := ItemTileView.new(juice, 0.0, 7)
+	moving.kick()
+	moving._exit_tree()   # its row went (a rebuild)
+	var again := ItemTileView.new(juice, 0.0, 7)
+	var other := ItemTileView.new(juice, 0.0, 8)
+	_check.call(again.slosh == moving.slosh and other.slosh != moving.slosh and not other.slosh.moving()
+			and not ItemTileView._carried.has(7), "slosh: a moving surface carries on in its item's next row, once")
+	var still := ItemTileView.new(juice, 0.0, 9)
+	still._exit_tree()
+	ItemTileView._carried[10] = [moving.slosh, Time.get_ticks_msec() - ItemTileView.CARRY_MS - 1]
+	var late := ItemTileView.new(juice, 0.0, 10)
+	_check.call(not ItemTileView._carried.has(9) and late.slosh != moving.slosh and not ItemTileView._carried.has(10),
+			"slosh: a still surface isn't kept; a stale one isn't picked up")
+	for i in ItemTileView.MAX_CARRIED:
+		ItemTileView._carried[100 + i] = [Slosh.new(), 0]
+	moving._exit_tree()
+	_check.call(ItemTileView._carried.size() == 1, "slosh: the carried surfaces are bounded")
+	ItemTileView._carried.clear()
+	for v: ItemTileView in [jv, fv, full_but_flagged, hidden, moving, again, other, still, late]:
+		v.free()
+
+
 # --- Character creation and main menu ------------------------------------------------------------------
 
 const CATALOG := {
@@ -811,6 +1027,13 @@ func _test_main_menu() -> void:
 	_check.call(m.suggested_world() == "World2", "menu: suggests a free world name")
 	_check.call(MainMenu.world_name_ok("a_b-1") and not MainMenu.world_name_ok("../x")
 			and not MainMenu.world_name_ok(""), "menu: world name rule")
+	var opts := [0]
+	m.options_requested.connect(func() -> void: opts[0] += 1)
+	m.show_page("main")
+	for b: Node in m._box.get_children():
+		if b is Button and (b as Button).text == "Options (F1)":
+			(b as Button).pressed.emit()
+	_check.call(opts[0] == 1, "menu: the Options (F1) button asks for the F1 menu")
 	m.show_page("credits")
 	_check.call(m.page == "credits" and m._box.get_child_count() >= 4, "menu: credits page")
 	m.show_page("new")
@@ -959,6 +1182,378 @@ const WORLD_CATALOG := {
 
 
 ## Back to the main menu after a game: what the menu says, and F1's "Save and quit to menu".
+## G7 options in HudSettings and the F1 menu: defaults, the controls save them, the file is clamped / ignored.
+func _test_options() -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_options.cfg")
+	var hs := HudSettings.new()
+	_check.call(hs.look_speed == 1.0 and hs.fov == HudSettings.DEFAULT_FOV and hs.render_scale == 1.0
+			and not hs.fullscreen and hs.vsync and not hs.invert_y and hs.ui_scale == 1.0
+			and hs.weather_quality == WeatherView.HIGH and hs.volume == 1.0 and hs.ambience_volume == 1.0,
+			"options: defaults (x1 look, 75 degrees, full resolution, windowed, vsync)")
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var seen := [0]
+	menu.hud_changed.connect(func() -> void: seen[0] += 1)
+	for sv: Array in [[menu.fov_slider, 90.0], [menu.look_slider, 2.0], [menu.scale_slider, 0.75],
+			[menu.ui_slider, 1.5], [menu.volume_slider, 0.5], [menu.ambience_slider, 0.25]]:
+		var s := sv[0] as HSlider
+		s.value = sv[1]
+		s.value_changed.emit(s.value)   # a slider outside the tree doesn't emit it itself
+	menu.fullscreen_check.button_pressed = true
+	menu.vsync_check.button_pressed = false
+	menu.invert_check.button_pressed = true
+	menu.weather_pick.select(WeatherView.LOW)
+	menu.weather_pick.item_selected.emit(WeatherView.LOW)   # select() alone doesn't emit it
+	var back := HudSettings.new()
+	var why := back.load_file(path)
+	_check.call(why == "" and back.fov == 90.0 and back.look_speed == 2.0 and back.render_scale == 0.75
+			and back.fullscreen and not back.vsync and back.invert_y and back.ui_scale == 1.5
+			and back.weather_quality == WeatherView.LOW and back.volume == 0.5 and back.ambience_volume == 0.25
+			and seen[0] == 10,
+			("options: the F1 controls set and save each (%s, %s, %s, %s, %s, %s, %s, weather %s, volume %s / %s; "
+			+ "%d changes)") % [back.fov, back.look_speed, back.render_scale, back.fullscreen, back.vsync,
+			back.invert_y, back.ui_scale, back.weather_quality, back.volume, back.ambience_volume, seen[0]])
+	_check.call(menu.weather_pick.item_count == 3 and menu.weather_pick.get_item_text(WeatherView.HIGH) == "High",
+			"options: the weather picker lists WeatherView's qualities by index")
+	var shown := [(menu._option_values[&"fov"] as Label).text, (menu._option_values[&"render_scale"] as Label).text]
+	_check.call(shown == ["90%s" % char(0xb0), "75 %"], "options: the values show next to the sliders (%s)" % [shown])
+	menu.set_option(&"debug_cheats", true)
+	_check.call(not hs.debug_cheats and seen[0] == 10, "options: set_option takes only the option fields")
+	var bi := HudSettings.ensure_ambience_bus()
+	var buses := AudioServer.bus_count
+	HudSettings.set_bus_loudness(bi, 0.5)
+	var half_db := AudioServer.get_bus_volume_db(bi)
+	HudSettings.set_bus_loudness(bi, 0.0)
+	var muted := AudioServer.is_bus_mute(bi)
+	HudSettings.set_bus_loudness(bi, 1.0)
+	HudSettings.set_bus_loudness(99, 0.0)   # no such bus: nothing
+	_check.call(bi > 0 and HudSettings.ensure_ambience_bus() == bi and AudioServer.bus_count == buses
+			and AudioServer.get_bus_send(bi) == &"Master" and absf(half_db - linear_to_db(0.5)) < 0.01 and muted
+			and not AudioServer.is_bus_mute(bi) and absf(AudioServer.get_bus_volume_db(bi)) < 0.01,
+			"options: the Ambience bus is made once, sends to Master; 0 mutes it, 0.5 is %.1f dB" % half_db)
+	hs.fov = 300.0   # out of range in memory: saved clamped
+	hs.save_file(path)
+	back = HudSettings.new()
+	back.load_file(path)
+	_check.call(back.fov == HudSettings.FOVS.y, "options: an out-of-range value is saved clamped (%s)" % back.fov)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[compass]\nopacity=0.5\n[look]\nspeed=99\ninvert=2\nfov=nan\n[display]\nscale=-3\n"
+			+ "fullscreen=1\nvsync=\"no\"\nui_scale=9\n[weather]\nquality=-5\n[sound]\nvolume=-1\nambience=\"loud\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	_check.call(junk.look_speed == HudSettings.LOOK_SPEEDS.y and junk.fov == HudSettings.DEFAULT_FOV
+			and junk.render_scale == HudSettings.RENDER_SCALES.x and not junk.fullscreen and junk.vsync
+			and not junk.invert_y and junk.ui_scale == HudSettings.UI_SCALES.y
+			and junk.weather_quality == WeatherView.MINIMAL and junk.volume == 0.0 and junk.ambience_volume == 1.0,
+			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
+			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
+	menu.free()
+
+
+func _test_hints() -> void:
+	var dir := preload("res://tests/test_dir.gd")
+	var path: String = dir.path("hints.cfg")
+	var names := InputActions.names()
+	var unknown: Array[String] = []
+	var re := RegEx.create_from_string("\\{(\\w+)\\}")
+	for id: String in Hints.TEXTS:
+		for m in re.search_all(Hints.TEXTS[id]):
+			if not names.has(StringName(m.get_string(1))):
+				unknown.append(m.get_string(1))
+	_check.call(unknown.is_empty(), "hints: every {action} in the texts is a key action (unknown: %s)" % [unknown])
+	InputMap.add_action(&"hints_test_act")
+	var ev := InputEventKey.new()
+	ev.physical_keycode = KEY_Q
+	InputMap.action_add_event(&"hints_test_act", ev)
+	var key := InputActions.key_of(&"hints_test_act")
+	var filled := Hints.fill("press {hints_test_act} or {no_such_action}, {open")
+	InputMap.erase_action(&"hints_test_act")
+	_check.call(key != "-" and filled == "press %s or no_such_action, {open" % key,
+			"hints: {action} becomes its key, an unknown name stays bare, an open brace stays (%s)" % filled)
+	var snap := Snapshot.new()
+	var hud := HudData.new()
+	var calm := Hints.due(snap, hud)
+	var friend := Snapshot.Creature.new()
+	friend.kind = Snapshot.Creature.NPC
+	friend.attitude = Snapshot.Creature.FRIENDLY
+	snap.creatures.append(friend)
+	var with_friend := Hints.due(snap, hud)
+	snap.creatures.append(Snapshot.Creature.new())   # a monster the bridge gives no attitude: hostile
+	snap.player_effects.append({"id": "hunger_engorged"})
+	var engorged := Hints.due(snap, hud)
+	snap.player_effects.append({"id": "hunger_hungry"})
+	hud.body.append({"part": "arm_l", "bleed": 1})
+	var every := Hints.due(snap, hud)
+	hud.needs["thirst"] = {"value": 50, "word": "Thirsty", "level": HudData.HURT}
+	var thirsty := Hints.due(Snapshot.new(), hud)
+	_check.call(calm.is_empty() and with_friend.is_empty() and engorged == (["hostile"] as Array[String])
+			and every == (["hostile", "eat", "bleed"] as Array[String])
+			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty(),
+			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding (%s, %s, %s)"
+			% [engorged, every, thirsty])
+	var h := Hints.new()
+	h.path = path
+	var fresh := h.load_file() == "" and h.enabled and h.seen.is_empty() and not h.visible
+	var first := h.trigger("start")
+	var twice := h.trigger("start")
+	var queued := h.trigger("prompt")
+	var odd := h.trigger("nope")
+	_check.call(fresh and first and not twice and queued and not odd and h.shown == "start" and h.visible
+			and h.queue.size() == 1 and h.queue[0] == "prompt" and not h._label.text.contains("{"),
+			"hints: each id once, the next waits, unknown ids refused (showing %s)" % h.shown)
+	h.tick(Hints.SHOW_S - 1.0)
+	var still := h.shown
+	h.tick(1.5)
+	var next := h.shown
+	h.dismiss()
+	_check.call(still == "start" and next == "prompt" and h.shown == "" and not h.visible,
+			"hints: one shows for SHOW_S seconds, then the next; dismiss hides the last")
+	var back := Hints.new()
+	back.path = path
+	_check.call(back.load_file() == "" and back.enabled and back.seen.has("start") and back.seen.has("prompt")
+			and not back.seen.has("inspect"), "hints: seen ids are saved (%s)" % [back.seen.keys()])
+	back.free()
+	var menu := KeyMenu.new()
+	menu.add_hints(h)
+	menu.hints_check.button_pressed = false
+	var off_refused := not h.trigger("inspect")
+	var off := Hints.new()
+	off.path = path
+	off.load_file()
+	_check.call(not h.enabled and off_refused and not h.seen.has("inspect") and not off.enabled,
+			"hints: the F1 Hints box off stops them and is saved")
+	off.free()
+	menu.hints_check.button_pressed = true
+	var on_shows := h.trigger("inspect") and h.shown == "inspect"
+	menu.hints_again.pressed.emit()
+	_check.call(on_shows and h.seen.is_empty() and h.trigger("start") and menu._status.text.contains("once more"),
+			"hints: on again shows; \"Show hints again\" lets each show once more")
+	menu.free()
+	h.free()
+	var t := Hints.new()
+	t.path = dir.path("hints_not_kept.cfg")
+	t.persist = false
+	_check.call(t.trigger("start") and not FileAccess.file_exists(t.path), "hints: persist off writes nothing")
+	t.free()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hints]\nenabled=2\nseen=[\"start\", \"nope\", 5, \"start\"]\n")
+	f.close()
+	var junk := Hints.new()
+	junk.path = path
+	_check.call(junk.load_file() == "" and junk.enabled and junk.seen.keys() == ["start"],
+			"hints: a non-bool leaves them on; only known ids are read (%s)" % [junk.seen.keys()])
+	junk.free()
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hints]\nenabled=false\nseen=[Object(Node,\"name\":\"x\")]\n")
+	f.close()
+	var evil := Hints.new()
+	evil.path = path
+	var why := evil.load_file()
+	_check.call(why.contains("Object(") and evil.enabled and evil.seen.is_empty(),
+			"hints: a file with Object( is ignored (%s)" % why)
+	evil.free()
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("#".repeat(Hints.MAX_FILE_BYTES + 1))
+	f.close()
+	var big := Hints.new()
+	big.path = path
+	_check.call(big.load_file().contains("over"), "hints: an oversized file is ignored")
+	big.free()
+
+
+func _test_wheel() -> void:
+	var sink := [{"id": 10, "label": "Wash your hands"}, {"id": 11, "label": "Drink from the sink"},
+			{"id": 12, "label": "<color_red>Empty</color> it", "enabled": false}, {"id": 13, "label": "Fill a container"},
+			{"id": 14, "label": "Admire the plumbing"}]
+	var placed := RadialRequestWidget.layout(RequestWidget.entries_of({"entries": sink}))
+	var ids := placed.map(func(e: Variant) -> Variant: return null if e == null else e["id"])
+	_check.call(ids == [11, 14, 13, null, 12, null, 10, null],
+			"wheel: drink at the top, fill right, empty below, wash left, the rest in the first free slot (%s)" % [ids])
+	var dirs := [Vector2(0, -90), Vector2(70, -70), Vector2(90, 0), Vector2(0, 90), Vector2(-90, 0), Vector2(5, 5),
+			Vector2(INF, 0)].map(func(v: Vector2) -> int: return RadialRequestWidget.slot_at(v))
+	_check.call(dirs == [0, 1, 2, 4, 6, -1, -1], "wheel: slot by direction, none at the centre (%s)" % [dirs])
+	var nine := []
+	for i in 9:
+		nine.append({"id": i, "label": "x%d" % i})
+	_check.call(RadialRequestWidget.fits(_req("menu", {"entries": sink}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": nine}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": []}))
+			and not RadialRequestWidget.fits(_req("menu", {"entries": sink, "actions": PackedStringArray(["HELP"])}))
+			and not RadialRequestWidget.fits(_req("popup", {"entries": sink})),
+			"wheel: only a menu of 1 to 8 entries without extra actions")
+	_show(_req("menu", {"entries": sink}))
+	var plain := ui.widget is ListRequestWidget
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink, "title": "Sink"}))
+	var w := ui.widget as RadialRequestWidget
+	_check.call(plain and w != null and not w.hold and ui.wheel_until == -1,
+			"wheel: a menu is a list unless E asked for a wheel; the wheel is used once")
+	w.aim(Vector2(0, -100))
+	var top := w.hovered
+	_key(KEY_ENTER)
+	_check.call(top == 0, "wheel: pointing up highlights the top slot")
+	_expect({"id": 7, "entry": 11}, "wheel: Enter picks it")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	w = ui.widget as RadialRequestWidget
+	_key(KEY_5)   # slot 5 (index 4): Empty, disabled
+	var refused := answers.is_empty()
+	_key(KEY_DOWN)
+	_key(KEY_LEFT)
+	_key(KEY_ENTER)
+	_check.call(refused and w.hovered == 6, "wheel: a greyed entry can't be picked; the arrows move to a slot")
+	_expect({"id": 7, "entry": 10}, "wheel: Left then Enter picks wash")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	w = ui.widget as RadialRequestWidget
+	w.hold = true
+	var kept := not w.release() and not w.done and not w.hold
+	w.hold = true
+	w.aim(Vector2(100, 0))
+	_check.call(kept and w.release(), "wheel: letting go at the centre keeps it open; pointing right, it picks")
+	_expect({"id": 7, "entry": 13}, "wheel: letting go of E picks fill")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	_key(KEY_3)
+	_expect({"id": 7, "entry": 13}, "wheel: 3 picks the third slot")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	_key(KEY_ESCAPE)
+	_expect({"id": 7, "cancel": true}, "wheel: Esc cancels")
+	var picks := [RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": 1})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": 99})),
+			RadialRequestWidget.default_id(_req("menu", {"entries": sink, "selected": "1"}))]
+	_check.call(picks == [11, null, null, null], "wheel: `selected` names an entry by index; missing or bad: none (%s)"
+			% [picks])
+	ui.want_wheel(5000, true)   # E let go already (no key is down in the tests): a tap
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	_expect({"id": 7, "entry": 11}, "wheel: a tap of E picks CDDA's default without showing the wheel")
+	ui.want_wheel(5000, true)
+	_show(_req("menu", {"entries": sink, "selected": 2}))   # the default is greyed (hostile): no pick
+	w = ui.widget as RadialRequestWidget
+	_check.call(answers.is_empty() and w != null and w.default_slot == -1 and not w.done,
+			"wheel: a greyed or missing default leaves the wheel up for a click")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink, "selected": 3}))
+	w = ui.widget as RadialRequestWidget
+	w.hold = true
+	w.tap_until = Time.get_ticks_msec() + 10000
+	_check.call(w.default_slot == 2 and w.release(), "wheel: letting go at the centre soon after E picks the default")
+	_expect({"id": 7, "entry": 13}, "wheel: the tap's default is fill")
+	ui.want_wheel(5000, false)
+	_show(_req("menu", {"entries": sink}))
+	var stick := InputEventJoypadMotion.new()
+	stick.axis = JOY_AXIS_LEFT_X
+	stick.axis_value = -1.0
+	ui.handle_input(stick)
+	var pad_a := InputEventJoypadButton.new()
+	pad_a.button_index = JOY_BUTTON_A
+	pad_a.pressed = true
+	ui.handle_input(pad_a)
+	_expect({"id": 7, "entry": 10}, "wheel: a pad's stick points left, A picks wash")
+	_check.call(InputActions.defaults(&"use_held").any(func(e: InputEvent) -> bool:
+			return e is InputEventJoypadButton and (e as InputEventJoypadButton).button_index == JOY_BUTTON_A),
+			"wheel: a pad's A is E by default")
+	InputMap.add_action(&"prompt_test_act")
+	var qk := InputEventKey.new()
+	qk.physical_keycode = KEY_Q
+	var pb := InputEventJoypadButton.new()
+	pb.button_index = JOY_BUTTON_X
+	InputMap.action_add_event(&"prompt_test_act", qk)
+	InputMap.action_add_event(&"prompt_test_act", pb)
+	var was := InputActions.pad_last
+	var press := InputEventJoypadButton.new()
+	press.button_index = JOY_BUTTON_B
+	press.pressed = true
+	InputActions.note_device(press)
+	var on_pad := InputActions.prompt_of(&"prompt_test_act")
+	var small := InputEventMouseMotion.new()
+	small.relative = Vector2(1, 0)   # a jiggle: still the pad
+	InputActions.note_device(small)
+	var still_pad := InputActions.pad_last
+	var typed := InputEventKey.new()
+	typed.physical_keycode = KEY_W
+	typed.pressed = true
+	InputActions.note_device(typed)
+	var on_keys := InputActions.prompt_of(&"prompt_test_act")
+	InputMap.erase_action(&"prompt_test_act")
+	InputActions.pad_last = was
+	_check.call(on_pad == "X" and still_pad and on_keys == InputActions.event_label(qk),
+			"prompts: after a pad button they name the pad's (%s), after a key the key (%s)" % [on_pad, on_keys])
+	ui.wheel_until = 0   # long past: a later menu is a list again
+	_show(_req("menu", {"entries": sink}))
+	_check.call(ui.widget is ListRequestWidget, "wheel: an old E press doesn't make a later menu a wheel")
+	ui.clear()
+	var path: String = preload("res://tests/test_dir.gd").path("hud_wheel.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	menu.set_option(&"context_menu", 7)
+	var refused_bad := hs.context_menu == HudSettings.MENU_HOLD
+	menu.menu_pick.select(HudSettings.MENU_LIST)
+	menu.menu_pick.item_selected.emit(HudSettings.MENU_LIST)
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(refused_bad and hs.context_menu == HudSettings.MENU_LIST and back.context_menu == HudSettings.MENU_LIST,
+			"wheel: the F1 option is checked, set and saved (%s)" % back.context_menu)
+	menu.free()
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[controls]\ncontext_menu=\"wheel\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.load_file(path)
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[controls]\ncontext_menu=9\n")
+	f.close()
+	var high := HudSettings.new()
+	high.load_file(path)
+	_check.call(junk.context_menu == HudSettings.MENU_HOLD and high.context_menu == HudSettings.MENU_LIST,
+			"wheel: a non-number in the file leaves hold, too high is clamped")
+
+## Handedness (HudSettings.main_hand, flat screen): the F1 picker sets and saves it, a bad value is ignored there and
+## in the file; keys 1 / 2 strike with the left / right hand whichever is main; the hands panel puts the main hand on
+## the left for a left-hander.
+func _test_main_hand(root: Node) -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_hands.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var right_first := hs.main_hand == "right" and not hs.left_handed() and menu.main_pick.selected == 0 \
+			and menu.main_pick.item_count == 2 and menu.main_pick.get_item_text(1) == "Left-handed"
+	menu.main_pick.select(1)
+	menu.main_pick.item_selected.emit(1)
+	menu.main_pick.item_selected.emit(7)
+	menu.set_option(&"main_hand", "both")
+	menu.set_option(&"main_hand", 1)
+	hs.main_hand = "LEFT"
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(right_first and hs.main_hand == "left" and back.main_hand == "left" and back.left_handed(),
+			"main hand: right unless picked; the F1 picker sets and saves left, bad values are ignored")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hands]\nmain=\"middle\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.main_hand = "left"
+	junk.load_file(path)
+	_check.call(junk.main_hand == "right", "main hand: anything else in the file is right")
+	_check.call(HudSettings.hand_for("left", false) == "off" and HudSettings.hand_for("right", false) == "main"
+			and HudSettings.hand_for("left", true) == "main" and HudSettings.hand_for("right", true) == "off",
+			"main hand: the left key strikes with the off hand, or the main one when left-handed")
+	var panel := HandsPanel.new()
+	root.add_child(panel)
+	panel.show_held({"seq": 1, "main": {"name": "knife"}, "off": {"name": "torch"}})
+	var right_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	panel.left_handed = true
+	var left_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	_check.call(right_rows == ["Left: torch", "Right: knife"] and left_rows == ["Left: knife", "Right: torch"],
+			"main hand: the hands panel shows a left-hander's main hand on the left (%s %s)" % [right_rows, left_rows])
+	panel.free()
+	menu.free()
+
+
 func _test_game_over(root: Node) -> void:
 	var said := [Main.game_over_text("ended", "saved and quit"), Main.game_over_text("ended", "the character died"),
 			Main.game_over_text("ended", "the game ended"), Main.game_over_text("ended", ""),

@@ -64,6 +64,8 @@ var _char_query := 0
 var _char_asked := 0
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
+const MAX_COOK_BATCH := 20         # L9: the bridge's cook `batch` range is 1..this
+const MAX_RECIPE := 128            # L9: a recipe id's bytes
 const MAX_KEPT_RESULTS := 32
 const QUERY_TIMEOUT_MS := 30000   # forgotten if no answer comes (a long prompt holds the sim up)
 ## Test range: the last info (no results), its seq, ops sent and waiting for a result (id -> msec sent).
@@ -588,10 +590,18 @@ func queue_action_at(action: String, square: Vector3i) -> bool:
 
 ## One item by its snapshot handle (uid + itype index), no menus; the sim checks it again and says why not in a
 ## message (contracts/bridge_api.md). JSON numbers arrive as floats: they are made ints here.
-## Take from square `pos` into hand "pack", "main" or "off".
-func take_item(uid: float, type: float, pos: Vector3i, hand := "pack") -> bool:
-	return _sim != null and _sim.queue_item_action({"op": "take", "item": int(uid), "type": int(type),
-			"pos": pos, "hand": hand})
+## Take from square `pos` into hand "pack", "main" or "off". L8: `container` + `container_type` (a handle_ok pair,
+## not the item itself; both -1 = none, the request as before) name the lying container on `pos` that holds the
+## item directly (one level). Only one of them, or a bad one: false, nothing sent.
+func take_item(uid: float, type: float, pos: Vector3i, hand := "pack", container := -1.0,
+		container_type := -1.0) -> bool:
+	var a := {"op": "take", "item": int(uid), "type": int(type), "pos": pos, "hand": hand}
+	if container != -1.0 or container_type != -1.0:
+		if not handle_ok(container, container_type) or container == uid:
+			return false
+		a["container"] = int(container)
+		a["container_type"] = int(container_type)
+	return _sim != null and _sim.queue_item_action(a)
 
 
 ## Put a carried item into a container: a carried one (worn, held), else the one on square `pos`;
@@ -670,17 +680,81 @@ func throw_item(uid: float, type: float, pos: Vector3i) -> bool:
 	return _sim != null and _sim.queue_item_action({"op": "throw", "item": int(uid), "type": int(type), "pos": pos})
 
 
-## Pour the liquid out of carried `uid` (a container, or the liquid itself) onto square `pos`: yours or one next
-## to it, all of it.
+## Pour the liquid out of `uid` (a container, carried or lying on your square or one next to it, e.g. a pot on its
+## burner; or the carried liquid itself) onto square `pos`: yours or one next to it, all of it. False when refused
+## here (nothing sent): no game, a bad handle or square.
 func pour_item(uid: float, type: float, pos: Vector3i) -> bool:
-	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type), "pos": pos})
+	if _sim == null or not handle_ok(uid, type) or not ItemActions.ok_square(pos):
+		return false
+	return bool(_sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type), "pos": pos}))
 
 
-## Pour the liquid out of carried `uid` into `container` (carried, or on or next to your square), as much as
-## fits; `pocket` -1 = CDDA's pick.
+## Pour the liquid out of `uid` (as for pour_item) into `container` (carried, or on or next to your square, e.g. a
+## pot), as much as fits; `pocket` -1 = CDDA's pick. False when refused here (nothing sent): no game, a bad handle,
+## pocket, or the container being the item itself.
 func pour_into(uid: float, type: float, container: float, container_type: float, pocket := -1) -> bool:
-	return _sim != null and _sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
-			"container": int(container), "container_type": int(container_type), "pocket": pocket})
+	if _sim == null or not handle_ok(uid, type) or not handle_ok(container, container_type) or container == uid \
+			or pocket < -1 or pocket > Snapshot.MAX_POCKET:
+		return false
+	return bool(_sim.queue_item_action({"op": "pour", "item": int(uid), "type": int(type),
+			"container": int(container), "container_type": int(container_type), "pocket": pocket}))
+
+
+## L9: cook `recipe` (an id match_recipes listed for this pot) from what pot `uid` lying on `pos` (your square or one
+## next to it) holds, `batch` 1..MAX_COOK_BATCH; the same recipe again goes on with that pot's paused craft (batch
+## unused). `tag` 1..MAX_ITEM_TAG (0: none) comes back in its `item_result` (done once the craft started or went on).
+## False when refused here (nothing sent): no game, a bad handle, square, recipe id (recipe_ok), batch or tag.
+func cook_item(uid: float, type: float, pos: Vector3i, recipe: String, batch := 1, tag := 0) -> bool:
+	if _sim == null or not handle_ok(uid, type) or not ItemActions.ok_square(pos) or not recipe_ok(recipe) \
+			or batch < 1 or batch > MAX_COOK_BATCH or tag < 0 or tag > MAX_ITEM_TAG:
+		return false
+	var a := {"op": "cook", "item": int(uid), "type": int(type), "pos": pos, "recipe": recipe, "batch": batch}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
+
+
+## L9: light a fire on square `pos` next to you (never your own) with carried firestarter `uid` + `type`, or with
+## both -1 the quickest carried one that works (CDDA's pick). CDDA's questions stay its popups; it needs fuel there.
+## `tag` as for cook_item. False when refused here (nothing sent): no game, a bad or half handle, a square not next
+## to `player` on its level, or a bad tag.
+func light_fire(pos: Vector3i, player: Vector3i, uid := -1.0, type := -1.0, tag := 0) -> bool:
+	if _sim == null or not ItemActions.ok_square(pos) or not ItemActions.ok_square(player) \
+			or not GrabController.adjacent(pos - player) or tag < 0 or tag > MAX_ITEM_TAG:
+		return false
+	var a := {"op": "light", "pos": pos}
+	if uid != -1.0 or type != -1.0:
+		if not handle_ok(uid, type):
+			return false
+		a["item"] = int(uid)
+		a["type"] = int(type)
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
+
+
+## L9: beat out the fire in the fire furniture (fireplace, stove, brazier ...) on `pos`, your square or one next to
+## it (CDDA's "Extinguish fire", 200 moves). `tag` as for cook_item. False when refused here (nothing sent): no game,
+## a square more than one step from `player` or on another level, a bad tag.
+func extinguish_fire(pos: Vector3i, player: Vector3i, tag := 0) -> bool:
+	if _sim == null or not ItemActions.ok_square(pos) or not ItemActions.ok_square(player) or pos.z != player.z \
+			or maxi(absi(pos.x - player.x), absi(pos.y - player.y)) > 1 or tag < 0 or tag > MAX_ITEM_TAG:
+		return false
+	var a := {"op": "extinguish", "pos": pos}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
+
+
+## A recipe id the bridge takes: 1..MAX_RECIPE characters of printable ASCII without spaces, quotes or backslashes.
+static func recipe_ok(r: String) -> bool:
+	if r.is_empty() or r.length() > MAX_RECIPE:
+		return false
+	for i in r.length():
+		var c := r.unicode_at(i)
+		if c <= 32 or c >= 127 or c == 34 or c == 39 or c == 92:
+			return false
+	return true
 
 
 ## L8: CDDA's own open (or close) of exactly the door, drawer or lid's furniture on `square`, one of the eight

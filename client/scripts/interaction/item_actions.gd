@@ -68,12 +68,35 @@ var _seq := 0   # seq of the newest snapshot seen
 var _snap: Snapshot   # the newest snapshot seen (unload / reload compare against it)
 
 
-## Takes `item` (lying on its square) into hand "pack", "main" or "off". False when refused here (nothing sent).
+## Takes `item` (lying on its square) into hand "pack", "main" or "off". L8: an item whose `parent` is set lies in
+## that container on the same square (one level); the container is taken only from the item's own parent, and only
+## while the newest snapshot lists it lying there (its itype from there). False when refused here (nothing sent).
 func take(item: ItemRef, hand := "pack") -> bool:
 	if not _ok_ref(item) or item.carried or not (hand in HANDS) or not ok_square(item.square):
 		return false
-	return _send("take", item, hand, Vector2(-1, -1), "take_item",
-			[float(item.uid), float(item.type), item.square, hand])
+	var args: Array = [float(item.uid), float(item.type), item.square, hand]
+	if item.parent != 0:
+		var ct := lying_type(_snap, item.parent, item.square)
+		if item.parent == item.uid or ct <= 0:
+			return false
+		args.append_array([float(item.parent), float(ct)])   # only then: a backend without containers takes 4 args
+	return _send("take", item, hand, Vector2(-1, -1), "take_item", args)
+
+
+## L8: the itype of item `uid` lying on square `sq` as `snap`'s handles list it; 0 when it isn't listed there (or
+## no snapshot).
+static func lying_type(snap: Snapshot, uid: int, sq: Vector3i) -> int:
+	if snap == null or uid <= 0 or not ok_square(sq):
+		return 0
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return 0
+	var tile := tile_of(sq)
+	var h := sm.handles
+	for i in range(0, h.size() - Snapshot.HANDLE_STRIDE + 1, Snapshot.HANDLE_STRIDE):
+		if h[i] == tile and h[i + 1] == uid:
+			return int(h[i + 2])
+	return 0
 
 
 ## Puts a carried `item` into `container` (carried, or lying in reach); `pocket` -1 = CDDA's pick.
@@ -462,7 +485,9 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 	var full := snap.carried.size() / Snapshot.CARRIED_STRIDE >= Snapshot.MAX_CARRIED
 	match e["op"]:
 		"take":
-			return Where.MOVED if row >= 0 else _on_square(snap, item)
+			if row >= 0:
+				return Where.MOVED
+			return _in_container(snap, item) if item.parent != 0 else _on_square(snap, item)
 		"drop":
 			if row >= 0:
 				return Where.STILL
@@ -477,6 +502,9 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 				return Where.UNKNOWN if full else Where.MOVED
 			var i := row * Snapshot.CARRIED_STRIDE
 			var same: bool = snap.carried[i + 2] == item.parent and snap.carried[i + 3] == item.pocket
+			# the off-hand item into its own pocket: CDDA only takes it out of the hand (the bridge's put)
+			var hands := Snapshot.CARRIED_WIELDED | Snapshot.CARRIED_OFFHAND
+			same = same and (snap.carried[i + 4] & hands) == (item.flags & hands)
 			return Where.STILL if same else Where.MOVED
 		"throw":
 			if row < 0:
@@ -514,6 +542,31 @@ func _on_square(snap: Snapshot, item: ItemRef) -> Where:
 	if sm == null or tile >= sm.vis.size() or sm.vis[tile] != 2:
 		return Where.UNKNOWN
 	return Where.STILL if handle_index(sm, tile, item.uid, item.type) >= 0 else Where.MOVED
+
+
+## L8: item `it` (its `parent` a container lying on its square) is still listed inside that container in `snap`.
+static func listed_inside(snap: Snapshot, it: ItemRef) -> bool:
+	if snap == null or it == null or it.parent <= 0 or lying_type(snap, it.parent, it.square) <= 0:
+		return false
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(it.square))
+	for r: Array in sm.inside.get(it.parent, []):
+		if r[0] == it.uid and r[1] == it.type:
+			return true
+	return false
+
+
+## L8: an item taken out of container item.parent lying on item.square: STILL while that container's `inside`
+## there still lists it; UNKNOWN when the square isn't seen, the container isn't listed there any more or its list
+## was cut short (`inside_more`); else MOVED (it left the container).
+func _in_container(snap: Snapshot, item: ItemRef) -> Where:
+	var sm: Snapshot.Submap = snap.submaps.get(CddaCoords.ms_to_sm(item.square))
+	var tile := tile_of(item.square)
+	if sm == null or tile >= sm.vis.size() or sm.vis[tile] != 2 or lying_type(snap, item.parent, item.square) <= 0:
+		return Where.UNKNOWN
+	for r: Array in sm.inside.get(item.parent, []):
+		if r[0] == item.uid and r[1] == item.type:
+			return Where.STILL
+	return Where.UNKNOWN if sm.inside_more.get(item.parent, 0) > 0 else Where.MOVED
 
 
 func _reason(e: Dictionary) -> String:

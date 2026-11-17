@@ -355,10 +355,11 @@ func _test_ui_rows() -> void:
 		_rig.press(_rig.off_ctrl(), "trigger_click")   # the trigger off the panel uses the picked row
 		_check.call(open and row >= 0 and asked.back() == want and not _rig.menu_open(),
 				"vr panel: the VR menu row `%s` asks for that menu and closes the settings menu (%s)" % [want, asked])
-	_check.call(asked.size() == 2 and VrSettings.save_file(_rig.settings, "user://vr_rows_test.json")
-			and not FileAccess.get_file_as_string("user://vr_rows_test.json").contains("inventory"),
+	var rows_file: String = preload("res://tests/test_dir.gd").path("vr_rows_test.json")   # this run's own folder
+	_check.call(asked.size() == 2 and VrSettings.save_file(_rig.settings, rows_file)
+			and not FileAccess.get_file_as_string(rows_file).contains("inventory"),
 			"vr panel: the menu rows are never saved as settings")
-	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://vr_rows_test.json"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(rows_file))
 	_rig.ui_asked.disconnect(on_ask)
 
 
@@ -378,7 +379,7 @@ func _test_report() -> void:
 	_check.call(parts.all(func(w: String) -> bool: return t.contains(w)) and not t.contains("nan"),
 			"vr report: the text has the runtime, controllers, changed settings, hands and the log's end
 %s" % t)
-	var dir := "user://vr_report_test"
+	var dir: String = preload("res://tests/test_dir.gd").path("vr_report_test")   # this run's own folder
 	var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
 	var path := VrReport.save(t, img, dir)
 	var saved := not path.is_empty() and FileAccess.get_file_as_string(path) == t \

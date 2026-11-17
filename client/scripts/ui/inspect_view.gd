@@ -7,7 +7,8 @@ extends Control
 ## the status line. Rows of items in flight are greyed and can't be dragged. Rebuilt on ItemActions.changed and
 ## when main shows a new snapshot (refresh), at most once a frame. No screen size, OS cursor or global mouse
 ## position is used, so it works inside a SubViewport (VR panel). Item names are game data: plain Label text only,
-## cleaned and capped by InventoryModel.
+## cleaned and capped by InventoryModel. Live item tiles: a row whose item has a live state (Snapshot.item_states)
+## shows it behind its text (ItemTileView: fill, temperature, spoilage, grime), with the amount and a tooltip line.
 ##
 ## Keys: Tab (the `inspect` action) opens it (main.gd, when allowed) and closes it, as does Esc; while open it
 ## takes those keys before the game (_input). Opening shows the mouse cursor, closing puts the old mouse mode back.
@@ -41,7 +42,6 @@ const ROW_H := 32.0              # rows, [ ] boxes and bar buttons: tall enough 
 const MAX_BATCH := 256           # items one drag moves, and the most that can be selected
 const MARQUEE_MIN_PX := 4.0      # a press on empty space that moves less is a click (selects none)
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
-const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
 const CANT_TAKE := "You can't take that now."
 
@@ -54,6 +54,19 @@ var mouse_hook := Callable()
 var cols: Array[Dictionary] = []
 ## The status line: the last refusal or local "can't".
 var status := ""
+## G2: what the character carries against what they can carry (CharacterData.carry, from the game's character
+## sheet), as two bars in the top line; hidden while the sheet doesn't say.
+var character: CharacterData:
+	set(v):
+		if character != null and character.changed.is_connected(_show_carry):
+			character.changed.disconnect(_show_carry)
+		character = v
+		if character != null:
+			character.changed.connect(_show_carry)
+		_show_carry()
+var _carry_box: HBoxContainer
+## G2: the hotbar (main's): while the view is open, a hotbar key puts the one selected item's type in that slot.
+var hotbar: Hotbar
 ## The rows picked to act on together: uid -> itype.
 var selection := {}
 
@@ -134,6 +147,11 @@ func _init(h: Hands, a: ItemActions) -> void:
 	_head = _label("", Color(1.0, 0.85, 0.3))
 	_head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(_head)
+	_carry_box = HBoxContainer.new()
+	_carry_box.name = "Carry"
+	_carry_box.add_theme_constant_override("separation", 8)
+	_carry_box.visible = false
+	top.add_child(_carry_box)
 	close_button = _bar_button("Close", close, "Close (Tab)", top)   # for a pointer alone (the VR panel)
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -217,6 +235,11 @@ func handle_key(event: InputEvent, allowed := true) -> bool:
 			and (k.physical_keycode == KEY_A or k.keycode == KEY_A):
 		select_all()
 		return true
+	if visible and hotbar != null:
+		for i in Hotbar.SLOTS:
+			if InputActions.pressed(event, Hotbar.action(i)):
+				_say(to_hotbar(i))
+				return true
 	var esc := k != null and k.pressed and not k.echo and k.physical_keycode == KEY_ESCAPE
 	var cancel := event is InputEventAction and event.is_pressed() and (event as InputEventAction).action == &"ui_cancel"
 	if visible and (esc or cancel):   # (ui_cancel: the VR panel's B / Y)
@@ -243,6 +266,38 @@ func _process(_delta: float) -> void:
 		rebuild()
 	if _batch_total > 0:
 		_run_batch()
+
+
+## [[text, how full 0..1+], ...] for the top line: weight, then volume, each when the sheet has it.
+static func carry_parts(c: Dictionary) -> Array:
+	var out := []
+	for k: Array in [["weight_g", "weight_max_g", "weight"], ["volume_ml", "volume_max_ml", "volume"]]:
+		var cur := int(c.get(k[0], -1))
+		var cap := int(c.get(k[1], -1))
+		if cur < 0 or cap <= 0:
+			continue
+		var t := (InventoryModel.weight_text(cur) + " of " + InventoryModel.weight_text(cap) if k[2] == "weight"
+				else InventoryModel.volume_text(cur) + " of " + InventoryModel.volume_text(cap))
+		out.append([t, float(cur) / float(cap)])
+	return out
+
+
+func _show_carry() -> void:
+	if _carry_box == null:
+		return
+	for c in _carry_box.get_children():
+		_carry_box.remove_child(c)
+		c.queue_free()
+	var parts := carry_parts(character.carry) if character != null else []
+	_carry_box.visible = not parts.is_empty()
+	for p: Array in parts:
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 1)
+		v.custom_minimum_size.x = 130
+		v.add_child(_label(p[0], DIM))
+		v.add_child(_fill_bar(p[1]))
+		_carry_box.add_child(v)
+	_carry_box.tooltip_text = "What you carry, from the game. Past the weight limit you are slowed and tire faster."
 
 
 ## Builds the columns again from the newest snapshot (now).
@@ -295,6 +350,19 @@ func group_slot(id: String, key: Variant) -> InspectSlot:
 ## Item `uid`'s [ ] box, null if its row isn't shown.
 func tick_box(uid: int) -> Label:
 	return _ticks.get(uid)
+
+
+## Live item tiles: item `uid`'s state from the newest snapshot (Snapshot.item_states) as an ItemTile, {} when the
+## snapshot has none for it or it shows nothing. Its row gets an ItemTileView behind it and the amount.
+func tile_of(uid: int) -> Dictionary:
+	var w: WorldView = hands.world if hands != null else null
+	if w == null or w.snapshot == null:
+		return {}
+	var s: Variant = w.snapshot.item_states.get(uid)
+	if s == null:
+		return {}
+	var t := ItemTile.of(s, w.tables)
+	return t if ItemTile.shows(t) else {}
 
 
 # --- selecting several ---
@@ -673,13 +741,20 @@ func _drop_one(data: Variant, target: Dictionary) -> String:
 				_say(CANT_TAKE)
 			refresh()
 			return "take" if ok else ""
-		"not_yet":
-			_say(p["why"])
+		"hold":
+			_say("")
+			var held := hands.hold(HAND, it, p["hand"])
+			if not held and status == "":
+				_say(CANT)
+			refresh()
+			return "hold" if held else ""
 	return ""
 
 
-## What a drop of `data` on `target` would do: {do: "move" (drop: for Hands.move) | "take" (hand) | "not_yet" (why)
-## | "none", item: ItemRef}.
+## What a drop of `data` on `target` would do: {do: "move" (drop: for Hands.move) | "take" (hand: a lying item) |
+## "hold" (hand: a carried one into CDDA's main or off hand, Hands.hold; worn ones have no rows) | "none",
+## item: ItemRef}. Onto the Hands column itself: the free hand (_free_hand); already in that hand: none. The
+## off-hand item onto its own pocket is a put: CDDA takes it out of the hand (it lies in that pocket all along).
 func plan(data: Variant, target: Dictionary) -> Dictionary:
 	var none := {"do": "none"}
 	var it := _dragged(data)
@@ -698,14 +773,19 @@ func plan(data: Variant, target: Dictionary) -> Dictionary:
 		return none
 	match col["kind"]:
 		"hands":
-			if it.carried:
-				return {"do": "not_yet", "item": it, "why": NOT_YET}
 			var hand: String = key if kind == "group" and key is String and key in ["main", "off"] else _free_hand()
-			return {"do": "take", "item": it, "hand": hand}
+			if not it.carried:
+				return {"do": "take", "item": it, "hand": hand}
+			if kind != "group" and (it.is_wielded() or it.is_off_hand()):
+				return none   # in a hand already: onto the column means nothing new
+			if it.flags & (Snapshot.CARRIED_WIELDED if hand == "main" else Snapshot.CARRIED_OFFHAND):
+				return none
+			return {"do": "hold", "item": it, "hand": hand}
 		"worn":
 			var c: ItemRef = col["container"]
 			var pocket: int = key if kind == "group" and key is int and key >= 0 else -1
-			if c == null or c.uid == it.uid or (it.carried and it.parent == c.uid and (pocket < 0 or pocket == it.pocket)):
+			if c == null or c.uid == it.uid or (it.carried and it.parent == c.uid and (pocket < 0 or pocket == it.pocket)
+					and not it.is_off_hand()):
 				return none
 			var d := {"kind": "container", "container": c}
 			if pocket >= 0:
@@ -950,6 +1030,18 @@ func _update_head() -> void:
 	_bar.visible = some or _batch_total > 0
 
 
+## G2: the one selected item's type into hotbar slot `i` (Hotbar.assign); returns the line to show.
+func to_hotbar(i: int) -> String:
+	if hotbar == null:
+		return ""
+	if selection.size() != 1:
+		return "Select one item, then press a hotbar key (%s to %s)." % [Hotbar.key_name(0),
+				Hotbar.key_name(Hotbar.SLOTS - 1)]
+	var tables := hands.world.tables if hands != null and hands.world != null else null
+	var d := tables.def_at("itype", int(selection.values()[0])) if tables != null else null
+	return hotbar.assign(i, d.id) if d != null else "That item can't go on the hotbar."
+
+
 func _say(text: String) -> void:
 	status = text
 	_status.text = text
@@ -1045,18 +1137,21 @@ static func _fill_tip(g: Dictionary) -> String:
 func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	var slot := _slot({"kind": "row", "column": col_id, "row": r})
 	slot.row = r
+	var depth := clampi(int(r["depth"]), 0, InventoryModel.MAX_DEPTH)
+	var uid: int = r["uid"]
+	var tile := tile_of(uid)
+	if not tile.is_empty():   # first: drawn behind the row
+		slot.add_child(ItemTileView.new(tile, INDENT * depth, uid))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 0)
 	slot.add_child(v)
 	var line := HBoxContainer.new()
 	v.add_child(line)
-	var depth := clampi(int(r["depth"]), 0, InventoryModel.MAX_DEPTH)
 	if depth > 0:
 		var pad := Control.new()
 		pad.custom_minimum_size.x = INDENT * depth
 		pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.add_child(pad)
-	var uid: int = r["uid"]
 	if r.get("item") is ItemRef:
 		var tick := _label(TICK_OFF, DIM)
 		tick.custom_minimum_size = Vector2(ROW_H, ROW_H)
@@ -1074,6 +1169,11 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(name_label)
+	var amount: String = tile.get("amount", "")
+	if amount != "":   # how much is in it, in the contents' colour (lightened to read on the dark panel)
+		var a := _label(amount, (tile["liquid"] as Color).lerp(Color.WHITE, 0.45))
+		a.name = "Amount"
+		line.add_child(a)
 	line.add_child(_label(InventoryModel.weight_text(r["weight_g"]), DIM))
 	var note: String = r["note"]
 	if note != "":
@@ -1082,6 +1182,8 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		v.add_child(n)
 	slot.tooltip_text = "%s\n%s, %s%s" % [r["name"], InventoryModel.weight_text(r["weight_g"]),
 			InventoryModel.volume_text(r["volume_ml"]), ("\n" + note) if note != "" else ""]
+	if not tile.is_empty():
+		slot.tooltip_text += "\n" + ItemTile.words(tile)
 	if r["pending"]:
 		slot.modulate = PENDING
 		slot.tooltip_text += "\n(moving)"

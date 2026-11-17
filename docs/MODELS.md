@@ -4,9 +4,10 @@ For anyone making models for the game. The game shows CDDA's world in 3D and VR.
 id (an item, a piece of furniture, terrain, a monster or a vehicle part). In VR, players pick models up, open
 them, pour from them and cook with them, so models need a few named points besides the mesh.
 
-Status: the client loads `.glb` models for furniture, traps, items and terrain (doors still use procedural
-shapes; monsters and vehicle parts don't load models yet). Ids without a model show simple placeholder
-shapes (PLAN.md H1, TASKS.md). A model that breaks the limits below is skipped with a warning in the
+Status: the client loads `.glb` models for furniture, traps, items, terrain and monsters (doors still use
+procedural shapes; NPCs and vehicle parts don't load models yet). Ids without a model show simple placeholder
+shapes (PLAN.md H1, TASKS.md). The first real models (41 items, 17 pieces of furniture) are from Kenney's
+CC0 kits, converted by `tools/models/kenney_convert.py` (credits: `assets/models/LICENSE.md`). A model that breaks the limits below is skipped with a warning in the
 console, and the placeholder shows instead.
 
 Art direction is still an open decision (PLAN.md: stylised low-poly or realistic). Agree on it with the project
@@ -33,8 +34,9 @@ owner before making many models, and keep one style across a set.
   itself:
   - Walls, windows and fences: the wall runs left to right in Front view (along X). The front is one face
     of the wall; the game doesn't know inside from outside yet, so make both faces look right.
-  - Stairs and ramps: the bottom step at the front, rising toward the back to 3 m. Longer flights repeat
-    the model on each tile for now.
+  - Stairs and ramps: the bottom step at the front, rising toward the back to 3 m. A longer flight of
+    stairs draws the model once per lane, stretched front to back over its tiles (make the steps look right
+    a little deeper); a ramp's model still repeats on each tile.
   - Floors, roofs and water: the whole tile surface; the model replaces the flat tile.
   - Trees, shrubs and other standing things: the game draws the ground under them, so model only the thing.
     Set `random_yaw` in the registry to turn them freely.
@@ -136,6 +138,18 @@ VR hand). The game reads them like this:
 - Collision (optional): a simple child mesh named `<name>-convcolonly` (the game makes it a convex collider
   and hides it). Without one the game uses the bounding box.
 
+## Monsters
+
+- One model per monster id (registry `"kind": "monster"`). A monster without one uses the model of its CDDA
+  `looks_like` id, else the game's simple placeholder figure.
+- Origin at the feet, centred; real size; the front as for everything else (−Y in Blender). The game turns
+  it to face where the monster goes.
+- Static meshes only for now (no skins or animations): the game bobs, lunges, flinches and tips over the
+  whole model. Flying monsters are lifted 1.3 m off the ground, like their placeholder.
+- The registry entry's `scale` (the model is kept within 20 m a side), `offset` (in the model's own axes)
+  and `material` (tint) apply.
+- A dead monster lying in an item pile is the same model, lying on its side, darker.
+
 ## Monster hit regions
 
 For the combat work. A monster model can mark where a shot hits which part of it:
@@ -143,16 +157,17 @@ For the combat work. A monster model can mark where a shot hits which part of it
 - Make each region a simple child mesh named `hit_<weak point id>`, for example `hit_head` or `hit_leg`.
   Use CDDA's weak point ids from the monster's JSON (`weakpoints`). The ones the game knows today:
   `head`, `eye`, `abdomen`, `belly`, `arm`, `leg`, `hindleg`, `wing`.
-- Humans and NPCs use CDDA's body part ids instead: `hit_head`, `hit_eyes`, `hit_mouth`, `hit_torso`,
+- Humans and human-shaped monsters (CDDA body type `human`) may use CDDA's body part ids instead: `hit_head`, `hit_eyes`, `hit_mouth`, `hit_torso`,
   `hit_arm_l`, `hit_arm_r`, `hit_hand_l`, `hit_hand_r`, `hit_leg_l`, `hit_leg_r`, `hit_foot_l`, `hit_foot_r`.
 - A region in several pieces gets a number per piece: `hit_leg_1`, `hit_leg_2` (rename Blender's `.001`
   suffixes, they break the name).
 - The region is the mesh's box (its bounding box in its own space), so keep them simple boxes or low-poly
-  hulls, and parent each to the bone or part that moves it.
-- A `hit_` id the monster's JSON doesn't list counts as its body.
+  hulls, and parent each to the part that moves it (models don't bend yet: everything moves with the model).
+- Ids are lower-case letters, digits and `_`, at most 32 characters. Regions count toward the 128 markers.
+- A `hit_` id the monster's JSON doesn't list (and, on a human-shaped body, that isn't a body part id) counts
+  as its body.
 - The game hides these meshes and uses them as hit zones. A monster model without them uses the zones of
-  its placeholder figure.
-- The client doesn't read them yet. Adding them now saves redoing the model later.
+  its placeholder figure (hidden, the same size as the placeholder would be).
 
 ## Weapons
 
@@ -201,6 +216,14 @@ Cooking and looting are the next VR features (PLAN.md L8, L9), so these CDDA ids
 - **Containers:** `jerrycan`, `bottle_plastic`, `can_beans`, `backpack`, `f_cupboard`, `f_dresser`,
   `f_fridge`, `f_counter`.
 - **Tools:** `hose`, `knife_butcher`.
+
+Done from Kenney's kits (2026-11-16, stylised low-poly): `pot`, `pan`, `f_oven`, `meat`, `meat_cooked`,
+`bottle_plastic`, `can_medium` (the can beans come in), `f_cupboard`, `f_counter`, `f_fridge` (doors that
+open, shelves as `surface_N`), the counter's `corner` join piece (off-centre: flush with the runs' backs, out
+to the tile's edges where they go on); also `f_trashcan` and `f_chest` with lids, `f_dresser` with drawers,
+`f_workbench`, `f_crate_o`, `f_crate_c`. Still wanted: `f_woodstove`, `f_fireplace`, `jerrycan`, `backpack`,
+`hose`, `knife_butcher`. Furniture that opens or holds items needs its doors, drawers and shelves as
+markers; without them it would lose the placeholder's opening by hand and its shelf heights.
 
 ## Licence and credit
 

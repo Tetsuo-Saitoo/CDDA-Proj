@@ -53,6 +53,9 @@ const MELEE_REACH_M := 3.5        # a melee pick looks this far (a reach weapon 
 const MELEE_KEEP_MS := 3000       # a melee aim answers the swing request this long after the strike key
 const MELEE_SQUARES := 2          # aimed strikes go to creatures this many squares off at most, along the 8 ways
 const AT_ACTION := "fp3d_attack_main_aim_at"   # the main hand's aimed strike at a square off the 8 ways
+const SMASH_AT := "smash_at"      # a strike key's smash: main sends CDDA's `smash` at smash_square (queue_action_at)
+# What a strike key smashes (LookRay's `what`): solid terrain but trees, closed doors, furniture.
+const SMASH_WHAT: Array[String] = ["wall", "window", "fence", "object", "door", "furniture"]
 const CALL_FAMILY := {"down": 2, "stun": 3, "disarm": 4}   # a swing answer's `action` -> the technique family
 const CALL_KEEP_MS := 5000        # a called technique's hit event counts as called this long after the answer
 const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
@@ -67,6 +70,7 @@ var crosshair: Crosshair
 var hits: HitFeedback             # hit confirmations from CDDA's events (main.gd feeds it)
 var _marker: MeshInstance3D
 var creature_view: CreatureView   # bullets hit its figures; null = CDDA rolls the shot as before
+var smash_square: Variant = null  # the square a SMASH_AT goes to (strike_action), null when none
 var wielded_gun := Callable()     # -> IdTables.Def of the wielded gun, or null (main.gd)
 var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or {}; shot requests fly from it
 ## () -> Dictionary: the eyes when the shown camera is away from them (C9 shoulder and top views,
@@ -361,16 +365,17 @@ func _melee_pick(origin: Vector3, seg: Vector3) -> Dictionary:
 	return {}
 
 
-## The technique family a strike at a figure's zone calls (the zone names of CreatureFigure.hit_zones): "head" and
-## "eye" call "stun"; "leg_l", "leg_r" and "leg" call "down"; "arm_l" and "arm_r" call "disarm"; "torso", "wing"
-## and anything else call nothing ("").
+## The technique family a strike at a figure's zone calls (CreatureFigure.hit_zones: the placeholder's zones, or a
+## model's weak point and body part ids): the head ("head", "eye", "eyes", "mouth") calls "stun"; a leg or foot
+## ("leg_l", "leg_r", "leg", "hindleg", "foot_l", "foot_r") "down"; an arm or hand ("arm_l", "arm_r", "arm",
+## "hand_l", "hand_r") "disarm"; the body ("torso", "abdomen", "belly"), "wing" and anything else nothing ("").
 static func technique_call(zone: String) -> String:
 	match zone:
-		"head", "eye":
+		"head", "eye", "eyes", "mouth":
 			return "stun"
-		"leg_l", "leg_r", "leg":
+		"leg_l", "leg_r", "leg", "hindleg", "foot_l", "foot_r":
 			return "down"
-		"arm_l", "arm_r":
+		"arm_l", "arm_r", "arm", "hand_l", "hand_r":
 			return "disarm"
 	return ""
 
@@ -378,16 +383,20 @@ static func technique_call(zone: String) -> String:
 ## The hand action for a strike key (`hand`: "main" or "off") from the player's square `me`: aimed
 ## ("fp3d_attack_<hand>_aim_<DIR>") at the creature under the crosshair through screen point `at` of `cam` when
 ## it is at most MELEE_SQUARES off along one of the 8 ways on this level (the main hand off the 8 ways: AT_ACTION,
-## as strike_segment); else a plain strike the way you face (`facing`, a direction name such as "LEFT").
+## as strike_segment); with no creature there but a wall, door, window or furniture next to you under it,
+## SMASH_AT (its square in smash_square: CDDA's smash, with what you wield, whichever hand's key); else a plain
+## strike the way you face (`facing`, a direction name such as "LEFT").
 func strike_action(hand: String, cam: Camera3D, at: Vector2, captured: bool, me: Vector3i, facing: String) -> String:
 	var plain := "fp3d_attack_%s_%s" % [hand, facing]
 	melee_aim = {}
+	smash_square = null
 	if cam == null or world == null or world.snapshot == null:
 		return plain
 	var line := shot_line(cam, at, captured)
 	var aim := melee_from(line[0], line[1])
 	if aim.is_empty():
-		return plain
+		smash_square = smash_at(line[0], line[1], me, line[2])
+		return SMASH_AT if smash_square != null else plain
 	var dir := strike_dir(me, aim["square"])
 	if dir == "":
 		if hand == "main" and strike_off_way(me, aim["square"]):
@@ -405,13 +414,35 @@ static func strike_off_way(me: Vector3i, to: Vector3i) -> bool:
 	return d.z == 0 and n >= 1 and n <= MELEE_SQUARES and strike_dir(me, to) == ""
 
 
-## The square a hand action goes to by queue_action_at: the kept melee aim's for AT_ACTION, else null. An
-## AT_ACTION with no square (null) isn't sent.
+## The square a hand action goes to by queue_action_at: the kept melee aim's for AT_ACTION, smash_square for
+## SMASH_AT (taken: one strike, one smash), else null. One with no square (null) isn't sent.
 func strike_square(act: String) -> Variant:
+	if act == SMASH_AT:
+		var at: Variant = smash_square
+		smash_square = null
+		return at if at is Vector3i else null
 	if act != AT_ACTION:
 		return null
 	var sq: Variant = melee_aim.get("square")
 	return sq if sq is Vector3i else null
+
+
+## The CDDA action a hand action is sent as: SMASH_AT is CDDA's "smash", any other goes as it is.
+static func cdda_action(act: String) -> String:
+	return "smash" if act == SMASH_AT else act
+
+
+## The square next to `me` (this level, one of the 8 around) whose wall, window, door or furniture (SMASH_WHAT) the
+## line from `origin` along `dir` meets first within MELEE_REACH_M, creatures left out; null when it meets
+## nothing, something else first (a floor, stairs) or a farther square. `skip_start` as LookRay.cast.
+func smash_at(origin: Vector3, dir: Vector3, me: Vector3i, skip_start := true) -> Variant:
+	if look_ray == null or not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 1e-12:
+		return null
+	var r := look_ray.cast(origin, dir.normalized(), MELEE_REACH_M, false, skip_start)
+	if not r.get("hit", false) or not str(r.get("what", "")) in SMASH_WHAT or not r.get("square") is Vector3i:
+		return null
+	var d: Vector3i = (r["square"] as Vector3i) - me
+	return r["square"] if d.z == 0 and maxi(absi(d.x), absi(d.y)) == 1 else null
 
 
 ## The direction name from square `me` to `to` when it lies 1..MELEE_SQUARES off along one of the 8 ways on the

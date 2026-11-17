@@ -64,6 +64,8 @@ var item_bodies: ItemBodies           # E2 item physics: the items near the play
 var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
+var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
+var hints: Hints                  # G6: one-time tips at the top right (flat screen)
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -73,10 +75,12 @@ var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold 
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
+var strain_cue: StrainCue         # the player's pain and low stamina at the view's edges (F3), under the hurt
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
+var item_looks: ItemLookView       # frost, heat, spoilage and liquid level on items lying near the player
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
@@ -128,6 +132,9 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
+	if not UserFiles.test_root().is_empty():   # a test or check run: its files aren't the player's
+		print("user files: " + UserFiles.test_root())
+	HudSettings.ensure_ambience_bus()   # G7: before the weather's players look for it
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
 	world.name = "World"
@@ -140,6 +147,10 @@ func _ready() -> void:
 	creature_view.name = "Creatures"
 	creature_view.smooth = str(_args.get("creatures", "smooth")) != "snap"
 	add_child(creature_view)
+	item_looks = ItemLookView.new()
+	item_looks.name = "ItemLooks"
+	item_looks.world = world
+	add_child(item_looks)
 	player_body = PlayerBody.new()
 	player_body.name = "PlayerBody"
 	add_child(player_body)
@@ -187,12 +198,18 @@ func _ready() -> void:
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
 	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	grab.context = _context_line
 	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
+	var tray := ItemTray.new()   # L8: the mouse's tray (`loot_tray`); VR has its own (VrRig.tray)
+	tray.world = world
+	tray.hands = hands
+	add_child(tray)
+	grab.tray = tray
 	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
 	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
 	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
@@ -207,6 +224,7 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		item_looks.body_slot = item_bodies.slot   # items in reach are bodies: their state shells follow them
 		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
 		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
 		item_placer = ItemPlacer.new()
@@ -227,6 +245,23 @@ func _ready() -> void:
 	inspect = InspectView.new(hands, item_actions)
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
+	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	hotbar = Hotbar.new()   # G2: 3..9 and 0 put a set item type into the main hand; set in the Tab view
+	hotbar.world = world
+	hotbar.actions = item_actions
+	var hb_why := hotbar.load_file()
+	if hb_why != "":
+		push_warning("hotbar: " + hb_why)
+	request_ui.get_parent().add_child(hotbar)
+	request_ui.get_parent().move_child(hotbar, inspect.get_index())   # under the Tab view and the prompts
+	inspect.hotbar = hotbar
+	inspect.opened.connect(func() -> void:
+		hotbar.show_empty = true
+		ItemTileView.stir(ItemTileView.OPEN_STIR)   # the liquids in the rows settle as it opens
+		if vr == null and hints != null:
+			hints.trigger("inspect"))
+	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
+	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
 		fp.set_process_unhandled_input(false))
@@ -239,6 +274,7 @@ func _ready() -> void:
 		hud_data.on_events([MockItems.message_event(t)]))
 	viewmodel = WeaponViewmodel.new()
 	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
+	viewmodel.left_handed = hud_settings.left_handed()   # a left-hander's gun rests on the left
 	fp.add_child(viewmodel)
 	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
 	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
@@ -346,6 +382,7 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
+	item_looks.apply(snap)
 	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
@@ -354,8 +391,16 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
 	character_data.update(hud_data, snap, world.tables)
-	if character.visible:
-		_ask_character()   # each new turn while shown (refused while the last one is still out)
+	# Each new turn while shown (refused while the last one is still out); the Tab view shows what is carried from
+	# the same sheet.
+	if character.visible or inspect.visible:
+		_ask_character()
+	if hotbar != null:
+		hotbar.refresh()   # G2: which slots are carried or in hand now
+	if hints != null and vr == null and live != null and _in_main_loop():
+		hints.trigger("start")   # G6: once, ever (seen ids are kept)
+		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
+			hints.trigger(id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -502,6 +547,7 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.gun.flashes = hud_settings.weather_flash   # its muzzle flash follows the flash setting too
 	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
@@ -655,7 +701,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else ProjectSettings.globalize_path(UserFiles.at("user://cdda"))
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if open_menu:   # after a game: the menu, never the command line's quick start or save again
@@ -722,6 +768,7 @@ func _show_main_menu(data_dir: String, user_dir: String) -> void:
 	main_menu.load_game.connect(func(w: String, sv: String) -> void:
 		_menu_started(center, live.start_load(data_dir, user_dir, w, sv)))
 	main_menu.quit_requested.connect(_quit)
+	main_menu.options_requested.connect(func() -> void: open_ui("keys"))
 	_boot_log("main menu")
 	main_menu.test_range_requested.connect(func() -> void:
 		key_menu.cheats_forced = true   # cheats are always allowed in the range
@@ -952,6 +999,8 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	if not request_ui.show_request(req):
 		push_warning("live: request without a usable id or kind: %s" % req)
+	elif vr == null and hints != null and not str(req.get("kind", "")) in ["chargen", "world_setup"]:
+		hints.trigger("prompt")   # G6: the first question from the game in play
 
 
 func _on_request_answered(a: Dictionary) -> void:
@@ -970,6 +1019,15 @@ func _on_live_events(events: Array) -> void:
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
 	if _log.size() > LOG_LINES:
 		_log = _log.slice(_log.size() - LOG_LINES)
+
+
+## Radial menus: the crosshair line for the furniture in the square you face (live, flat screen, in play).
+func _context_line() -> String:
+	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
+		return ""
+	var s: Vector2i = OCT_STEPS[_octant(Vector2(0, 1))]
+	return ContextPrompt.text(world.snapshot, world.tables, world.snapshot.player_pos + Vector3i(s.x, s.y, 0),
+			hud_settings.context_menu)
 
 
 func _octant(dir: Vector2) -> int:
@@ -996,6 +1054,13 @@ func _screen_step(dir: Vector2) -> Vector2i:
 
 ## Live-mode actions in the main loop (prompts take their keys in RequestUI first); true if used.
 func _live_action(event: InputEvent) -> bool:
+	for i in Hotbar.SLOTS:   # G2: a set item type into the main hand; why not goes to the message feed
+		if hotbar != null and InputActions.pressed(event, Hotbar.action(i)):
+			if _in_main_loop():
+				var why := hotbar.use(i)
+				if why != "":
+					hud_data.on_events([MockItems.message_event(why)])
+			return true
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
@@ -1013,14 +1078,17 @@ func _live_action(event: InputEvent) -> bool:
 		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
 		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
+		if vr == null and hud_settings.context_menu != HudSettings.MENU_LIST:   # the object's menu, if any, as a wheel
+			request_ui.want_wheel(WHEEL_WAIT_MS, hud_settings.context_menu == HudSettings.MENU_HOLD)
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# strike with the left or right hand (main or off by HudSettings.main_hand): the creature under the crosshair when it is within
 		# reach (an aimed strike, AimController.strike_action), else the square you face
-		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
+		var hand := HudSettings.hand_for("left" if InputActions.pressed(event, &"hand_off") else "right",
+				hud_settings.left_handed())
 		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
 		var cam := get_viewport().get_camera_3d()
 		act = "fp3d_attack_%s_%s" % [hand, facing]
@@ -1040,12 +1108,13 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## A hand or key action out to CDDA; a strike at a square (AimController.strike_square, a knight's move off) goes
-## by queue_action_at, and one whose square is gone isn't sent.
+## A hand or key action out to CDDA; a strike at a square (AimController.strike_square: a knight's move off, or a
+## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
+## isn't sent.
 func _queue_act(act: String) -> bool:
-	if act == AimController.AT_ACTION:
+	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
-		return sq is Vector3i and live.queue_action_at(act, sq)
+		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
 	return live.queue_action(act)
 
 
@@ -1370,12 +1439,56 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
+const BASE_LOOK := 0.003
+const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon after shows as a wheel   # the cameras' own look speed, radians per pixel
+
+
+## G7 options: the volume on the Master bus (headset too); the look speed, invert Y and field of view on the
+## flat-screen cameras; the 3D render scale, vsync and
+## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
+func _apply_options() -> void:
+	var o := hud_settings
+	for c: Camera3D in [fp, view_cam, camera]:
+		if c != null:
+			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
+	if fp != null:
+		fp.sensitivity = speed
+		fp.invert_y = o.invert_y
+	if camera != null:
+		camera.sensitivity = speed
+		camera.invert_y = o.invert_y
+	HudSettings.set_bus_loudness(0, o.volume)   # Master (bus 0): every sound, the Ambience bus's too
+	HudSettings.set_bus_loudness(AudioServer.get_bus_index(HudSettings.AMBIENCE_BUS), o.ambience_volume)
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED if o.vsync else DisplayServer.VSYNC_DISABLED)
+	var full := DisplayServer.window_get_mode() in [DisplayServer.WINDOW_MODE_FULLSCREEN,
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN]
+	if full != o.fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if o.fullscreen
+				else DisplayServer.WINDOW_MODE_WINDOWED)
+
+
+## G7: the menus' and the HUD's size (the window's content scale; the 3D view keeps its pixels), at start and when
+## the F1 menu closes, not while its slider moves (the menu would move under the mouse). Not with the headset (its
+## panels are their own viewports), for a screenshot or headless.
+func _apply_ui_scale() -> void:
+	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
+		return
+	get_window().content_scale_factor = HudSettings.clamp_to(hud_settings.ui_scale, HudSettings.UI_SCALES, 1.0)
+
+
 func _setup_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	strain_cue = StrainCue.new()   # pain and low stamina: over the mood's tint, under the hurt's
+	strain_cue.data = hud_data
+	layer.add_child(strain_cue)
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
@@ -1398,8 +1511,12 @@ func _setup_hud() -> void:
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
+	strain_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
+	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
+	_apply_options()
+	_apply_ui_scale()
 	look_panel = Label.new()
 	look_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	look_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
@@ -1411,6 +1528,7 @@ func _setup_hud() -> void:
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
+	hands_panel.left_handed = hud_settings.left_handed()
 	layer.add_child(hands_panel)
 	hud_view = HudView.new()
 	hud_view.data = hud_data
@@ -1434,6 +1552,13 @@ func _setup_hud() -> void:
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
 	key_menu.add_hud_settings(hud_settings)
+	hints = Hints.new()   # G6: one-time tips (the first turn, the first Tab view, the first question)
+	hints.persist = get_tree().get_script() == null   # a test runner's SceneTree script: never the player's file
+	var hints_why := hints.load_file() if hints.persist else ""   # nor read it: runs are the same everywhere
+	if hints_why != "":
+		push_warning("hints: " + hints_why)
+	layer.add_child(hints)
+	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
@@ -1442,9 +1567,17 @@ func _setup_hud() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
+		strain_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
+		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
-			viewmodel.flashes = hud_settings.weather_flash)
+			viewmodel.flashes = hud_settings.weather_flash
+		if vr != null:
+			vr.gun.flashes = hud_settings.weather_flash
+			viewmodel.left_handed = hud_settings.left_handed()
+		if hands_panel != null:
+			hands_panel.left_handed = hud_settings.left_handed()
+		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
@@ -1458,6 +1591,7 @@ func _open_key_menu() -> void:
 
 
 func _on_key_menu_closed() -> void:
+	_apply_ui_scale()
 	if vr == null:
 		_set_view(view_mode)   # cameras take their input again
 
@@ -1520,7 +1654,8 @@ func _demo_tick() -> void:
 
 
 func _process(_delta: float) -> void:
-	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible   # no camera or walking
+	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible \
+			or grab.tray_open()   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	if vr == null and view_mode == "top" and fp.z != _top_z:   # top-down: the cut follows the player's level
 		_top_z = fp.z
@@ -1537,6 +1672,8 @@ func _process(_delta: float) -> void:
 		cam.v_offset = o.y
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
+	grab.update_tray(get_viewport().get_camera_3d(), _pointer(), vr != null or key_menu.visible or inspect.visible
+			or character.visible or request_ui.visible or main_menu != null)
 	if typing or vr != null or (live != null and not _in_main_loop()):
 		pour.cancel()   # a menu or prompt took the keys: its release won't come here
 	elif pour.update(Time.get_ticks_msec()) == "refused":
@@ -1610,7 +1747,7 @@ func _act_help() -> String:
 	for a: StringName in InputActions.CDDA:
 		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
-	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
+	parts.append("%s use / examine what you face  %s/%s hold / put away (off hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
 	var p := pour.hint(world.tables)
 	if not p.is_empty():
@@ -1629,6 +1766,10 @@ static func _keys(actions: Array) -> String:
 	return "".join(ks) if short else "/".join(ks)
 
 
+func _input(event: InputEvent) -> void:
+	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if key_menu.visible or inspect.visible or character.visible:
 		return   # the inspect view and the character screen take their keys themselves (their _input)
@@ -1636,6 +1777,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
 		return
+	if vr == null and grab.tray_event(event, get_viewport().get_camera_3d(), _pointer(), _can_inspect()):
+		return   # L8: the tray opens on the bag or pile pointed at; while open it takes the clicks, Esc closes it
 	if inspect.handle_key(event, _can_inspect()):
 		return
 	if character.handle_key(event, _can_open_character()):

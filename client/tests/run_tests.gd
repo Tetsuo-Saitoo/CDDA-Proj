@@ -21,6 +21,7 @@ func _initialize() -> void:
 	OS.add_logger(_errors)
 	_test_error_catch()
 	_test_test_dir()
+	_test_user_files()
 	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
@@ -39,10 +40,12 @@ func _initialize() -> void:
 	await process_frame   # the root is in the tree from here on: the VR rig needs global transforms
 	preload("res://tests/vr_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/fp_tests.gd").new().run(root, _check, data, tables)
+	preload("res://tests/model_tests.gd").new().run_figures(root, _check)
 	preload("res://tests/door_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/part_tests.gd").new().run(root, _check, data, tables, _repo)
 	preload("res://tests/box_tests.gd").new().run(_check, data, tables, _scene, _repo)
 	preload("res://tests/shape_tests.gd").new().run(_check, _repo)
+	preload("res://tests/item_look_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/item_action_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/item_pick_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/hands_tests.gd").new().run(root, _check, data, tables)
@@ -57,7 +60,7 @@ func _initialize() -> void:
 	preload("res://tests/vr_hurt_tests.gd").new().run(root, _check)
 	preload("res://tests/vr_hud_tests.gd").new().run(root, _check, tables)
 	preload("res://tests/vr_cheats_tests.gd").new().run(root, _check)
-	preload("res://tests/vr_range_tests.gd").new().run(root, _check)
+	preload("res://tests/vr_range_tests.gd").new().run(root, _check, tables)
 	preload("res://tests/vr_cook_tests.gd").new().run(root, _check, tables)
 	preload("res://tests/inspect_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
@@ -125,6 +128,90 @@ func _test_test_dir() -> void:
 	DirAccess.remove_absolute(other.path_join(TestDir.STAMP))
 	DirAccess.remove_absolute(other)
 	DirAccess.remove_absolute(fresh)
+	# dir() empties a dead run's folder with this id, but keeps one this run made before any test asked for it.
+	var old := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 7))
+	DirAccess.make_dir_recursive_absolute(old)
+	var just_made := TestDir.made_by_this_run(old)
+	TestDir.stamp(old, 1)
+	_check(just_made and not TestDir.made_by_this_run(old) and not TestDir.made_by_this_run(old + "-none"),
+			"a folder made in this run is told from a dead run's and from none")
+	DirAccess.remove_absolute(old.path_join(TestDir.STAMP))
+	DirAccess.remove_absolute(old)
+
+
+## In a test run the game's own user:// files (settings, key bindings, reports, CDDA's folder) are this run's, not
+## the player's and not another run's (scripts/user_files.gd).
+func _test_user_files() -> void:
+	print("user files")
+	var root := UserFiles.test_root()
+	_check(root == TestDir.own().path_join("user"), "a test run keeps the game's user files in its own folder (%s)" % root)
+	_check(UserFiles.at("user://hud.cfg") == root.path_join("hud.cfg")
+			and UserFiles.at("user://bug_reports") == root.path_join("bug_reports")
+			and UserFiles.at(TestDir.path("x.cfg")) == TestDir.path("x.cfg")
+			and UserFiles.at(UserFiles.TEST_RUNS) == UserFiles.TEST_RUNS
+			and UserFiles.at("res://project.godot") == "res://project.godot",
+			"user:// paths go there; paths already under test-runs or outside user:// stay as they are")
+	UserFiles.set_test_root("user://elsewhere")
+	UserFiles.set_test_root(UserFiles.TEST_RUNS + "/../elsewhere")
+	_check(UserFiles.test_root() == root, "a folder outside test-runs is refused as the run's folder")
+	_check(UserFiles.at("user://../hud.cfg") == "" and UserFiles.at("user://a/../../hud.cfg") == "",
+			"a path with .. opens nothing in a test run")
+	_check(UserFiles.script_run(PackedStringArray(["--headless", "--path", "client", "--script", "res://tests/run_tests.gd"]))
+			and UserFiles.script_run(PackedStringArray(["-s", "x.gd"]))
+			and not UserFiles.script_run(PackedStringArray(["--headless", "--path", "client"]))
+			and UserFiles.script_run(OS.get_cmdline_args()),
+			"a --script start is known as a test run from Godot's arguments, before the main loop exists")
+	# What keeps the player's files, saved under its own default path: all in the run's folder, the player's untouched.
+	var files: Array[String] = [HudSettings.FILE, InputActions.FILE, VrSettings.FILE, Hints.FILE, Hotbar.FILE]
+	var before := files.map(func(f: String) -> int: return FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else -1)
+	var hints := Hints.new()
+	var bar := Hotbar.new()
+	var wrote := HudSettings.new().save_file() == OK and InputActions.save_bindings() == "" \
+			and VrSettings.save_file(VrSettings.DEFAULTS.duplicate()) and hints.save_file() == OK and bar.save_file() == OK
+	hints.free()
+	bar.free()
+	var there := files.all(func(f: String) -> bool: return FileAccess.file_exists(root.path_join(f.trim_prefix("user://"))))
+	var after := files.map(func(f: String) -> int: return FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else -1)
+	_check(wrote and there, "settings, key bindings, VR settings, hints and the hotbar save into the run's folder (%s)" % [files])
+	_check(before == after, "the player's own files are not written")
+	var cdda: String = ProjectSettings.globalize_path(UserFiles.at("user://cdda"))
+	_check(cdda.begins_with(ProjectSettings.globalize_path(root)), "CDDA's default folder is the run's too (%s)" % cdda)
+	for f in files:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(root.path_join(f.trim_prefix("user://"))))
+	# What a dead run with the same process id left as its user files goes; this run's own folder and anything
+	# outside a run's user files folder stay.
+	var dead := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 9))
+	DirAccess.make_dir_recursive_absolute(dead.path_join("user/bug_reports"))
+	FileAccess.open(dead.path_join("user/vr.json"), FileAccess.WRITE).store_string("{}")
+	FileAccess.open(dead.path_join("user/bug_reports/r.txt"), FileAccess.WRITE).store_string("x")
+	var now := int(Time.get_unix_time_from_system())
+	var kept := not UserFiles.drop_stale(dead.path_join("user"), now - 3600) and FileAccess.file_exists(dead.path_join("user/vr.json"))
+	var refused := not UserFiles.drop_stale(dead, now + 3600) and not UserFiles.drop_stale("user://", now + 3600) \
+			and not UserFiles.drop_stale(dead.path_join("user/../user"), now + 3600) and FileAccess.file_exists(dead.path_join("user/vr.json"))
+	var dropped := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not DirAccess.dir_exists_absolute(dead.path_join("user")) \
+			and DirAccess.dir_exists_absolute(dead)
+	_check(kept and refused and dropped, "a dead run's user files folder is removed, a newer one and anything else is not (%s %s %s)" % [kept, refused, dropped])
+	DirAccess.remove_absolute(dead)
+	# A check run of the game itself (--vr-check: VrCheck's scenarios) has its own folder too; a plain start doesn't.
+	_check(UserFiles.check_run(PackedStringArray(["--vr", "--vr-check=report,loot"])) and UserFiles.check_run(PackedStringArray(["--vr-check"]))
+			and not UserFiles.check_run(PackedStringArray(["--vr", "--live", "--vr-checks", "--vr-move=hand"]))
+			and not UserFiles.check_run(PackedStringArray()),
+			"--vr-check among the game's arguments makes a check run, nothing else does")
+	# The game started that way (headless, a few frames, no --script) says where its files go: a run folder of its own.
+	var out := []
+	var code := OS.execute(OS.get_executable_path(), PackedStringArray(["--headless", "--path",
+			ProjectSettings.globalize_path("res://"), "--quit-after", "5", "--", "--vr-check=report"]), out, true)
+	var said := ""
+	for chunk: String in out:
+		for line in chunk.split("\n"):
+			if line.begins_with("user files: "):
+				said = line.trim_prefix("user files: ").strip_edges()
+	var id := said.trim_prefix(TestDir.ROOT + "/" + TestDir.PREFIX).trim_suffix("/user")
+	_check(code == 0 and id.is_valid_int() and int(id) > 0 and int(id) != OS.get_process_id()
+			and said == TestDir.ROOT.path_join(TestDir.PREFIX + id).path_join("user"),
+			"the game started with --vr-check keeps its files in a run folder of its own (exit %d, \"%s\")" % [code, said])
+	if id.is_valid_int() and int(id) > 0 and int(id) != OS.get_process_id():
+		TestDir._remove_tree(TestDir.ROOT.path_join(TestDir.PREFIX + id))   # what that run made
 
 
 func _cast_freed() -> void:
@@ -388,6 +475,13 @@ func _test_id_tables(t: IdTables) -> void:
 	var base := {"generation": 3, "ter": [{"id": "t_null"}, {"id": "t_x", "flags": ["FLAT"], "connect_groups": ["WALL"]}],
 			"furn": [{"id": "f_null"}], "trap": [], "field": [], "itype": [{"id": ""}, {"id": "i_x", "volume_ml": 250}]}
 	_check(IdTables.from_data(base).is_valid(), "small tables valid")
+	var phased: Dictionary = base.duplicate(true)
+	phased["itype"].append_array([{"id": "i_water", "phase": "liquid"}, {"id": "i_odd", "phase": "lava"},
+			{"id": "i_gas", "phase": "gas"}])
+	var pt := IdTables.from_data(phased)
+	_check(pt.is_valid() and pt.def_named("itype", "i_water").phase == "liquid" and pt.def_named("itype", "i_gas").phase == "gas"
+			and pt.def_named("itype", "i_odd").phase == "" and pt.def_named("itype", "i_x").phase == "",
+			"itype phase: CDDA's four kept; unknown or missing: \"\"")
 	var bad := func(f: Callable, what: String) -> void:
 		var d: Dictionary = base.duplicate(true)
 		f.call(d)
@@ -401,6 +495,8 @@ func _test_id_tables(t: IdTables) -> void:
 	bad.call(func(d: Dictionary) -> void: d["ter"][1] = 5, "row not an object")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["id"] = "t".repeat(500), "id too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["id"] = 7, "id not a string")
+	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = 1, "phase not a string")
+	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = "p".repeat(500), "phase too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["name"] = "n".repeat(5000), "name too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = "FLAT", "flags not a list")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = [1], "flag not a string")

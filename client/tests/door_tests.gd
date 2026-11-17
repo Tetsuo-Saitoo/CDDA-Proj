@@ -298,6 +298,7 @@ func _test_parts(root: Node, world: WorldView) -> void:
 	_test_lid(holder, world)
 	_test_part_cdda(holder, world)
 	_test_part_locked(holder, world)
+	_test_part_feel(holder, world)
 	holder.free()
 	world.door_local = was_local
 	for k: Variant in world.door_state.keys():
@@ -534,6 +535,83 @@ func _test_part_cdda(holder: Node3D, world: WorldView) -> void:
 	world.door_wants.disconnect(f)
 	g.free()
 	c.free()
+
+
+## L8 feel: a grab against a stop counts one bump per arrival (open, shut, a locked part's play); a part without a
+## CDDA pair let go while moving goes on, slowing, to where it stops or to a stop; slowly let go, or with a pair, it
+## doesn't.
+func _test_part_feel(holder: Node3D, world: WorldView) -> void:
+	var at := Vector3(56, 0.6, 40)
+	var g := Grabbable.part(world, _drawer_spec("test_feel_drawer", at))
+	holder.add_child(g)
+	var h0 := g.handle_point()
+	g.begin_hand(h0)
+	g.drag_hand(h0 + Vector3(0, 0, -0.1))
+	var shut_held := g.bumps == 0
+	g.drag_hand(h0 + Vector3(0, 0, 0.6))
+	g.drag_hand(h0 + Vector3(0, 0, 0.7))
+	var one := g.bumps == 1 and g.last_bump == "open"
+	g.drag_hand(h0 + Vector3(0, 0, 0.2))
+	g.drag_hand(h0 + Vector3(0, 0, 0.6))
+	var two := g.bumps == 2
+	g.drag_hand(h0 + Vector3(0, 0, -0.2))
+	_check.call(shut_held and one and two and g.bumps == 3 and g.last_bump == "shut",
+			"parts feel: a grab against a stop bumps once per arrival (open, open again, shut; %d %s)" % [g.bumps, g.last_bump])
+	g.end_grab()
+	# A shove out: 0.1 -> 0.14 m over two 20 ms frames (2 m/s raw, 0.75 m/s measured), let go: it slides on.
+	g.begin_grab(g.handle_point())
+	g.set_amount(0.1)
+	g._process(0.02)
+	g.set_amount(0.12)
+	g._process(0.02)
+	g.set_amount(0.14)
+	g._process(0.02)
+	g.end_grab()
+	for i in 30:
+		g._process(0.05)
+	var slid := g.amount
+	_check.call(slid > 0.2 and slid < g.max_amount and not g.is_processing(),
+			"parts feel: a drawer let go while sliding out slides on and slows to a stop (%.3f m)" % slid)
+	g.begin_grab(g.handle_point())
+	g._process(0.02)
+	g.set_amount(slid - 0.04)
+	g._process(0.02)
+	g.end_grab()
+	for i in 30:
+		g._process(0.05)
+	_check.call(g.amount == 0.0, "parts feel: a shove in shuts it against its stop (%.3f m)" % g.amount)
+	g.begin_grab(g.handle_point())
+	g._process(0.02)
+	g.set_amount(0.005)
+	g._process(0.02)
+	g.end_grab()
+	for i in 5:
+		g._process(0.05)
+	_check.call(g.amount == 0.0, "parts feel: let go slowly it doesn't slide on (under 8 %: shuts)")
+	g.free()
+	var ls := _drawer_spec("test_feel_locked", Vector3(60, 0.6, 40))
+	ls["locked"] = true
+	var d := Grabbable.part(world, ls)
+	holder.add_child(d)
+	var l0 := d.handle_point()
+	d.begin_hand(l0)
+	d.drag_hand(l0 + Vector3(0, 0, 0.3))
+	d.drag_hand(l0 + Vector3(0, 0, 0.35))
+	_check.call(d.bumps == 1 and d.last_bump == "locked", "parts feel: a locked drawer bumps 'locked' at its play")
+	d.end_grab()
+	d.free()
+	var ps := _lid_spec("test_feel_safe", Vector3(64, 0.5, 40))
+	ps["open_id"] = "f_safe_o"
+	ps["close_id"] = "f_safe_c"
+	var p := Grabbable.part(world, ps)
+	holder.add_child(p)
+	p.begin_grab(p.handle_point())
+	p._process(0.02)
+	p.set_amount(0.2)
+	p._process(0.02)
+	p.end_grab()
+	_check.call(p._coast == 0.0, "parts feel: a part with a CDDA pair never swings on by itself")
+	p.free()
 
 
 func _test_part_locked(holder: Node3D, world: WorldView) -> void:

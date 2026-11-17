@@ -451,6 +451,25 @@ func hand_over(from_id: String, to_id: String, into := "") -> bool:
 	return false
 
 
+## Moves carried item `it` into CDDA's hand `into` ("main": wield; "off": held there, it stays in its pocket)
+## without any copy changing hands (the Tab view's drag onto a hand; VR's quick switch out of the pack). Refusals
+## (a full hand: nothing is ever put away to make room) come through `refused` naming `id`; done, a hand showing it
+## holds it as CDDA has it then. False (nothing sent) when it isn't carried, is worn, is in that hand already or has
+## an action in flight.
+func hold(id: String, it: ItemRef, into: String) -> bool:
+	if it == null or not it.carried or (it.flags & Snapshot.CARRIED_WORN) != 0 or not (into in ["main", "off"]):
+		return false
+	if actions.pending(it.uid) != "" or _then.has(it.uid) or _handing.has(it.uid):
+		return false
+	if (it.flags & (Snapshot.CARRIED_WIELDED if into == "main" else Snapshot.CARRIED_OFFHAND)) != 0:
+		return false
+	_owner[it.uid] = id   # before the call: a backend may answer inside it (MockItems)
+	if actions.hold(it, into):
+		return true
+	_owner.erase(it.uid)
+	return false
+
+
 ## Whether hand `id`'s copy is kept upright now (tests, VR).
 func keeps_upright(id: String) -> bool:
 	return _hands.has(id) and _keeps_upright(_hands[id])
@@ -476,6 +495,8 @@ func take(id: String, target: Dictionary, where := "pack") -> bool:
 		return false
 	var it: ItemRef = target["item"]
 	var now := picker.by_uid(it.uid)   # a stale target: carried or gone since
+	if it.parent != 0:   # L8: one inside a lying container (the tray) isn't the picker's; the snapshot still lists it there
+		now = it if ItemActions.listed_inside(world.snapshot, it) else null
 	if it.carried or now == null or now.carried or not _usable(it):
 		return false
 	_owner[it.uid] = id

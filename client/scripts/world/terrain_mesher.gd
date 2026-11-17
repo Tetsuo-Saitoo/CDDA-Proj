@@ -45,7 +45,19 @@ const GROUND := "ground"
 const CEILING := Color(0.82, 0.81, 0.78)
 const CEILING_SHARE := 0.75
 const WET_ROUGHNESS := 0.35
+const SNOW_SHADER := preload("res://shaders/snow_cover.gdshader")
+const SNOW_PERIOD := 512   # squares: the snow's patches repeat this often (the shader's PERIOD)
+static var _snow: ShaderMaterial   # the snow pass over the ground (snow_ground), made on first use
 const WET_SPECULAR := 0.8
+const PUDDLE_SHADER := preload("res://shaders/puddle.gdshader")
+const PUDDLE_GROUP := &"terrain_puddles"   # the submaps' puddle meshes (WorldView), hidden while none shows
+const PUDDLE_ONE_IN := 5      # about one open-ground floor square in this many has a puddle
+const PUDDLE_SIDES := 10      # rim points of a puddle's disc
+const PUDDLE_Y := 0.012       # a puddle lies this far above the ground
+const PUDDLE_FIRST := 0.15    # the puddle level the first puddles start to fill at (puddle_ground)
+const PUDDLE_LAST := 0.85     # and the last
+static var _puddle_mat: ShaderMaterial   # the puddles' material (puddle_material), made on first use
+static var puddles_shown := false    # puddle_ground's level shows any puddle: the puddle meshes are visible
 const WET_TINT := Color(0.72, 0.74, 0.78)
 static var _materials := {}
 static var _materials_lock := Mutex.new()
@@ -55,6 +67,7 @@ class Buf:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
+	var uvs := PackedVector2Array()   # only puddles have them (fan)
 
 	## Four corners in order around the face; fixes the winding so the face looks along n.
 	func quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, n: Vector3, col: Color) -> void:
@@ -106,6 +119,20 @@ class Buf:
 		quad(a, b, c, d, Vector3.UP, col)
 		quad(a, b, c, d, Vector3.DOWN, TerrainMesher.ceiling_color(col))
 
+	## One triangle of a puddle's disc (TerrainMesher._puddle), facing up: its centre c and two rim points given as
+	## offsets from c. Each vertex keeps its offset (UV) and, in its colour, 0 at the centre or 1 on the rim (red)
+	## and the level the puddle starts to fill at (alpha).
+	func fan(c: Vector3, a: Vector3, b: Vector3, start: float) -> void:
+		if a.cross(b).dot(Vector3.UP) > 0.0:
+			var t := a
+			a = b
+			b = t
+		for v: Vector3 in [Vector3.ZERO, a, b]:
+			verts.push_back(c + v)
+			normals.push_back(Vector3.UP)
+			colors.push_back(Color(0.0 if v == Vector3.ZERO else 1.0, 0.0, 0.0, start))
+			uvs.push_back(Vector2(v.x, v.z))
+
 	func commit(mesh: ArrayMesh, material: Material) -> void:
 		if verts.is_empty():
 			return
@@ -114,6 +141,8 @@ class Buf:
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		arrays[Mesh.ARRAY_NORMAL] = normals
 		arrays[Mesh.ARRAY_COLOR] = colors
+		if not uvs.is_empty():
+			arrays[Mesh.ARRAY_TEX_UV] = uvs
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, material)
 
@@ -122,6 +151,7 @@ class Result:
 	var terrain: ArrayMesh   # null when empty
 	var roof: ArrayMesh
 	var caps: ArrayMesh
+	var puddles: ArrayMesh   # null when none: the puddles on the open ground (_puddle), drawn by the weather
 	var vertices := 0
 	## Door leaves to swing: {square, local (corner in the submap), along_x, color, glass, open, locked}.
 	var doors: Array[Dictionary] = []
@@ -139,6 +169,7 @@ var _outdoor: Buf    # squares under the open sky (material "ground": the weathe
 var _glass: Buf
 var _roof: Buf
 var _caps: Buf
+var _puddles: Buf
 var _doors: Array[Dictionary] = []
 var _models := {}
 var _roof_models := {}
@@ -162,6 +193,7 @@ func build(sm_pos: Vector3i) -> Result:
 	_glass = Buf.new()
 	_roof = Buf.new()
 	_caps = Buf.new()
+	_puddles = Buf.new()
 	_doors = []
 	_models = {}
 	_roof_models = {}
@@ -181,10 +213,13 @@ func build(sm_pos: Vector3i) -> Result:
 				_roof.slab(o, H, Color(0.32, 0.3, 0.3))
 	var r := Result.new()
 	r.vertices = (_indoor.verts.size() + _outdoor.verts.size() + _glass.verts.size() + _roof.verts.size()
-			+ _caps.verts.size())
+			+ _caps.verts.size() + _puddles.verts.size())
 	r.terrain = _mesh([_outdoor, _indoor, _glass], [GROUND, "solid", "glass"])
 	r.roof = _mesh([_roof], [GROUND])
 	r.caps = _mesh([_caps], ["solid"])
+	if not _puddles.verts.is_empty():
+		r.puddles = ArrayMesh.new()
+		_puddles.commit(r.puddles, puddle_material())
 	r.doors = _doors
 	r.models = _models
 	r.roof_models = _roof_models
@@ -204,6 +239,8 @@ func _tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 				_wedge(p, o, hs, st.color)   # a ramp's low end
 			elif floor_ok:
 				_solid.slab(o, 0.0, st.color)
+				if _solid == _outdoor:
+					_puddle(p, o)
 		K.ROOF:
 			if floor_ok:
 				_roof.slab(o, ROOF_LIFT, st.color)
@@ -241,13 +278,15 @@ func _tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 ## then the entry's offset and scale). Facing: walls and windows with their run along the model's x (front
 ## +z out of the wall: south for an east-west run, east for a north-south one), fences the same over the
 ## fences they join, stairs and ramps with the bottom step at the front and rising toward the back (the
-## flight's rise direction), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
+## flight's rise direction; a stairs model is drawn once per lane of its flight, by the bottom square,
+## stretched along the lane), the rest unturned (+z south) or turned freely with `random_yaw`. Floor, roof
 ## and water models replace their slab; standing things (trees, shrubs, ladders, fences, boxes) keep the
 ## ground slab under them; walls, windows, stairs and tree tops are the model alone.
 func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) -> void:
 	var y := 0.0
 	var facing := UNTURNED
 	var free := false
+	var lane := Vector3.ZERO   # a stairs model's lane: from its middle back to the bottom square's centre
 	match st.kind:
 		K.FLOOR:
 			if not floor_ok:
@@ -264,7 +303,12 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 			_fence_base(o, st, floor_ok)
 			facing = UNTURNED if _fence_joins(p, st, 1) or _fence_joins(p, st, 3) else 1
 		K.STAIRS_UP, K.RAMP_UP:
-			facing = (_flight(p).x + 2) % 4
+			var f := _flight(p)
+			facing = (f.x + 2) % 4
+			if st.kind == K.STAIRS_UP:
+				if f.y > 0:
+					return   # the bottom square draws the lane
+				lane = Vector3(DIRS[f.x].x, 0, DIRS[f.x].y) * (f.z - 1)
 		_:
 			_ground(o, floor_ok)
 			free = st.random_yaw
@@ -273,8 +317,10 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 		var rng := RandomNumberGenerator.new()
 		rng.seed = square_hash(p)
 		yaw = rng.randf() * TAU
-	var xf := Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale),
-			o + Vector3(0.5, y, 0.5) + st.offset) * MODEL_TURN
+	var basis := Basis(Vector3.UP, yaw).scaled(Vector3.ONE * st.scale)
+	if lane != Vector3.ZERO:   # front to back (model z, along the rise) over the lane's squares
+		basis = basis * Basis.from_scale(Vector3(1, 1, lane.length() + 1))
+	var xf := Transform3D(basis, o + Vector3(0.5, y, 0.5) + st.offset + lane * 0.5) * MODEL_TURN
 	var md := _roof_models if st.kind == K.ROOF else _models
 	if not md.has(st.model):
 		md[st.model] = []
@@ -393,6 +439,27 @@ func _steps(p: Vector3i, o: Vector3, count: int, col: Color) -> void:
 ## stair_flight for the stairs or ramp at p, over this snapshot (terrain models rise along it).
 func _flight(p: Vector3i) -> Vector3i:
 	return stair_flight(p, _kind_at, _style_at(p).kind, _walk)
+
+
+## A puddle on about one open-ground floor square in PUDDLE_ONE_IN, chosen by the square so it stays put: a flat,
+## uneven disc inside the square, which starts to fill at its own level between PUDDLE_FIRST and PUDDLE_LAST
+## (Buf.fan; the puddle shader grows it from nothing as puddle_ground's level rises).
+func _puddle(p: Vector3i, o: Vector3) -> void:
+	var h := square_hash(p)
+	if h % PUDDLE_ONE_IN != 0:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = h ^ 0x5eed
+	var c := o + Vector3(0.5 + rng.randf_range(-0.05, 0.05), PUDDLE_Y, 0.5 + rng.randf_range(-0.05, 0.05))
+	var r := rng.randf_range(0.24, 0.38)
+	var start := rng.randf_range(PUDDLE_FIRST, PUDDLE_LAST)
+	var turn := rng.randf() * TAU
+	var rim: Array[Vector3] = []
+	for i in PUDDLE_SIDES:   # at most 0.05 + 0.38 * 1.15 from the square's middle: inside it
+		var a := turn + TAU * i / PUDDLE_SIDES
+		rim.append(Vector3(cos(a), 0.0, sin(a)) * r * rng.randf_range(0.8, 1.15))
+	for i in PUDDLE_SIDES:
+		_puddles.fan(c, rim[i], rim[(i + 1) % PUDDLE_SIDES], start)
 
 
 ## Stable non-negative hash of an absolute square (random yaw, item slots: never changes between rebuilds).
@@ -766,6 +833,50 @@ static func wet_ground(wet: float) -> void:
 	m.roughness = lerpf(0.9, WET_ROUGHNESS, w)
 	m.metallic_specular = lerpf(0.5, WET_SPECULAR, w)
 	m.albedo_color = Color.WHITE.lerp(WET_TINT, w)
+
+
+## How much of the open ground and roofs lies under snow, 0 bare .. 1 covered: a pass over the ground material
+## (shaders/snow_cover.gdshader: white on what faces up, in patches that grow with `cover`), none at 0. `origin_ms`:
+## the bubble's origin, so the patches stay put on the map when it shifts. Main thread.
+static func snow_ground(cover: float, origin_ms: Vector3i) -> void:
+	var m := material(GROUND)
+	var c := clampf(cover, 0.0, 1.0) if is_finite(cover) else 0.0
+	if c <= 0.0:
+		m.next_pass = null
+		return
+	if _snow == null:
+		_snow = ShaderMaterial.new()
+		_snow.shader = SNOW_SHADER
+		_snow.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the ground
+	_snow.set_shader_parameter(&"cover", c)
+	_snow.set_shader_parameter(&"origin_m", Vector2(posmod(origin_ms.x, SNOW_PERIOD), posmod(origin_ms.y, SNOW_PERIOD)) * CddaCoords.TILE_M)
+	m.next_pass = _snow
+
+
+## How full the puddles on the open ground are, 0 none .. 1 full: each starts to fill at its own level (PUDDLE_FIRST
+## .. PUDDLE_LAST) and is full at 1. Up to PUDDLE_FIRST none shows and the puddle meshes in `tree` (PUDDLE_GROUP;
+## may be null) are hidden, so dry weather draws nothing. Main thread.
+static func puddle_ground(level: float, tree: SceneTree) -> void:
+	var l := clampf(level, 0.0, 1.0) if is_finite(level) else 0.0
+	puddle_material().set_shader_parameter(&"level", l)
+	var on := l > PUDDLE_FIRST
+	if on != puddles_shown:
+		puddles_shown = on
+		if tree != null:
+			tree.set_group(PUDDLE_GROUP, "visible", on)
+
+
+## The puddles' shared material (shaders/puddle.gdshader, before the light pass), made on first use by whichever
+## thread asks first (see material).
+static func puddle_material() -> ShaderMaterial:
+	_materials_lock.lock()
+	if _puddle_mat == null:
+		_puddle_mat = ShaderMaterial.new()
+		_puddle_mat.shader = PUDDLE_SHADER
+		_puddle_mat.render_priority = WorldLighting.UNDER_PRIORITY   # darkened by the light pass, like the ground
+	var m := _puddle_mat
+	_materials_lock.unlock()
+	return m
 
 
 ## The shared material `name` ("solid", "ground" or "glass"), made on first use by whichever thread asks first: the meshing
