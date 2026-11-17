@@ -6,7 +6,9 @@ extends SceneTree
 ## answer with a message instead (CDDA's "nothing to ..."): that is reported, not failed, except for the keys whose
 ## list or direction prompt is sure (KEYS). Last, F1 in the game: a free key goes in inventory's next key slot by
 ## the slot's button (saved in this run's folder, never the player's keys file), Esc closes the menu, and the new
-## key opens the inventory. Then the screen HUD: body bars, needs, move line and message feed from the live game.
+## key opens the inventory. Before that the Tab view's numbers from the live snapshot (a stack's count, a bottle
+## with water, nothing counted twice). Then the screen HUD: body bars, needs, move line and message feed from the
+## live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
 ## puts it away. Then F3's classic view of the map around the player. Uses this run's own CDDA folder, never the
 ## player's saves.
@@ -114,6 +116,7 @@ func _run() -> void:
 			_check(false, "the game stopped after %s (%s %s)" % [k[0], _live.state, _live.error])
 			break
 	if _live.state == "running":
+		await _counts_live()   # before anything is poured out or eaten
 		await _rebind_live(&"cdda_inventory")
 		_hud_live()
 		await _hands_live()
@@ -426,6 +429,91 @@ func _pour_live() -> void:
 
 ## Presses `action`'s key (`ev`, else its first binding) in the main loop; CDDA's answer must show (and be the
 ## `want` kind, when set), and Esc must bring the game back to its main loop.
+## The Tab view's numbers in the live game (InventoryModel over the live snapshot, the bridge's item_amounts), with
+## the test kit carried: a stack lists its count as CDDA writes it, a bottle with water has CDDA's own weight and
+## volume, and what lies inside an item with CDDA's totals isn't added to its column a second time. The numbers
+## are printed.
+func _counts_live() -> void:
+	var got := {}
+	var look := func() -> bool:
+		got.clear()
+		got.merge(_tab_numbers())
+		return got.has("bottle") and got.has("stack")
+	if not await _until(look, ASK_TIMEOUT_MS, true):
+		_check(false, "Tab: a carried stack and a bottle with water are listed with CDDA's numbers (columns %s, stack %s, bottle %s)"
+				% [got.get("ids", []), got.has("stack"), got.has("bottle")])
+		return
+	var tables: IdTables = _main.world.tables
+	var stack: Dictionary = got["stack"]
+	var bottle: Dictionary = got["bottle"]
+	var water: Dictionary = got["water"]
+	var col: Dictionary = got["column"]
+	var listed := InventoryModel.row_name(stack)
+	_check(listed == "%s (%d)" % [stack["name"], stack["count"]], "Tab: a carried stack lists CDDA's count: \"%s\" (%d g, %d ml)"
+			% [listed, stack["weight_g"], stack["volume_ml"]])
+	var b: ItemRef = bottle["item"]
+	print("    bottle \"%s\": %d g, %d ml with what is in it (its type alone: %d g, %d ml); in it \"%s\": %d g, %d ml"
+			% [InventoryModel.row_name(bottle), bottle["weight_g"], bottle["volume_ml"], b.weight_g(tables), b.volume_ml(tables),
+			InventoryModel.row_name(water), water["weight_g"], water["volume_ml"]])
+	# (a gram of rounding between the three numbers is fine)
+	_check(int(water["weight_g"]) > 0 and int(bottle["weight_g"]) >= b.weight_g(tables) + int(water["weight_g"]) - 1
+			and int(bottle["volume_ml"]) > 0, "Tab: the bottle's weight is CDDA's, with the water in it (%d g; the water %d g)"
+			% [bottle["weight_g"], water["weight_g"]])
+	var sums := _column_sums(col)
+	var once: Vector2i = sums[0]
+	var all: Vector2i = sums[1]
+	_check(int(col["cut"]) == 0 and int(col["weight_g"]) == once.x and int(col["volume_ml"]) == once.y and all.x > once.x,
+			"Tab: what is inside isn't counted twice: column \"%s\" %d g, %d ml = its rows counted once (%d g, %d ml; %d g with the insides again)"
+			% [col["id"], col["weight_g"], col["volume_ml"], once.x, once.y, all.x])
+
+
+## InventoryModel's columns over the live snapshot, the ground left out: {ids (the columns), bottle + water + column
+## (a carried container with CDDA's totals, the water right inside it, their column), stack (a carried row with
+## CDDA's count over 1, not the water)}.
+func _tab_numbers() -> Dictionary:
+	var out := {"ids": []}
+	if _main.hands == null or _main.world.snapshot == null:
+		return out
+	for col: Dictionary in InventoryModel.columns(_main.hands.picker, _main.world.tables, null):
+		(out["ids"] as Array).append(col["id"])
+		if col["kind"] == "nearby":
+			continue
+		for g: Dictionary in col["groups"]:
+			var rows: Array = g["rows"]
+			for k in rows.size():
+				var row: Dictionary = rows[k]
+				var wet := str(row["name"]).to_lower().contains("water")
+				var next: Dictionary = rows[k + 1] if k + 1 < rows.size() else {}
+				if not out.has("bottle") and row["exact"] and row["is_container"] and not next.is_empty() and next["exact"] \
+						and int(next["depth"]) == int(row["depth"]) + 1 and str(next["name"]).to_lower().contains("water"):
+					out["bottle"] = row
+					out["water"] = next
+					out["column"] = col
+				elif not out.has("stack") and row["exact"] and int(row["count"]) > 1 and not wet:
+					out["stack"] = row
+	return out
+
+
+## The weight (x, g) and volume (y, ml) of a column's rows: [counted once (the rows inside a row with CDDA's totals
+## left out), every row].
+func _column_sums(col: Dictionary) -> Array:
+	var once := Vector2i.ZERO
+	var all := Vector2i.ZERO
+	for g: Dictionary in col["groups"]:
+		var exact_at: Array = []   # exact_at[d]: the row above at depth d has CDDA's totals
+		for row: Dictionary in g["rows"]:
+			var d := int(row["depth"])
+			exact_at.resize(mini(d, exact_at.size()))
+			while exact_at.size() < d:
+				exact_at.append(false)
+			var w := Vector2i(int(row["weight_g"]), int(row["volume_ml"]))
+			all += w
+			if not exact_at.has(true):
+				once += w
+			exact_at.append(row["exact"])
+	return [once, all]
+
+
 ## A number prompt in the live game, through the request UI: the debug menu's "Set hunger to?" (lead-bridge's path:
 ## Player..., Edit player/NPC, You, Set needs, Hunger). The field holds a number; a text that isn't one isn't sent;
 ## 100 typed and Enter sets it, and the snapshot's hunger follows. Skipped on a bridge without `number` requests.
