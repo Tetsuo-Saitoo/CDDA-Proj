@@ -129,7 +129,8 @@ code calls its tile renderer directly).
 - **Real time**: each turn lasts 1 s / timescale (0.25–16) of wall time. `do_turn` waits out the rest of the
   turn; a `timed` request still unanswered when the turn ends expires (the answer comes back `timed_out`) and the
   player waits (`pause`). A late answer to an expired id is ignored: the client re-sends its action to the next
-  request. Activities and sleep fast-forward.
+  request. Activities and sleep fast-forward: no request comes then, and the client gets a snapshot about
+  every 0.5 s of real time (`player.activity` and `player.asleep` say what is going on).
 - **Pause** stops turns in both modes (at the next turn boundary; a pending request doesn't expire). The sim
   auto-pauses real time when a new hostile comes into view (`pause_reason` "hostile spotted"; where CDDA's safe
   mode would stop you) unless the client turned that off (`set_auto_pause_hostiles`); only the client resumes.
