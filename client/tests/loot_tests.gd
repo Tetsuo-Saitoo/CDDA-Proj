@@ -56,6 +56,7 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 	_mock = mock
 	_world = WorldView.new()
 	_world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	_world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://tests/pins"))   # PropBoxes' dresser and sealed crate, not the kit models
 	_world.set_id_tables(tables)
 	root.add_child(_world)
 	_world.apply_snapshot(_snap)

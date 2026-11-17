@@ -192,6 +192,7 @@ Each line: **ID — task.** Done-when. *(depends on)*
 
 ### G. UI/UX — the "user friendly" part — 2 agents (G-hud: G1, G8; G-menus: G2–G7)
 - **In the view, flat screen and VR (user, 2026-11-10).** Everything G shows (HUD, inventory, crafting, character, map) also works in the first-person view and in VR: one shared data layer per screen, two thin views (screen widgets; wrist, body or world-space panels in VR, L4). No menu is VR-only or flat-only. *(E, L4)*
+- **Live item tiles and radial menus (user, 2026-11-16).** Item icons show state with animated backgrounds (sloshing liquid level, frozen, hot, spoilage, gun grime), the same on 3D items. Context objects get a hold-to-open radial menu with a fixed slot per action (muscle memory; greyed when unavailable; optional click or list mode; VR wheel around the hand) built from CDDA's examine options; pad buttons are context-sensitive with a prompt by the crosshair. Bridge sends per-item temperature, rot and dirt. *(E2, E6, L4)*
 - **G1 — HUD.** Body-part health doll, stamina, hunger/thirst/fatigue/temperature icons, effects bar, filtered
   message feed.
 - **G2 — Inventory.** Pockets/containers as nested panes with drag & drop, weight/volume bars, worn-gear paper

@@ -60,7 +60,7 @@ const ACTIONS := [
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike with the left hand (the off hand, unless left-handed in Options)", ["1"]],
 	[&"hand_main", "Act", "strike with the right hand (the main hand, unless left-handed in Options)", ["2"]],
-	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold", ["E"]],
+	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold; an object's choices show as a wheel: point, let go to pick", ["E", "pad:0"]],
 	[&"click", "Act", "take the item you point at, like E; hold on a door or an item and drag; click stairs to take them; aiming: pick a target, again to fire", ["mouse:1"]],
 	[&"carry_farther", "Act", "carrying an item: hold it farther away", ["mouse:4"]],
 	[&"carry_closer", "Act", "carrying an item: hold it closer", ["mouse:5"]],
@@ -173,6 +173,32 @@ static func slots(action: StringName) -> Array[InputEvent]:
 
 
 ## First key of an action as short text for the HUD ("-" when unbound).
+## The last input came from a pad (note_device): prompts name its buttons (prompt_of).
+static var pad_last := false
+
+
+## Keeps pad_last: a pad button or a stick past DEADZONE sets it, a key, a mouse button or a real mouse move clears it.
+static func note_device(e: InputEvent) -> void:
+	if e is InputEventJoypadButton and e.is_pressed():
+		pad_last = true
+	elif e is InputEventJoypadMotion and absf((e as InputEventJoypadMotion).axis_value) >= DEADZONE:
+		pad_last = true
+	elif (e is InputEventKey or e is InputEventMouseButton) and e.is_pressed():
+		pad_last = false
+	elif e is InputEventMouseMotion and (e as InputEventMouseMotion).relative.length() > 2.0:
+		pad_last = false
+
+
+## The key a prompt names for `action`: its first pad binding's button ("A") when the pad was used last and it
+## has one, else key_of.
+static func prompt_of(action: StringName) -> String:
+	if pad_last:
+		var p := pad_slots(action)
+		if not p.is_empty():
+			return event_label(p[0]).trim_prefix("Pad ")
+	return key_of(action)
+
+
 static func key_of(action: StringName) -> String:
 	var s := slots(action)
 	return event_label(s[0]) if not s.is_empty() else "-"
@@ -384,6 +410,7 @@ static func binding_from(e: InputEvent) -> InputEvent:
 
 ## Writes the actions that differ from their defaults. Returns "" or an error.
 static func save_bindings(path := FILE) -> String:
+	path = UserFiles.at(path)   # a test run's own folder
 	var changed := {}
 	for a in names():
 		var now := _texts(InputMap.action_get_events(a) if InputMap.has_action(a) else [])
@@ -398,6 +425,7 @@ static func save_bindings(path := FILE) -> String:
 
 ## Applies a bindings file; a missing file is fine. Returns what was wrong with it (entries skipped).
 static func load_bindings(path := FILE) -> PackedStringArray:
+	path = UserFiles.at(path)
 	var bad := PackedStringArray()
 	if not FileAccess.file_exists(path):
 		return bad

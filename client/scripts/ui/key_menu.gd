@@ -43,9 +43,14 @@ var look_slider: HSlider
 var invert_check: CheckBox
 var ui_slider: HSlider
 var weather_pick: OptionButton
+var menu_pick: OptionButton   # HudSettings.context_menu: how E shows an object's choices
 var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
+## G6 (add_hints): the hints and their on / off box.
+var hints: Hints
+var hints_check: CheckBox
+var hints_again: Button
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -246,6 +251,15 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		if i >= 0 and i < HudSettings.MAIN_HANDS.size():
 			set_option(&"main_hand", HudSettings.MAIN_HANDS[i]))
 	opt_row.add_child(main_pick)
+	menu_pick = OptionButton.new()
+	for n: String in HudSettings.MENU_NAMES:
+		menu_pick.add_item(n)
+	menu_pick.tooltip_text = ("How E shows an object's choices (a sink: drink, fill, empty, wash): a wheel where each "
+			+ "choice has its own place, picked by letting go of E or by a click, or the game's list.")
+	menu_pick.focus_mode = Control.FOCUS_NONE
+	menu_pick.select(clampi(settings.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
+	menu_pick.item_selected.connect(func(i: int) -> void: set_option(&"context_menu", i))
+	opt_row.add_child(menu_pick)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -300,6 +314,28 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	_show_options()
 
 
+## G6: the Hints row under the options: show hints on / off, and "Show hints again" (Hints.reset).
+func add_hints(h: Hints) -> void:
+	hints = h
+	var row := HBoxContainer.new()
+	hints_check = CheckBox.new()
+	hints_check.text = "Hints"
+	hints_check.tooltip_text = "Short tips the first time you meet something (each shows once)."
+	hints_check.focus_mode = Control.FOCUS_NONE
+	hints_check.button_pressed = h.enabled
+	hints_check.toggled.connect(func(on: bool) -> void: hints.set_enabled(on))
+	row.add_child(hints_check)
+	hints_again = Button.new()
+	hints_again.text = "Show hints again"
+	hints_again.focus_mode = Control.FOCUS_NONE
+	hints_again.pressed.connect(func() -> void:
+		hints.reset()
+		_status.text = "Each hint shows once more.")
+	row.add_child(hints_again)
+	_box.add_child(row)
+	_box.move_child(row, mini(6, _box.get_child_count() - 1))
+
+
 func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
 	var s := HSlider.new()
 	s.min_value = limits.x
@@ -332,9 +368,11 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume", &"main_hand"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu"]:
 		return
 	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
+		return
+	if key == &"context_menu" and not (v is int and v >= HudSettings.MENU_HOLD and v <= HudSettings.MENU_LIST):
 		return
 	hud.set(key, v)
 	_show_options()
@@ -469,12 +507,15 @@ func open() -> void:
 		look_slider.set_value_no_signal(hud.look_speed)
 		invert_check.set_pressed_no_signal(hud.invert_y)
 		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
+		menu_pick.select(clampi(hud.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
 		ui_slider.set_value_no_signal(hud.ui_scale)
 		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
 		volume_slider.set_value_no_signal(hud.volume)
 		ambience_slider.set_value_no_signal(hud.ambience_volume)
+	if hints_check != null:
+		hints_check.set_pressed_no_signal(hints.enabled)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()

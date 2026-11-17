@@ -48,6 +48,10 @@ const MAX_INSIDE_PER_SUBMAP := 256
 const MAX_MORE := 0x7FFFFFFF              # more, inside_more: how many items the bridge left out of a list
 const CARRIED_STRIDE := 5                 # carried: uid, itype, parent uid (0 on the body), pocket, flags
 const MAX_CARRIED := 256
+const STATE_SIZE := 7                     # item_states: temp, rot, fill, fill_type, see_through, fill_ml, dirt (after the uid)
+const MAX_ITEM_STATES := 512
+const MAX_STATE_ML := 100000000           # 100 m3
+const MAX_DIRT := 10000                   # a gun's fouling, as wielded_gun.dirt
 const MAX_POCKET := 255
 const CARRIED_WORN := 1
 const CARRIED_WIELDED := 2
@@ -141,6 +145,8 @@ var player_gun := {}                       # player.wielded_gun: {type, dirt, fa
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
+var item_states := {}                      # uid -> PackedInt32Array(STATE_SIZE): live state of a carried item or one lying in reach (ItemLook)
+var _item_states_sent: Variant             # player.item_states as sent, read once the submaps' handles are known
 var player_stamina := -1                   # -1: not sent
 var player_stamina_max := -1
 var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
@@ -293,6 +299,18 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
+	if is_valid() and _item_states_sent != null:
+		var known := {}
+		for k in range(0, carried.size(), CARRIED_STRIDE):
+			known[carried[k]] = true
+		for sm: Submap in submaps.values():
+			for k in range(1, sm.handles.size(), HANDLE_STRIDE):
+				known[sm.handles[k]] = true
+			for c: int in sm.inside:
+				for e: Array in sm.inside[c]:
+					known[e[0]] = true   # what is in a container lying next to the player (its tray row)
+		item_states = states_from(_item_states_sent, known)
+	_item_states_sent = null
 
 
 ## [min, max]: the map's z range. It must hold z 0 and stay within CddaCoords.Z_LIMIT either way.
@@ -334,6 +352,7 @@ func _read_player(v: Variant) -> void:
 	_read_needs((v as Dictionary))
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
+	_item_states_sent = (v as Dictionary).get("item_states")
 	player_effects = effects_from((v as Dictionary).get("effects"))
 	var md: Variant = (v as Dictionary).get("mood")
 	player_mood = mood_from(md)
@@ -903,6 +922,35 @@ func _handles(v: Variant, pos: Vector3i, what: String) -> PackedInt64Array:
 		uids[uid] = true
 		if not is_valid():
 			return out
+	return out
+
+
+## player.item_states, cleaned (look-only data: anything malformed is left out, it never fails a snapshot):
+## [[uid, temp, rot, fill, fill_type, see_through, fill_ml, dirt], ...] -> uid -> PackedInt32Array(STATE_SIZE),
+## the first MAX_ITEM_STATES, each uid one of `known` (carried items, handles and what is in the containers lying next to the player), the
+## first of a repeat kept.
+## temp 0..3, rot -1..2000, fill -1..1000 permille and fill_ml -1..MAX_STATE_ML (both -1 or neither: not a
+## container), fill_type an itype index or 0, see_through 0/1, dirt -1..MAX_DIRT. Values as ItemLook reads them.
+static func states_from(v: Variant, known: Dictionary) -> Dictionary:
+	var out := {}
+	if not v is Array:
+		return out
+	var lo := [0, -1, -1, 0, 0, -1, -1]
+	var hi := [3, 2000, 1000, MAX_ID, 1, MAX_STATE_ML, MAX_DIRT]
+	for e: Variant in (v as Array).slice(0, MAX_ITEM_STATES):
+		if not e is Array or (e as Array).size() != STATE_SIZE + 1:
+			continue
+		var uid: Variant = _whole(e[0], 1, MAX_UID - 1)
+		if uid == null or not known.has(uid) or out.has(uid):
+			continue
+		var s := PackedInt32Array()
+		for k in STATE_SIZE:
+			var x: Variant = _whole(e[k + 1], lo[k], hi[k])
+			if x == null:
+				break
+			s.append(x)
+		if s.size() == STATE_SIZE and (s[2] == -1) == (s[5] == -1):
+			out[uid] = s
 	return out
 
 

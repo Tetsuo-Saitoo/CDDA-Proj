@@ -7,7 +7,8 @@ extends Control
 ## the status line. Rows of items in flight are greyed and can't be dragged. Rebuilt on ItemActions.changed and
 ## when main shows a new snapshot (refresh), at most once a frame. No screen size, OS cursor or global mouse
 ## position is used, so it works inside a SubViewport (VR panel). Item names are game data: plain Label text only,
-## cleaned and capped by InventoryModel.
+## cleaned and capped by InventoryModel. Live item tiles: a row whose item has a live state (Snapshot.item_states)
+## shows it behind its text (ItemTileView: fill, temperature, spoilage, grime), with the amount and a tooltip line.
 ##
 ## Keys: Tab (the `inspect` action) opens it (main.gd, when allowed) and closes it, as does Esc; while open it
 ## takes those keys before the game (_input). Opening shows the mouse cursor, closing puts the old mouse mode back.
@@ -349,6 +350,19 @@ func group_slot(id: String, key: Variant) -> InspectSlot:
 ## Item `uid`'s [ ] box, null if its row isn't shown.
 func tick_box(uid: int) -> Label:
 	return _ticks.get(uid)
+
+
+## Live item tiles: item `uid`'s state from the newest snapshot (Snapshot.item_states) as an ItemTile, {} when the
+## snapshot has none for it or it shows nothing. Its row gets an ItemTileView behind it and the amount.
+func tile_of(uid: int) -> Dictionary:
+	var w: WorldView = hands.world if hands != null else null
+	if w == null or w.snapshot == null:
+		return {}
+	var s: Variant = w.snapshot.item_states.get(uid)
+	if s == null:
+		return {}
+	var t := ItemTile.of(s, w.tables)
+	return t if ItemTile.shows(t) else {}
 
 
 # --- selecting several ---
@@ -1123,18 +1137,21 @@ static func _fill_tip(g: Dictionary) -> String:
 func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	var slot := _slot({"kind": "row", "column": col_id, "row": r})
 	slot.row = r
+	var depth := clampi(int(r["depth"]), 0, InventoryModel.MAX_DEPTH)
+	var uid: int = r["uid"]
+	var tile := tile_of(uid)
+	if not tile.is_empty():   # first: drawn behind the row
+		slot.add_child(ItemTileView.new(tile, INDENT * depth))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 0)
 	slot.add_child(v)
 	var line := HBoxContainer.new()
 	v.add_child(line)
-	var depth := clampi(int(r["depth"]), 0, InventoryModel.MAX_DEPTH)
 	if depth > 0:
 		var pad := Control.new()
 		pad.custom_minimum_size.x = INDENT * depth
 		pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.add_child(pad)
-	var uid: int = r["uid"]
 	if r.get("item") is ItemRef:
 		var tick := _label(TICK_OFF, DIM)
 		tick.custom_minimum_size = Vector2(ROW_H, ROW_H)
@@ -1152,6 +1169,11 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(name_label)
+	var amount: String = tile.get("amount", "")
+	if amount != "":   # how much is in it, in the contents' colour (lightened to read on the dark panel)
+		var a := _label(amount, (tile["liquid"] as Color).lerp(Color.WHITE, 0.45))
+		a.name = "Amount"
+		line.add_child(a)
 	line.add_child(_label(InventoryModel.weight_text(r["weight_g"]), DIM))
 	var note: String = r["note"]
 	if note != "":
@@ -1160,6 +1182,8 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		v.add_child(n)
 	slot.tooltip_text = "%s\n%s, %s%s" % [r["name"], InventoryModel.weight_text(r["weight_g"]),
 			InventoryModel.volume_text(r["volume_ml"]), ("\n" + note) if note != "" else ""]
+	if not tile.is_empty():
+		slot.tooltip_text += "\n" + ItemTile.words(tile)
 	if r["pending"]:
 		slot.modulate = PENDING
 		slot.tooltip_text += "\n(moving)"

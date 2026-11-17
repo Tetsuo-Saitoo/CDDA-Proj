@@ -94,6 +94,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
 	_test_grime(root, tables)
+	_test_gun_grime(root)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
 	_test_misfires(root, aim, tables)
@@ -830,6 +831,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
 	_test_melee(aim, eye, head, me, zp)
 	_test_techniques(aim, ui, cam, eye, head, zp)
+	_test_smash(aim, world, cam, eye, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -837,6 +839,72 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 
 
 const ZUID := 8589934593   # the test zombie
+
+
+## Strike keys at things: with no creature under the crosshair, furniture (a wall, a door) next to you is smashed at
+## its square (SMASH_AT, CDDA's smash by queue_action_at); a floor, a farther square or junk gives no smash.
+func _test_smash(aim: AimController, world: WorldView, cam: Camera3D, eye: Vector3, me: Vector3i, zp: Vector3i) -> void:
+	var S := AimController
+	var away := Vector3i(-signi(zp.x - me.x), -signi(zp.y - me.y), 0)   # the side away from the zombie
+	if away == Vector3i.ZERO:
+		away = Vector3i(1, 0, 0)
+	var side := me + away
+	var two := me + away * 2
+	var set_furn := func(sq: Vector3i, f: int) -> int:
+		var sm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(sq))
+		if sm == null:
+			return -1
+		var l := CddaCoords.ms_to_local(sq)
+		var old: int = sm.furn[l.y * CddaCoords.SEEX + l.x]
+		sm.furn[l.y * CddaCoords.SEEX + l.x] = f
+		return old
+	var at_furn := func(sq: Vector3i) -> Vector3:
+		return world.coords.ms_center_to_world(sq) + Vector3(0, 0.5, 0)
+	var old_side: int = set_furn.call(side, 1)
+	var old_two: int = set_furn.call(two, 0)
+	var hit: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me)
+	cam.global_position = eye
+	cam.look_at(at_furn.call(side))
+	var act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	var kept: Variant = aim.smash_square
+	var off_act := aim.strike_action("off", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(old_side >= 0 and hit == side and act == S.SMASH_AT and kept == side and off_act == S.SMASH_AT
+			and aim.melee_aim.is_empty(), "smash: a strike key at furniture next to you smashes its square (%s %s %s)"
+			% [hit, act, kept])
+	var taken: Variant = aim.strike_square(S.SMASH_AT)
+	var again: Variant = aim.strike_square(S.SMASH_AT)
+	aim.smash_square = "junk"
+	var junk_sq: Variant = aim.strike_square(S.SMASH_AT)
+	_check.call(taken == side and again == null and junk_sq == null and S.cdda_action(S.SMASH_AT) == "smash"
+			and S.cdda_action(S.AT_ACTION) == S.AT_ACTION and S.cdda_action("smash") == "smash",
+			"smash: its square is taken once and the action goes to CDDA as smash")
+	# two squares off: out of a smash's reach (CDDA smashes only next to you)
+	set_furn.call(side, 0)
+	set_furn.call(two, 1)
+	var far: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(two)), me)
+	cam.look_at(at_furn.call(two))
+	var far_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	# the floor next to you: nothing to smash
+	set_furn.call(two, 0)
+	var floor_at := world.coords.ms_center_to_world(side)
+	var on_floor: Variant = aim.smash_at(eye, eye.direction_to(floor_at), me)
+	cam.look_at(floor_at)
+	var floor_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(far == null and far_act == "fp3d_attack_main_LEFT" and on_floor == null
+			and floor_act == "fp3d_attack_main_LEFT" and aim.smash_square == null,
+			"smash: furniture two squares off or a bare floor: a plain strike, no smash (%s %s %s %s)"
+			% [far, far_act, on_floor, floor_act])
+	set_furn.call(side, 1)
+	var ray := aim.look_ray
+	var junk := [aim.smash_at(Vector3(NAN, 0, 0), Vector3.FORWARD, me), aim.smash_at(eye, Vector3.ZERO, me),
+			aim.smash_at(eye, Vector3(INF, 0, 0), me)]
+	aim.look_ray = null
+	junk.append(aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me))
+	aim.look_ray = ray
+	_check.call(junk.all(func(x: Variant) -> bool: return x == null), "smash: junk lines or no look ray: no smash")
+	set_furn.call(side, old_side)
+	set_furn.call(two, old_two)
+	aim.melee_aim = {}
 
 
 ## Melee: an aimed strike picks the figure within reach (not past MELEE_REACH_M, not through a wall), names the
@@ -1565,6 +1633,100 @@ func _test_strike_runs(aim: AimController, me: int, head: int, torso: int) -> vo
 
 
 ## A gun model's named parts (later models carry the same names as markers).
+## Gun fouling on any model (GunGrime): the one dirt mapping, CDDA's symbol steps, and grime shells over a model's
+## meshes that leave its own materials and overlay alone, come off at 0 and stay bounded.
+func _test_gun_grime(root: Node) -> void:
+	var same := true
+	for dd: int in [-99999, -1, 0, 1, 1000, 2000, 4999, 6000, 9999, 10000, 10001, 99999]:
+		same = same and GunGrime.grime_for(dd) == WeaponViewmodel.grime_for(dd)
+	var steps := [-1, 0, 1999, 2000, 3999, 4000, 9999, 10000, 99999].map(func(d: int) -> int: return GunGrime.step_for(d))
+	_check.call(same and GunGrime.grime_for(6000) == 0.6 and GunGrime.grime_for(-1) == 0.0
+			and steps == [0, 0, 0, 1, 1, 2, 4, 5, 5], "gun grime: one mapping for models, viewmodel and icons; CDDA's symbol steps (%s)" % [steps])
+
+	var sh: Shader = load("res://scripts/combat/grime_overlay.gdshader")
+	var names := []
+	if sh != null:
+		for u: Dictionary in sh.get_shader_uniform_list():
+			names.append(u.get("name"))
+	_check.call(sh != null and sh.get_mode() == Shader.MODE_SPATIAL
+			and ["grime", "box_centre", "half_extents", "push"].all(func(x: String) -> bool: return x in names),
+			"gun grime: the shell shader loads with its uniforms (%s)" % [names])
+
+	# A model: a box body, a barrel nested under it, a node with no mesh, an empty mesh; an outline overlay and own
+	# materials that must stay as they are.
+	var model := Node3D.new()
+	root.add_child(model)
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.04, 0.12, 0.2)
+	body.mesh = bm
+	var own := StandardMaterial3D.new()
+	body.material_override = own
+	var outline := StandardMaterial3D.new()
+	body.material_overlay = outline
+	model.add_child(body)
+	var barrel := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.01
+	cm.bottom_radius = 0.01
+	cm.height = 0.3
+	barrel.mesh = cm
+	barrel.position = Vector3(0, 0.04, -0.2)
+	body.add_child(barrel)
+	model.add_child(Node3D.new())
+	var empty := MeshInstance3D.new()
+	model.add_child(empty)
+	var shells := func() -> Array:
+		return GunGrime.meshes(model).map(func(mi: MeshInstance3D) -> Variant: return mi.get_node_or_null(GunGrime.SHELL))
+	var n := GunGrime.apply(model, 0.5)
+	var s: Array = shells.call()
+	var bs := body.get_node_or_null(GunGrime.SHELL) as MeshInstance3D
+	var bmat := bs.material_override as ShaderMaterial if bs != null else null
+	_check.call(n == 2 and s.size() == 2 and s.all(func(x: Variant) -> bool: return x is MeshInstance3D) and bs != null
+			and bs.mesh == bm and bmat != null and bmat.shader == sh and bmat.get_shader_parameter("grime") == 0.5
+			and bmat.get_shader_parameter("half_extents") == bm.get_aabb().size / 2.0
+			and bmat.get_shader_parameter("box_centre") == bm.get_aabb().get_center()
+			and bs.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			and bmat.render_priority == WorldLighting.UNDER_PRIORITY,
+			"gun grime: each mesh of a model wears a shell sized to its box, at the level (%d meshes)" % n)
+	_check.call(body.material_override == own and body.material_overlay == outline and bm.material == null
+			and barrel.material_overlay == null, "gun grime: the model's own materials and overlay are left alone")
+	var count_before := body.get_child_count()
+	n = GunGrime.apply(model, 0.8)
+	_check.call(n == 2 and body.get_child_count() == count_before and is_equal_approx(GunGrime.level_of(model), 0.8)
+			and ((barrel.get_node(GunGrime.SHELL) as MeshInstance3D).material_override as ShaderMaterial)
+					.get_shader_parameter("grime") == 0.8,
+			"gun grime: a new level changes the shells, adds none")
+	n = GunGrime.apply(model, 0.0)
+	_check.call(n == 0 and (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+			and GunGrime.level_of(model) == 0.0 and body.material_overlay == outline, "gun grime: level 0 takes the shells off")
+	GunGrime.apply(model, 0.6)
+	var junk := [GunGrime.apply(model, NAN), GunGrime.apply(model, -2.0), GunGrime.apply(null, 0.5)]
+	var cleaned := (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+	GunGrime.apply(model, 7.0)
+	_check.call(junk == [0, 0, 0] and cleaned and GunGrime.level_of(model) == 1.0,
+			"gun grime: NaN or below 0 is clean, above 1 is 1, no model is nothing")
+	model.free()
+
+	# Bounded: a huge model gets MAX_MESHES shells, a deep one only MAX_DEPTH levels down.
+	var wide := Node3D.new()
+	for i in GunGrime.MAX_MESHES + 40:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		wide.add_child(mi)
+	var deep := Node3D.new()
+	var at: Node = deep
+	for i in GunGrime.MAX_DEPTH + 4:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		at.add_child(mi)
+		at = mi
+	_check.call(GunGrime.apply(wide, 0.5) == GunGrime.MAX_MESHES and GunGrime.apply(deep, 0.5) == GunGrime.MAX_DEPTH,
+			"gun grime: at most %d meshes, %d levels deep" % [GunGrime.MAX_MESHES, GunGrime.MAX_DEPTH])
+	wide.free()
+	deep.free()
+
+
 func _test_gun_parts() -> void:
 	var VM := WeaponViewmodel
 	var want := {"pistol": ["Muzzle", "Grip", "MagWell", "Magazine", "Slide"], "long": ["Muzzle", "Grip", "MagWell",

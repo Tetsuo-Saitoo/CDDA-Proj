@@ -65,6 +65,7 @@ var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
+var hints: Hints                  # G6: one-time tips at the top right (flat screen)
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -78,6 +79,7 @@ var text_dock: TextKeysDock       # the on-screen keyboard for the focused text 
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
+var item_looks: ItemLookView       # frost, heat, spoilage and liquid level on items lying near the player
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
@@ -142,6 +144,10 @@ func _ready() -> void:
 	creature_view.name = "Creatures"
 	creature_view.smooth = str(_args.get("creatures", "smooth")) != "snap"
 	add_child(creature_view)
+	item_looks = ItemLookView.new()
+	item_looks.name = "ItemLooks"
+	item_looks.world = world
+	add_child(item_looks)
 	player_body = PlayerBody.new()
 	player_body.name = "PlayerBody"
 	add_child(player_body)
@@ -189,6 +195,7 @@ func _ready() -> void:
 	request_ui.get_parent().move_child(grab.icon, request_ui.get_index())
 	grab.reach = _reach_square
 	grab.view = eyes_view   # over the shoulder / top-down: reach counts from the eyes, not the camera
+	grab.context = _context_line
 	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
@@ -244,7 +251,10 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(hotbar)
 	request_ui.get_parent().move_child(hotbar, inspect.get_index())   # under the Tab view and the prompts
 	inspect.hotbar = hotbar
-	inspect.opened.connect(func() -> void: hotbar.show_empty = true)
+	inspect.opened.connect(func() -> void:
+		hotbar.show_empty = true
+		if vr == null and hints != null:
+			hints.trigger("inspect"))
 	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
 	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
@@ -367,6 +377,7 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
+	item_looks.apply(snap)
 	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
@@ -381,6 +392,10 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		_ask_character()
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
+	if hints != null and vr == null and live != null and _in_main_loop():
+		hints.trigger("start")   # G6: once, ever (seen ids are kept)
+		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
+			hints.trigger(id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -680,7 +695,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else ProjectSettings.globalize_path(UserFiles.at("user://cdda"))
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if open_menu:   # after a game: the menu, never the command line's quick start or save again
@@ -978,6 +993,8 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	if not request_ui.show_request(req):
 		push_warning("live: request without a usable id or kind: %s" % req)
+	elif vr == null and hints != null and not str(req.get("kind", "")) in ["chargen", "world_setup"]:
+		hints.trigger("prompt")   # G6: the first question from the game in play
 
 
 func _on_request_answered(a: Dictionary) -> void:
@@ -996,6 +1013,15 @@ func _on_live_events(events: Array) -> void:
 			_log.append(CddaText.plain(str(e.get("text", ""))).left(200))
 	if _log.size() > LOG_LINES:
 		_log = _log.slice(_log.size() - LOG_LINES)
+
+
+## Radial menus: the crosshair line for the furniture in the square you face (live, flat screen, in play).
+func _context_line() -> String:
+	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
+		return ""
+	var s: Vector2i = OCT_STEPS[_octant(Vector2(0, 1))]
+	return ContextPrompt.text(world.snapshot, world.tables, world.snapshot.player_pos + Vector3i(s.x, s.y, 0),
+			hud_settings.context_menu)
 
 
 func _octant(dir: Vector2) -> int:
@@ -1046,6 +1072,8 @@ func _live_action(event: InputEvent) -> bool:
 		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
 		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
+		if vr == null and hud_settings.context_menu != HudSettings.MENU_LIST:   # the object's menu, if any, as a wheel
+			request_ui.want_wheel(WHEEL_WAIT_MS, hud_settings.context_menu == HudSettings.MENU_HOLD)
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
 	elif InputActions.pressed(event, &"stow_off"):
@@ -1074,12 +1102,13 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## A hand or key action out to CDDA; a strike at a square (AimController.strike_square, a knight's move off) goes
-## by queue_action_at, and one whose square is gone isn't sent.
+## A hand or key action out to CDDA; a strike at a square (AimController.strike_square: a knight's move off, or a
+## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
+## isn't sent.
 func _queue_act(act: String) -> bool:
-	if act == AimController.AT_ACTION:
+	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
-		return sq is Vector3i and live.queue_action_at(act, sq)
+		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
 	return live.queue_action(act)
 
 
@@ -1404,7 +1433,8 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
-const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
+const BASE_LOOK := 0.003
+const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon after shows as a wheel   # the cameras' own look speed, radians per pixel
 
 
 ## G7 options: the volume on the Master bus (headset too); the look speed, invert Y and field of view on the
@@ -1512,6 +1542,13 @@ func _setup_hud() -> void:
 	key_menu = KeyMenu.new()
 	key_menu.closed.connect(_on_key_menu_closed)
 	key_menu.add_hud_settings(hud_settings)
+	hints = Hints.new()   # G6: one-time tips (the first turn, the first Tab view, the first question)
+	hints.persist = get_tree().get_script() == null   # a test runner's SceneTree script: never the player's file
+	var hints_why := hints.load_file() if hints.persist else ""   # nor read it: runs are the same everywhere
+	if hints_why != "":
+		push_warning("hints: " + hints_why)
+	layer.add_child(hints)
+	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
 	key_menu.add_cheat_page(cheat_panel)
@@ -1714,6 +1751,10 @@ static func _keys(actions: Array) -> String:
 		ks.append(InputActions.key_of(a))
 		short = short and ks[-1].length() == 1
 	return "".join(ks) if short else "/".join(ks)
+
+
+func _input(event: InputEvent) -> void:
+	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
 
 
 func _unhandled_input(event: InputEvent) -> void:

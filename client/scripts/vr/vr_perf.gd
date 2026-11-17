@@ -114,9 +114,10 @@ func _report() -> void:
 
 
 static func _write(line: String) -> void:
-	var f := FileAccess.open(LOG_PATH, FileAccess.READ_WRITE)
+	var path := UserFiles.at(LOG_PATH)   # a test run's own folder
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
 	if f == null or f.get_length() > MAX_LOG_BYTES:
-		f = FileAccess.open(LOG_PATH, FileAccess.WRITE)
+		f = FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return
 	f.seek_end()

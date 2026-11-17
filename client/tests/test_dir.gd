@@ -2,7 +2,8 @@ extends RefCounted
 ## One scratch folder per test run: user://test-runs/run-<process id>/. Godot names the user:// folder after the
 ## project, so every worktree shares it, and fixed file names there collide when tests run in parallel.
 ## Tests put their files and CDDA user dirs here (path / global); the entry scripts call clean() at the end,
-## which also removes stale folders left by runs that crashed or timed out.
+## which also removes stale folders left by runs that crashed or timed out. The game's own user:// files (settings,
+## key bindings, reports) go to the run folder's user/ by themselves in a test run (scripts/user_files.gd).
 ## Use: const TestDir := preload("res://tests/test_dir.gd"), then TestDir.path("x.json").
 ## Another run's folder counts as stale only by the age of its STAMP file: OS.is_process_running only knows this
 ## process's own children, so a pid check deleted parallel runs' folders while they ran.
@@ -15,15 +16,29 @@ const STALE_S := 12 * 3600           # another run's folder that started longer 
 static var _dir := ""
 
 
-## This run's folder as a user:// path, made on first use (emptied first: a dead run with the same id may
-## have left one).
+## This run's folder as a user:// path, made on first use (emptied first when a dead run with the same id left
+## one; kept when this run made it already, as UserFiles does for the game's own files).
 static func dir() -> String:
 	if _dir.is_empty():
-		_dir = ROOT.path_join(PREFIX + str(OS.get_process_id()))
-		_remove_tree(_dir)
+		_dir = own()
+		if not made_by_this_run(_dir):
+			_remove_tree(_dir)
 		DirAccess.make_dir_recursive_absolute(_dir)
 		stamp(_dir)
 	return _dir
+
+
+## The folder of the run with this process id.
+static func own() -> String:
+	return ROOT.path_join(PREFIX + str(OS.get_process_id()))
+
+
+## Whether folder `user_path` exists and was made since this process started (its stamp, else its own time).
+static func made_by_this_run(user_path: String) -> bool:
+	if not DirAccess.dir_exists_absolute(user_path):
+		return false
+	var process_start := int(Time.get_unix_time_from_system()) - int(Time.get_ticks_msec() / 1000.0) - 2
+	return _started(user_path) >= process_start
 
 
 ## Marks folder `user_path` as started at unix time `at` (default now).
@@ -66,6 +81,7 @@ static func use_parent(args: PackedStringArray) -> bool:
 			var id := a.trim_prefix("--test-run=")
 			if id.is_valid_int() and int(id) > 0 and str(int(id)) == id:
 				_dir = ROOT.path_join(PREFIX + id)
+				UserFiles.set_test_root(_dir.path_join("user"))   # the game's own files: the parent's too
 				return true
 	return false
 
@@ -73,9 +89,8 @@ static func use_parent(args: PackedStringArray) -> bool:
 ## Removes this run's folder and stale folders of other runs (started more than STALE_S ago). Folders of runs
 ## still going in other checkouts are kept. A child run must not call it.
 static func clean() -> void:
-	if not _dir.is_empty():
-		_remove_tree(_dir)
-		_dir = ""
+	_remove_tree(_dir if not _dir.is_empty() else own())   # own(): made by UserFiles alone when no test asked for dir()
+	_dir = ""
 	if not DirAccess.dir_exists_absolute(ROOT):
 		return
 	var now := int(Time.get_unix_time_from_system())

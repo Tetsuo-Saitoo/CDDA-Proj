@@ -37,6 +37,8 @@ var reach: Callable          # () -> Variant: the square you reach from (Vector3
 ## () -> Dictionary: the eyes when the shown camera is away from them (main.eyes_view: {mode, eye, facing});
 ## {} otherwise. Reach and carrying then count from in front of the player, not from the camera.
 var view := Callable()
+## () -> String: the line when nothing is under the pointer (main: ContextPrompt for the square you face), "" none.
+var context := Callable()
 var grabbed: Grabbable
 var hover: Grabbable
 var ask := {}                # {word, pos, until}: the door prompt a queued open / close will bring
@@ -156,13 +158,17 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 			icon.mode = GrabIcon.FIST
 		elif not t.is_empty():
 			icon.mode = GrabIcon.HAND
-			if not item_hover.is_empty():
+			if not item_hover.is_empty() and InputActions.pad_last:
+				text = "%s\n%s take" % [t["name"], InputActions.prompt_of(&"use_held")]
+			elif not item_hover.is_empty():
 				text = "%s\n%s or %s take   hold %s carry   %s off hand" % [t["name"], InputActions.key_of(&"use_held"),
 						InputActions.key_of(&"click"), InputActions.key_of(&"click"), InputActions.key_of(&"hold_off")]
 			else:   # a door leaf or furniture part (drawer, lid)
 				text = "%s\nhold %s and drag" % [t["name"], InputActions.key_of(&"click")]
 		else:
 			icon.mode = GrabIcon.DOT if enabled and captured else GrabIcon.NONE
+			if enabled and grabbed == null and context.is_valid():
+				text = str(context.call())   # the furniture you face and what E does there (ContextPrompt)
 	else:
 		var h: Grabbable = null
 		if grabbed == null and enabled:
