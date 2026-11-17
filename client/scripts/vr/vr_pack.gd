@@ -262,7 +262,7 @@ func hover(i: int, t: Dictionary) -> void:
 		var s: float = e["size"]
 		box.position = e["pos"]
 		box.scale = Vector3.ONE * (s * 1.25)
-		lab.text = e["name"]
+		lab.text = VrTile.line(e["name"], e.get("tile", {}))   # and its live state (VrTile.tag)
 		lab.position = e["pos"] + Vector3(0, s * 0.5 + 0.015, 0.02)
 		lab.visible = not lab.text.is_empty()
 	else:
@@ -594,8 +594,10 @@ func _item_node(e: Dictionary, world: WorldView) -> Node3D:
 
 
 ## Item model `e` wears its live look as items lying in the world do (ItemLookView.dress_from: frost, heat, spoilage,
-## liquid level, grime), made and on each newer snapshot; none while it is dimmed (pending).
+## liquid level, grime), made and on each newer snapshot; none while it is dimmed (pending). Its tile (`tile`,
+## ItemTile) is kept for the hover name's second line.
 static func _dress(e: Dictionary, snap: Snapshot, tables: IdTables) -> void:
+	e["tile"] = ItemTile.for_item(snap, tables, int(e["uid"])) if snap != null and not e["pending"] else {}
 	var v: Variant = e.get("visual")
 	if is_instance_valid(v) and v is Node3D:
 		ItemLookView.dress_from(v, int(e["uid"]), snap if not e["pending"] else null, tables)

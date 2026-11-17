@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — In VR, item labels show the item's state too: the label over your hand says "Cold" or "Spoilage 95% (old)" with a level gauge in the drink's colour, and items on the tray and in the open pack say "500 ml, cold" or "frozen, rotten" under their names. Client tests pass.
 - 2026-11-17 — Cooking on the flat screen: pots on the heat near you show the same recipe cards as in VR, bigger; put the crosshair on a "+" line and press E to start that recipe, and the game's answer shows on the card. Client tests pass.
 - 2026-11-17 — Art coverage tool: the reports' text cells stay plain text when a spreadsheet opens them. A normal run's output is unchanged.
 - 2026-11-17 — Bridge: the screen no longer stands still while you wait, craft or sleep: the game sends a snapshot about twice a second during those stretches (it sent none until they ended), and says what the character is doing (`player.activity`, `player.asleep`). A 6-hour wait takes as long as before. Fork tests pass on Windows and Linux, client tests pass.

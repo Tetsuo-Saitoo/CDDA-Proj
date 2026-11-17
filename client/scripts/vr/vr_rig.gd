@@ -132,6 +132,7 @@ var panel: VrPanel        # L4: CDDA's 2D menus and prompts (main.gd puts them u
 var pointer: MeshInstance3D       # the menu's laser pointer from the main hand (update_pointer) ...
 var pointer_dot: MeshInstance3D   # ... and its dot on the panel
 var _held := {}                   # the last show_held, shown again when the main hand changes
+var _tiles_snap: Snapshot = null  # the snapshot the hand labels' tiles (VrHeld.tile) were last read from
 ## K7: the menu's Cheats page talks to this (main.gd: the LiveSession; null in the mock) ...
 var cheats_backend: Object:
 	set(b):
@@ -517,6 +518,7 @@ func hand_id(c: XRController3D) -> String:
 ## that hand holds a copy. `all_hands`: count hands the runtime doesn't track (tests).
 func update_hands(delta: float, all_hands := false) -> void:
 	_tick_notes(delta)
+	_refresh_held_tiles()
 	if hands == null:
 		pack.close("gone")
 		tray.close("gone")
@@ -1855,13 +1857,24 @@ func show_held(held: Dictionary) -> void:
 	var main_held := left_held if main_ctrl() == left else right_held
 	var off_held := right_held if main_held == left_held else left_held
 	var filling := str(held.get("activity", "")) == HandsPanel.FILL_ACTIVITY
-	off_held.show_hand(held.get("off") if held.get("off") is Dictionary else {}, filling)
-	main_held.show_hand(held.get("main") if held.get("main") is Dictionary else {}, filling)
+	var off: Dictionary = held.get("off") if held.get("off") is Dictionary else {}
+	var main: Dictionary = held.get("main") if held.get("main") is Dictionary else {}
+	_tiles_snap = world.snapshot if world != null and is_instance_valid(world) else null
+	off_held.show_hand(off, filling, VrTile.of(world, HandsPanel.uid_of(off)))
+	main_held.show_hand(main, filling, VrTile.of(world, HandsPanel.uid_of(main)))
 	_sync_held()
 	if _was_filling and not filling:
 		_buzz(left)
 		_buzz(right)
 	_was_filling = filling
+
+
+## Live item tiles: a newer snapshot brings the held items' states; the hand labels show them again.
+func _refresh_held_tiles() -> void:
+	if left_held == null or _held.is_empty() or world == null or not is_instance_valid(world) \
+			or world.snapshot == _tiles_snap:
+		return
+	show_held(_held)
 
 
 static func _buzz(c: XRController3D) -> void:
