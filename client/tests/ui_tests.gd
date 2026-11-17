@@ -32,6 +32,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_game_over(root)
 	_test_options()
 	_test_hints()
+	_test_busy_note()
 	_test_wheel()
 	_test_main_hand(root)
 	ui.free()
@@ -1304,6 +1305,35 @@ func _test_options() -> void:
 			"options: the file's numbers are clamped, NaN and non-bools leave the defaults (%s, %s, %s, %s, %s)"
 			% [junk.look_speed, junk.fov, junk.render_scale, junk.fullscreen, junk.vsync])
 	menu.free()
+
+
+## "Time passes..." while the game asks nothing (a long wait or sleep sends no snapshot until it is over).
+func _test_busy_note() -> void:
+	var a := BusyNote.AFTER_MS
+	var d := BusyNote.DOT_MS
+	_check.call(BusyNote.text_at(-1, 99999, true) == "" and BusyNote.text_at(1000, 1000 + a - 1, true) == ""
+			and BusyNote.text_at(1000, 1000 + a, true) == "Time passes." and BusyNote.text_at(1000, 1000 + a + d, true)
+			== "Time passes.." and BusyNote.text_at(1000, 1000 + a + 2 * d, true) == "Time passes..."
+			and BusyNote.text_at(1000, 1000 + a + 3 * d, true) == "Time passes." and BusyNote.text_at(1000, 99999, false)
+			== "", "busy note: after %d ms with no request while running, the dots move; nothing before or when not running"
+			% a)
+	var n := BusyNote.new()
+	n.tick(5000, true)
+	var none_yet := not n.visible
+	n.on_request({"id": 4}, 5000)
+	n.on_request({}, 6000)
+	n.on_request({}, 6500)   # still quiet: counts from the first
+	n.tick(6000 + a, true)
+	var shown := n.visible and n.text == "Time passes."
+	n.on_request({"id": 5}, 7000)
+	n.tick(7000, true)
+	var gone := not n.visible
+	n.on_request({}, 8000)
+	n.tick(8000 + a, false)
+	n.tick(8000 + a, true)
+	_check.call(none_yet and shown and gone and not n.visible and n.quiet_since == -1,
+			"busy note: shown once the game went quiet, gone with the next request; a stop forgets the quiet")
+	n.free()
 
 
 func _test_hints() -> void:
