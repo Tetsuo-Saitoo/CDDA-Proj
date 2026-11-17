@@ -63,6 +63,13 @@ func _test_snapshot(data: Variant, tables: IdTables) -> void:
 			"item state: the snapshot and ItemLook agree on the format")
 	var old := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void: (d["player"] as Dictionary).erase("item_states")))
 	_check.call(old.is_valid() and old.item_states.is_empty(), "item state: an older bridge sends none")
+	var bag := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void:
+		for sm: Dictionary in d["submaps"]:
+			if Vector3i(int(sm["pos"][0]), int(sm["pos"][1]), int(sm["pos"][2])) == SM:
+				sm["inside"] = [[U_OFF, 701, tables.index_of("itype", "rock"), 0]]
+		(d["player"] as Dictionary)["item_states"] = [GOOD_HOT, [701, 0, 1500, -1, 0, 0, -1, -1], [702, 0, 1500, -1, 0, 0, -1, -1]]))
+	_check.call(bag.is_valid() and Array(bag.item_states.get(701, [])) == [0, 1500, -1, 0, 0, -1, -1] and not bag.item_states.has(702),
+			"item state: what is in a container lying next to the player has its state too (its tray row) " + bag.error)
 	var junk := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void: (d["player"] as Dictionary)["item_states"] = {"x": 1}))
 	_check.call(junk.is_valid() and junk.item_states.is_empty(), "item state: a list that isn't one is ignored")
 	# Each bad entry is for U_NONE, next to a good one for U_HOT: the bad one goes, the rest stays.

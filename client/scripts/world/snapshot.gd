@@ -306,6 +306,9 @@ func _read(data: Variant) -> void:
 		for sm: Submap in submaps.values():
 			for k in range(1, sm.handles.size(), HANDLE_STRIDE):
 				known[sm.handles[k]] = true
+			for c: int in sm.inside:
+				for e: Array in sm.inside[c]:
+					known[e[0]] = true   # what is in a container lying next to the player (its tray row)
 		item_states = states_from(_item_states_sent, known)
 	_item_states_sent = null
 
@@ -924,7 +927,8 @@ func _handles(v: Variant, pos: Vector3i, what: String) -> PackedInt64Array:
 
 ## player.item_states, cleaned (look-only data: anything malformed is left out, it never fails a snapshot):
 ## [[uid, temp, rot, fill, fill_type, see_through, fill_ml, dirt], ...] -> uid -> PackedInt32Array(STATE_SIZE),
-## the first MAX_ITEM_STATES, each uid one of `known` (carried items and handles), the first of a repeat kept.
+## the first MAX_ITEM_STATES, each uid one of `known` (carried items, handles and what is in the containers lying next to the player), the
+## first of a repeat kept.
 ## temp 0..3, rot -1..2000, fill -1..1000 permille and fill_ml -1..MAX_STATE_ML (both -1 or neither: not a
 ## container), fill_type an itype index or 0, see_through 0/1, dirt -1..MAX_DIRT. Values as ItemLook reads them.
 static func states_from(v: Variant, known: Dictionary) -> Dictionary:
