@@ -50,6 +50,9 @@ const CARRIED_STRIDE := 5                 # carried: uid, itype, parent uid (0 o
 const MAX_CARRIED := 256
 const STATE_SIZE := 7                     # item_states: temp, rot, fill, fill_type, see_through, fill_ml, dirt (after the uid)
 const MAX_ITEM_STATES := 512
+const MAX_ITEM_AMOUNTS := 1024             # item_amounts: carried items, then in reach (the contract's cap)
+const MAX_COUNT := 2147483647              # an item_amounts count (charges), 1 at least
+const MAX_AMOUNT := 1_000_000_000          # an item_amounts weight in g / volume in ml
 const MAX_STATE_ML := 100000000           # 100 m3
 const MAX_DIRT := 10000                   # a gun's fouling, as wielded_gun.dirt
 const MAX_POCKET := 255
@@ -148,6 +151,10 @@ var player_worn: Array[Worn] = []          # what the player wears, inner to out
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
 var item_states := {}                      # uid -> PackedInt32Array(STATE_SIZE): live state of a carried item or one lying in reach (ItemLook)
 var _item_states_sent: Variant             # player.item_states as sent, read once the submaps' handles are known
+## uid -> PackedInt32Array([count, weight_g, volume_ml]): CDDA's own numbers for a carried item or one in reach (the
+## whole stack; weight with contents, volume as it takes room where it is); {} from an older bridge (amounts_from).
+var item_amounts := {}
+var _item_amounts_sent: Variant
 var player_stamina := -1                   # -1: not sent
 var player_stamina_max := -1
 var player_needs := {}                     # NEEDS key -> int, only the ones sent (clamped to int16)
@@ -303,18 +310,29 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
-	if is_valid() and _item_states_sent != null:
-		var known := {}
-		for k in range(0, carried.size(), CARRIED_STRIDE):
-			known[carried[k]] = true
-		for sm: Submap in submaps.values():
-			for k in range(1, sm.handles.size(), HANDLE_STRIDE):
-				known[sm.handles[k]] = true
-			for c: int in sm.inside:
-				for e: Array in sm.inside[c]:
-					known[e[0]] = true   # what is in a container lying next to the player (its tray row)
-		item_states = states_from(_item_states_sent, known)
+	if is_valid() and (_item_states_sent != null or _item_amounts_sent != null):
+		var known := _known_uids()
+		if _item_states_sent != null:
+			item_states = states_from(_item_states_sent, known)
+		if _item_amounts_sent != null:
+			item_amounts = amounts_from(_item_amounts_sent, known)
 	_item_states_sent = null
+	_item_amounts_sent = null
+
+
+## The item uids per-item lists may name: carried items, the submaps' handles and what is in a container lying
+## next to the player (its tray row, `inside`).
+func _known_uids() -> Dictionary:
+	var known := {}
+	for k in range(0, carried.size(), CARRIED_STRIDE):
+		known[carried[k]] = true
+	for sm: Submap in submaps.values():
+		for k in range(1, sm.handles.size(), HANDLE_STRIDE):
+			known[sm.handles[k]] = true
+		for c: int in sm.inside:
+			for e: Array in sm.inside[c]:
+				known[e[0]] = true
+	return known
 
 
 ## [min, max]: the map's z range. It must hold z 0 and stay within CddaCoords.Z_LIMIT either way.
@@ -357,6 +375,7 @@ func _read_player(v: Variant) -> void:
 	_read_worn((v as Dictionary).get("worn"))
 	carried = _carried((v as Dictionary).get("items"), "player.items")
 	_item_states_sent = (v as Dictionary).get("item_states")
+	_item_amounts_sent = (v as Dictionary).get("item_amounts")
 	player_effects = effects_from((v as Dictionary).get("effects"))
 	var md: Variant = (v as Dictionary).get("mood")
 	player_mood = mood_from(md)
@@ -957,6 +976,32 @@ static func states_from(v: Variant, known: Dictionary) -> Dictionary:
 			s.append(x)
 		if s.size() == STATE_SIZE and (s[2] == -1) == (s[5] == -1):
 			out[uid] = s
+	return out
+
+
+## player.item_amounts, cleaned like item_states (anything malformed is left out, it never fails a snapshot):
+## [[uid, count, weight_g, volume_ml], ...] -> uid -> PackedInt32Array([count, weight_g, volume_ml]), the first
+## MAX_ITEM_AMOUNTS, each uid one of `known`, the first of a repeat kept; count 1..MAX_COUNT, grams and ml
+## 0..MAX_AMOUNT.
+static func amounts_from(v: Variant, known: Dictionary) -> Dictionary:
+	var out := {}
+	if not v is Array:
+		return out
+	var hi := [MAX_COUNT, MAX_AMOUNT, MAX_AMOUNT]
+	for e: Variant in (v as Array).slice(0, MAX_ITEM_AMOUNTS):
+		if not e is Array or (e as Array).size() != 4:
+			continue
+		var uid: Variant = _whole(e[0], 1, MAX_UID - 1)
+		if uid == null or not known.has(uid) or out.has(uid):
+			continue
+		var a := PackedInt32Array()
+		for k in 3:
+			var x: Variant = _whole(e[k + 1], 1 if k == 0 else 0, hi[k])
+			if x == null:
+				break
+			a.append(x)
+		if a.size() == 3:
+			out[uid] = a
 	return out
 
 
