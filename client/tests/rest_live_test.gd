@@ -97,7 +97,7 @@ func _wait(id: int, label: String, turns: int) -> bool:
 	_check(w["silent"] <= SILENT_MS, "the client hears from the game while it waits %s (longest silence %.1f s, limit %.1f)"
 			% [label, w["silent"] / 1000.0, SILENT_MS / 1000.0])
 	if w["ms"] > 3000 and _main.get("busy_note") != null:   # a stretch long enough for the note (BusyNote, lead-ui)
-		_check(w["noted"], "the screen says \"Time passes\" while it waits %s" % label)
+		_check(w["noted"] != "", "the screen says that time passes while it waits %s (\"%s\")" % [label, w["noted"]])
 	return w["done"]
 
 
@@ -118,13 +118,16 @@ func _sleep() -> void:
 	_check(w["done"], "the character sleeps: an hour or more passes by itself (%.1f h in %.0f s)" % [passed / 3600.0, w["ms"] / 1000.0])
 	_check(w["silent"] <= SILENT_MS, "the client hears from the game while the character sleeps (longest silence %.1f s, limit %.1f)"
 			% [w["silent"] / 1000.0, SILENT_MS / 1000.0])
+	if w["ms"] > 3000 and _main.get("busy_note") != null:
+		_check(w["noted"] != "", "the screen says that time passes while the character sleeps (\"%s\")" % w["noted"])
 
 
 ## Watches the game run on by itself from turn `turn0` until `turns` have passed (or `timeout_ms`), calling `each`
 ## on every look. {done, turns, ms, rate (ms a turn), seen (snapshots with a new turn), silent (the longest time
-## without one, ms), noted (main's "Time passes" line showed meanwhile)}.
+## without one, ms), noted (what main's busy note said meanwhile, "Time passes" or CDDA's word, without its dots;
+## "" when it never showed)}.
 func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dictionary:
-	var noted := false
+	var noted := ""
 	var seen := 0
 	var last_turn := turn0
 	var t0 := Time.get_ticks_msec()
@@ -138,7 +141,8 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dict
 			_answer(_live.request)
 		var now := Time.get_ticks_msec()
 		var note: Variant = _main.get("busy_note")
-		noted = noted or (note is Label and (note as Label).visible and (note as Label).text.begins_with("Time passes"))
+		if note is Label and (note as Label).visible and not (note as Label).text.rstrip(".").is_empty():
+			noted = (note as Label).text.rstrip(".")
 		var t: int = _main.world.snapshot.turn
 		if t != last_turn:
 			seen += 1
