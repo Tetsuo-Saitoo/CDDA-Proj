@@ -1,0 +1,4 @@
+[
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "dresser", "material": "wood", "id": ["f_dresser"] },
+  { "type": "fp3d_model", "kind": "furniture", "placeholder": "crate", "material": "wood_pale", "id": ["f_crate_c"] }
+]

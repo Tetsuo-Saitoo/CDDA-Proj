@@ -71,14 +71,15 @@ GLBS = [
     # kit put it, at the back). The vertices are placed in the file (bake_glb), so parts have no scale.
     (SURV, 'workbench', 'furniture', 'f_workbench', 0.95, None, {'surfaces': [(1, 0.69, -0.44, -0.40, 0.36, 0.40)]}),
     (SURV, 'box-open', 'furniture', 'f_crate_o', 0.9, None, {'surfaces': [(1, 0.073, -0.27, -0.27, 0.27, 0.27)]}),
+    (SURV, 'box', 'furniture', 'f_crate_c', 0.75, None),   # sealed: CDDA pries it open, never by hand
     (SURV, 'chest', 'furniture', 'f_chest', 0.9, None, {'keep': ['lid'], 'drop_animations': True,
                                                           'surfaces': [(1, 0.109, -0.25, -0.23, 0.25, 0.27)]}),
 ]
 # Furniture pack: OBJ in units of about 0.2 m, front -Z (turned to +Z here). The kitchen pieces are made
 # 0.995 m wide (4.3 units) so a run of them closes up. Doors become door_N parts (hinged on their left, -X:
 # the kit's handles are on the right), and surface_N planes where items lie (docs/MODELS.md); counters and
-# sinks keep their door shut (CDDA's counter and sink hold nothing). Not converted: the crates and the bin
-# (one piece, no lid), the dresser (the kit has none) and the workbench, which keep their placeholders.
+# sinks keep their door shut (CDDA's counter and sink hold nothing). The dresser is the kit's drawer vanity
+# with its sink cut off, made taller.
 # (file, out name, metres per unit up and front to back, metres per unit across, {OBJ group: part},
 #  [(N, height, x0, z0, x1, z1, part or None)] in metres from the bottom centre, x before the widening,
 #  optional {sy: metres per unit up, cut_above: drop faces reaching above (m), lid_above: faces wholly above
@@ -97,6 +98,9 @@ OBJS = [
         (2, 0.475, -0.36, -0.33, 0.36, 0.33, None)]),
     ('kitchenCabinet', 'f_counter', 0.2, KITCHEN_X, {}, [(1, 0.84, -0.41, -0.37, 0.41, 0.43, None)]),
     ('kitchenSink', 'f_sink', 0.2, KITCHEN_X, {}, [(1, 0.64, -0.27, -0.18, 0.27, 0.24, None)]),
+    ('kitchenCabinetDrawer', 'f_dresser', 0.2, KITCHEN_X, {'drawerBottom': 'drawer_1', 'drawerTop': 'drawer_2'}, [
+        (1, 0.115, -0.34, -0.18, 0.34, 0.24, 'drawer_1'),
+        (2, 0.527, -0.34, -0.18, 0.34, 0.24, 'drawer_2')], {'sy': 0.27, 'cut_above': 0.91}),
     ('bookcaseClosed', 'f_bookcase', 0.2, 0.2, {}, [
         (1, 0.26, -0.38, -0.23, 0.38, 0.19, None),
         (2, 0.74, -0.38, -0.23, 0.38, 0.19, None),

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
 - 2026-11-16 — Kenney bin, chest, workbench and open crate (lead-world): the bin's and the chest's lids lift by hand like the placeholders' did, and items lie inside them, on the workbench and in the open crate. Client tests pass.
 - 2026-11-16 — Kenney fridge, cupboard, counter, sink and bookcase (lead-world): the fridge's and the cupboard's doors open by hand like the placeholders' did, with items on their shelves and in the fridge door's bins; counters and kitchen pieces are 1 m wide so a run closes up. Client tests pass.
 - 2026-11-16 — Weather sounds (rain, roof, wind, thunder) play on the Ambience bus, so the F1 Weather sounds slider sets their volume; on Master while that bus doesn't exist (lead-world). Client tests pass.
