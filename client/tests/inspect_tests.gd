@@ -427,6 +427,14 @@ func _test_tiles() -> void:
 	_check.call(plain.size() == 3, "inspect: no state, nothing to show or a junk state: no tile %s" % [plain])
 	var data: Variant = bottle._get_drag_data(Vector2.ZERO)
 	_check.call(data is Dictionary and data["inspect_uid"] == BOTTLE, "inspect: a row with a tile still drags")
+	var sl := tv.slosh
+	var water_def := _tables.def_at("itype", _it["water_clean"])
+	_check.call(sl != null and sl.moving(), "inspect: water sloshes; picking its row up to drag shoves it (symbol '%s')"
+			% (water_def.symbol if water_def != null else "?"))
+	_view.rebuild()
+	var tv2 := _view.row_slot(BOTTLE).get_node_or_null("ItemTile") as ItemTileView
+	_check.call(tv2 != null and tv2 != tv and tv2.slosh == sl, "inspect: the surface goes on moving in the rebuilt row")
+	ItemTileView._carried.clear()
 	snap.item_states = keep
 	_view.rebuild()
 	_check.call(_view.row_slot(BOTTLE).get_node_or_null("ItemTile") == null, "inspect: the tile goes with the state")

@@ -37,6 +37,7 @@ func run(root: Node, check: Callable) -> void:
 	ui.free()
 	_test_hands_panel(root)
 	_test_item_tile()
+	_test_slosh()
 
 
 func _req(kind: String, fields: Dictionary, id := 7) -> Dictionary:
@@ -788,6 +789,88 @@ func _test_item_tile() -> void:
 	_check.call(tv.mouse_filter == Control.MOUSE_FILTER_IGNORE and tv.focus_mode == Control.FOCUS_NONE and tv.inset == 0.0,
 			"tile: the view takes no mouse input or focus")
 	tv.free()
+
+
+## Live item tiles, slice 2: Slosh is a damped spring back to level; a liquid's tile (drawn "~") sloshes from
+## stir() and kick(), anything else doesn't; stirs while hidden aren't saved up; a surface still moving when its
+## row goes carries on in the item's next row (soon after only).
+func _test_slosh() -> void:
+	var s := Slosh.new()
+	s.push(NAN)
+	s.push(INF)
+	_check.call(not s.moving() and s.tilt == 0.0 and s.vel == 0.0, "slosh: still at first; NaN or infinite shoves ignored")
+	s.push(3.0)
+	var peak := 0.0
+	var frames := 0
+	while s.step(1.0 / 60.0) and frames < 600:
+		peak = maxf(peak, absf(s.tilt))
+		frames += 1
+	_check.call(peak > 0.1 and peak <= 1.0 and s.tilt == 0.0 and s.vel == 0.0 and frames < 600,
+			"slosh: a shove tilts it, then it settles back to level (%d frames, peak %.2f)" % [frames, peak])
+	s.push(1000.0)
+	_check.call(s.vel == Slosh.MAX_VEL, "slosh: speed capped")
+	var a := Slosh.new()
+	var b := Slosh.new()
+	a.push(3.0)
+	b.push(3.0)
+	a.step(10.0)
+	b.step(Slosh.MAX_DT)
+	var held := a.tilt
+	a.step(NAN)
+	a.step(-1.0)
+	_check.call(a.tilt == b.tilt and a.tilt != 0.0 and a.tilt == held, "slosh: a long frame counts as MAX_DT; NaN or negative steps do nothing")
+	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "juice", "symbol": "~", "category": "drinks"}, {"id": "water", "symbol": "~",
+			"category": "food"}, {"id": "flour", "symbol": "%", "category": "food"}]})
+	var juice := ItemTile.of(PackedInt32Array([0, -1, 500, 1, 1, 250, -1]), t)
+	var water := ItemTile.of(PackedInt32Array([0, -1, 500, 2, 0, 250, -1]), t)
+	var flour := ItemTile.of(PackedInt32Array([0, -1, 500, 3, 0, 250, -1]), t)
+	var dry := ItemTile.of(PackedInt32Array([0, -1, 0, 1, 1, 0, -1]), t)
+	_check.call(juice["sloshes"] and water["sloshes"] and not flour["sloshes"] and not dry["sloshes"]
+			and not ItemTile.of(null, t)["sloshes"], "slosh: liquids (\"~\", whatever the category) slosh; flour, an empty jug or no state don't")
+	var jv := ItemTileView.new(juice)
+	var fv := ItemTileView.new(flour)
+	var full_but_flagged := ItemTileView.new({"sloshes": true, "level": 0.0})
+	_check.call(jv.slosh != null and fv.slosh == null and full_but_flagged.slosh == null,
+			"slosh: only a liquid with something in it gets a surface")
+	var before := ItemTileView.stirred
+	ItemTileView.stir(NAN)
+	ItemTileView.stir(1000.0)
+	_check.call(ItemTileView.stirred == before + ItemTileView.STIR_MAX, "slosh: a stir is capped; NaN ignored")
+	jv.tick(1.0 / 60.0)
+	fv.tick(1.0 / 60.0)
+	_check.call(jv.slosh.moving() and absf(jv.slosh.tilt) > 0.0, "slosh: a stir moves a liquid's surface")
+	var hidden := ItemTileView.new(juice)
+	ItemTileView.stir(2.0)
+	hidden._process(1.0 / 60.0)   # not in the tree: hidden
+	hidden.tick(1.0 / 60.0)
+	_check.call(not hidden.slosh.moving(), "slosh: stirs while hidden are not saved up")
+	hidden.kick(NAN)
+	_check.call(not hidden.slosh.moving(), "slosh: a NaN kick does nothing")
+	hidden.kick()
+	fv.kick()
+	_check.call(hidden.slosh.moving() and fv.slosh == null, "slosh: a kick shoves that tile alone; nothing for one that doesn't slosh")
+	ItemTileView._carried.clear()
+	var moving := ItemTileView.new(juice, 0.0, 7)
+	moving.kick()
+	moving._exit_tree()   # its row went (a rebuild)
+	var again := ItemTileView.new(juice, 0.0, 7)
+	var other := ItemTileView.new(juice, 0.0, 8)
+	_check.call(again.slosh == moving.slosh and other.slosh != moving.slosh and not other.slosh.moving()
+			and not ItemTileView._carried.has(7), "slosh: a moving surface carries on in its item's next row, once")
+	var still := ItemTileView.new(juice, 0.0, 9)
+	still._exit_tree()
+	ItemTileView._carried[10] = [moving.slosh, Time.get_ticks_msec() - ItemTileView.CARRY_MS - 1]
+	var late := ItemTileView.new(juice, 0.0, 10)
+	_check.call(not ItemTileView._carried.has(9) and late.slosh != moving.slosh and not ItemTileView._carried.has(10),
+			"slosh: a still surface isn't kept; a stale one isn't picked up")
+	for i in ItemTileView.MAX_CARRIED:
+		ItemTileView._carried[100 + i] = [Slosh.new(), 0]
+	moving._exit_tree()
+	_check.call(ItemTileView._carried.size() == 1, "slosh: the carried surfaces are bounded")
+	ItemTileView._carried.clear()
+	for v: ItemTileView in [jv, fv, full_but_flagged, hidden, moving, again, other, still, late]:
+		v.free()
 
 
 # --- Character creation and main menu ------------------------------------------------------------------

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Item tiles, slice 2: in the Tab view the fill line of a liquid sloshes and settles when the view opens or you pick the item up to drag it. Client tests pass.
 - 2026-11-17 — Tester AppImage test-2026-11-17 (private test repo, pre-release, not a release) from main 6b99094 + fork 5190675, after the QA lead's OK for the range since test-2026-11-16; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range/game-over live tests). An earlier build of the same day was dropped: appimage.sh writes BUILD_INFO from HEAD at the end, so merge nothing while it runs.
 - 2026-11-17 — VR checks keep to their own folder (QA lead): the game started with --vr-check (vr_check.sh) reads and writes its settings, log and bug reports in a run folder of its own instead of the player's, and says where at the start.
 - 2026-11-17 — Client tests keep to their own folder (QA lead): in a test run the game's files under user:// (settings, key bindings, hints, hotbar, VR settings and log, bug reports, CDDA's default folder) go to that run's own folder, so a test never reads or changes the player's files and runs from several checkouts at once share none (`UserFiles`). The fork's range test has its own user folder and its turn-time check measures again before failing under load.
