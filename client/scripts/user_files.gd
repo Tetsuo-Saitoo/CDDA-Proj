@@ -2,11 +2,12 @@ class_name UserFiles
 extends RefCounted
 ## Where the game's own files under user:// are read and written: settings, key bindings, bug reports, logs and
 ## CDDA's folder. In the game that is user:// itself. In a test run (Godot started with --script, so the main loop
-## has a script) it is that run's own folder, user://test-runs/run-<process id>/user/: a test never reads or
-## changes the player's files, and runs from several checkouts at once share none (Godot names user:// after the
-## project, so every checkout has the same one). Code that opens such a file passes its path through at().
-## tests/test_dir.gd owns the run folders (stamps, cleaning); a child run is pointed at its parent's folder with
-## set_test_root.
+## has a script) or a check run of the game (`-- --vr-check`, VrCheck's scenarios) it is that run's own folder,
+## user://test-runs/run-<process id>/user/: such a run never reads or changes the player's files, and runs from
+## several checkouts at once share none (Godot names user:// after the project, so every checkout has the same
+## one). Code that opens such a file passes its path through at(). tests/test_dir.gd owns the run folders (stamps,
+## cleaning; a check run's folder stays for a look and goes with the stale ones); a child run is pointed at its
+## parent's folder with set_test_root.
 
 const TEST_RUNS := "user://test-runs"
 
@@ -27,14 +28,15 @@ static func at(path: String) -> String:
 	return root.path_join(path.trim_prefix("user://"))
 
 
-## The folder user files go to in a test run, "" in the game.
+## The folder user files go to in a test or check run, "" in the game.
 static func test_root() -> String:
 	if not _decided:
 		var loop := Engine.get_main_loop()
-		if loop == null and not script_run(OS.get_cmdline_args()):
-			return ""   # too early to tell, and not started with --script: asked again on the next call
+		var by_args := script_run(OS.get_cmdline_args()) or check_run(OS.get_cmdline_user_args())
+		if loop == null and not by_args:
+			return ""   # too early to tell from the main loop, and the arguments don't say: asked again next time
 		_decided = true
-		if loop == null or loop.get_script() != null:
+		if by_args or loop.get_script() != null:
 			_root = TEST_RUNS.path_join("run-%d" % OS.get_process_id()).path_join("user")
 	return _root
 
@@ -43,6 +45,15 @@ static func test_root() -> String:
 ## the main loop exists.
 static func script_run(args: PackedStringArray) -> bool:
 	return args.has("--script") or args.has("-s")
+
+
+## Whether the game's own arguments `user_args` (those after "--") make it a check run: --vr-check or
+## --vr-check=<names> (VrCheck's scenarios in a VR session, tools/vr/vr_check.sh).
+static func check_run(user_args: PackedStringArray) -> bool:
+	for a in user_args:
+		if a == "--vr-check" or a.begins_with("--vr-check="):
+			return true
+	return false
 
 
 ## Points this test run's user files at `dir`, a folder under TEST_RUNS (a child run: its parent's). Anything else

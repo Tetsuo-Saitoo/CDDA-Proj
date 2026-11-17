@@ -131,6 +131,8 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
+	if not UserFiles.test_root().is_empty():   # a test or check run: its files aren't the player's
+		print("user files: " + UserFiles.test_root())
 	HudSettings.ensure_ambience_bus()   # G7: before the weather's players look for it
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()

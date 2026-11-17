@@ -178,6 +178,26 @@ func _test_user_files() -> void:
 	_check(cdda.begins_with(ProjectSettings.globalize_path(root)), "CDDA's default folder is the run's too (%s)" % cdda)
 	for f in files:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(root.path_join(f.trim_prefix("user://"))))
+	# A check run of the game itself (--vr-check: VrCheck's scenarios) has its own folder too; a plain start doesn't.
+	_check(UserFiles.check_run(PackedStringArray(["--vr", "--vr-check=report,loot"])) and UserFiles.check_run(PackedStringArray(["--vr-check"]))
+			and not UserFiles.check_run(PackedStringArray(["--vr", "--live", "--vr-checks", "--vr-move=hand"]))
+			and not UserFiles.check_run(PackedStringArray()),
+			"--vr-check among the game's arguments makes a check run, nothing else does")
+	# The game started that way (headless, a few frames, no --script) says where its files go: a run folder of its own.
+	var out := []
+	var code := OS.execute(OS.get_executable_path(), PackedStringArray(["--headless", "--path",
+			ProjectSettings.globalize_path("res://"), "--quit-after", "5", "--", "--vr-check=report"]), out, true)
+	var said := ""
+	for chunk: String in out:
+		for line in chunk.split("\n"):
+			if line.begins_with("user files: "):
+				said = line.trim_prefix("user files: ").strip_edges()
+	var id := said.trim_prefix(TestDir.ROOT + "/" + TestDir.PREFIX).trim_suffix("/user")
+	_check(code == 0 and id.is_valid_int() and int(id) > 0 and int(id) != OS.get_process_id()
+			and said == TestDir.ROOT.path_join(TestDir.PREFIX + id).path_join("user"),
+			"the game started with --vr-check keeps its files in a run folder of its own (exit %d, \"%s\")" % [code, said])
+	if id.is_valid_int() and int(id) > 0 and int(id) != OS.get_process_id():
+		TestDir._remove_tree(TestDir.ROOT.path_join(TestDir.PREFIX + id))   # what that run made
 
 
 func _cast_freed() -> void:
