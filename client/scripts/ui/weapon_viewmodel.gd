@@ -299,10 +299,17 @@ func _tick_flash(delta: float) -> void:
 	if _flash == null:
 		return
 	_flash_t = maxf(_flash_t - delta, 0.0) if flashes else 0.0
-	var f := _flash_t / FLASH_S
-	_flash.visible = f > 0.0
-	_flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
-	var light := _flash.get_node_or_null("Light") as OmniLight3D
+	show_flash(_flash, _flash_t / FLASH_S)
+
+
+## Draws a build_flash() flash at `f` of its strength (1 just fired .. 0 gone: hidden), star and light; VrGun's too.
+static func show_flash(flash: Node3D, f: float) -> void:
+	if flash == null:
+		return
+	f = clampf(f, 0.0, 1.0) if is_finite(f) else 0.0
+	flash.visible = f > 0.0
+	flash.scale = Vector3.ONE * (0.5 + 0.5 * f) if f > 0.0 else Vector3.ONE
+	var light := flash.get_node_or_null("Light") as OmniLight3D
 	if light != null:
 		light.visible = f > 0.0
 		light.light_energy = FLASH_ENERGY * f
