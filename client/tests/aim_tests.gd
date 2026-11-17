@@ -831,6 +831,7 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 	_test_wielded_and_vr(aim, ui, cam, req, eye, head)
 	_test_melee(aim, eye, head, me, zp)
 	_test_techniques(aim, ui, cam, eye, head, zp)
+	_test_smash(aim, world, cam, eye, me, zp)
 	zdef.weakpoints = old_wp
 	aim.wielded_gun = Callable()
 	aim.creature_view = null
@@ -838,6 +839,72 @@ func _test_bullets(root: Node, world: WorldView, tables: IdTables, me: Vector3i,
 
 
 const ZUID := 8589934593   # the test zombie
+
+
+## Strike keys at things: with no creature under the crosshair, furniture (a wall, a door) next to you is smashed at
+## its square (SMASH_AT, CDDA's smash by queue_action_at); a floor, a farther square or junk gives no smash.
+func _test_smash(aim: AimController, world: WorldView, cam: Camera3D, eye: Vector3, me: Vector3i, zp: Vector3i) -> void:
+	var S := AimController
+	var away := Vector3i(-signi(zp.x - me.x), -signi(zp.y - me.y), 0)   # the side away from the zombie
+	if away == Vector3i.ZERO:
+		away = Vector3i(1, 0, 0)
+	var side := me + away
+	var two := me + away * 2
+	var set_furn := func(sq: Vector3i, f: int) -> int:
+		var sm: Snapshot.Submap = world.snapshot.submaps.get(CddaCoords.ms_to_sm(sq))
+		if sm == null:
+			return -1
+		var l := CddaCoords.ms_to_local(sq)
+		var old: int = sm.furn[l.y * CddaCoords.SEEX + l.x]
+		sm.furn[l.y * CddaCoords.SEEX + l.x] = f
+		return old
+	var at_furn := func(sq: Vector3i) -> Vector3:
+		return world.coords.ms_center_to_world(sq) + Vector3(0, 0.5, 0)
+	var old_side: int = set_furn.call(side, 1)
+	var old_two: int = set_furn.call(two, 0)
+	var hit: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me)
+	cam.global_position = eye
+	cam.look_at(at_furn.call(side))
+	var act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	var kept: Variant = aim.smash_square
+	var off_act := aim.strike_action("off", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(old_side >= 0 and hit == side and act == S.SMASH_AT and kept == side and off_act == S.SMASH_AT
+			and aim.melee_aim.is_empty(), "smash: a strike key at furniture next to you smashes its square (%s %s %s)"
+			% [hit, act, kept])
+	var taken: Variant = aim.strike_square(S.SMASH_AT)
+	var again: Variant = aim.strike_square(S.SMASH_AT)
+	aim.smash_square = "junk"
+	var junk_sq: Variant = aim.strike_square(S.SMASH_AT)
+	_check.call(taken == side and again == null and junk_sq == null and S.cdda_action(S.SMASH_AT) == "smash"
+			and S.cdda_action(S.AT_ACTION) == S.AT_ACTION and S.cdda_action("smash") == "smash",
+			"smash: its square is taken once and the action goes to CDDA as smash")
+	# two squares off: out of a smash's reach (CDDA smashes only next to you)
+	set_furn.call(side, 0)
+	set_furn.call(two, 1)
+	var far: Variant = aim.smash_at(eye, eye.direction_to(at_furn.call(two)), me)
+	cam.look_at(at_furn.call(two))
+	var far_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	# the floor next to you: nothing to smash
+	set_furn.call(two, 0)
+	var floor_at := world.coords.ms_center_to_world(side)
+	var on_floor: Variant = aim.smash_at(eye, eye.direction_to(floor_at), me)
+	cam.look_at(floor_at)
+	var floor_act := aim.strike_action("main", cam, aim.aim_point(cam, Vector2.ZERO, true), true, me, "LEFT")
+	_check.call(far == null and far_act == "fp3d_attack_main_LEFT" and on_floor == null
+			and floor_act == "fp3d_attack_main_LEFT" and aim.smash_square == null,
+			"smash: furniture two squares off or a bare floor: a plain strike, no smash (%s %s %s %s)"
+			% [far, far_act, on_floor, floor_act])
+	set_furn.call(side, 1)
+	var ray := aim.look_ray
+	var junk := [aim.smash_at(Vector3(NAN, 0, 0), Vector3.FORWARD, me), aim.smash_at(eye, Vector3.ZERO, me),
+			aim.smash_at(eye, Vector3(INF, 0, 0), me)]
+	aim.look_ray = null
+	junk.append(aim.smash_at(eye, eye.direction_to(at_furn.call(side)), me))
+	aim.look_ray = ray
+	_check.call(junk.all(func(x: Variant) -> bool: return x == null), "smash: junk lines or no look ray: no smash")
+	set_furn.call(side, old_side)
+	set_furn.call(two, old_two)
+	aim.melee_aim = {}
 
 
 ## Melee: an aimed strike picks the figure within reach (not past MELEE_REACH_M, not through a wall), names the

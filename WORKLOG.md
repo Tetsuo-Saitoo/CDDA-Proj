@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Strike keys smash (combat lead): with no creature under the crosshair, a strike key at the wall, window, door or furniture next to you smashes it through CDDA's smash, no direction asked. Client, sim and live tests pass.
 - 2026-11-17 — Gun grime on any model (combat lead, client): GunGrime puts CDDA's fouling as a grime shell over a gun model's meshes (any .glb or prop, its own materials untouched) and is the one dirt-to-grime mapping for the viewmodel, models and icons (Live item tiles, gun part). Client tests pass.
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.

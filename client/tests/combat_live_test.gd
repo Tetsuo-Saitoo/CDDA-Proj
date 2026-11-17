@@ -11,7 +11,10 @@ extends SceneTree
 ##  4. The machete is wielded and the main hand strikes the zombie next to you, aimed at its head (a stun call):
 ##     each aimed swing is answered and resolved; the techniques CDDA used are listed (none expected: the machete
 ##     has only a block technique, and the range has no skill cheat for the others; the sim test covers them).
-##  5. A live grenade on a zombie's square seven squares ahead goes off after its countdown (turns pass with
+##  5. The player is teleported beside the hub's window (the range's teleport cheat) and the main hand strikes it:
+##     the crosshair on it picks a smash at its square (`smash` by queue_action_at), CDDA asks no direction and the
+##     glass breaks within a few strikes; then back where the player stood.
+##  6. A live grenade on a zombie's square seven squares ahead goes off after its countdown (turns pass with
 ##     "pause"): an `explosion` event, ExplosionView's blast and a shake, the zombie's death, its body lying there
 ##     (CreatureView) and its blood on the ground (GoreView). The player is invincible (the range's cheat) meanwhile:
 ##     CDDA's shrapnel kills in the open out to some 30 squares. Fire fields aren't tried: the range's only explosive
@@ -104,6 +107,8 @@ func _run() -> void:
 		await _reach_live()
 	if _live.state == "running":
 		await _melee_live()
+	if _live.state == "running":
+		await _smash_live()
 	if _live.state == "running":
 		await _explosion_live()
 	if _live.state != "running":
@@ -214,7 +219,90 @@ func _melee_live() -> void:
 	print("    techniques used: %s" % [_techniques.slice(tech0)])
 
 
-## 5: a live grenade on a zombie's square seven squares ahead: the blast, the death, the body and its blood.
+## 5: the strike key at the hub's window, the player beside it: CDDA's smash at that square, no direction asked.
+func _smash_live() -> void:
+	var win := _cp.tables.index_of("ter", "t_window")
+	var me0: Vector3i = _main.world.snapshot.player_pos
+	var back := _ahead(3, 0)   # where the view looks now (the grenade's line), faced again after
+	var glass: Variant = _ter_near(win, me0, 20) if win >= 0 else null
+	var stand: Variant = null
+	if glass is Vector3i:
+		for d: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0)]:
+			var q: Vector3i = glass + d
+			var style := _main.world.catalog.style_for(_ter_at(q))
+			if stand == null and style.kind == TerrainCatalog.Kind.FLOOR and _main.world.snapshot.creature_at(q) == null:
+				stand = q
+	if stand == null or not _live.can_teleport():
+		print("  (smash not tried: %s)" % ["no teleport cheat" if glass is Vector3i else "no window near"])
+		return
+	if not await _teleport(stand):
+		return
+	var directions := [0]   # direction requests CDDA made meanwhile (the smash must take the square)
+	var on_req := func(req: Dictionary) -> void:
+		if req.get("kind", "") == "direction":
+			directions[0] += 1
+	var snaps := [0]   # snapshots since
+	var on_snap := func(_s: Snapshot) -> void: snaps[0] += 1
+	_live.request_changed.connect(on_req)
+	_live.snapshot_ready.connect(on_snap)
+	var acts := PackedStringArray()
+	for i in 5:
+		if _ter_at(glass) != win:
+			break
+		await _until(_in_loop, ASK_TIMEOUT_MS, false)
+		var rid := int(_live.request.get("id", 0))
+		var s0: int = snaps[0]
+		var act := await _strike_at(glass, 1.0)
+		acts.append(act)
+		if act != AimController.SMASH_AT:
+			break
+		# A smash costs less than a turn: done once the main loop asks again (a new request) and the map came after.
+		var taken := func() -> bool: return int(_live.request.get("id", 0)) != rid and snaps[0] > s0 and _in_loop()
+		if not await _until(taken, OP_TIMEOUT_MS, true):
+			break
+	_live.request_changed.disconnect(on_req)
+	_live.snapshot_ready.disconnect(on_snap)
+	var smashes := Array(acts).filter(func(a: String) -> bool: return a == AimController.SMASH_AT).size()
+	_check(smashes == acts.size() and smashes > 0 and directions[0] == 0 and _ter_at(glass) != win,
+			("strike at the window beside you: CDDA smashes that square, nothing asked (%s; %d direction request(s);"
+			+ " the square now %s)") % [",".join(acts), directions[0],
+			_main.world.snapshot.ter_names.get(_ter_at(glass), _ter_at(glass))])
+	if await _teleport(me0):
+		await _face(back, CHEST_M)
+
+
+## Teleports the player to `sq` (the range's cheat); true once the snapshot has them there.
+func _teleport(sq: Vector3i) -> bool:
+	await _until(_in_loop, ASK_TIMEOUT_MS, false)
+	if await _op_id(_live.cheat_teleport(sq), "Teleport to %s" % sq) != "":
+		_check(false, "teleported to %s" % sq)
+		return false
+	var there := func() -> bool: return _main.world.snapshot.player_pos == sq and _in_loop()
+	_check(await _until(there, OP_TIMEOUT_MS, true), "teleported to %s" % sq)
+	return there.call()
+
+
+## The terrain id on `p` in the current snapshot, -1 when it isn't in it.
+func _ter_at(p: Vector3i) -> int:
+	var sm: Snapshot.Submap = _main.world.snapshot.submaps.get(CddaCoords.ms_to_sm(p))
+	if sm == null:
+		return -1
+	var l := CddaCoords.ms_to_local(p)
+	var i := l.y * CddaCoords.SEEX + l.x
+	return sm.ter[i] if i >= 0 and i < sm.ter.size() else -1
+
+
+## The nearest square on `near`'s level within `r` squares (Chebyshev) whose terrain is `ter`, null when none.
+func _ter_near(ter: int, near: Vector3i, r: int) -> Variant:
+	for n in range(1, r + 1):
+		for dy in range(-n, n + 1):
+			for dx in range(-n, n + 1):
+				if maxi(absi(dx), absi(dy)) == n and _ter_at(near + Vector3i(dx, dy, 0)) == ter:
+					return near + Vector3i(dx, dy, 0)
+	return null
+
+
+## 6: a live grenade on a zombie's square seven squares ahead: the blast, the death, the body and its blood.
 func _explosion_live() -> void:
 	var gid := _cp.tables.index_of("itype", "grenade_act")
 	if gid < 0:
