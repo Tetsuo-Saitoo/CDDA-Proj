@@ -387,6 +387,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
 	if hints != null and vr == null and live != null and _in_main_loop():
 		hints.trigger("start")   # G6: once, ever (seen ids are kept)
+		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
+			hints.trigger(id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
