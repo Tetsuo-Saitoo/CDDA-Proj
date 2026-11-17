@@ -268,15 +268,13 @@ func _test_feedback() -> void:
 	var b := _rig.buzzes.duplicate()
 	hf.technique_used.emit(ZUID + 1, "Other", 1)
 	var other := sw.label == null or not sw.label.visible
-	var raw := "Precise
-Strike" + "!".repeat(80)
+	var raw := "Precise\nStrike" + "!".repeat(80)
 	hf.technique_used.emit(ZUID, raw, 3)
 	var l := sw.label
 	var text := l.text if l != null else ""
 	_check.call(_sent.size() == n + 1 and other and l != null and l.visible and l.get_parent() == _rig._ctrl(1)
 			and text == Snapshot.plain_text(raw, VrSwing.LABEL_LEN) and text.length() <= VrSwing.LABEL_LEN
-			and not text.contains("
-") and text.begins_with("Precise") and l.billboard == BaseMaterial3D.BILLBOARD_ENABLED,
+			and not text.contains("\n") and text.begins_with("Precise") and l.billboard == BaseMaterial3D.BILLBOARD_ENABLED,
 			"vr swing: the technique CDDA used shows by the hand that struck, one clean line (%s)" % text)
 	hf.swing_resolved.emit(ZUID, false)
 	var missed: bool = sw.misses == 1 and _rig.buzzes[1] == b[1] + 1 and _rig.buzz_amp[1] == VrSwing.MISS_AMP

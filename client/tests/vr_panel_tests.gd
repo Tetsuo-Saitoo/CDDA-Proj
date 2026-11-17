@@ -377,8 +377,7 @@ func _test_report() -> void:
 	var parts := ["runtime: ", "controllers: left_hand ", "settings: snap_deg=30", "main_hand=left", "left hand: ",
 			"right hand: ", "game: ", "--- the end of vr_perf.log"]
 	_check.call(parts.all(func(w: String) -> bool: return t.contains(w)) and not t.contains("nan"),
-			"vr report: the text has the runtime, controllers, changed settings, hands and the log's end
-%s" % t)
+			"vr report: the text has the runtime, controllers, changed settings, hands and the log's end\n%s" % t)
 	var dir: String = preload("res://tests/test_dir.gd").path("vr_report_test")   # this run's own folder
 	var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
 	var path := VrReport.save(t, img, dir)

@@ -395,8 +395,7 @@ func _line_on(c: Card, pt: Vector3) -> Dictionary:
 	var up := l.y - c.label.position.y
 	if lh <= 0.0 or up < 0.0 or absf(l.z) > PICK_Z:
 		return {}
-	var lines := c.text.split("
-")
+	var lines := c.text.split("\n")
 	var k := lines.size() - 1 - int(up / lh)   # bottom-aligned: the last line sits on the label's origin
 	if k < 0:
 		return {}
