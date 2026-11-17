@@ -219,7 +219,8 @@ Cooking and looting are the next VR features (PLAN.md L8, L9), so these CDDA ids
 
 Done from Kenney's kits (2026-11-16, stylised low-poly): `pot`, `pan`, `f_oven`, `meat`, `meat_cooked`,
 `bottle_plastic`, `can_medium` (the can beans come in), `f_cupboard`, `f_counter`, `f_fridge` (doors that
-open, shelves as `surface_N`); also `f_trashcan` and `f_chest` with lids, `f_dresser` with drawers,
+open, shelves as `surface_N`), the counter's `corner` join piece (off-centre: flush with the runs' backs, out
+to the tile's edges where they go on); also `f_trashcan` and `f_chest` with lids, `f_dresser` with drawers,
 `f_workbench`, `f_crate_o`, `f_crate_c`. Still wanted: `f_woodstove`, `f_fireplace`, `jerrycan`, `backpack`,
 `hose`, `knife_butcher`. Furniture that opens or holds items needs its doors, drawers and shelves as
 markers; without them it would lose the placeholder's opening by hand and its shelf heights.
