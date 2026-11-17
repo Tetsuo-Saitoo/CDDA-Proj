@@ -91,7 +91,8 @@ class Card extends Node3D:
 	var fill: MeshInstance3D
 	var steam: GPUParticles3D
 	var pot := {}           # the pots_near entry it was last drawn for
-	var matches: Array = [] # what its lines 2.. list (clean_match each; press_at), [] none
+	var matches: Array = [] # what its lines match_from.. list (clean_match each; press_at), [] none
+	var match_from := -1    # the line its first listed match is on (after a refusal shown over them: one lower)
 
 
 var world: WorldView
@@ -402,7 +403,7 @@ func _line_on(c: Card, pt: Vector3) -> Dictionary:
 	var w := font.get_string_size(lines[k], HORIZONTAL_ALIGNMENT_LEFT, -1, FONT).x * PIXEL
 	if absf(l.x) > w * 0.5 + PICK_PAD:
 		return {}
-	var i := k - 2
+	var i := k - c.match_from if c.match_from >= 0 else -1
 	return {"uid": c.uid, "line": k, "match": c.matches[i] if i >= 0 and i < c.matches.size() else {}}
 
 
@@ -604,6 +605,12 @@ static func time_text(secs: int) -> String:
 
 ## The card's lines for one pot near the head (pots_near's entry).
 func card_text(p: Dictionary, snap: Snapshot) -> String:
+	return _card_lines(p, snap)[0]
+
+
+## [card_text, the line its recipe lines start on (-1: none listed)], counted in the text as drawn.
+func _card_lines(p: Dictionary, snap: Snapshot) -> Array:
+	var from := -1
 	var cw: Snapshot.Cookware = p["cw"]
 	var tables: IdTables = world.tables if world != null else null
 	var lines: Array[String] = [heat_text(p["heat"], tables), contents_text(cw.contents, tables)]
@@ -617,8 +624,9 @@ func card_text(p: Dictionary, snap: Snapshot) -> String:
 		else:
 			if not no.is_empty():
 				lines.append(_cap(no))
+			from = "\n".join(lines).split("\n").size()   # a line with a break in it still counts as drawn
 			lines.append_array(_recipe_lines(p, snap))
-	return "\n".join(lines)
+	return ["\n".join(lines), from]
 
 
 func _recipe_lines(p: Dictionary, snap: Snapshot) -> Array[String]:
@@ -778,6 +786,7 @@ func _show(near: Array[Dictionary]) -> void:
 			gone.steaming = false
 			gone.pot = {}
 			gone.matches = []
+			gone.match_from = -1
 			cards.erase(uid)
 			_free.append(gone)
 	if near.is_empty():
@@ -796,7 +805,9 @@ func _show(near: Array[Dictionary]) -> void:
 		c.visible = true
 		c.pot = p
 		c.matches = _listed(p)
-		var t := card_text(p, snap)
+		var cl := _card_lines(p, snap)
+		var t: String = cl[0]
+		c.match_from = cl[1]
 		if t != c.text:
 			c.text = t
 			c.label.text = t
