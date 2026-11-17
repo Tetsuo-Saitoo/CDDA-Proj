@@ -9,7 +9,7 @@ request, wait for the answer". The client shows a generic widget (block E3) and 
 |---|---|---|---|
 | `yes_no` | text | bool | `query_yn` (output.cpp) |
 | `popup` | text, options (ok / any key) | key/ok | `popup`, `query_popup` |
-| `menu` | title, text, entries [{id, label, enabled, hotkey, description}], selected | entry id or cancel | `uilist` (uilist.h) |
+| `menu` | title, text, entries [{id, label, enabled, hotkey, description}], selected (index into entries of CDDA's highlighted entry: the caller's choice, or the next enabled entry after it; -1 when none is enabled) | entry id or cancel | `uilist` (uilist.h) |
 | `string` | title, description, default, max_len | string or cancel | `string_input_popup` |
 | `number` | title, min, max, default | int or cancel | `string_input_popup` (numeric) / `query_int` |
 | `direction` | prompt, allow_vertical | dir or cancel | `choose_direction`, `choose_adjacent` |
