@@ -64,6 +64,7 @@ var item_bodies: ItemBodies           # E2 item physics: the items near the play
 var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
+var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -234,6 +235,17 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
 	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	hotbar = Hotbar.new()   # G2: 3..9 and 0 put a set item type into the main hand; set in the Tab view
+	hotbar.world = world
+	hotbar.actions = item_actions
+	var hb_why := hotbar.load_file()
+	if hb_why != "":
+		push_warning("hotbar: " + hb_why)
+	request_ui.get_parent().add_child(hotbar)
+	request_ui.get_parent().move_child(hotbar, inspect.get_index())   # under the Tab view and the prompts
+	inspect.hotbar = hotbar
+	inspect.opened.connect(func() -> void: hotbar.show_empty = true)
+	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
 	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
@@ -366,6 +378,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	# the same sheet.
 	if character.visible or inspect.visible:
 		_ask_character()
+	if hotbar != null:
+		hotbar.refresh()   # G2: which slots are carried or in hand now
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -1007,6 +1021,13 @@ func _screen_step(dir: Vector2) -> Vector2i:
 
 ## Live-mode actions in the main loop (prompts take their keys in RequestUI first); true if used.
 func _live_action(event: InputEvent) -> bool:
+	for i in Hotbar.SLOTS:   # G2: a set item type into the main hand; why not goes to the message feed
+		if hotbar != null and InputActions.pressed(event, Hotbar.action(i)):
+			if _in_main_loop():
+				var why := hotbar.use(i)
+				if why != "":
+					hud_data.on_events([MockItems.message_event(why)])
+			return true
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
