@@ -820,14 +820,19 @@ func _test_slosh() -> void:
 	a.step(-1.0)
 	_check.call(a.tilt == b.tilt and a.tilt != 0.0 and a.tilt == held, "slosh: a long frame counts as MAX_DT; NaN or negative steps do nothing")
 	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
-			"itype": [{"id": ""}, {"id": "juice", "symbol": "~", "category": "drinks"}, {"id": "water", "symbol": "~",
-			"category": "food"}, {"id": "flour", "symbol": "%", "category": "food"}]})
+			"itype": [{"id": ""}, {"id": "juice", "symbol": "~", "category": "drinks"}, {"id": "water", "symbol": "!",
+			"category": "food", "phase": "liquid"}, {"id": "flour", "symbol": "%", "category": "food"},
+			{"id": "wax", "symbol": "~", "phase": "solid"}]})
 	var juice := ItemTile.of(PackedInt32Array([0, -1, 500, 1, 1, 250, -1]), t)
 	var water := ItemTile.of(PackedInt32Array([0, -1, 500, 2, 0, 250, -1]), t)
 	var flour := ItemTile.of(PackedInt32Array([0, -1, 500, 3, 0, 250, -1]), t)
 	var dry := ItemTile.of(PackedInt32Array([0, -1, 0, 1, 1, 0, -1]), t)
-	_check.call(juice["sloshes"] and water["sloshes"] and not flour["sloshes"] and not dry["sloshes"]
-			and not ItemTile.of(null, t)["sloshes"], "slosh: liquids (\"~\", whatever the category) slosh; flour, an empty jug or no state don't")
+	var wax := ItemTile.of(PackedInt32Array([0, -1, 500, 4, 0, 250, -1]), t)
+	var ice := ItemTile.of(PackedInt32Array([ItemLook.Temp.FROZEN, -1, 500, 2, 0, 250, -1]), t)
+	_check.call(juice["sloshes"] and water["sloshes"] and not flour["sloshes"] and not dry["sloshes"] and not wax["sloshes"]
+			and not ice["sloshes"] and not ItemTile.of(null, t)["sloshes"],
+			"slosh: liquids by phase (no phase: drawn \"~\") slosh, whatever the category; a solid \"~\", frozen water, "
+			+ "flour, an empty jug or no state don't")
 	var jv := ItemTileView.new(juice)
 	var fv := ItemTileView.new(flour)
 	var full_but_flagged := ItemTileView.new({"sloshes": true, "level": 0.0})

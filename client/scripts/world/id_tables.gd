@@ -33,6 +33,8 @@ const POCKET_AMMO_ONLY := 64
 const POCKET_RESTRICTED := 128
 const POCKET_FORBIDDEN := 256         # the player can't use it
 const POCKET_FLAGS := 511
+## An itype's `phase` as CDDA has it for the type (not the item's state now: frozen water is "liquid").
+const PHASES := ["solid", "liquid", "gas", "plasma"]
 
 
 class Def:
@@ -52,6 +54,7 @@ class Def:
 	var close := ""          # id of the closed state
 	var roof := ""           # ter: what is built on top of it
 	var category := ""       # itype
+	var phase := ""          # itype: one of PHASES; "" when not sent (an older bridge), not set or unknown
 	var gun_ammo := ""       # itype, guns: the first ammo type (9mm, 223, shot, arrow, ...)
 	var weakpoints := {}     # mtype: CDDA weak point ids (head, eye, arm, leg, ...) -> true
 	var gun := ""            # itype: the skill a gun uses (pistol, rifle, archery, ...), "" if not a gun
@@ -262,6 +265,8 @@ func _read_table(table: String, v: Variant) -> void:
 			def.roof = _str(r.get("roof"), MAX_ID, what + ".roof")
 		elif table == "itype":
 			def.category = _str(r.get("category"), MAX_FLAG_LEN, what + ".category")
+			var phase := _str(r.get("phase"), MAX_FLAG_LEN, what + ".phase")
+			def.phase = phase if phase in PHASES else ""
 			if r.has("gun"):
 				def.gun = _str(r.get("gun"), MAX_FLAG_LEN, what + ".gun")
 			def.gun_ammo = _str(r.get("gun_ammo"), MAX_FLAG_LEN, what + ".gun_ammo")
