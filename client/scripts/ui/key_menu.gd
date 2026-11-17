@@ -44,6 +44,8 @@ var invert_check: CheckBox
 var ui_slider: HSlider
 var weather_pick: OptionButton
 var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
+var volume_slider: HSlider
+var ambience_slider: HSlider
 var fov_slider: HSlider
 var scale_slider: HSlider
 var fullscreen_check: CheckBox
@@ -280,6 +282,20 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	disp_row.add_child(weather_pick)
 	_box.add_child(disp_row)
 	_box.move_child(disp_row, 4)
+	var sound_row := HBoxContainer.new()
+	var vol := Label.new()
+	vol.text = "Volume"
+	sound_row.add_child(vol)
+	volume_slider = _option_slider(sound_row, HudSettings.VOLUMES, 0.05, settings.volume, &"volume")
+	volume_slider.tooltip_text = "How loud the game is: weather, hits, shots, explosions. 0 is silent."
+	var aml := Label.new()
+	aml.text = "Weather sounds"
+	sound_row.add_child(aml)
+	ambience_slider = _option_slider(sound_row, HudSettings.VOLUMES, 0.05, settings.ambience_volume,
+			&"ambience_volume")
+	ambience_slider.tooltip_text = "Rain, wind and thunder, under the volume on the left."
+	_box.add_child(sound_row)
+	_box.move_child(sound_row, 5)
 	_show_compass_value()
 	_show_options()
 
@@ -316,7 +332,7 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"main_hand"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand"]:
 		return
 	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
 		return
@@ -333,6 +349,8 @@ func _show_options() -> void:
 	_option_values[&"fov"].text = "%d%s" % [roundi(hud.fov), char(0xb0)]
 	_option_values[&"render_scale"].text = "%d %%" % roundi(hud.render_scale * 100.0)
 	_option_values[&"ui_scale"].text = "%d %%" % roundi(hud.ui_scale * 100.0)
+	_option_values[&"volume"].text = "%d %%" % roundi(hud.volume * 100.0)
+	_option_values[&"ambience_volume"].text = "%d %%" % roundi(hud.ambience_volume * 100.0)
 
 
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
@@ -455,6 +473,8 @@ func open() -> void:
 		scale_slider.set_value_no_signal(hud.render_scale)
 		ui_slider.set_value_no_signal(hud.ui_scale)
 		weather_pick.select(clampi(hud.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
+		volume_slider.set_value_no_signal(hud.volume)
+		ambience_slider.set_value_no_signal(hud.ambience_volume)
 		fullscreen_check.set_pressed_no_signal(hud.fullscreen)
 		vsync_check.set_pressed_no_signal(hud.vsync)
 		_show_options()

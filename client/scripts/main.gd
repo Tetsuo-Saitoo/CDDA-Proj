@@ -64,6 +64,7 @@ var item_bodies: ItemBodies           # E2 item physics: the items near the play
 var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
+var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -128,6 +129,7 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
+	HudSettings.ensure_ambience_bus()   # G7: before the weather's players look for it
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
 	world.name = "World"
@@ -233,6 +235,17 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
 	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	hotbar = Hotbar.new()   # G2: 3..9 and 0 put a set item type into the main hand; set in the Tab view
+	hotbar.world = world
+	hotbar.actions = item_actions
+	var hb_why := hotbar.load_file()
+	if hb_why != "":
+		push_warning("hotbar: " + hb_why)
+	request_ui.get_parent().add_child(hotbar)
+	request_ui.get_parent().move_child(hotbar, inspect.get_index())   # under the Tab view and the prompts
+	inspect.hotbar = hotbar
+	inspect.opened.connect(func() -> void: hotbar.show_empty = true)
+	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
 	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
 		camera.set_process_unhandled_input(false)
@@ -366,6 +379,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	# the same sheet.
 	if character.visible or inspect.visible:
 		_ask_character()
+	if hotbar != null:
+		hotbar.refresh()   # G2: which slots are carried or in hand now
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -1007,6 +1022,13 @@ func _screen_step(dir: Vector2) -> Vector2i:
 
 ## Live-mode actions in the main loop (prompts take their keys in RequestUI first); true if used.
 func _live_action(event: InputEvent) -> bool:
+	for i in Hotbar.SLOTS:   # G2: a set item type into the main hand; why not goes to the message feed
+		if hotbar != null and InputActions.pressed(event, Hotbar.action(i)):
+			if _in_main_loop():
+				var why := hotbar.use(i)
+				if why != "":
+					hud_data.on_events([MockItems.message_event(why)])
+			return true
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
@@ -1385,7 +1407,8 @@ func _setup_environment() -> void:
 const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
 
 
-## G7 options: the look speed, invert Y and field of view on the flat-screen cameras; the 3D render scale, vsync and
+## G7 options: the volume on the Master bus (headset too); the look speed, invert Y and field of view on the
+## flat-screen cameras; the 3D render scale, vsync and
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
@@ -1399,6 +1422,8 @@ func _apply_options() -> void:
 	if camera != null:
 		camera.sensitivity = speed
 		camera.invert_y = o.invert_y
+	HudSettings.set_bus_loudness(0, o.volume)   # Master (bus 0): every sound, the Ambience bus's too
+	HudSettings.set_bus_loudness(AudioServer.get_bus_index(HudSettings.AMBIENCE_BUS), o.ambience_volume)
 	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
 		return
 	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)

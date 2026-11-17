@@ -16,6 +16,9 @@ extends RefCounted
 ##
 ## Models face +Z (Godot's model front), origin at the bottom centre, 1 unit = 1 m.
 ##
+## Monster hit regions (`hit_<id>`, `hit_<id>_N`; docs/MODELS.md) are hidden and kept as Model.hits for
+## CreatureFigure's hit zones.
+##
 ## Doors, drawers and lids (lid, door_N, drawer_N) become movers (Model.movers, block L8): their hinge or slide,
 ## how far they open, their handle, their meshes and surface_N planes in their own space, checked and capped
 ## (MAX_MOVERS), plus `still`, the model without them. Furniture draws `still` and opens the movers
@@ -89,6 +92,8 @@ const NUMBERED_POINTS := ["burner"]
 const PARTS := ["lid"]
 const NUMBERED_PARTS := ["door", "drawer", "handle", "knob"]
 const COLLIDER_SUFFIX := "-convcolonly"
+const HIT_PREFIX := "hit_"   # monster hit regions: hidden, Model.hits
+const MAX_HIT_ID := 32       # characters of a hit region's id (a CDDA weak point or body part id)
 ## Movers (block L8): the parts furniture opens (Grabbable.part), at most MAX_MOVERS per model; the rest stay put.
 const MAX_MOVERS := 16
 const DOOR_MAX := deg_to_rad(110.0)   # how far a door_N turns open
@@ -99,7 +104,7 @@ const DRAWER_MIN := 0.05              # metres a drawer slides out at least
 ## and texture detail): albedo colour * lerp(white, material colour, TINT).
 const TINT := 0.7
 
-enum Marker { NONE, POINT, PART, SURFACE, FILL, COLLIDER }
+enum Marker { NONE, POINT, PART, SURFACE, FILL, COLLIDER, HIT }
 
 
 class Model:
@@ -117,6 +122,9 @@ class Model:
 	## Collider meshes from `<name>-convcolonly` (hidden): [Mesh, Transform3D]. Make the shape with
 	## ModelLibrary.collider_shape on the main thread when it is needed.
 	var colliders: Array = []
+	## Monster hit regions from `hit_<id>` meshes (hidden): [id (hit_id: "" when the name is malformed), Mesh,
+	## Transform3D in model space]. The region is the mesh's own bounding box.
+	var hits: Array = []
 	var aabb := AABB()
 	var triangles := 0
 	## Registry material this variant is tinted with ("" = the model as made).
@@ -265,7 +273,7 @@ func _room_to_tint(m: Model) -> bool:
 
 ## A variant of m whose drawn meshes use copies of its materials, the albedo colour multiplied by
 ## lerp(white, tint, TINT) (textures keep their detail). Meshes and materials shared inside the model stay
-## shared in the variant; markers, surfaces, fill and colliders are m's own. m is left as it is.
+## shared in the variant; markers, surfaces, fill, colliders and hits are m's own. m is left as it is.
 static func tinted(m: Model, tint: Color) -> Model:
 	var t := Model.new()
 	t.path = m.path
@@ -274,6 +282,7 @@ static func tinted(m: Model, tint: Color) -> Model:
 	t.surfaces = m.surfaces
 	t.fill = m.fill
 	t.colliders = m.colliders
+	t.hits = m.hits
 	t.aabb = m.aabb
 	t.triangles = m.triangles
 	var factor := Color.WHITE.lerp(Color(tint, 1.0), TINT)
@@ -838,7 +847,7 @@ func _read(scene: Node, m: Model) -> String:
 		if not box.is_finite():
 			return "mesh bounds are not finite numbers"
 		bounds = box if visited == 1 else bounds.merge(box)
-		if kind != Marker.NONE and kind != Marker.COLLIDER:
+		if kind != Marker.NONE and kind != Marker.COLLIDER and kind != Marker.HIT:
 			m.markers[name] = xf
 			if not owner.is_empty():
 				m.marker_owner[name] = owner
@@ -862,6 +871,10 @@ func _read(scene: Node, m: Model) -> String:
 				hidden = true
 				if mesh != null:
 					m.colliders.append([mesh, xf])
+			Marker.HIT:
+				hidden = true
+				if mesh != null:
+					m.hits.append([hit_id(name), mesh, xf])
 		if mesh != null:
 			m.triangles += _triangles(mesh)
 			if not hidden and kind != Marker.POINT:
@@ -876,7 +889,7 @@ func _read(scene: Node, m: Model) -> String:
 				m.part_owner.append(owner)
 		for c in n.get_children():
 			stack.append([c, xf, hidden, owner])
-	if m.markers.size() + m.colliders.size() > max_markers:
+	if m.markers.size() + m.colliders.size() + m.hits.size() > max_markers:
 		return "more than %d markers" % max_markers
 	if m.triangles > max_triangles:
 		return "%d triangles, more than %d" % [m.triangles, max_triangles]
@@ -1074,6 +1087,8 @@ static func collider_shape(mesh: Mesh, max_points := MAX_HULL_POINTS) -> ConvexP
 static func marker_kind(name: String) -> Marker:
 	if name.ends_with(COLLIDER_SUFFIX):
 		return Marker.COLLIDER
+	if name.begins_with(HIT_PREFIX):
+		return Marker.HIT
 	if name in POINTS:
 		return Marker.POINT
 	if name in PARTS:
@@ -1094,6 +1109,26 @@ static func marker_kind(name: String) -> Marker:
 	if prefix in NUMBERED_PARTS:
 		return Marker.PART
 	return Marker.NONE
+
+
+## The id of a hit region's mesh name: `hit_<id>` or `hit_<id>_N` (N 1..MAX_NUMBER, one piece of a region in
+## several) -> <id>, lower-case letters, digits and `_` only, at most MAX_HIT_ID long; "" for anything else.
+static func hit_id(name: String) -> String:
+	if not name.begins_with(HIT_PREFIX):
+		return ""
+	var id := name.substr(HIT_PREFIX.length())
+	var cut := id.rfind("_")
+	if cut > 0:
+		var num := id.substr(cut + 1)
+		if num.is_valid_int() and num == str(num.to_int()) and num.to_int() >= 1 and num.to_int() <= MAX_NUMBER:
+			id = id.left(cut)
+	if id.is_empty() or id.length() > MAX_HIT_ID:
+		return ""
+	for i in id.length():
+		var c := id.unicode_at(i)
+		if not ((c >= 0x61 and c <= 0x7a) or (c >= 0x30 and c <= 0x39) or c == 0x5f):
+			return ""
+	return id
 
 
 static func _triangles(mesh: Mesh) -> int:

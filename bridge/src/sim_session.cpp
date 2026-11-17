@@ -319,6 +319,8 @@ void play_game()
             } else {
                 fp3d::boot_world( boot_world, true );
             }
+            // Input validation of the new character's name, whatever made it; its save id is set once here.
+            fp3d::settle_new_character( get_avatar() );
             fp3d::note_boot_step( "Starting the game (world and map)" );
             if( !fp3d_game_access::start_game( *g ) ) {
                 throw std::runtime_error( "start_game failed" );

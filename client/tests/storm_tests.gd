@@ -265,9 +265,20 @@ func _test_clips() -> void:
 
 
 func _test_sound(root: Node) -> void:
+	var made := AudioServer.get_bus_index(WeatherSound.BUS) < 0   # main makes it at start; a test run may not have
+	if made:
+		var plain := WeatherSound.new()
+		root.add_child(plain)
+		_check.call(plain.rain.bus == &"Master" and plain.thunder.bus == &"Master", "sound: on Master without the Ambience bus")
+		root.remove_child(plain)
+		plain.free()
+		AudioServer.add_bus()
+		AudioServer.set_bus_name(AudioServer.bus_count - 1, WeatherSound.BUS)
 	var s := WeatherSound.new()
 	root.add_child(s)
 	_check.call(not s.busy() and not s.is_processing() and not s.rain.playing, "sound: silent and idle to begin with")
+	_check.call([s.rain, s.roof, s.wind, s.thunder].all(func(p: AudioStreamPlayer) -> bool: return p.bus == WeatherSound.BUS),
+			"sound: plays on the Ambience bus (its own volume)")
 	s.apply(_state(RAIN))
 	_check.call(is_equal_approx(s.targets[s.rain], WeatherSound.RAIN_GAIN) and s.targets[s.roof] == 0.0
 			and s.targets[s.wind] == 0.0 and s.is_processing(), "sound: heavy rain in the open is the hiss alone")
@@ -334,6 +345,8 @@ func _test_sound(root: Node) -> void:
 		s.tick(0.1)
 	root.remove_child(s)
 	s.free()
+	if made:
+		AudioServer.remove_bus(AudioServer.get_bus_index(WeatherSound.BUS))
 	# WeatherView runs it.
 	var view := WeatherView.new()
 	root.add_child(view)
