@@ -144,7 +144,7 @@ The client doesn't have to catch each `timed` request: it can queue main-loop ac
 request's `actions`) at any time, up to 32 (`queue_action` returns false when full). The sim takes one per timed
 request before waiting, under the lock that posts the request, so the client only ever sees a timed request when
 the queue is empty. Nothing is taken while paused. An action that isn't valid there is dropped with a `message`
-event ("Can't do that here: …"). Auto-pause clears the queue. Menus and other untimed requests are still answered
+event ("Can't do that here: …"). The main loop has an action allow-list (a timed request's `actions` lists it): the eight steps, `LEVEL_UP`, `LEVEL_DOWN`, `pause`, `toggle_run`, `toggle_crouch`, `open`, `close`, `smash`, `examine`, `pickup`, `grab`, `butcher`, `look`, `peek`, `inventory`, `apply`, `wear`, `take_off`, `eat`, `read`, `wield`, `reload_weapon`, `unload`, `throw`, `fire`, `drop`, `wait`, `sleep`, `safemode`, `save`, `SUICIDE`, every `fp3d_...` action, and `debug` only while cheats are allowed. Any other CDDA action is dropped the same way. Auto-pause clears the queue. Menus and other untimed requests are still answered
 with `answer()`. `queue_action_at(action, square)` queues an action for one square next to the player: CDDA's
 adjacent-square prompt (open, close, examine, ...) takes that square and asks nothing, or does nothing with its
 "nothing ... nearby" message when it doesn't allow it there; it is dropped when the main loop next waits. Asking again after a bad answer keeps the request `timed` (fixed in B5: it used to lose the flag).
