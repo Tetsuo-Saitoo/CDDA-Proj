@@ -98,6 +98,24 @@ func _test_hold() -> void:
 	a.check_timeouts()
 	_check.call(waits and seen[-1] == ["refused", 32, "hold", ItemActions.NO_ANSWER] and a.pending_count() == 0,
 			"item actions: a held item gone from the carried list is no hand change: it times out (%s)" % [seen[-1]])
+	# the off-hand item put into its own pocket: CDDA only takes it out of the hand; done when the hand flag clears
+	var bag := [40, 8, 0, -1, WORN]
+	a.on_snapshot(_snap(9, [], [bag, [31, 8, 40, 0, OFFHAND]]))
+	seen.clear()
+	var stow := a.put(ItemRef.on_player(31, 8, 40, 0, OFFHAND, SQ), ItemRef.on_player(40, 8, 0, -1, WORN, SQ), 0)
+	a.on_snapshot(_snap(10, [], [bag, [31, 8, 40, 0, OFFHAND]]))
+	var held_on := seen.is_empty() and a.pending(31) == "put"
+	a.on_snapshot(_snap(11, [], [bag, [31, 8, 40, 0, 0]]))
+	_check.call(stow and held_on and seen == [["finished", 31, "put"]],
+			"item actions: the off-hand item put into its own pocket is done when it leaves the hand (%s)" % [seen])
+	seen.clear()
+	a.put(ItemRef.on_player(31, 8, 40, 0, 0, SQ), ItemRef.on_player(40, 8, 0, -1, WORN, SQ), 0)
+	a.on_snapshot(_snap(12, [], [bag, [31, 8, 40, 0, 0]]))
+	var still := seen.is_empty() and a.pending(31) == "put"
+	now[0] += ItemActions.TIMEOUT_MS + 1
+	a.check_timeouts()
+	_check.call(still and seen == [["refused", 31, "put", ItemActions.DIDNT_WORK]],
+			"item actions: a put with nothing changed (same pocket, same hands) is still: refused when its time is up (%s)" % [seen])
 	a.free()
 	# LiveSession.hold_item: the bridge's "hold" op, checked here first
 	var ls := LiveSession.new()

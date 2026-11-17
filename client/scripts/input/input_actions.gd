@@ -68,7 +68,7 @@ const ACTIONS := [
 	[&"carry_turn_right", "Act", "carrying an item: turn it right", ["mouse:Shift+5"]],
 	[&"inspect", "Act", "look into a container / your backpack", ["Tab"]],
 	[&"loot_tray", "Act", "lay out what is in the bag or big pile you point at on a tray; click one to take it (again or Esc: close)", ["K"]],
-	[&"hold_off", "Act", "hold an item in the off hand", ["H"]],
+	[&"hold_off", "Act", "hold an item in your off hand (the one under the crosshair, else pick one)", ["H"]],
 	[&"stow_off", "Act", "put away the off hand's item", ["Shift+H"]],
 	[&"cdda_examine", "Act", "examine (pick a direction)", ["X"]],
 	[&"cdda_pickup", "Act", "pick up", ["G"]],

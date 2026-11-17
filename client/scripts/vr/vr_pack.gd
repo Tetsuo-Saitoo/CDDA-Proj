@@ -315,12 +315,21 @@ func drop_for(p: Vector3, it: ItemRef) -> Dictionary:
 	if k < 0:
 		return {}
 	var key: int = comps[k]["key"]
-	if it.uid == bag.uid or (it.carried and it.parent == bag.uid and (key < 0 or key == it.pocket)):
-		return {"kind": "none"}
+	if it.uid == bag.uid or (it.carried and it.parent == bag.uid and (key < 0 or key == it.pocket) and not it.is_off_hand()):
+		return {"kind": "none"}   # (the off-hand item lies in its pocket while held: putting it there takes it out of the hand)
 	var d := {"kind": "container", "container": bag}
 	if key >= 0:
 		d["pocket"] = key
 	return d
+
+
+## World point `p` is at the open pack: within `margin` of its compartments' box (front and back included).
+func near(p: Vector3, margin: float) -> bool:
+	if state == State.CLOSED or _content == null or not is_inside_tree() or not p.is_finite():
+		return false
+	var l := global_transform.affine_inverse() * p
+	return absf(l.x) <= _width * 0.5 + margin and l.y >= -HEIGHT * 0.5 - margin and l.y <= HEIGHT * 0.5 + TITLE_H + margin \
+			and l.z >= -DROP_BACK - margin and l.z <= DROP_FRONT + margin
 
 
 ## World point of item `uid`'s model, INF if not shown.

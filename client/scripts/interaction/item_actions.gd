@@ -502,6 +502,9 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 				return Where.UNKNOWN if full else Where.MOVED
 			var i := row * Snapshot.CARRIED_STRIDE
 			var same: bool = snap.carried[i + 2] == item.parent and snap.carried[i + 3] == item.pocket
+			# the off-hand item into its own pocket: CDDA only takes it out of the hand (the bridge's put)
+			var hands := Snapshot.CARRIED_WIELDED | Snapshot.CARRIED_OFFHAND
+			same = same and (snap.carried[i + 4] & hands) == (item.flags & hands)
 			return Where.STILL if same else Where.MOVED
 		"throw":
 			if row < 0:

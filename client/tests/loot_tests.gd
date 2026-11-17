@@ -580,6 +580,31 @@ func _test_desk_tray() -> void:
 	_check.call(took == "take" and ItemActions.carried_row(_snap, 424500, rock) >= 0 and stale == "" and paged == "page"
 			and tray.page == 1 and miss == "",
 			"desk tray: a click takes an item into the pack (not twice), on the arrow pages, off it nothing (%s %s %s %s)" % [took, stale, paged, miss])
+	tray.refresh()
+	var q0 := tray.global_transform * ItemTray.cell_pos(0)
+	var qt := tray.target_at(q0)
+	var qu: int = (qt["item"] as ItemRef).uid if qt.get("kind") == "item" else -1
+	var held := g.tray_click(eye, q0 - eye, "off")
+	var qrow := ItemActions.carried_row(_snap, qu, rock)
+	_check.call(held == "take" and qrow >= 0 and (_snap.carried[qrow * Snapshot.CARRIED_STRIDE + 4] & Snapshot.CARRIED_OFFHAND) != 0,
+			"desk tray: H takes the item under the pointer into the off hand (%s %d)" % [held, qu])
+	# H on an item under the crosshair (no tray): into the off hand; that hand full: CDDA's refusal flashes; nothing
+	# under the crosshair: not H's to use (CDDA's hold prompt goes on)
+	var h_key := InputActions.slots(&"hold_off")[0].duplicate() as InputEvent
+	if h_key is InputEventKey:
+		(h_key as InputEventKey).pressed = true
+	g.flash("")   # the stale click's line above
+	g.item_hover = {"kind": "item", "item": _hands.picker.by_uid(424400)}
+	var lying: bool = g.item_hover["item"] != null
+	var used := lying and g.take_hovered(h_key)
+	var sent: Variant = (_actions._pending.get(424400, {}) as Dictionary).get("target")
+	_snap.seq += 1
+	_mock.changed.emit(_snap)   # MockItems' message isn't wired to the actions here: a second look refuses it
+	var said := [g._flash, g._flash_bad]
+	g.item_hover = {}
+	_check.call(used and sent == "off" and not _carried(424400) and _actions.pending(424400) == ""
+			and said == [ItemActions.DIDNT_WORK, true] and not g.take_hovered(h_key),
+			"desk tray: H on the item under the crosshair: sent into the off hand; that hand full: the refusal flashes; nothing there: CDDA's prompt (%s %s %s %s)" % [lying, used, sent, said])
 	var esc := InputEventKey.new()
 	esc.physical_keycode = KEY_ESCAPE
 	esc.pressed = true

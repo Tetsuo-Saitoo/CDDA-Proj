@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Off hand holds a second item: H takes the item under the crosshair or in the tray into your off hand; in the Tab view drag a carried item onto a hand to hold it there, or onto its own pocket to put it away; in VR an item you take out of the pack is held in that hand once you carry it away. Client tests pass.
 - 2026-11-16 — L8 tray sorted: the item tray (VR and K on the flat screen) lists a bag's or pile's items the way the game's inventory does, by category, then name, and keeps that order as the game sends updates. Client tests pass.
 - 2026-11-16 — L8 furniture feel: a VR hand feels a buzz when a drawer, cabinet door or lid it holds hits fully open, shut or a lock; a drawer or cupboard door let go while moving (mouse or hand) slides or swings on and can be shoved shut. Client tests pass.
 - 2026-11-16 — Left-handed option on the flat screen (F1, Look row): key 1 then strikes with your main hand, the gun rests on the left and the hands panel shows the main hand on the left. VR already had its own. Client tests pass.
