@@ -27,7 +27,7 @@ const SWAY_FULL_ARCMIN := 900.0       # this much dispersion (15 degrees) or mor
 const SWAY_ROT := 0.02618             # full sway: rotation (radians, 1.5 degrees)
 const SWAY_POS := 0.01                # full sway: offset (m)
 const SWAY_RATE := 1.5                # how fast the sway grows / settles (per second)
-const DIRT_MAX := 10000               # CDDA's most fouling; its fouling symbol steps every 2000
+const DIRT_MAX := GunGrime.DIRT_MAX     # CDDA's most fouling (GunGrime: the one mapping)
 const GUN_SHAPES: Array[String] = ["pistol", "long", "launcher"]   # the shapes that show grime
 const GRIME_SHADER := preload("res://scripts/combat/grime.gdshader")
 ## CDDA's jams (fault type gun_mechanical_simple, data/json/faults/faults_guns.json) and how the label names them.
@@ -214,7 +214,7 @@ func _pose_jam() -> void:
 
 ## CDDA's `dirt` (0..DIRT_MAX, negative none) as the shader's grime, 0..1.
 static func grime_for(d: int) -> float:
-	return float(clampi(d, 0, DIRT_MAX)) / DIRT_MAX
+	return GunGrime.grime_for(d)   # the one mapping (icons, models)
 
 
 func kick() -> void:
