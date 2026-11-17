@@ -66,6 +66,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_shown()
 	_test_fire()
 	_test_misfire()
+	_test_flash()
 	_test_mag_out()
 	_test_mag_in()
 	_test_mag_out_refused()
@@ -255,6 +256,73 @@ func _test_misfire() -> void:
 	_check.call(g.shown and kicked and others and g.misfires == 1 and _rig.buzzes[1] == b[1] + 1
 			and _rig.buzz_amp[1] == VrGun.CLICK_AMP and _part("Muzzle").global_position.distance_to(rest.origin) < 0.001,
 			"vr gun: the player's misfire stops the kick and buzzes a light click (another's does nothing)")
+
+
+## Muzzle flash: a round CDDA fired (shot_went) shows WeaponViewmodel's star and a shadowless light at the Muzzle for
+## FLASH_S; a burst flashes at most once every FLASH_GAP_S; none with flashes off, a suppressed gun, a misfire or the
+## gun out of the hand; the flash goes with the model (another gun, none).
+func _test_flash() -> void:
+	var g := _rig.gun
+	var keep: Dictionary = _snap.player_gun.duplicate(true)
+	_frame(1.0)   # past the gap of earlier tests' shots
+	var f := _part("Muzzle").get_node_or_null("Flash") as Node3D if _part("Muzzle") != null else null
+	var light := f.get_node_or_null("Light") as OmniLight3D if f != null else null
+	var n := g.flashed
+	_aim.shot_went.emit()
+	var lit := f != null and f.visible and light != null and light.visible and not light.shadow_enabled \
+			and g.flashed == n + 1
+	_frame(WeaponViewmodel.FLASH_S * 0.5)
+	var fading := f != null and f.visible and f.scale.x < 1.0
+	_frame(WeaponViewmodel.FLASH_S)
+	_check.call(lit and fading and not f.visible and not light.visible,
+			"vr gun: a fired round flashes at the Muzzle (star, shadowless light), gone after %.2f s"
+			% WeaponViewmodel.FLASH_S)
+	_frame(1.0)
+	n = g.flashed
+	for i in 40:   # a 2 s burst at 20 rounds a second
+		_aim.shot_went.emit()
+		_frame(0.05)
+	var burst := g.flashed - n
+	_check.call(burst >= 2 and burst <= ceili(2.0 / WeaponViewmodel.FLASH_GAP_S),
+			"vr gun: a burst flashes at most once every %.2f s (%d of 40 rounds)" % [WeaponViewmodel.FLASH_GAP_S, burst])
+	_frame(1.0)
+	n = g.flashed
+	g.flashes = false
+	_aim.shot_went.emit()
+	var off_ok := g.flashed == n and not f.visible
+	g.flashes = true
+	_snap.player_gun["suppressed"] = true
+	_captured()
+	_frame()
+	_aim.shot_went.emit()
+	var hushed := g.suppressed and g.flashed == n and not f.visible
+	_snap.player_gun["suppressed"] = false
+	_captured()
+	_frame()
+	_aim.fired.emit()
+	_aim.hits.on_events([{"kind": "misfire", "uid": _aim.hits.player_uid(), "detail": 1}])
+	_frame()
+	var dry := g.flashed == n and not f.visible
+	g.shown = false
+	_aim.shot_went.emit()
+	g.shown = true
+	_check.call(off_ok and hushed and dry and g.flashed == n and not g.suppressed,
+			"vr gun: no flash with flashes off, a suppressed gun, a misfire, or the gun out of the hand")
+	_snap.player_gun = {"type": _it["remington_870"], "dirt": 0, "faults": [], "rounds": 4}
+	_captured()
+	_frame()
+	var f2 := _part("Muzzle").get_node_or_null("Flash") as Node3D if _part("Muzzle") != null else null
+	var swapped := not is_instance_valid(f) and f2 != null and g.shape == "long"
+	_snap.player_gun = {}
+	_captured()
+	_frame()
+	var gone := g.model == null and not is_instance_valid(f2)
+	_aim.shot_went.emit()   # nothing to flash: no error
+	_snap.player_gun = keep
+	_captured()
+	_frame()
+	_check.call(swapped and gone and _part("Muzzle").get_node_or_null("Flash") != null and g.shape == "pistol",
+			"vr gun: the flash goes with the model: another gun brings its own, none leaves none")
 
 
 ## Trigger with a fire request: flown from the Muzzle pose (fire_from), a kick and a buzz; a kill buzzes harder;
