@@ -113,6 +113,7 @@ struct player_view {
     std::vector<worn_view> worn;             // inner to outer (CDDA's order), visible items only; cap 64
     std::vector<carried_view> items;         // wielded, then worn (CDDA's worn order), each followed by what's inside, depth first; cap 256, 8 levels
     std::vector<item_state_view> item_states;   // live item tiles (2026-11-17): what items show of their state; cap 512
+    std::vector<item_amount_view> item_amounts;   // exact numbers (G2, 2026-11-17): every carried item, then those in reach; cap 1024
     optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
     std::vector<effect_view> effects;        // what CDDA's @ screen lists (effects with no display name left out); cap 64
     mood_view mood;                          // CDDA's morale screen (2026-11-12)
@@ -162,6 +163,18 @@ struct item_state_view { uint64 uid; uint8 temp; int16 rot; int16 fill; uint32 f
     // A fouling that a save spells as anything but a number reads as 0.
     // JSON: player "item_states": [[uid, temp, rot, fill, fill_type, see_through (0/1), fill_ml, dirt], ...].
     // Older bridges send no "item_states": read a missing one as empty.
+struct item_amount_view { uint64 uid; int32 count; int32 weight_g; int32 volume_ml; };
+    // One entry for every carried item, in the order of `items`, then for every item lying on the player's square
+    // or one of the 8 around it and for what is directly inside those (the same items `item_states` looks at, but
+    // every one). uid = the item's handle.
+    // count: its charges when CDDA counts it by charges (ammo, thread, liquids), else 1; 1..2^31-1.
+    // weight_g: CDDA's weight of the item with everything in it; a stack: the whole stack. 0..1e9.
+    // volume_ml: the room it takes where it is, as CDDA counts it: a rigid container (a bottle, a can) its own
+    // size whether full or empty, a soft one (a bag) its own size plus what is in it; a stack: the whole stack.
+    // 0..1e9. So a row shows its numbers as they are, and a pocket's fill is the sum over the items directly in
+    // it; summing down the tree would count the contents of every container twice.
+    // JSON: player "item_amounts": [[uid, count, weight_g, volume_ml], ...]. Older bridges send none: read a
+    // missing one as empty and fall back to the item type's numbers.
 
 struct environment_view {
     int64 turn_of_day_s; uint8 season; float sun_alt_deg, sun_az_deg; uint8 moon_phase;
