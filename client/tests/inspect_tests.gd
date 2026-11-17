@@ -693,12 +693,7 @@ func _test_drops() -> void:
 	_view.column_slot("hands")._drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO))
 	row = _carried(stone)
 	_check.call(row.size() == 5 and row[4] == Snapshot.CARRIED_WIELDED and row[2] == 0, "inspect: ground -> hands: into the main hand")
-	_view.rebuild()
-	var before := _snap.carried.duplicate()
-	var seq := _snap.seq
-	_view.column_slot("hands")._drop_data(Vector2.ZERO, _view.row_slot(WATER)._get_drag_data(Vector2.ZERO))
-	_check.call(_view.status == InspectView.NOT_YET and _snap.seq == seq and _snap.carried == before
-			and _actions.pending_count() == 0, "inspect: carried -> hands: 'not yet', nothing sent")
+	_test_hold_drops(stone, sack_id)
 	_view.rebuild()
 	_view.group_slot("hands", "main")._drop_data(Vector2.ZERO, _view.row_slot(bag)._get_drag_data(Vector2.ZERO))
 	_check.call(_view.status.begins_with("Your hand is full") and _view.find_children("*", "Label", true, false).any(
@@ -706,6 +701,47 @@ func _test_drops() -> void:
 			"inspect: a refusal shows CDDA's reason (%s)" % _view.status)
 	_hands.refused.emit("mouse", {}, "Not for this view.")
 	_check.call(_view.status.begins_with("Your hand is full"), "inspect: other hands' refusals aren't shown")
+
+
+## Carried items dragged onto a hand are held there (Hands.hold: CDDA's wield / off-hand hold); a held one goes to
+## the other hand when that one is free, a full hand refuses (a swap puts nothing away); onto the column: the free
+## hand, nothing new for one in a hand already; the off-hand item onto its own pocket is put away (out of the
+## hand, still there). After it: the stone wielded, the bottle in the sack's first pocket.
+func _test_hold_drops(stone: int, sack_id: String) -> void:
+	var drag := func(uid: int, key: Variant) -> String:
+		_view.rebuild()
+		var d: Variant = _view.row_slot(uid)._get_drag_data(Vector2.ZERO)
+		if key == null:
+			return _view.drop(d, _view.column_slot("hands").target)
+		return _view.drop(d, {"kind": "group", "column": "hands", "key": key})
+	var flags := func(uid: int) -> int:
+		var r := _carried(uid)
+		return int(r[4]) if r.size() == 5 else -1
+	_view.rebuild()
+	_check.call(not _view.column_slot("hands")._can_drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO))
+			and not _view.group_slot("hands", "main")._can_drop_data(Vector2.ZERO, _view.row_slot(stone)._get_drag_data(Vector2.ZERO)),
+			"inspect: the wielded item onto the hands or its own hand: nothing to do")
+	var to_off: String = drag.call(stone, "off")
+	var off_ok: bool = flags.call(stone) == Snapshot.CARRIED_OFFHAND and _view.status == ""
+	var to_main: String = drag.call(stone, "main")
+	_check.call(to_off == "hold" and off_ok and to_main == "hold" and flags.call(stone) == Snapshot.CARRIED_WIELDED
+			and _actions.pending_count() == 0, "inspect: a held item goes to the other hand when that one is free, and back")
+	var bottle: String = drag.call(BOTTLE, null)
+	var row := _carried(BOTTLE)
+	_check.call(bottle == "hold" and row[4] == Snapshot.CARRIED_OFFHAND and row[2] == SACK and row[3] == 0 and _carried(WATER)[2] == BOTTLE,
+			"inspect: carried -> hands: into the free hand (the off hand; it stays in its pocket) (%s)" % [row])
+	var swap: String = drag.call(BOTTLE, "main")
+	var full_main: bool = _view.status.begins_with("Your hand is full") and flags.call(BOTTLE) == Snapshot.CARRIED_OFFHAND \
+			and flags.call(stone) == Snapshot.CARRIED_WIELDED
+	var back: String = drag.call(stone, "off")
+	_check.call(swap == "hold" and back == "hold" and full_main and _view.status == "Your off hand is full."
+			and flags.call(stone) == Snapshot.CARRIED_WIELDED and _actions.pending_count() == 0,
+			"inspect: into a full hand: sent, CDDA's refusal shown, nothing put away (%s %s %s %s)" % [swap, back, full_main, _view.status])
+	_view.rebuild()
+	var away := _view.drop(_view.row_slot(BOTTLE)._get_drag_data(Vector2.ZERO), {"kind": "group", "column": sack_id, "key": 0})
+	row = _carried(BOTTLE)
+	_check.call(away == "put" and row[4] == 0 and row[2] == SACK and row[3] == 0 and _actions.pending_count() == 0 and _view.status == "",
+			"inspect: the off-hand item onto its own pocket: put away, out of the hand (%s %s)" % [away, row])
 
 
 ## Dragging a selected row moves the whole selection, one item after another. After _test_drops: the bottle (with

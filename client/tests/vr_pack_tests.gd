@@ -56,6 +56,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_take_out()
 	_test_put_in()
 	_test_same_pocket()
+	_test_quick_switch()
 	_test_pending()
 	_test_refused()
 	_test_close()
@@ -403,6 +404,64 @@ func _test_same_pocket() -> void:
 	var row := _row(PLANK)
 	_check.call(l != null and l.uid == PLANK and _snap.seq == seq and row[0] == BAG_L and row[2] == 2
 			and pack.item_node(PLANK).visible and pack.builds == b and _clean(), "vr pack: back into its own pocket: nothing sent")
+
+
+## Quick switch: an item taken out of the pack goes into that hand in CDDA only once it is carried SWITCH_M away
+## (the left hand: the off hand; it stays in its pocket), once; let go over its own pocket it is put away (out of the
+## hand). A hand CDDA holds something in already: nothing is sent.
+func _test_quick_switch() -> void:
+	var pack := _rig.pack
+	var seq := _snap.seq
+	var away := func(x: float) -> Vector3: return pack.global_transform * Vector3(x, 0, VrPack.DROP_FRONT + VrRig.SWITCH_M + 0.1)
+	_rig.left.global_position = pack.item_point(PLANK)
+	_rig.press(_rig.left, "grip_click")
+	_rig.update_hands(0.016, true)
+	var at_pack := _snap.seq == seq and pack.near(_rig.left.global_position, VrRig.SWITCH_M)
+	_rig.left.global_position = away.call(0.0)
+	_rig.update_hands(0.016, true)
+	var row := _row(PLANK)
+	var l: ItemRef = _hands.holding("vr_l").get("item")
+	_check.call(at_pack and not pack.near(_rig.left.global_position, VrRig.SWITCH_M) and not row.is_empty()
+			and int(row[1]) == Snapshot.CARRIED_OFFHAND and row[0] == BAG_L and row[2] == 2 and l != null and l.is_off_hand()
+			and _actions.pending_count() == 0,
+			"vr pack: quick switch: taken out and carried away, it is held in the off hand (still in its pocket) (%s)" % [row])
+	var seq2 := _snap.seq
+	_rig.update_hands(0.016, true)
+	var once := _snap.seq == seq2
+	_rig.left.global_position = pack.compartment_point(pack.compartment_index(2))
+	_rig.update_hands(0.016, true)
+	_rig.release(_rig.left, "grip_click")
+	_rig.update_hands(0.016, true)
+	row = _row(PLANK)
+	_check.call(once and not row.is_empty() and int(row[1]) == 0 and row[0] == BAG_L and row[2] == 2 and _clean(),
+			"vr pack: ... once; let go over its own pocket it is put away, out of the hand (%s)" % [row])
+	# CDDA's main hand holds something (a stand-in: HAMMER flagged wielded): the right hand's switch sends nothing
+	var c := _snap.carried
+	var hi := -1
+	for i in range(0, c.size() - CS + 1, CS):
+		if c[i] == HAMMER:
+			hi = i
+	c[hi + 4] = Snapshot.CARRIED_WIELDED
+	_snap.seq += 1
+	_mock.changed.emit(_snap)
+	_rig.update_hands(0.016, true)
+	var seq3 := _snap.seq
+	_rig.right.global_position = pack.item_point(PLANK)
+	_rig.press(_rig.right, "grip_click")
+	_rig.right.global_position = away.call(0.1)
+	_rig.update_hands(0.016, true)
+	var r: ItemRef = _hands.holding("vr_r").get("item")
+	var none := _snap.seq == seq3 and r != null and r.uid == PLANK and not r.is_wielded() and _actions.pending_count() == 0
+	_rig.right.global_position = pack.compartment_point(pack.compartment_index(2))
+	_rig.update_hands(0.016, true)
+	_rig.release(_rig.right, "grip_click")
+	c = _snap.carried
+	c[hi + 4] = 0
+	_snap.seq += 1
+	_mock.changed.emit(_snap)
+	_rig.update_hands(0.016, true)
+	_check.call(none and _snap.seq == seq3 + 1 and int(_row(PLANK)[1]) == 0 and _clean(),
+			"vr pack: quick switch into a hand CDDA holds something in: nothing sent, it stays a carried copy")
 
 
 ## An action in flight: its model dims and can't be gripped; done: back to normal.

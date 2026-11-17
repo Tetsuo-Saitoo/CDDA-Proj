@@ -161,8 +161,8 @@ func update(cam: Camera3D, pt: Vector2, enabled: bool, captured: bool) -> void:
 			if not item_hover.is_empty() and InputActions.pad_last:
 				text = "%s\n%s take" % [t["name"], InputActions.prompt_of(&"use_held")]
 			elif not item_hover.is_empty():
-				text = "%s\n%s or %s take   hold %s carry" % [t["name"], InputActions.key_of(&"use_held"),
-						InputActions.key_of(&"click"), InputActions.key_of(&"click")]
+				text = "%s\n%s or %s take   hold %s carry   %s off hand" % [t["name"], InputActions.key_of(&"use_held"),
+						InputActions.key_of(&"click"), InputActions.key_of(&"click"), InputActions.key_of(&"hold_off")]
 			else:   # a door leaf or furniture part (drawer, lid)
 				text = "%s\nhold %s and drag" % [t["name"], InputActions.key_of(&"click")]
 		else:
@@ -344,8 +344,11 @@ func throw_square(cam: Camera3D, pt: Vector2) -> Variant:
 	return sq
 
 
-## E on the item under the pointer takes it into the pack; true when the event was used that way.
+## E on the item under the pointer takes it into the pack, H (hold_off) into the off hand; true when the event was
+## used that way (nothing under the pointer: H goes on to CDDA's hold prompt).
 func take_hovered(event: InputEvent) -> bool:
+	if InputActions.pressed(event, &"hold_off"):
+		return take_hover("off")
 	if not InputActions.pressed(event, &"use_held"):
 		return false
 	return take_hover()
@@ -384,8 +387,8 @@ func _on_tray_closed(_why: String) -> void:
 
 
 ## The tray's keys and clicks: `loot_tray` on the item under the pointer opens it (`allowed`: first person, the
-## main loop, no menu, view or prompt up); while it is open, Esc or `loot_tray` closes it and a click goes to
-## tray_click. True when the event was the tray's.
+## main loop, no menu, view or prompt up); while it is open, Esc or `loot_tray` closes it, a click goes to
+## tray_click and H (hold_off) takes the item under the pointer into the off hand. True when the event was the tray's.
 func tray_event(event: InputEvent, cam: Camera3D, pt: Vector2, allowed: bool) -> bool:
 	if tray_open():
 		var key := event as InputEventKey
@@ -397,6 +400,10 @@ func tray_event(event: InputEvent, cam: Camera3D, pt: Vector2, allowed: bool) ->
 			var ray := ray_from(cam, pt)
 			tray_click(ray[0], ray[1])
 			return true
+		if InputActions.pressed(event, &"hold_off") and cam != null:
+			var r := ray_from(cam, pt)
+			tray_click(r[0], r[1], "off")
+			return true
 		return false
 	if not InputActions.pressed(event, &"loot_tray") or not allowed:
 		return false
@@ -407,15 +414,15 @@ func tray_event(event: InputEvent, cam: Camera3D, pt: Vector2, allowed: bool) ->
 	return true
 
 
-## A click along a ray while the tray is open: "take" (the item under it, into the pack), "page" (an arrow) or ""
-## (nothing there; a refused take says why under the pointer).
-func tray_click(origin: Vector3, dir: Vector3) -> String:
+## A click along a ray while the tray is open: "take" (the item under it, into the pack, or `where`: "off" for H),
+## "page" (an arrow) or "" (nothing there; a refused take says why under the pointer).
+func tray_click(origin: Vector3, dir: Vector3, where := "pack") -> String:
 	if not tray_open() or hands == null:
 		return ""
 	var t := tray.target_on_ray(origin, dir)
 	match t.get("kind"):
 		"item":
-			if hands.take("mouse", t, "pack"):
+			if hands.take("mouse", t, where):
 				return "take"
 			flash("You can't take that now.", true)
 		"page":
@@ -441,14 +448,15 @@ func update_tray(cam: Camera3D, pt: Vector2, blocked: bool) -> void:
 	if tray_hover.get("kind") == "item" and Time.get_ticks_msec() >= _flash_until:
 		icon.at = pt
 		icon.mode = GrabIcon.HAND
-		icon.text = "%s\n%s take   %s close" % [tray_hover["name"], InputActions.key_of(&"click"), InputActions.key_of(&"loot_tray")]
+		icon.text = "%s\n%s take   %s off hand   %s close" % [tray_hover["name"], InputActions.key_of(&"click"),
+				InputActions.key_of(&"hold_off"), InputActions.key_of(&"loot_tray")]
 
 
-## Takes the item under the pointer into the pack (E's tap); false when there is none.
-func take_hover() -> bool:
+## Takes the item under the pointer into the pack (E's tap) or `where` ("off": H); false when there is none.
+func take_hover(where := "pack") -> bool:
 	if hands == null or item_hover.is_empty() or carrying():
 		return false
-	if not hands.take("mouse", item_hover, "pack"):
+	if not hands.take("mouse", item_hover, where):
 		flash("You can't take that now.", true)
 	return true
 

@@ -10,7 +10,10 @@ extends Node3D
 ##   the muzzle pose for each projectile of a burst. A buzz per shot, a thump when it hits (HitFeedback.shot_confirmed),
 ##   a strong one for a kill; the model kicks (visual only). A trigger pull CDDA fired no round for
 ##   (HitFeedback.misfired): the kick stops and a light buzz; the click itself is WeaponViewmodel's (it stays in the
-##   tree in VR).
+##   tree in VR). A round CDDA fired (AimController.shot_went) flashes at the Muzzle as on the flat screen
+##   (WeaponViewmodel.build_flash: a star and a shadowless light for FLASH_S, at most once every FLASH_GAP_S, so under 3
+##   a second); none with `flashes` off (the flash setting) or a suppressed gun. The flash is the model's child: it goes
+##   with it.
 ## - Magazine out: the off grip within MAG_OUT_M of MagWell while a magazine is inside unloads it into CDDA's off hand
 ##   (ItemActions.unload "off"); its copy rides in the off hand meanwhile, then the hand holds the magazine
 ##   (Hands.adopt; the grip let go before that: let go like any held item). Refused: it snaps back, CDDA's reason by
@@ -64,6 +67,8 @@ var aim: AimController:
 		if is_instance_valid(aim):
 			if aim.fired.is_connected(_on_fired):
 				aim.fired.disconnect(_on_fired)
+			if aim.shot_went.is_connected(_on_shot_went):
+				aim.shot_went.disconnect(_on_shot_went)
 			if aim.hits != null and aim.hits.shot_confirmed.is_connected(_on_hit):
 				aim.hits.shot_confirmed.disconnect(_on_hit)
 			if aim.hits != null and aim.hits.misfired.is_connected(_on_misfired):
@@ -73,6 +78,7 @@ var aim: AimController:
 		aim = a
 		if a != null:
 			a.fired.connect(_on_fired)
+			a.shot_went.connect(_on_shot_went)
 			if a.hits != null:
 				a.hits.shot_confirmed.connect(_on_hit)
 				a.hits.misfired.connect(_on_misfired)
@@ -101,6 +107,9 @@ var dirt := -1
 var grime := 0.0
 var jam := ""                 # WeaponViewmodel.JAMS id, "" none
 var shown := false            # the model shows in the main hand
+var flashes := true           # muzzle flashes at all (main.gd: the flash setting); off: shots only kick
+var suppressed := false       # the wielded gun has a suppressor (Snapshot.player_gun): no flash
+var flashed := 0              # muzzle flashes shown (tests)
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
 var misfires := 0             # misfire clicks felt (tests)
@@ -114,6 +123,9 @@ var _half := {}               # part -> half size of its box
 var _rest := {}               # Slide / Bolt -> its rest position
 var _grime_mats: Array[ShaderMaterial] = []
 var _kick := 0.0
+var _flash: Node3D            # WeaponViewmodel.build_flash under the model's Muzzle, null without one
+var _flash_t := 0.0           # seconds the flash still shows
+var _flash_wait := 0.0        # seconds before the next flash may show
 var _op := {}                 # the gun's item action in flight: {op, uid (the gun), mag (unload), item (reload)}
 var _copy: MeshInstance3D     # the magazine riding in the off hand while it comes out
 var _rack := {}               # {part, hand (0 left / 1 right), start (z along the bore), max (pulled)}
@@ -134,6 +146,7 @@ func update(delta: float) -> void:
 	if rig == null:
 		return
 	var d := clampf(delta, 0.0, 1.0) if is_finite(delta) else 0.0
+	_tick_flash(d)
 	var s := rig.world.snapshot
 	if s != _snap or (s != null and s.seq != _seq):
 		_refresh(s)
@@ -350,6 +363,7 @@ func _refresh(s: Snapshot) -> void:
 	if not sh in SHAPES:
 		sh = DEFAULT_SHAPE
 	dirt = _int_of(g.get("dirt"), 0, WeaponViewmodel.DIRT_MAX, -1)
+	suppressed = g.get("suppressed", false) == true
 	var gr := WeaponViewmodel.grime_for(dirt)
 	if model == null or sh != shape:
 		_build_model(sh, gr)
@@ -390,6 +404,9 @@ func _clear() -> void:
 	dirt = -1
 	grime = 0.0
 	jam = ""
+	suppressed = false
+	_flash = null   # freed with the model
+	_flash_t = 0.0
 	_local = {}
 	_half = {}
 	_rest = {}
@@ -406,6 +423,12 @@ func _build_model(sh: String, gr: float) -> void:
 	model = WeaponViewmodel.build(sh, gr)
 	add_child(model)
 	shape = sh
+	_flash = null   # the old one went with the old model
+	_flash_t = 0.0
+	var muzzle := model.get_node_or_null("Muzzle") as Node3D
+	if muzzle != null:
+		_flash = WeaponViewmodel.build_flash(WeaponViewmodel.FLASH_SIZE.get(sh, 0.1))
+		muzzle.add_child(_flash)
 	_grime_mats = WeaponViewmodel.grime_materials(model)
 	_local = {}
 	_half = {}
@@ -701,6 +724,25 @@ func _on_fired() -> void:
 	_kick = 1.0
 	kicks += 1
 	rig.feel(rig.main_ctrl(), SHOT_AMP, SHOT_S)
+
+
+## A round CDDA fired (AimController.shot_went): the muzzle flash, unless the gun isn't in the hand, flashes are off,
+## it has a suppressor, or the last flash was under FLASH_GAP_S ago.
+func _on_shot_went() -> void:
+	if not shown or _flash == null or not flashes or suppressed or _flash_wait > 0.0:
+		return
+	_flash_t = WeaponViewmodel.FLASH_S
+	_flash_wait = WeaponViewmodel.FLASH_GAP_S
+	_flash.rotation.z = randf() * TAU
+	flashed += 1
+	WeaponViewmodel.show_flash(_flash, 1.0)   # at once, not on the next frame
+
+
+## Fades the flash out and counts down the gap to the next one; off, it goes at once.
+func _tick_flash(d: float) -> void:
+	_flash_wait = maxf(_flash_wait - d, 0.0)
+	_flash_t = maxf(_flash_t - d, 0.0) if flashes else 0.0
+	WeaponViewmodel.show_flash(_flash, _flash_t / WeaponViewmodel.FLASH_S)
 
 
 ## The player's trigger pull fired no round (HitFeedback.misfired): no recoil, a dry click in the hand.

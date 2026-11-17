@@ -135,9 +135,20 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			and (param.call(U_ICE, &"liquid") as Color).a > 0.0 and (param.call(U_OFF, &"liquid") as Color).a == 0.0
 			and ice.global_transform.is_equal_approx(slot[4]) and (model == null or ice.get_child_count() == model.parts.size()),
 			"item state: the see-through one shows its liquid a quarter up, over its own meshes; the opaque can none (%s in %s)" % [ly, wb])
+	var hot_slot := world.item_slot(U_HOT)
 	world.set_hidden_items({U_HOT: true})
 	view.tick(0.01)
 	_check.call(not view.shell(U_HOT).visible and view.shell(U_ICE).visible, "item state: an item taken into a hand loses its shell")
+	var body_xf := (hot_slot[4] as Transform3D).translated(Vector3(0.3, 0.4, 0.0)) if not hot_slot.is_empty() else Transform3D()
+	view.body_slot = func(uid: int) -> Array:
+		return [uid, hot_slot[1], hot_slot[2], body_xf.origin, body_xf, hot_slot[5]] if uid == U_HOT else []
+	view.tick(0.01)
+	var on_body := view.shell(U_HOT).visible and view.shell(U_HOT).global_transform.is_equal_approx(body_xf)
+	view.body_slot = func(uid: int) -> Array: return [uid, "x", 0, Vector3(NAN, 0, 0), body_xf, 1.0] if uid == U_HOT else []
+	view.tick(0.01)
+	_check.call(not hot_slot.is_empty() and on_body and not view.shell(U_HOT).visible,
+			"item state: an item drawn as a physics body (static copy hidden) keeps its shell, on the body; a malformed body entry hides it")
+	view.body_slot = Callable()
 	world.set_hidden_items({})
 	view.set_states({U_ICE: PackedInt32Array([3, -1, -1, 0, 0, -1, -1]), "x": PackedInt32Array([1, 0, 0, 0, 0, 0, 0]),
 			U_OFF: PackedInt32Array([1]), U_HOT: [1, -1, -1, 0, 0, -1, -1]})

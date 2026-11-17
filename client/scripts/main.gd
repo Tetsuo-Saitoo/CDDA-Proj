@@ -78,6 +78,7 @@ var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold 
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
+var strain_cue: StrainCue         # the player's pain and low stamina at the view's edges (F3), under the hurt
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -226,6 +227,7 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		item_looks.body_slot = item_bodies.slot   # items in reach are bodies: their state shells follow them
 		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
 		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
 		item_placer = ItemPlacer.new()
@@ -554,6 +556,7 @@ func _start_vr() -> void:
 	vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()   # kept in step each frame (_process)
 	vr.cook.backend = live   # L9: recipe matches over pots on the heat (once LiveSession has match_recipes)
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
+	vr.gun.flashes = hud_settings.weather_flash   # its muzzle flash follows the flash setting too
 	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
@@ -1492,6 +1495,9 @@ func _setup_hud() -> void:
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	strain_cue = StrainCue.new()   # pain and low stamina: over the mood's tint, under the hurt's
+	strain_cue.data = hud_data
+	layer.add_child(strain_cue)
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
@@ -1514,6 +1520,7 @@ func _setup_hud() -> void:
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
+	strain_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
@@ -1571,10 +1578,13 @@ func _setup_hud() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
+		strain_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash
+		if vr != null:
+			vr.gun.flashes = hud_settings.weather_flash
 			viewmodel.left_handed = hud_settings.left_handed()
 		if hands_panel != null:
 			hands_panel.left_handed = hud_settings.left_handed()
