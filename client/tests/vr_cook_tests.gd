@@ -63,6 +63,24 @@ class Cooker extends Backend:
 		return true
 
 
+## LiveSession's light_fire / extinguish_fire: records [op, pos, player, uid, type]; `refuse_fire`: says no.
+class Firer extends RefCounted:
+	var fires: Array = []
+	var refuse_fire := false
+
+	func light_fire(pos: Vector3i, player: Vector3i, uid := -1.0, type := -1.0, _tag := 0) -> bool:
+		if refuse_fire:
+			return false
+		fires.append(["light", pos, player, uid, type])
+		return true
+
+	func extinguish_fire(pos: Vector3i, player: Vector3i, _tag := 0) -> bool:
+		if refuse_fire:
+			return false
+		fires.append(["extinguish", pos, player, -1.0, -1.0])
+		return true
+
+
 ## Only recipe_matches (no signal): VrCook polls it.
 class Polled extends RefCounted:
 	var calls := 0
@@ -101,6 +119,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_polled()
 	_test_cook()
 	_test_resume()
+	_test_fire()
 	_test_rig()
 	if is_instance_valid(_cook):
 		_cook.free()
@@ -569,10 +588,79 @@ func _test_resume() -> void:
 	_check.call(b.cooked.size() == 2, "vr cook: a paused craft whose recipe id LiveSession wouldn't take: nothing sent")
 
 
+## Square `sq`'s middle, `up` metres over its floor (where a hand would be).
+func _over(sq: Vector3i, up := 0.5) -> Vector3:
+	return _world.coords.ms_center_to_world(sq) + Vector3(0.0, up, 0.0)
+
+
+## Lighting and putting out fires by hand (VrFire): a hand low over a fire square next to the player; an unlit one
+## lights (the carried item held, else CDDA's pick), a burning one goes out (also the player's own square), the fuel
+## lying on a plain square lights only with a carried item held; vehicles, far squares, high hands, other levels and
+## a backend without the ops do nothing; one op a square per PRESS_S; the line by the hand says which.
+func _test_fire() -> void:
+	var f := VrFire.new()
+	f.world = _world
+	_root.add_child(f)
+	var me := Vector3i(5, 5, 0)
+	var e := Vector3i(6, 5, 0)
+	var s := _snap([_heat(6, 5, false, 1, -1, 0, 0), _heat(5, 5, true, 0, 0, 2, 0), _heat(4, 5, true, 1, -1, 3),
+			_heat(5, 6, true, 2, -1, 0), _heat(7, 5, true, 0, 0, 2, 0)], [], me)
+	s.submaps[SM].handles = PackedInt64Array([_at(5, 4), 950, _meat, -1, -1])
+	_world.snapshot = s
+	f.backend = RefCounted.new()
+	var none := f.target_at(_over(e), null).is_empty()
+	var b := Firer.new()
+	f.backend = b
+	var lighter := ItemRef.on_square(960, _plate, me)
+	lighter.carried = true
+	var lying := ItemRef.on_square(961, _plate, e)
+	var t := f.target_at(_over(e), null)
+	_check.call(none and t.get("op") == VrFire.LIGHT and t["pos"] == e and t["item"] == null
+			and t["text"] == "trigger: light the fire" and f.target_at(_over(e), lying)["item"] == null
+			and f.target_at(_over(e), lighter)["item"] == lighter
+			and f.target_at(_over(e), lighter)["text"] == "trigger: light it with hotplate",
+			"vr fire: an unlit fire square next to you: the trigger lights it, with the carried item held, else CDDA's pick")
+	_check.call(f.target_at(_over(Vector3i(4, 5, 0)), null).get("op") == VrFire.EXTINGUISH
+			and f.target_at(_over(me), null).get("op") == VrFire.EXTINGUISH
+			and f.target_at(_over(Vector3i(7, 5, 0)), null).is_empty(),
+			"vr fire: a burning one next to you or under you: the trigger puts it out; two squares off: nothing")
+	_check.call(f.target_at(_over(Vector3i(5, 6, 0)), null).is_empty() and f.target_at(_over(e, 1.5), null).is_empty()
+			and f.target_at(_over(e, -0.5), null).is_empty() and f.target_at(_over(e) + Vector3(0, 3.0, 0), null).is_empty()
+			and f.target_at(Vector3.INF, null).is_empty(),
+			"vr fire: a vehicle's heat, a hand too high or under the floor, another level: nothing")
+	var pile := Vector3i(5, 4, 0)
+	_check.call(f.target_at(_over(pile), null).is_empty() and f.target_at(_over(pile), lying).is_empty()
+			and f.target_at(_over(pile), lighter).get("op") == VrFire.LIGHT
+			and f.target_at(_over(Vector3i(6, 6, 0)), lighter).is_empty(),
+			"vr fire: fuel lying on a plain square lights only with a carried item held; an empty square: nothing")
+	var r1 := f.press(_over(e), lighter)
+	var r2 := f.press(_over(e), null)
+	var r3 := f.press(_over(Vector3i(4, 5, 0)), null)
+	var r4 := f.press(_over(Vector3i(7, 5, 0)), null)
+	f.update(VrFire.PRESS_S + 0.1, [], [])
+	var r5 := f.press(_over(e), null)
+	_check.call([r1, r2, r3, r4, r5] == [VrFire.LIGHT, "wait", VrFire.EXTINGUISH, "", VrFire.LIGHT] and b.fires == [
+			["light", e, me, 960.0, float(_plate)], ["extinguish", Vector3i(4, 5, 0), me, -1.0, -1.0],
+			["light", e, me, -1.0, -1.0]] and f.sent == 3,
+			"vr fire: presses send light / extinguish with the square and the player, one a square per second (%s %s)"
+			% [[r1, r2, r3, r4, r5], b.fires])
+	b.refuse_fire = true
+	_check.call(f.press(_over(Vector3i(4, 5, 0)), null) == "refused" and f.sent == 3, "vr fire: the backend says no: 'refused'")
+	f.update(0.016, [_over(e), _over(Vector3i(9, 9, 0))], [lighter, null])
+	var h0: Label3D = f.hints[0]
+	var shown := h0 != null and h0.visible and h0.text == "trigger: light it with hotplate" \
+			and h0.position.is_equal_approx(_over(e) + Vector3(0, VrFire.HINT_UP, 0)) and (f.hints[1] == null or not f.hints[1].visible)
+	f.update(0.016, [_over(e), null], [null, null], false)
+	_check.call(shown and not h0.visible, "vr fire: the line by the hand says what the trigger does; gone off the square or with a menu up")
+	f.free()
+
+
 func _test_rig() -> void:
 	var rig := VrRig.new(_world, {"blink": false, "hands": "boxes"})
 	_check.call(rig.cook != null and rig.cook.get_parent() == rig and rig.cook.head == rig.camera and rig.cook.world == _world,
 			"vr cook: the rig has one, on its head and world")
+	_check.call(rig.fire != null and rig.fire.get_parent() == rig and rig.fire.world == _world and rig.held_item(0) == null,
+			"vr fire: the rig has one on its world; empty hands hold nothing")
 	var b := Backend.new()
 	rig.cook.backend = b
 	_check.call(b.is_connected("recipes_matched", rig.cook._on_matched), "vr cook: the backend's signal is connected")
