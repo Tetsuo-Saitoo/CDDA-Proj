@@ -21,6 +21,7 @@ func _initialize() -> void:
 	OS.add_logger(_errors)
 	_test_error_catch()
 	_test_test_dir()
+	_test_user_files()
 	_test_scripts_compile()
 	_test_coords()
 	var data: Variant = _mock_data()
@@ -127,6 +128,49 @@ func _test_test_dir() -> void:
 	DirAccess.remove_absolute(other.path_join(TestDir.STAMP))
 	DirAccess.remove_absolute(other)
 	DirAccess.remove_absolute(fresh)
+	# dir() empties a dead run's folder with this id, but keeps one this run made before any test asked for it.
+	var old := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 7))
+	DirAccess.make_dir_recursive_absolute(old)
+	var just_made := TestDir.made_by_this_run(old)
+	TestDir.stamp(old, 1)
+	_check(just_made and not TestDir.made_by_this_run(old) and not TestDir.made_by_this_run(old + "-none"),
+			"a folder made in this run is told from a dead run's and from none")
+	DirAccess.remove_absolute(old.path_join(TestDir.STAMP))
+	DirAccess.remove_absolute(old)
+
+
+## In a test run the game's own user:// files (settings, key bindings, reports, CDDA's folder) are this run's, not
+## the player's and not another run's (scripts/user_files.gd).
+func _test_user_files() -> void:
+	print("user files")
+	var root := UserFiles.test_root()
+	_check(root == TestDir.own().path_join("user"), "a test run keeps the game's user files in its own folder (%s)" % root)
+	_check(UserFiles.at("user://hud.cfg") == root.path_join("hud.cfg")
+			and UserFiles.at("user://bug_reports") == root.path_join("bug_reports")
+			and UserFiles.at(TestDir.path("x.cfg")) == TestDir.path("x.cfg")
+			and UserFiles.at(UserFiles.TEST_RUNS) == UserFiles.TEST_RUNS
+			and UserFiles.at("res://project.godot") == "res://project.godot",
+			"user:// paths go there; paths already under test-runs or outside user:// stay as they are")
+	UserFiles.set_test_root("user://elsewhere")
+	UserFiles.set_test_root(UserFiles.TEST_RUNS + "/../elsewhere")
+	_check(UserFiles.test_root() == root, "a folder outside test-runs is refused as the run's folder")
+	# What keeps the player's files, saved under its own default path: all in the run's folder, the player's untouched.
+	var files: Array[String] = [HudSettings.FILE, InputActions.FILE, VrSettings.FILE, Hints.FILE, Hotbar.FILE]
+	var before := files.map(func(f: String) -> int: return FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else -1)
+	var hints := Hints.new()
+	var bar := Hotbar.new()
+	var wrote := HudSettings.new().save_file() == OK and InputActions.save_bindings() == "" \
+			and VrSettings.save_file(VrSettings.DEFAULTS.duplicate()) and hints.save_file() == OK and bar.save_file() == OK
+	hints.free()
+	bar.free()
+	var there := files.all(func(f: String) -> bool: return FileAccess.file_exists(root.path_join(f.trim_prefix("user://"))))
+	var after := files.map(func(f: String) -> int: return FileAccess.get_modified_time(f) if FileAccess.file_exists(f) else -1)
+	_check(wrote and there, "settings, key bindings, VR settings, hints and the hotbar save into the run's folder (%s)" % [files])
+	_check(before == after, "the player's own files are not written")
+	var cdda: String = ProjectSettings.globalize_path(UserFiles.at("user://cdda"))
+	_check(cdda.begins_with(ProjectSettings.globalize_path(root)), "CDDA's default folder is the run's too (%s)" % cdda)
+	for f in files:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(root.path_join(f.trim_prefix("user://"))))
 
 
 func _cast_freed() -> void:

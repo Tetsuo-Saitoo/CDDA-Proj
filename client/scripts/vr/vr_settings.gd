@@ -95,6 +95,7 @@ static func from_args(args: Dictionary, base := DEFAULTS) -> Dictionary:
 
 ## The saved settings over the defaults; anything missing, unknown or bad is left at its default.
 static func load_file(path := FILE) -> Dictionary:
+	path = UserFiles.at(path)   # a test run's own folder
 	var s := DEFAULTS.duplicate()
 	if not FileAccess.file_exists(path):
 		return s
@@ -114,6 +115,7 @@ static func load_file(path := FILE) -> Dictionary:
 
 
 static func save_file(s: Dictionary, path := FILE) -> bool:
+	path = UserFiles.at(path)
 	var out := {}
 	for key: String in DEFAULTS:
 		var v: Variant = clean(key, s.get(key))

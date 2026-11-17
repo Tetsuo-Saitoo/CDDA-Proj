@@ -694,7 +694,7 @@ func _start_live() -> void:
 	# load a saved game instead and never delete anything: --world alone takes its first save, --save alone
 	# looks in LIVE_WORLD (or the -2, -3 ... worlds quick starts moved to: world_for_save). Saves live under
 	# user://cdda/save/<world>/ (copy CDDA worlds there).
-	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else OS.get_user_data_dir().path_join("cdda")
+	var user_dir := cdda_user_dir if not cdda_user_dir.is_empty() else ProjectSettings.globalize_path(UserFiles.at("user://cdda"))
 	var data_dir: String = _args.get("cdda", _repo_path("cdda"))
 	var ok := false
 	if open_menu:   # after a game: the menu, never the command line's quick start or save again
