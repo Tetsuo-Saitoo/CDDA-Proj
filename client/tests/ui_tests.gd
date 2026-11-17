@@ -36,6 +36,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
+	_test_item_tile()
 
 
 func _req(kind: String, fields: Dictionary, id := 7) -> Dictionary:
@@ -721,6 +722,72 @@ func _test_hands_panel(root: Node) -> void:
 	vh.show_hand({}, false)
 	_check.call(not vh.visible, "hands: VR empty hand hidden")
 	vh.free()
+
+
+## Live item tiles, slice 1: ItemTile from a state [temp, rot, fill, fill_type, see_through, fill_ml, dirt] (values
+## and colours as ItemLook / GunGrime say); a missing or hostile state shows nothing; ItemTileView takes no mouse.
+func _test_item_tile() -> void:
+	var t := IdTables.from_data({"generation": 1, "ter": [{"id": "t_null"}], "furn": [], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "juice", "name": "orange <color_red>juice</color>", "color": "c_yellow"},
+			{"id": "odd"}]})
+	_check.call(t.is_valid(), "tile: test tables load (%s)" % t.error)
+	var jug := ItemTile.of(PackedInt32Array([ItemLook.Temp.COLD, -1, 250, 1, 1, 250, -1]), t)
+	var cold: Color = jug["temp_color"]
+	_check.call(is_equal_approx(jug["level"], 0.25) and jug["amount"] == "250 ml" and jug["see_through"]
+			and jug["liquid"] == CddaPalette.NAMED["yellow"] and jug["contents"] == "orange juice"
+			and jug["temp"] == ItemLook.Temp.COLD and Color(cold, 1.0) == Color(ItemLook.COLD_TINT, 1.0) and cold.a > 0.0
+			and jug["rot"] == -1 and (jug["rot_color"] as Color).a == 0.0 and jug["grime"] == -1.0 and ItemTile.shows(jug),
+			"tile: a cold jug a quarter full of juice, 250 ml, in the juice's colour (%s)" % [jug])
+	_check.call(ItemTile.words(jug) == "Cold\n250 ml orange juice, 25% full", "tile: in words (%s)" % ItemTile.words(jug).replace("\n", " | "))
+	var big := ItemTile.of(PackedInt32Array([0, -1, 1000, 2, 0, 1500, -1]), t)
+	var plain := ItemTile.of([0, -1, 600, 1, 0, 600, -1], null)
+	_check.call(big["level"] == 1.0 and big["amount"] == "1.5 L" and not big["see_through"]
+			and big["liquid"] == ItemLook.LIQUID_DEFAULT and big["contents"] == "odd" and big["temp"] == ItemLook.Temp.NORMAL
+			and (big["temp_color"] as Color).a == 0.0 and plain["liquid"] == ItemLook.LIQUID_DEFAULT
+			and plain["contents"] == "" and plain["amount"] == "600 ml",
+			"tile: full, litres; no colour or no tables: the default liquid colour (%s)" % [big])
+	var texts := [0, -5, 1, 999, 1000, 1049, 1050, 1949, 10000, 123456, ItemLook.ML_MAX, ItemLook.ML_MAX + 1].map(
+			func(ml: int) -> String: return ItemTile.amount_text(ml))
+	_check.call(texts == ["", "", "1 ml", "999 ml", "1 L", "1 L", "1.1 L", "1.9 L", "10 L", "123.5 L", "100000 L", ""],
+			"tile: amount text in ml below a litre, then to a tenth of a litre %s" % [texts])
+	var frozen := ItemTile.of(PackedInt32Array([ItemLook.Temp.FROZEN, 0, -1, 0, 0, -1, -1]), t)
+	var hot := ItemTile.of(PackedInt32Array([ItemLook.Temp.HOT, -1, -1, 0, 0, -1, -1]), t)
+	_check.call(frozen["temp"] == ItemLook.Temp.FROZEN and Color(frozen["temp_color"], 1.0) == Color(ItemLook.FROST, 1.0)
+			and hot["temp"] == ItemLook.Temp.HOT and Color(hot["temp_color"], 1.0) == Color(ItemLook.HEAT, 1.0)
+			and (frozen["temp_color"] as Color).a > cold.a and frozen["level"] == -1.0 and frozen["amount"] == ""
+			and ItemTile.words(hot) == "Hot", "tile: frozen and hot edges in ItemLook's colours, frozen the strongest")
+	var old := ItemTile.of(PackedInt32Array([0, 950, -1, 0, 0, -1, -1]), t)
+	_check.call(frozen["rot"] == 0 and frozen["rot_color"] == ItemLook.FRESH_COLOR and old["rot"] == 950
+			and old["rot_color"] == ItemLook.rot_color(950) and ItemTile.shows(old)
+			and ItemTile.words(old) == "Spoilage 95% (old)" and ItemTile.words(frozen) == "Frozen\nSpoilage 0% (fresh)",
+			"tile: spoilage in rot_color for things that rot (%s)" % ItemTile.words(old))
+	var gun := ItemTile.of(PackedInt32Array([0, -1, -1, 0, 0, -1, 4000]), t)
+	var clean := ItemTile.of(PackedInt32Array([0, -1, -1, 0, 0, -1, 0]), t)
+	_check.call(is_equal_approx(gun["grime"], GunGrime.grime_for(4000)) and is_equal_approx(gun["grime"], 0.4)
+			and ItemTile.shows(gun) and ItemTile.words(gun) == "Fouling 40%" and clean["grime"] == 0.0
+			and not ItemTile.shows(clean), "tile: a fouled gun's grime as its model shows it; a clean one shows nothing")
+	var none := ItemTile.of(null, null)
+	var empty_pack := ItemTile.of(PackedInt32Array([0, -1, 0, 0, 0, 0, -1]), t)
+	var missing := [ItemTile.of(PackedInt32Array(), t), ItemTile.of({}, t), ItemTile.of("x", t),
+			ItemTile.of(PackedInt32Array([1, 2, 3]), t), ItemTile.of([0, -1, 500, 1, 1, 500, -1, 9], t)]
+	_check.call(none["level"] == -1.0 and none["amount"] == "" and none["rot"] == -1 and none["grime"] == -1.0
+			and none["temp"] == ItemLook.Temp.NORMAL and not ItemTile.shows(none) and ItemTile.words(none) == ""
+			and missing.all(func(m: Dictionary) -> bool: return m == none)
+			and empty_pack["level"] == 0.0 and empty_pack["amount"] == "" and not ItemTile.shows(empty_pack),
+			"tile: no state, or the wrong size: nothing; an empty container: level 0, no amount, nothing drawn")
+	var out_of_range := ItemTile.of(PackedInt32Array([9, 5000, 1500, 0x7fffffff, 3, 250, 20000]), t)
+	var bad_type := ItemTile.of([0, -1, 500, -4, 0, ItemLook.ML_MAX + 1, -1], t)
+	var junk := ItemTile.of(["hot", 1.5, "250", [1], {}, INF, NAN], t)
+	var floats := ItemTile.of([1.0, 100.0, 500.0, 1.0, 1.0, 500.0, -1.0], t)
+	_check.call(out_of_range == none and junk == none and bad_type["level"] == 0.5 and bad_type["amount"] == ""
+			and bad_type["liquid"] == ItemLook.LIQUID_DEFAULT and bad_type["contents"] == ""
+			and floats["temp"] == ItemLook.Temp.HOT and floats["rot"] == 100 and floats["level"] == 0.5
+			and floats["amount"] == "500 ml" and floats["see_through"] and floats["contents"] == "orange juice",
+			"tile: out of range or wrong types show nothing; whole floats count (%s, %s)" % [out_of_range, junk])
+	var tv := ItemTileView.new(gun, -INF)
+	_check.call(tv.mouse_filter == Control.MOUSE_FILTER_IGNORE and tv.focus_mode == Control.FOCUS_NONE and tv.inset == 0.0,
+			"tile: the view takes no mouse input or focus")
+	tv.free()
 
 
 # --- Character creation and main menu ------------------------------------------------------------------

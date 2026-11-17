@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Item tiles, slice 1: in the Tab view each item's row shows how full it is and how much, frozen / cold / hot, spoilage and gun grime. Client tests pass.
 - 2026-11-17 — Radial menu, slice 4: the crosshair names the furniture you face and the key for it; with a gamepad the prompts show its buttons. Client tests pass.
 - 2026-11-17 — Radial menu, slice 3: a quick tap of E does the object's default action (the one the game highlights); hold E for the wheel. Client tests pass.
 - 2026-11-17 — Live item state on 3D items (lead-world): items lying near you get frost when frozen (fainter when cold), a heat shimmer when hot, a brown tint as food goes off and, in see-through containers, the liquid up to its level, once the bridge sends the states; the values are shared with the item icons. Client tests pass.
