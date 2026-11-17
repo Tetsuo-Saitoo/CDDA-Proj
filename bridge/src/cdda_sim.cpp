@@ -1118,6 +1118,7 @@ Dictionary hand_dict( const fp3d::hand_view &h )
     if( !h.held ) {
         return d;
     }
+    d["uid"] = static_cast<int64_t>( h.uid );
     d["id"] = to_godot( h.id );
     d["name"] = to_godot( h.name );
     d["liquid"] = to_godot( h.liquid );
