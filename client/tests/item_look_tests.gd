@@ -175,6 +175,7 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			"item state: a shell can be made for an item in a hand too")
 	held.free()
 	_test_dress(root, world, snap, tables)
+	_test_hands(root, world, data, tables)
 	view.free()
 	world.free()
 
@@ -224,6 +225,32 @@ func _test_dress(root: Node, world: WorldView, snap: Snapshot, tables: IdTables)
 			and ItemLookView.shows(wet, tables) and ItemLookView.dress(v, wet, tables),
 			"item state: a see-through container shows the level of a liquid only, not of solid contents")
 	v.free()
+
+
+## The copy a hand holds (Hands, hands.gd) wears its item's state, and a new snapshot repaints or takes it off.
+func _test_hands(root: Node, world: WorldView, data: Variant, tables: IdTables) -> void:
+	var acts := ItemActions.new()
+	var hands := Hands.new(world, acts)
+	root.add_child(hands)
+	var ice := hands.picker.by_uid(U_ICE)
+	var grabbed := ice != null and hands.grab("mouse", {"kind": "item", "node": null, "item": ice, "square": ice.square,
+			"point": ice.point, "dist": 0.0, "name": ""})
+	var px := hands.proxy("mouse")
+	var look := px.get_node_or_null(ItemLookView.DRESS) if px != null else null
+	var frost: Variant = (look.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"frost") if look != null else null
+	world.apply_snapshot(Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void:
+		(d["player"] as Dictionary)["item_states"] = [[U_ICE, 1, -1, -1, 0, 0, -1, -1]])))
+	hands.dress_held()
+	var warm := px.get_node_or_null(ItemLookView.DRESS) if px != null else null
+	var heat: Variant = (warm.get_meta(&"mat") as ShaderMaterial).get_shader_parameter(&"heat") if warm != null else null
+	world.apply_snapshot(Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void:
+		(d["player"] as Dictionary)["item_states"] = [])))
+	hands.dress_held()
+	_check.call(grabbed and frost == 1.0 and warm == look and heat == 1.0 and px.get_node_or_null(ItemLookView.DRESS) == null,
+			"item state: the copy in a hand wears its item's state, repainted by a new snapshot, off when it has none (%s %s %s)"
+			% [grabbed, frost, heat])
+	hands.free()
+	acts.free()
 
 
 func _test_values() -> void:

@@ -386,6 +386,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
 	item_looks.apply(snap)
+	if hands != null:
+		hands.dress_held()   # the copies in hands wear their items' states too
 	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
