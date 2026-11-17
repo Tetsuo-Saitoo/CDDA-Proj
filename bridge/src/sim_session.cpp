@@ -343,6 +343,11 @@ void play_game()
             fp3d::publish_snapshot( fp3d::capture_snapshot() );
             fp3d::publish_held();
         } );
+        // No request comes while CDDA runs a long activity or the character sleeps: a snapshot about twice a second
+        // then, so the client's clock, light and needs keep moving (the held state goes out every turn anyway).
+        fp3d::set_running_hook( [] {
+            fp3d::publish_snapshot( fp3d::capture_snapshot() );
+        } );
         fp3d::note_boot_step( "Running" );
         // Not when the boot watchdog gave up on it meanwhile (check_boot_stall): that stays failed.
         if( move_state( state::booting, state::running ) ) {

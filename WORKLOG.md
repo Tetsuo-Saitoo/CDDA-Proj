@@ -1,5 +1,7 @@
 # WORKLOG
 
+- 2026-11-17 — Art coverage tool: the reports' text cells stay plain text when a spreadsheet opens them. A normal run's output is unchanged.
+- 2026-11-17 — Bridge: the screen no longer stands still while you wait, craft or sleep: the game sends a snapshot about twice a second during those stretches (it sent none until they ended), and says what the character is doing (`player.activity`, `player.asleep`). A 6-hour wait takes as long as before. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the game library no longer loads tileset images it never draws (B2): it reads only the tile sizes. About 550 MB less memory on Windows and 525 MB on Linux, and about a second less at the first game load; turn times as before. All fork tests pass on both, client tests pass.
 - 2026-11-17 — Art coverage tool: `--ids` reads the ids, names and looks_like from the bridge's id tables file instead of the game's JSON (B6 follow-up); the JSON still gives the spawn weights. Same percentages as before for terrain and furniture; monsters and vehicle parts now list everything the game loads.
 - 2026-11-17 — The waiting line now says what you are doing: "Sleeping...", "Waiting..." or the game's own word for a longer task, once the bridge sends it. Client tests pass.

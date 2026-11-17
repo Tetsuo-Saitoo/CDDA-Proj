@@ -70,8 +70,8 @@ struct cookware_view  { uint8 tile; uint64 uid; uint32 type; std::vector<cookwar
     // cap 16. An in-progress CDDA craft among the contents, else one the `cook` item action started for this pot
     // (it lies on the character's square or one next to it, next to the pot, naming the pot): craft_result = itype
     // index of the result (0 none), craft_recipe = recipe id ("" none), craft_progress = permille.
-    // Snapshots come with requests, and CDDA asks nothing while the craft activity runs (it fast-forwards): the
-    // progress seen is that of a paused craft, or of one a question interrupts.
+    // CDDA asks nothing while the craft activity runs (it fast-forwards); a snapshot then comes about every
+    // 0.5 s of real time, so the progress moves in steps.
 struct cookware_item_view { uint64 uid; uint32 type; int32 count; };   // count = charges if counted by charges, else 1
 
 struct creature_view {
@@ -117,6 +117,8 @@ struct player_view {
     optional<gun_view> wielded_gun;          // JSON "wielded_gun", only when the wielded item is a gun
     std::vector<effect_view> effects;        // what CDDA's @ screen lists (effects with no display name left out); cap 64
     mood_view mood;                          // CDDA's morale screen (2026-11-12)
+    optional<activity_view> activity;        // JSON "activity", only while an activity runs (2026-11-17)
+    bool asleep;                             // JSON "asleep": true, only with CDDA's sleep effect (2026-11-17)
 };
 struct mood_view {
     int16 level;                             // CDDA's morale level, the same number as `morale`
@@ -133,6 +135,15 @@ struct mood_entry { string name /* the morale screen's line, e.g. "Music", "Enjo
 // cut to a whole number, and scales it further while the character is on Prozac (a bad level times 0.25). Don't
 // work the level out from the entries. An entry whose morale type the game data doesn't know (a save from other
 // mods) has no name: it is counted in `total` and left out of `entries`.
+// What the character is busy with, for a "time passes" line: while an activity runs or the character sleeps no
+// request comes, and a snapshot comes about every 0.5 s of real time instead. Older bridges send neither field.
+struct activity_view {
+    std::string id;     // CDDA's activity type id, "ACT_WAIT": letters, digits and _ only, up to 64 bytes; "" if a
+                        // mod's id is anything else
+    std::string verb;   // CDDA's verb for it, "waiting": color tags removed, up to 40 columns; may be ""
+};
+// JSON: "activity":{"id":"ACT_WAIT","verb":"waiting"}. Lying down and trying to sleep is the activity
+// ACT_TRY_SLEEP ("trying to fall asleep"), not `asleep` yet; asleep there is usually no activity.
 // JSON: "mood":{"level":-20,"band":-1,"face":"):","total":2,"entries":[{"name":"Craving caffeine","value":-30,"percent":100},
 //   {"name":"Music","value":10,"percent":100}]}
 struct effect_view { string id /* effect_type id, e.g. drunk, bleed; up to 64 bytes */;
