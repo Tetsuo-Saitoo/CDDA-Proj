@@ -69,6 +69,7 @@ var mock_items: MockItems         # mock mode: item actions done on the client's
 var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
 var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
 var hints: Hints                  # G6: one-time tips at the top right (flat screen)
+var busy_note := BusyNote.new()   # "Time passes..." while the game runs on by itself (flat screen)
 var hud_data := HudData.new()     # what the HUD shows (body, needs, held, messages, warnings), for screen and VR
 var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
@@ -979,6 +980,7 @@ func _on_world_applied(snap: Snapshot, n: int) -> void:
 
 
 func _on_live_request(req: Dictionary) -> void:
+	busy_note.on_request(req, Time.get_ticks_msec())
 	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
 		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
@@ -1571,6 +1573,7 @@ func _setup_hud() -> void:
 	if hints_why != "":
 		push_warning("hints: " + hints_why)
 	layer.add_child(hints)
+	layer.add_child(busy_note)
 	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()
 	key_menu.cheats_forced = _args.has("test") or _args.has("cheats")
@@ -1677,6 +1680,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
+	busy_note.tick(Time.get_ticks_msec(), vr == null and live != null and live.state == "running")
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)
