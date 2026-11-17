@@ -157,8 +157,9 @@ func _test_user_files() -> void:
 	UserFiles.set_test_root("user://elsewhere")
 	UserFiles.set_test_root(UserFiles.TEST_RUNS + "/../elsewhere")
 	_check(UserFiles.test_root() == root, "a folder outside test-runs is refused as the run's folder")
-	_check(UserFiles.at("user://../hud.cfg") == "" and UserFiles.at("user://a/../../hud.cfg") == "",
-			"a path with .. opens nothing in a test run")
+	_check(UserFiles.at("user://../hud.cfg") == "" and UserFiles.at("user://a/../../hud.cfg") == ""
+			and UserFiles.at(UserFiles.TEST_RUNS + "/../hud.cfg") == "" and UserFiles.at(root.path_join("../../../hud.cfg")) == "",
+			"a path with .. opens nothing in a test run, one under test-runs neither")
 	_check(UserFiles.script_run(PackedStringArray(["--headless", "--path", "client", "--script", "res://tests/run_tests.gd"]))
 			and UserFiles.script_run(PackedStringArray(["-s", "x.gd"]))
 			and not UserFiles.script_run(PackedStringArray(["--headless", "--path", "client"]))
@@ -194,6 +195,27 @@ func _test_user_files() -> void:
 	var dropped := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not DirAccess.dir_exists_absolute(dead.path_join("user")) \
 			and DirAccess.dir_exists_absolute(dead)
 	_check(kept and refused and dropped, "a dead run's user files folder is removed, a newer one and anything else is not (%s %s %s)" % [kept, refused, dropped])
+	# A dead run's user files folder that is a link: the link goes, what it points at stays. Skipped where this
+	# account can't make links (Windows without developer mode).
+	_check(not UserFiles.through_link(dead.path_join("user")) and UserFiles.through_link("user://elsewhere/x")
+			and not UserFiles.unlink(dead), "a plain folder under test-runs goes through no link and is none")
+	var target := TestDir.path("linked")
+	DirAccess.make_dir_recursive_absolute(target)
+	FileAccess.open(target.path_join("keep.txt"), FileAccess.WRITE).store_string("x")
+	var up := DirAccess.open(dead)
+	if up != null and up.create_link(ProjectSettings.globalize_path(target), "user") == OK and up.is_link("user"):
+		var went := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not up.is_link("user") \
+				and not up.dir_exists("user")
+		_check(went and FileAccess.file_exists(target.path_join("keep.txt")),
+				"a dead run's user files folder that is a link: the link is removed, its target keeps its files")
+		up.create_link(ProjectSettings.globalize_path(target), "user")
+		var inside := UserFiles.through_link(dead.path_join("user/sub"))
+		up.remove("user")
+		_check(inside, "a folder under a link goes through a link: nothing is deleted there")
+	else:
+		print("  (no link could be made here: the link checks are skipped)")
+	DirAccess.remove_absolute(target.path_join("keep.txt"))
+	DirAccess.remove_absolute(target)
 	DirAccess.remove_absolute(dead)
 	# A check run of the game itself (--vr-check: VrCheck's scenarios) has its own folder too; a plain start doesn't.
 	_check(UserFiles.check_run(PackedStringArray(["--vr", "--vr-check=report,loot"])) and UserFiles.check_run(PackedStringArray(["--vr-check"]))

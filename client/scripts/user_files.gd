@@ -18,13 +18,16 @@ static var _decided := false
 
 ## `path` as it is opened: unchanged in the game, and for a path outside user:// or already under TEST_RUNS; in a
 ## test run the same name in the run's folder ("user://hud.cfg" -> "<run>/user/hud.cfg"). For the fixed names the
-## game uses: in a test run a path with ".." gives "" (nothing opens), so nothing leaves the run's folder.
+## game uses: in a test run a user:// path with ".." gives "" (nothing opens), one under TEST_RUNS too, so nothing
+## leaves the run's folder.
 static func at(path: String) -> String:
 	var root := test_root()
-	if root.is_empty() or not path.begins_with("user://") or path == TEST_RUNS or path.begins_with(TEST_RUNS + "/"):
+	if root.is_empty() or not path.begins_with("user://"):
 		return path
 	if path.contains(".."):
 		return ""
+	if path == TEST_RUNS or path.begins_with(TEST_RUNS + "/"):
+		return path
 	DirAccess.make_dir_recursive_absolute(root)   # again each time: a test may have cleaned the run folder
 	return root.path_join(path.trim_prefix("user://"))
 
@@ -59,9 +62,37 @@ static func _run_user_dir(path: String) -> bool:
 			and parts[0].trim_prefix("run-").is_valid_int() and parts[1] == "user"
 
 
-## Deletes a run's user files folder (or a folder in it) with everything in it. Links are removed, never followed.
+## Whether `path` goes through a link on the way from user:// down to its parent folder (TEST_RUNS or a folder
+## under it being one); true as well for a path outside TEST_RUNS. Nothing is deleted through such a path: it would
+## empty the link's target.
+static func through_link(path: String) -> bool:
+	if not path.begins_with(TEST_RUNS + "/") or path.contains(".."):
+		return true
+	var at_dir := "user://"
+	var parts := path.trim_prefix("user://").split("/", false)
+	for k in parts.size() - 1:   # the folders above `path`
+		var d := DirAccess.open(at_dir)
+		if d == null:
+			return false   # nothing there: nothing to follow
+		if d.is_link(parts[k]):
+			return true
+		at_dir = at_dir.path_join(parts[k])
+	return false
+
+
+## Folder `path` (under TEST_RUNS) is itself a link: the link is removed, its target left alone. True if it was one.
+static func unlink(path: String) -> bool:
+	var up := DirAccess.open(path.get_base_dir()) if path.begins_with(TEST_RUNS + "/") and not path.contains("..") else null
+	if up == null or not up.is_link(path.get_file()):
+		return false
+	up.remove(path.get_file())
+	return true
+
+
+## Deletes a run's user files folder (or a folder in it) with everything in it. Links are removed, never followed:
+## the folder itself and the ones above it are looked at too.
 static func _remove_tree(path: String) -> void:
-	if not _run_user_dir(path):
+	if not _run_user_dir(path) or through_link(path) or unlink(path):
 		return
 	var d := DirAccess.open(path)
 	if d == null:

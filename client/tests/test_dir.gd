@@ -101,9 +101,11 @@ static func clean() -> void:
 			_remove_tree(ROOT.path_join(sub))
 
 
-## Deletes a folder under ROOT with everything in it. Links are removed, never followed.
+## Deletes a folder under ROOT with everything in it. Links are removed, never followed: the folder itself and the
+## ones above it are looked at too (UserFiles.through_link, unlink).
 static func _remove_tree(user_path: String) -> void:
-	if not user_path.begins_with(ROOT + "/") or user_path.contains("..") or not DirAccess.dir_exists_absolute(user_path):
+	if not user_path.begins_with(ROOT + "/") or user_path.contains("..") or UserFiles.through_link(user_path) \
+			or UserFiles.unlink(user_path) or not DirAccess.dir_exists_absolute(user_path):
 		return
 	var d := DirAccess.open(user_path)
 	if d == null:
