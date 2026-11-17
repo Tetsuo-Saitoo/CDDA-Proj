@@ -128,6 +128,7 @@ func _exit_tree() -> void:
 func _ready() -> void:
 	_boot_log("main scene ready (engine, extensions, scene loaded)")
 	_args = _parse_args()
+	HudSettings.ensure_ambience_bus()   # G7: before the weather's players look for it
 	snapshot_path = _args.get("snapshot", _repo_path("contracts/mock/snapshot_town.json"))
 	world = WorldView.new()
 	world.name = "World"
@@ -1398,9 +1399,8 @@ func _apply_options() -> void:
 	if camera != null:
 		camera.sensitivity = speed
 		camera.invert_y = o.invert_y
-	var vol := HudSettings.clamp_to(o.volume, HudSettings.VOLUMES, 1.0)   # every sound plays on Master (bus 0)
-	AudioServer.set_bus_mute(0, vol <= 0.0)
-	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(vol, 0.001)))
+	HudSettings.set_bus_loudness(0, o.volume)   # Master (bus 0): every sound, the Ambience bus's too
+	HudSettings.set_bus_loudness(AudioServer.get_bus_index(HudSettings.AMBIENCE_BUS), o.ambience_volume)
 	if vr != null or _args.has("vr") or _args.has("screenshot") or DisplayServer.get_name() == "headless":
 		return
 	get_viewport().scaling_3d_scale = HudSettings.clamp_to(o.render_scale, HudSettings.RENDER_SCALES, 1.0)
