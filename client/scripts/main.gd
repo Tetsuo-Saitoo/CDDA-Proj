@@ -75,6 +75,7 @@ var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold 
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
 var hurt_cue: HurtCue             # the player's hurt at the view's edges (F3), over the mood's tint
+var strain_cue: StrainCue         # the player's pain and low stamina at the view's edges (F3), under the hurt
 var text_dock: TextKeysDock       # the on-screen keyboard for the focused text field (pad Y; the VR panel)
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
@@ -1482,6 +1483,9 @@ func _setup_hud() -> void:
 	mood_cue = MoodCue.new()   # first: everything else draws over it
 	mood_cue.data = hud_data
 	layer.add_child(mood_cue)
+	strain_cue = StrainCue.new()   # pain and low stamina: over the mood's tint, under the hurt's
+	strain_cue.data = hud_data
+	layer.add_child(strain_cue)
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
@@ -1504,6 +1508,7 @@ func _setup_hud() -> void:
 	compass.opacity = hud_settings.compass_opacity
 	mood_cue.enabled = hud_settings.mood_cues
 	hurt_cue.enabled = hud_settings.hurt_cues
+	strain_cue.enabled = hud_settings.hurt_cues
 	weather.flash_enabled = hud_settings.weather_flash
 	weather.quality = hud_settings.weather_quality   # G7, lead-world's setting (clamped there too)
 	hud_data.set_feed_hidden(hud_settings.feed_hidden)
@@ -1559,6 +1564,7 @@ func _setup_hud() -> void:
 		compass.opacity = hud_settings.compass_opacity
 		mood_cue.enabled = hud_settings.mood_cues
 		hurt_cue.enabled = hud_settings.hurt_cues
+		strain_cue.enabled = hud_settings.hurt_cues
 		weather.flash_enabled = hud_settings.weather_flash
 		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
