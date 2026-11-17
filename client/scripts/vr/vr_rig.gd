@@ -52,6 +52,11 @@ extends XROrigin3D
 ## a drink in hand work at once; the off-hand item let go over its own pocket is just put away. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
+## Body slots (L8 slice 5, VrSlots `slots`): the other worn containers sit on the body (holsters and sheaths at the
+## hips and thighs, pouches on the chest). A hand coming to one buzzes lightly and shows its ring and what's in it;
+## grip there with an empty hand takes the first thing in it (Hands.adopt, quick switch as from the pack, SWITCH_M
+## from the slot); let go of an item there puts it in (its own container: back, nothing sent); the wielded gun's
+## grip let go at a slot puts the gun in (Hands.move). A slot with something to take wins over items lying nearby.
 ## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
 ## craft progress or the recipes its contents match; main.gd sets `cook.backend`). One recipe CDDA would start now
 ## starts by itself; of several, the trigger with an empty hand on a "+" line starts that one; a paused craft goes on
@@ -174,6 +179,8 @@ const MAX_HAND_SPEED := 15.0   # m/s: a faster reading is a tracking jump, not a
 const THROW_FLAT_SPEED := 1.5  # m/s: a throw needs at least this much level speed (else a slam down: put down)
 const HAND_OVER_M := 0.2       # a grip this near the other hand's item's grip point takes it over
 const SWITCH_M := 0.3          # an item taken out of the open pack and carried this far from it: into that CDDA hand
+const SLOT_AMP := 0.2          # a hand coming to a body slot: a light tick
+const SLOT_S := 0.03
 const GRAVITY := 9.8
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
@@ -195,6 +202,7 @@ var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature s
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
+var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
 var results := VrResults.new()   # L9: tags of the cook and fire ops and CDDA's answers to them
 var _events_from: Object = null  # the backend whose events_arrived is connected to on_events
 var wheel: VrWheel         # radial menus: furniture used by hand, CDDA's choices around the hand (built in _build)
@@ -218,6 +226,7 @@ var _ray_wait: Array[float] = [0.0, 0.0]       # seconds to the next look
 var _fly_from: Array[Transform3D] = [Transform3D(), Transform3D()]   # where a pulled copy lay
 var _fly_t: Array[float] = [-1.0, -1.0]        # seconds into its flight; < 0: none
 var _from_pack: Array[int] = [-1, -1]          # uid each hand took out of the open pack, until quick_switch; -1 none
+var _from_slot: Array[int] = [-1, -1]          # ... the container uid when that was a body slot's; -1 the pack's
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -322,6 +331,10 @@ func _build() -> void:
 	add_child(tray)
 	cook.head = camera
 	add_child(cook)
+	slots = VrSlots.new()
+	slots.world = world
+	slots.head = camera
+	add_child(slots)
 	fire = VrFire.new()
 	fire.world = world
 	fire.results = results
@@ -507,11 +520,14 @@ func update_hands(delta: float, all_hands := false) -> void:
 	if hands == null:
 		pack.close("gone")
 		tray.close("gone")
+		slots.hands = null
+		slots.refresh()
 		for i in 2:
 			_show_pull_ray(i, {})
 		return
 	pack.update()
 	tray.update()
+	update_slots(all_hands)
 	var drawn: Array = [null, null]   # where each held item was drawn last frame
 	for i in 2:
 		var id: String = HAND_IDS[i]
@@ -528,6 +544,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 		if held.is_empty():
 			_fly_t[i] = -1.0
 			_from_pack[i] = -1
+			_from_slot[i] = -1
 			var t := {}
 			var pt := {}   # the open pack goes first, the tray, then what the hand touches, then what its pull ray meets
 			var tt := {}
@@ -536,12 +553,14 @@ func update_hands(delta: float, all_hands := false) -> void:
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
 				tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+				var st := slot_take(i, pt, tt)
 				if tt.get("kind") == "item":
 					t = tt
-				elif pt.is_empty() and tt.is_empty():
+				elif pt.is_empty() and tt.is_empty() and st == null:
 					t = hands.find_near(c.global_position, GRAB_REACH)
 				# (a finger resting on a gun's trigger points nothing)
-				pointing = pt.is_empty() and tt.is_empty() and t.is_empty() and trigger_half(i) and not _gun_hand(i)
+				pointing = pt.is_empty() and tt.is_empty() and t.is_empty() and st == null and trigger_half(i) \
+						and not _gun_hand(i)
 				if pointing:
 					t = _point(i, c, delta)
 			if not pointing:   # the next pointing looks at once
@@ -586,14 +605,44 @@ func quick_switch(i: int) -> String:
 	var it: ItemRef = hands.holding(HAND_IDS[i]).get("item")
 	if it == null or it.uid != _from_pack[i] or not it.carried:
 		_from_pack[i] = -1
+		_from_slot[i] = -1
 		return ""
-	if pack.near(c.global_position, SWITCH_M):
+	if _from_slot[i] > 0:
+		var sp := slots.point_of(_from_slot[i])
+		if sp.is_finite() and c.global_position.distance_to(sp) < SWITCH_M:
+			return ""   # still at its slot
+	elif pack.near(c.global_position, SWITCH_M):
 		return ""   # still at the pack
 	_from_pack[i] = -1
+	_from_slot[i] = -1
 	if cdda_holds(c) != null:
 		return ""
 	var into := "main" if c == main_ctrl() else "off"
 	return into if hands.hold(HAND_IDS[i], it, into) else ""
+
+
+## L8 slice 5: places the body slots for this frame (VrSlots.update: the hands that look, the rig's floor) and buzzes
+## a hand lightly as it comes to one.
+func update_slots(all_hands := false) -> void:
+	slots.hands = hands
+	slots.main_right = main_ctrl() == right
+	var looks := world.snapshot != null and not ui_open()
+	var pts: Array[Vector3] = []
+	for i in 2:
+		var c := _ctrl(i)
+		pts.append(c.global_position if looks and (all_hands or c.get_is_active()) and c.is_inside_tree() else Vector3.INF)
+	slots.update(global_position.y if is_inside_tree() else NAN, pts)
+	for i in 2:
+		if slots.entered[i]:
+			feel(_ctrl(i), SLOT_AMP, SLOT_S)
+
+
+## What an empty hand i gripping now would take from a body slot: none while the pack or the tray has something
+## there (`pt`, `tt`: their targets), for the gun hand (its grip holds the gun) or with nothing in the slot.
+func slot_take(i: int, pt: Dictionary, tt: Dictionary) -> ItemRef:
+	if not pt.is_empty() or not tt.is_empty() or _gun_hand(i) or hands == null:
+		return null
+	return slots.take_at(_ctrl(i).global_position)
 
 
 ## Hand i is the main hand and a gun shows in it (VrGun).
@@ -776,15 +825,17 @@ func grab_with(c: XRController3D) -> bool:
 	var pt := {}
 	var looks := world.snapshot != null and not menu_open()
 	var tt := {}
+	var st: ItemRef = null
 	if looks:
 		pt = pack.target_at(c.global_position)
 		tt = tray.target_at(c.global_position) if pt.is_empty() else {}
+		st = slot_take(i, pt, tt)
 		if tt.get("kind") == "item":
 			t = tt
-		elif pt.is_empty() and tt.is_empty():
+		elif pt.is_empty() and tt.is_empty() and st == null:
 			t = hands.find_near(c.global_position, GRAB_REACH)
 	# touching nothing else, the gun not in this hand (its grip just holds the gun) and the shoulder not reached: the other
-	if pt.is_empty() and tt.is_empty() and t.is_empty() and other != null and not _gun_hand(i) and takes_over(i) \
+	if pt.is_empty() and tt.is_empty() and t.is_empty() and st == null and other != null and not _gun_hand(i) and takes_over(i) \
 			and not (looks and over_shoulder(camera.global_transform, c.global_position)):
 		var ok_over := hands.hand_over(HAND_IDS[1 - i], id, "main" if c == main_ctrl() else "off")   # hand's item
 		if ok_over:
@@ -798,8 +849,14 @@ func grab_with(c: XRController3D) -> bool:
 		ok = pack.grip(i, pt)
 		if ok and pt.get("kind") == "item" and pt.get("item") is ItemRef:
 			_from_pack[i] = (pt["item"] as ItemRef).uid
+			_from_slot[i] = -1
 	elif not tt.is_empty() and t.is_empty():
 		ok = false   # the tray's frame or a page arrow: the trigger works those
+	elif st != null:
+		ok = hands.adopt(id, st)   # out of a body slot: carried, nothing sent until let go or carried away
+		if ok:
+			_from_pack[i] = st.uid
+			_from_slot[i] = st.parent
 	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
 		var bag := shoulder_bag(hands.picker.worn_containers(), null, world.tables)
 		ok = bag != null and pack.open_in(i, bag)
@@ -861,11 +918,18 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 		return ""
 	var held := hands.holding(id)
 	if held.is_empty():
+		if _gun_hand(0 if c == left else 1) and world.snapshot != null:   # the gun's grip let go at a slot: in it goes
+			var g := cdda_holds(c)
+			var gd := slots.drop_for(c.global_position, g) if g != null else {}
+			if gd.get("kind") == "container":
+				return hands.move(id, g, gd)
 		return ""
 	var it: ItemRef = held.get("item")
 	if held.get("kind") != "item" or it == null or world.snapshot == null:
 		return hands.release(id, {})
 	var drop := pack.drop_for(c.global_position, it)
+	if drop.is_empty():
+		drop = slots.drop_for(c.global_position, it)
 	var shoulder := over_shoulder(camera.global_transform, c.global_position)
 	if drop.is_empty() and not shoulder and throw_ok:
 		var sq: Variant = throw_square(c)
