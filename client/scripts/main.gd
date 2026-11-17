@@ -93,6 +93,7 @@ var live: LiveSession
 var cdda_user_dir := ""
 var vr: VrRig
 var vr_perf: VrPerf
+var flat_cook: VrCook   # E6: the pots' cooking cards on the flat screen (live, no headset); grab.cook picks them
 var _quitting := false
 var _saving_to_quit := false
 var _save_asked := false   # the player's save (F5, closing the window), not an autosave
@@ -296,6 +297,10 @@ func _ready() -> void:
 		world.set_roofs_visible(false)
 	if _args.has("vr"):
 		_start_vr()
+	if live != null and vr == null:   # E6: cooking by the crosshair (the headset has its own cards: VrRig.cook)
+		flat_cook = VrCook.flat(world, fp, live)
+		add_child(flat_cook)
+		grab.cook = flat_cook
 	_frame_player()
 	if _args.has("camera"):
 		var c := String(_args["camera"]).split_floats(",")
@@ -827,6 +832,12 @@ func _back_to_menu(text: String, ok: bool) -> void:
 	if _leaving or not is_inside_tree():
 		return
 	_leaving = true
+	grab.cook = null   # the flat cooking cards stop before the LiveSession goes
+	if is_instance_valid(flat_cook):
+		flat_cook.standalone = false
+		flat_cook.backend = null
+		flat_cook.queue_free()
+	flat_cook = null
 	var fresh := (load(SCENE) as PackedScene).instantiate() as Node3D
 	var fields := {"cdda_user_dir": cdda_user_dir, "open_menu": true, "menu_message": text, "menu_ok": ok}
 	for k: String in fields:   # by name: main.gd has no class_name to type `fresh` with

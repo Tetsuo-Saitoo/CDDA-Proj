@@ -34,8 +34,16 @@ extends Node3D
 ##   instead (the recipe lines stay under it; nothing starts by itself again for those contents and heat).
 ## Recipe ids come from the bridge's answers and the snapshot: only ones LiveSession.recipe_ok takes are used, and
 ## LiveSession checks every op again. A refused send (false) is tried again on the next look.
+## The flat screen (E6) uses the same cards: `standalone` makes it update itself every frame and listen to its
+## backend's events for CDDA's answers to its own cooks (VrResults); `head` is the screen's eye, `range_m` and
+## `card_scale` suit a screen, and the crosshair picks a "+" line by ray (line_on_ray, press_ray; `pick_hint` says how).
 
-const RANGE_M := 2.5        # cards for pots this near the head ...
+const RANGE_M := 2.5        # cards for pots this near the head (range_m: VR's) ...
+const MAX_RANGE_M := 6.0    # ... range_m at most
+const RAY_M := 6.0          # line_on_ray: cards this far along the ray at most
+const FLAT_RANGE_M := 4.0   # flat(): the screen's range_m, card_scale and pick_hint (the crosshair says the key)
+const FLAT_SCALE := 2.5
+const FLAT_HINT := "crosshair on a + line: cook it"
 const MAX_CARDS := 4        # ... at most this many, the nearest
 const MAX_MATCHES := 3      # recipe lines on a card
 const MAX_SCAN := 32        # matches looked at in one answer (the contract's cap)
@@ -87,7 +95,17 @@ class Card extends Node3D:
 
 
 var world: WorldView
-var head: Node3D            # the XR camera: cards are for pots near it and turn to it
+var head: Node3D            # the XR camera (the flat screen's eye): cards are for pots near it and turn to it
+var range_m := RANGE_M      # cards for pots this near the head (0.5..MAX_RANGE_M)
+var card_scale := 1.0       # the cards' size (a screen wants them bigger; 0.5..4)
+var pick_hint := PICK_HINT  # the line under a card's "+" lines: how to start one
+## The flat screen: update every frame by itself and show CDDA's answers to its cooks (VR: VrRig does both).
+var standalone := false:
+	set(v):
+		standalone = v
+		set_process(v)
+		if not v:
+			_drop_events()
 ## L9: LiveSession (null in the mock): match_recipes / recipes_matched / recipe_matches, looked up by name.
 var backend: Object = null:
 	set(b):
@@ -125,10 +143,31 @@ var _wait := 0.0
 var _mats := {}
 var _steam_mat: ParticleProcessMaterial
 var _steam_mesh: QuadMesh
+var _events_from: Object = null   # standalone: the backend whose events_arrived reaches on_events
 
 
 func _init() -> void:
 	name = "VrCook"
+	set_process(false)
+
+
+## The flat screen's cards (E6, made by main.gd in a live game without a headset): standalone, bigger, for pots
+## within FLAT_RANGE_M of `eye`; GrabController.cook picks their "+" lines with the crosshair.
+static func flat(w: WorldView, eye: Node3D, b: Object) -> VrCook:
+	var c := VrCook.new()
+	c.world = w
+	c.head = eye
+	c.backend = b
+	c.range_m = FLAT_RANGE_M
+	c.card_scale = FLAT_SCALE
+	c.pick_hint = FLAT_HINT
+	c.standalone = true
+	return c
+
+
+func _process(delta: float) -> void:
+	if standalone:
+		update(delta)
 
 
 ## Every frame (VrRig._process): pots are looked for every TICK_S, the cards turn to the head every frame.
@@ -137,6 +176,9 @@ func update(delta: float) -> void:
 		delta = 0.0
 	_clock += delta
 	_wait -= delta
+	if standalone:
+		_hook_events()
+		results.tick(delta)
 	if _wait <= 0.0:
 		_wait = TICK_S
 		refresh()
@@ -175,7 +217,8 @@ func pots_near(snap: Snapshot, hp: Vector3) -> Array[Dictionary]:
 	if not hp.is_finite():
 		return out
 	var hs := world.coords.world_to_ms(hp)
-	var r := ceili(RANGE_M / CddaCoords.TILE_M)
+	var reach := clampf(range_m, 0.5, MAX_RANGE_M) if is_finite(range_m) else RANGE_M
+	var r := ceili(reach / CddaCoords.TILE_M)
 	var lo := CddaCoords.ms_to_sm(hs - Vector3i(r, r, 0))
 	var hi := CddaCoords.ms_to_sm(hs + Vector3i(r, r, 0))
 	for sy in range(lo.y, hi.y + 1):
@@ -198,7 +241,7 @@ func pots_near(snap: Snapshot, hp: Vector3) -> Array[Dictionary]:
 					continue   # only pots on the heat (Snapshot checks it too)
 				var pt := pot_top(cw.uid, sq)
 				var d := hp.distance_to(pt)
-				if d <= RANGE_M:
+				if d <= reach:
 					out.append({"uid": cw.uid, "cw": cw, "square": sq, "heat": heat, "point": pt, "dist": d})
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return a["dist"] < b["dist"] or (a["dist"] == b["dist"] and a["uid"] < b["uid"]))
@@ -233,7 +276,7 @@ func face() -> void:
 		var d := hp - c.position
 		d.y = 0.0
 		if d.length_squared() > 1e-6:
-			c.basis = Basis.looking_at(d, Vector3.UP, true)   # the label's front (+Z) to the head
+			c.basis = Basis.looking_at(d, Vector3.UP, true).scaled(Vector3.ONE * _scale())   # its front (+Z) to the head
 
 
 ## What makes a pot worth asking again: its contents and whether its heat is lit.
@@ -297,38 +340,93 @@ func line_at(pt: Vector3) -> Dictionary:
 	if not pt.is_finite():
 		return {}
 	for c: Card in cards.values():
+		var hit := _line_on(c, pt)
+		if not hit.is_empty():
+			return hit
+	return {}
+
+
+## The card line the ray from `origin` along `dir` meets first within RAY_M (the flat screen's crosshair): line_at's
+## {uid, line, match} and the `point`; {} for none.
+func line_on_ray(origin: Vector3, dir: Vector3) -> Dictionary:
+	if not origin.is_finite() or not dir.is_finite() or dir.length_squared() < 1e-8:
+		return {}
+	var d := dir.normalized()
+	var best := {}
+	var best_t := RAY_M
+	for c: Card in cards.values():
 		if not c.visible or c.text.is_empty():
 			continue
-		var font: Font = c.label.font if c.label.font != null else ThemeDB.fallback_font
-		var lh := font.get_height(FONT) * PIXEL
 		var xf := c.global_transform if c.is_inside_tree() else c.transform
-		var l := xf.affine_inverse() * pt
-		var up := l.y - c.label.position.y
-		if lh <= 0.0 or up < 0.0 or absf(l.z) > PICK_Z:
+		var n := xf.basis.z.normalized()
+		var den := n.dot(d)
+		if absf(den) < 1e-4:
 			continue
-		var lines := c.text.split("\n")
-		var k := lines.size() - 1 - int(up / lh)   # bottom-aligned: the last line sits on the label's origin
-		if k < 0:
+		var t := n.dot(xf.origin - origin) / den
+		if t < 0.0 or t > best_t:
 			continue
-		var w := font.get_string_size(lines[k], HORIZONTAL_ALIGNMENT_LEFT, -1, FONT).x * PIXEL
-		if absf(l.x) > w * 0.5 + PICK_PAD:
-			continue
-		var i := k - 2
-		return {"uid": c.uid, "line": k, "match": c.matches[i] if i >= 0 and i < c.matches.size() else {}}
-	return {}
+		var hit := _line_on(c, origin + d * t)
+		if not hit.is_empty():
+			hit["point"] = origin + d * t
+			best = hit
+			best_t = t
+	return best
 
 
 ## The trigger with an empty hand at `pt`: on a "+" line (a recipe CDDA would start now) that recipe starts. True
 ## when a cook was sent.
 func press_at(pt: Vector3) -> bool:
+	return _press(line_at(pt))
+
+
+## The flat screen's press (E with the crosshair on a "+" line): that recipe starts. True when a cook was sent.
+func press_ray(origin: Vector3, dir: Vector3) -> bool:
+	return _press(line_on_ray(origin, dir))
+
+
+## The line of card c at world point `pt` (in its plane, within PICK_Z), as line_at's; {} off it.
+func _line_on(c: Card, pt: Vector3) -> Dictionary:
+	if not c.visible or c.text.is_empty():
+		return {}
+	var font: Font = c.label.font if c.label.font != null else ThemeDB.fallback_font
+	var lh := font.get_height(FONT) * PIXEL
+	var xf := c.global_transform if c.is_inside_tree() else c.transform
+	var l := xf.affine_inverse() * pt
+	var up := l.y - c.label.position.y
+	if lh <= 0.0 or up < 0.0 or absf(l.z) > PICK_Z:
+		return {}
+	var lines := c.text.split("\n")
+	var k := lines.size() - 1 - int(up / lh)   # bottom-aligned: the last line sits on the label's origin
+	if k < 0:
+		return {}
+	var w := font.get_string_size(lines[k], HORIZONTAL_ALIGNMENT_LEFT, -1, FONT).x * PIXEL
+	if absf(l.x) > w * 0.5 + PICK_PAD:
+		return {}
+	var i := k - 2
+	return {"uid": c.uid, "line": k, "match": c.matches[i] if i >= 0 and i < c.matches.size() else {}}
+
+
+## Whether `hit` (line_at's or line_on_ray's) is a "+" line a press would start now (a recipe CDDA can start, the
+## pot within reach, a backend that cooks); nothing is sent.
+func can_press(hit: Dictionary) -> bool:
 	if not can_cook() or world == null or world.snapshot == null:
 		return false
-	var hit := line_at(pt)
-	var m: Dictionary = hit.get("match", {})
-	var c: Card = cards.get(hit.get("uid", 0))
-	if m.is_empty() or c == null or c.pot.is_empty() or not m["can_start"] or str(m["recipe"]).is_empty() \
-			or not in_reach(world.snapshot.player_pos, c.pot["square"]):
+	var mv: Variant = hit.get("match")
+	var cv: Variant = cards.get(hit.get("uid", 0))
+	if not mv is Dictionary or not cv is Card:
 		return false
+	var m: Dictionary = mv
+	var c: Card = cv
+	return not m.is_empty() and not c.pot.is_empty() and m.get("can_start") is bool and m["can_start"] \
+			and not str(m.get("recipe", "")).is_empty() and in_reach(world.snapshot.player_pos, c.pot["square"])
+
+
+## Starts the "+" line `hit` (line_at's) lists. True when a cook was sent.
+func _press(hit: Dictionary) -> bool:
+	if not can_press(hit):
+		return false
+	var c: Card = cards[hit["uid"]]
+	var m: Dictionary = hit["match"]
 	return _cook(c.pot, m["recipe"], m["name"])
 
 
@@ -542,7 +640,7 @@ func _recipe_lines(p: Dictionary, snap: Snapshot) -> Array[String]:
 		if r["more"] > 0:
 			out.append("+%d more" % r["more"])
 		if can_cook() and ms.any(func(m: Dictionary) -> bool: return m["can_start"] and not m["recipe"].is_empty()):
-			out.append(PICK_HINT)
+			out.append(pick_hint.left(LINE_MAX))
 		return out
 	out.append("checking recipes..." if in_reach(snap.player_pos, p["square"]) else "(out of your reach)")
 	return out
@@ -694,7 +792,7 @@ func _show(near: Array[Dictionary]) -> void:
 			c.text = ""
 			c.progress = -2.0
 			cards[uid] = c
-		c.position = (p["point"] as Vector3) + Vector3(0.0, CARD_UP, 0.0)
+		c.position = (p["point"] as Vector3) + Vector3(0.0, CARD_UP * _scale(), 0.0)
 		c.visible = true
 		c.pot = p
 		c.matches = _listed(p)
@@ -752,6 +850,41 @@ func _take_card() -> Card:
 	c.add_child(c.steam)
 	add_child(c)
 	return c
+
+
+func _scale() -> float:
+	return clampf(card_scale, 0.5, 4.0) if is_finite(card_scale) else 1.0
+
+
+## Standalone: on_events listens to the backend's events_arrived, the current backend's only; a new one starts
+## with fresh tags.
+func _hook_events() -> void:
+	var b: Object = backend if is_instance_valid(backend) else null
+	if b == _events_from and results != null:
+		return
+	_drop_events()
+	results = VrResults.new()
+	_events_from = b
+	if b != null and b.has_signal("events_arrived"):
+		b.connect("events_arrived", on_events)
+
+
+func _drop_events() -> void:
+	if is_instance_valid(_events_from) and _events_from.has_signal("events_arrived") \
+			and _events_from.is_connected("events_arrived", on_events):
+		_events_from.disconnect("events_arrived", on_events)
+	_events_from = null
+
+
+## Standalone: the bridge's events; CDDA's answers to this card's cooks (VrResults) go to on_result.
+func on_events(events: Variant) -> void:
+	if results == null:
+		return
+	for r: Dictionary in results.on_events(events):
+		var info: Dictionary = r["info"]
+		var kind: Variant = info.get("kind")
+		if kind is String and kind == "cook":
+			on_result(int(info.get("uid", 0)), r["done"], r["why"])
 
 
 ## prog 0..1: the bar at that fill; < 0: no bar.
