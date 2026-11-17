@@ -21,6 +21,7 @@ const ROWS := 3
 const PAGE := COLS * ROWS
 const CELL := 0.11            # m: an item cell
 const MAX_ITEM_M := 0.08      # an item model's longest side on the tray
+const NAME_PX := 0.0002       # an item's name (and its live state, VrTile) under it
 const ITEM_Z := 0.035         # items float this far in front of the board
 const RIM := 0.02
 const TITLE_H := 0.035
@@ -408,18 +409,27 @@ func _item_node(e: Dictionary) -> Node3D:
 				(m as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		e["visual"] = v
 		ItemLookView.dress_from(v, it.uid, world.snapshot, world.tables)
-	_label(e["name"], Vector3(0, -MAX_ITEM_M * 0.5 - 0.008, 0), 0.0002, holder)
+	# the name, and under it the live state in a short line (VrTile.tag: "250 ml orange juice, cold")
+	var l := _label(VrTile.line(e["name"], VrTile.of(world, it.uid), true),
+			Vector3(0, -MAX_ITEM_M * 0.5 - 0.008 + NAME_PX * 16.0, 0), NAME_PX, holder)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_TOP   # a second line goes down, the name stays put
+	e["label"] = l
 	return holder
 
 
 ## Each item model wears its live look as items lying in the world do (ItemLookView.dress_from: frost, heat,
-## spoilage, liquid level, grime): when it is made and again on each newer snapshot.
+## spoilage, liquid level, grime), and its label says it (VrTile.line): when it is made and again on each newer
+## snapshot.
 func _dress_all() -> void:
 	var snap := world.snapshot if world != null and is_instance_valid(world) else null
 	for e: Dictionary in items:
+		var uid := (e["item"] as ItemRef).uid
 		var v: Variant = e.get("visual")
 		if is_instance_valid(v) and v is Node3D:
-			ItemLookView.dress_from(v, (e["item"] as ItemRef).uid, snap, world.tables if snap != null else null)
+			ItemLookView.dress_from(v, uid, snap, world.tables if snap != null else null)
+		var l: Variant = e.get("label")
+		if is_instance_valid(l) and l is Label3D:
+			(l as Label3D).text = VrTile.line(str(e.get("name", "")), VrTile.of(world, uid) if snap != null else {}, true)
 
 
 func _scale_item(k: int, s: float) -> void:

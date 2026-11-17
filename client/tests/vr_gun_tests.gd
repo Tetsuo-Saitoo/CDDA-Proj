@@ -645,6 +645,8 @@ func _test_long_gun() -> void:
 			and g.gun == null and g.loaded() and _mag_shown() and is_equal_approx(g.grime, 0.6)
 			and _rig.notes[1].text == "Double feed: rack the bolt to clear",
 			"vr gun: a long gun: held by its grip, its bolt; no carried row: rounds say it's loaded; grime; the jam note")
+	var four: bool = g.count != null and g.count.visible and g.count.text == "4" and g.count.modulate == Color.WHITE \
+			and g.count.get_parent() == g.model and g.count.position.y > _part("Grip").position.y
 	var m := g.model
 	_snap.player_gun["dirt"] = 2000
 	_snap.player_gun["rounds"] = 0
@@ -654,6 +656,12 @@ func _test_long_gun() -> void:
 	_check.call(g.model == m and is_equal_approx(g.grime, 0.2) and not mats.is_empty()
 			and is_equal_approx(float(mats[0].get_shader_parameter("grime")), 0.2) and not _mag_shown(),
 			"vr gun: dirt and rounds change the parts in place (no rebuild)")
+	var empty: bool = g.count.visible and g.count.text == "0" and g.count.modulate == VrGun.EMPTY_COLOR
+	_snap.player_gun.erase("rounds")   # a gun that takes no ammo: no count
+	_captured()
+	_frame()
+	_check.call(four and empty and not g.count.visible and g.rounds == -1,
+			"vr gun: the round count over the grip says the loaded rounds, red at 0, none for a gun with no ammo")
 	_snap.player_gun = {"type": _it["glock_19"], "dirt": 0, "faults": [], "rounds": 0}
 	_captured()
 	_frame()
