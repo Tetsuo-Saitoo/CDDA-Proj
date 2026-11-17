@@ -268,6 +268,7 @@ func _grab(id: String, target: Dictionary) -> bool:
 			bs.hold(it.uid)   # its body goes (after the hand hid it: the static copy stays hidden throughout)
 	h.proxy = _make_proxy(it)
 	world.add_child(h.proxy)
+	_dress(h)
 	var start := Transform3D(Basis.IDENTITY, it.point if it.is_drawn() else h.xform.origin)
 	if not slot.is_empty():   # where the pile drew it, turned the same way (the proxy has its own scale)
 		var xf: Transform3D = slot[4]
@@ -759,6 +760,21 @@ func _on_finished(item: ItemRef, op: String) -> void:
 		return
 	_owner.erase(item.uid)
 	confirmed.emit(id, _item_target(item, 0.0))
+
+
+## Live item tiles: every held copy wears its item's state (frost, heat, spoilage, liquid, grime; ItemLookView.dress)
+## from the newest snapshot; main calls it for each one shown (a take makes it carried, it warms in the hand).
+func dress_held() -> void:
+	for h: Hand in _hands.values():
+		_dress(h)
+
+
+func _dress(h: Hand) -> void:
+	if h.proxy == null or not is_instance_valid(h.proxy) or h.held.is_empty() or h.held.get("kind") != "item":
+		return
+	var it: ItemRef = h.held.get("item")
+	if it != null and world != null:
+		ItemLookView.dress_from(h.proxy, it.uid, world.snapshot, world.tables)
 
 
 ## The hand holding item `uid`, or null.

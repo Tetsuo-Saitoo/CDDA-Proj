@@ -539,6 +539,19 @@ func _test_tray_sort() -> void:
 	var again: Array = tray.rows.map(func(r: ItemRef) -> int: return r.uid)
 	_check.call(ok and first == sorted and again == sorted and (tray.items[0]["item"] as ItemRef).uid == 424500,
 			"tray sort: the tray shows that order, and a snapshot listing them otherwise doesn't reshuffle it (%s)" % [again])
+	# each model wears its item's live look as items lying in the world do (ItemLookView.dress_from), again on a
+	# newer snapshot; the state gone: the look comes off
+	var hv: Node3D = tray.items[0].get("visual")
+	_snap.item_states[424500] = PackedInt32Array([3, -1, -1, 0, 0, -1, -1])
+	_snap.seq += 1
+	tray.update()
+	var dressed := hv != null and is_instance_valid(hv) and hv.get_node_or_null(ItemLookView.DRESS) != null
+	_snap.item_states.erase(424500)
+	_snap.seq += 1
+	tray.update()
+	_check.call(dressed and is_instance_valid(hv) and hv.get_node_or_null(ItemLookView.DRESS) == null
+			and (tray.items[1]["visual"] as Node3D).get_node_or_null(ItemLookView.DRESS) == null,
+			"tray: a model wears its item's live look (frozen) on a newer snapshot, and takes it off when that goes")
 	tray.free()
 	sm.inside.erase(c)
 	_snap.seq += 1
