@@ -7,6 +7,7 @@
 - 2026-11-17 — Item tiles, slice 4: a glass jar or clear bottle shows as glass in the Tab view and the hands panel, and an empty one says "empty". Client tests pass.
 - 2026-11-17 — A see-through container in the 3D world shows the level of a liquid only, not of beans or flour, by the same rule as the item tiles (lead-world). Client tests pass.
 - 2026-11-17 — An item held in a hand or shown in the VR tray can wear the same frost, heat, spoilage, liquid and grime look as one lying in the world, with one call from the hands and tray code (lead-world; those calls come next). Client tests pass.
+- 2026-11-17 — Bridge: a gun shot's `projectile` event names its ammo (`detail` = the ammo's itype), so the client can show what flies. Events test and sim test check it.
 - 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
 - 2026-11-17 — Radial menu, slice 5: the line by the crosshair says what E does at what you face (light, drink, craft, ... or examine), and names terrain you can do something with, like a water source. Client tests pass.
