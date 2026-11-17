@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
 - 2026-11-16 — Kenney bin, chest, workbench and open crate (lead-world): the bin's and the chest's lids lift by hand like the placeholders' did, and items lie inside them, on the workbench and in the open crate. Client tests pass.
 - 2026-11-16 — Kenney fridge, cupboard, counter, sink and bookcase (lead-world): the fridge's and the cupboard's doors open by hand like the placeholders' did, with items on their shelves and in the fridge door's bins; counters and kitchen pieces are 1 m wide so a run closes up. Client tests pass.

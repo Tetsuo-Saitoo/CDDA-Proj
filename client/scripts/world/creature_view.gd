@@ -82,7 +82,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 
 
 ## Bodies: a pile whose largest corpse is a known monster gets that monster's figure lying on the square.
-## Kept while the pile says so; a square where a creature is still falling waits for the next snapshot.
+## Kept while the pile says so; a square where a creature is still falling gets its body when the fall ends.
 func _apply_corpses(snap: Snapshot, world: WorldView) -> void:
 	var want := {}
 	for sm: Snapshot.Submap in snap.submaps.values():
@@ -171,11 +171,15 @@ func tick(delta: float) -> void:
 		if g[1] <= 0.0:
 			(g[0] as CreatureFigure).free()
 			_gone.erase(uid)
+	var fell := false
 	for i in range(_dying.size() - 1, -1, -1):
 		_dying[i].animate(delta)
 		if _dying[i].done:
 			_dying[i].free()
 			_dying.remove_at(i)
+			fell = true
+	if fell and _snap != null and is_instance_valid(_world):   # the body it left, without waiting for a turn
+		_apply_corpses(_snap, _world)
 
 
 ## The origin moved (map shift): keep every figure on its square.
