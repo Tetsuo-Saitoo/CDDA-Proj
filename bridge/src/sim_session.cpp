@@ -1123,12 +1123,15 @@ uint64_t snapshot_seq()
 
 std::string snapshot_json( int z_below, int z_above, uint64_t &seq )
 {
+    const int levels = OVERMAP_DEPTH + OVERMAP_HEIGHT;
+    // The sim captures the widest range the client has asked for so far, not all 21 levels each time (most of a
+    // capture's cost). A wider range than before gets its extra levels from the next snapshot on.
+    fp3d::want_snapshot_levels( std::clamp( z_below, 0, levels ), std::clamp( z_above, 0, levels ) );
     const std::shared_ptr<const fp3d::snapshot> s = fp3d::latest_snapshot();
     seq = s ? s->seq : 0;
     if( !s ) {
         return "";
     }
-    const int levels = OVERMAP_DEPTH + OVERMAP_HEIGHT;
     const int pz = s->player.pos.z;
     std::ostringstream out;
     fp3d::write_snapshot_json( out, *s, std::max( -OVERMAP_DEPTH, pz - std::clamp( z_below, 0, levels ) ),

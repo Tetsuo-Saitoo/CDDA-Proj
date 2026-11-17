@@ -26,7 +26,11 @@ struct snapshot {
     uint32 ids_generation;        // the id tables (id_tables.md) its indices belong to
     ui_point bubble_origin;       // absolute submap at bubble (0,0); z = 0
     player_view player;
-    std::vector<shared_ptr<const submap_view>> submaps;   // all 2541, z -10..10 (JSON: top-level "z_levels": [-10, 10])
+    std::vector<shared_ptr<const submap_view>> submaps;   // 121 per level taken; all 2541, z -10..10, unless the host
+                                  // wants fewer levels (fp3d::want_snapshot_levels: the bridge takes the widest range
+                                  // get_snapshot_json was asked for). A level left out keeps its revision counters.
+                                  // (JSON: top-level "z_levels": [-10, 10], the map's range)
+    int8 z_first, z_last;         // the levels `submaps` holds (not in the JSON)
     std::vector<creature_view> creatures;   // perceived only, player first   (cap 1024)
     std::vector<vehicle_view>  vehicles;    // all in the bubble (physical, like terrain) (cap 256)
     environment_view env;
