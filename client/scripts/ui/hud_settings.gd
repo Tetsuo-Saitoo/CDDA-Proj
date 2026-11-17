@@ -1,6 +1,15 @@
 class_name HudSettings
 extends RefCounted
 ## Flat-screen HUD settings, picked in the F1 menu (KeyMenu) and saved in user://hud.cfg (ConfigFile).
+func left_handed() -> bool:
+	return main_hand == "left"
+
+
+## The CDDA hand ("main" / "off") the key for hand `side` ("left" / "right") strikes with.
+static func hand_for(side: String, left_hand_main: bool) -> String:
+	return "main" if (side == "left") == left_hand_main else "off"
+
+
 ## The file is treated as hostile: size-capped, no object constructors, wrong types and NaN ignored, values
 ## clamped. A missing or bad file leaves the defaults.
 
@@ -39,6 +48,15 @@ const UI_SCALES := Vector2(0.75, 2.0)
 const DEFAULT_FOV := 75.0   # Camera3D's own
 var look_speed := 1.0
 var invert_y := false
+## The flat-screen main hand (the headset has its own, VrSettings `main_hand`): "right", or "left" for a left-hander.
+## Keys 1 / 2 strike with the left / right hand, so a left-hander's 1 is the main hand (hand_for); the gun rests on
+## the left (WeaponViewmodel.left_handed) and the hands panel shows the main hand on the left. CDDA's main hand is
+## the wielding one either way. Saved as [hands] main; anything but MAIN_HANDS is ignored (the file: "right").
+const MAIN_HANDS: Array[String] = ["right", "left"]
+var main_hand := "right":
+	set(v):
+		if v is String and v in MAIN_HANDS:
+			main_hand = v
 var fov := DEFAULT_FOV
 var render_scale := 1.0
 var fullscreen := false
@@ -104,6 +122,8 @@ func load_file(path := FILE) -> String:
 	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
 	var iy: Variant = cfg.get_value("look", "invert", false)
 	invert_y = iy if iy is bool else false
+	var mh: Variant = cfg.get_value("hands", "main", "right")
+	main_hand = mh if mh is String and mh in MAIN_HANDS else "right"
 	fov = clamp_to(cfg.get_value("look", "fov", DEFAULT_FOV), FOVS, DEFAULT_FOV)
 	render_scale = clamp_to(cfg.get_value("display", "scale", 1.0), RENDER_SCALES, 1.0)
 	var fs: Variant = cfg.get_value("display", "fullscreen", false)
@@ -133,6 +153,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
 	cfg.set_value("look", "invert", invert_y)
+	cfg.set_value("hands", "main", main_hand if main_hand in MAIN_HANDS else "right")
 	cfg.set_value("look", "fov", roundf(clamp_to(fov, FOVS, DEFAULT_FOV)))
 	cfg.set_value("display", "scale", snappedf(clamp_to(render_scale, RENDER_SCALES, 1.0), 0.01))
 	cfg.set_value("display", "fullscreen", fullscreen)

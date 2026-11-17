@@ -246,6 +246,7 @@ func _ready() -> void:
 		hud_data.on_events([MockItems.message_event(t)]))
 	viewmodel = WeaponViewmodel.new()
 	viewmodel.flashes = hud_settings.weather_flash   # muzzle flashes follow the flash setting
+	viewmodel.left_handed = hud_settings.left_handed()   # a left-hander's gun rests on the left
 	fp.add_child(viewmodel)
 	aim.shot_went.connect(viewmodel.kick)   # a round CDDA fired: recoil and muzzle flash
 	aim.hits.misfired.connect(viewmodel.click)   # a trigger pull with no round: a dry click
@@ -1028,9 +1029,10 @@ func _live_action(event: InputEvent) -> bool:
 	elif InputActions.pressed(event, &"stow_off"):
 		act = "fp3d_stow_off"
 	elif InputActions.pressed(event, &"hand_off") or InputActions.pressed(event, &"hand_main"):
-		# strike with the left (off) or right (main) hand: the creature under the crosshair when it is within
+		# strike with the left or right hand (main or off by HudSettings.main_hand): the creature under the crosshair when it is within
 		# reach (an aimed strike, AimController.strike_action), else the square you face
-		var hand := "off" if InputActions.pressed(event, &"hand_off") else "main"
+		var hand := HudSettings.hand_for("left" if InputActions.pressed(event, &"hand_off") else "right",
+				hud_settings.left_handed())
 		var facing: String = OCT_ACTIONS[_octant(Vector2(0, 1))]
 		var cam := get_viewport().get_camera_3d()
 		act = "fp3d_attack_%s_%s" % [hand, facing]
@@ -1461,6 +1463,7 @@ func _setup_hud() -> void:
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
+	hands_panel.left_handed = hud_settings.left_handed()
 	layer.add_child(hands_panel)
 	hud_view = HudView.new()
 	hud_view.data = hud_data
@@ -1496,6 +1499,9 @@ func _setup_hud() -> void:
 		weather.quality = hud_settings.weather_quality
 		if viewmodel != null:
 			viewmodel.flashes = hud_settings.weather_flash
+			viewmodel.left_handed = hud_settings.left_handed()
+		if hands_panel != null:
+			hands_panel.left_handed = hud_settings.left_handed()
 		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
@@ -1666,7 +1672,7 @@ func _act_help() -> String:
 	for a: StringName in InputActions.CDDA:
 		parts.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
 	parts.append("%s/%s hit left/right hand" % [InputActions.key_of(&"hand_off"), InputActions.key_of(&"hand_main")])
-	parts.append("%s use / examine what you face  %s/%s hold / put away (left hand)" % [InputActions.key_of(&"use_held"),
+	parts.append("%s use / examine what you face  %s/%s hold / put away (off hand)" % [InputActions.key_of(&"use_held"),
 			InputActions.key_of(&"hold_off"), InputActions.key_of(&"stow_off")])
 	var p := pour.hint(world.tables)
 	if not p.is_empty():

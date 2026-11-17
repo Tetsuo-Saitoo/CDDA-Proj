@@ -152,6 +152,19 @@ func _test_viewmodel(root: Node, tables: IdTables) -> void:
 	vm._process(0.02)
 	_check.call(nan_ok and absf(vm.rotation.y) < 1e-4 and vm.position.distance_to(vm._base) < 1e-4,
 			"viewmodel: no sway without dispersion, NaN is none (%s)" % [still])
+	vm.left_handed = true
+	var snapped := vm.position.is_equal_approx(Vector3(-WeaponViewmodel.REST.x, WeaponViewmodel.REST.y, WeaponViewmodel.REST.z))
+	for f in 50:
+		vm._process(0.02)
+	var left_rest := vm._base.is_equal_approx(vm.rest()) and vm.rest().x < 0.0
+	vm.aimed = true
+	for f in 100:
+		vm._process(0.02)
+	var aimed_mid := vm._base.distance_to(WeaponViewmodel.AIMED) < 0.01
+	vm.aimed = false
+	vm.left_handed = false
+	_check.call(snapped and left_rest and aimed_mid and vm.position.is_equal_approx(WeaponViewmodel.REST),
+			"viewmodel: left-handed rests mirrored on the left at once, aims in the middle; back to the right at once")
 	vm.free()
 
 
