@@ -24,6 +24,8 @@ const TEXTS := {
 			+ "what you can eat or drink.",
 	"bleed": "You are bleeding (the body bars at the left show where): press {cdda_apply} and pick a bandage or a "
 			+ "first aid kit.",
+	"tired": "You are getting tired: find somewhere safe, ideally a bed, and press {cdda_sleep} to sleep. "
+			+ "{cdda_wait} waits longer than one turn.",
 }
 ## CDDA's hunger effects that mean "eat something" (not full, not engorged).
 const HUNGRY_EFFECTS := ["hunger_hungry", "hunger_very_hungry", "hunger_near_starving", "hunger_starving",
@@ -72,7 +74,8 @@ static func fill(text: String) -> String:
 
 
 ## The hints the game calls for now (main asks each snapshot in play): "hostile" for a hostile creature in sight,
-## "eat" for hunger (HUNGRY_EFFECTS) or thirst (HudData's HURT or worse), "bleed" for a bleeding body part.
+## "eat" for hunger (HUNGRY_EFFECTS) or thirst (HudData's HURT or worse), "bleed" for a bleeding body part, "tired"
+## for sleepiness at CDDA's Tired or worse (HURT).
 ## trigger() then refuses the ones already seen.
 static func due(snap: Snapshot, hud: HudData) -> Array[String]:
 	var out: Array[String] = []
@@ -85,6 +88,9 @@ static func due(snap: Snapshot, hud: HudData) -> Array[String]:
 		out.append("eat")
 	if hud != null and hud.body.any(func(p: Dictionary) -> bool: return int(p.get("bleed", 0)) > 0):
 		out.append("bleed")
+	var tired: Variant = hud.needs.get("sleepiness", {}).get("level", HudData.UNKNOWN) if hud != null else null
+	if tired is int and tired >= HudData.HURT:
+		out.append("tired")
 	return out
 
 
