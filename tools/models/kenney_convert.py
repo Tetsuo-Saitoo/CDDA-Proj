@@ -68,17 +68,37 @@ GLBS = [
     (SURV, 'tool-hoe', 'items', 'hoe', 1.4, UP_TO_FRONT),
     (SURV, 'campfire-pit', 'furniture', 'f_firering', 0.9, None),
 ]
-# Furniture pack: OBJ in units of about 0.2 m, front -Z (turned to +Z here). (file, out name, metres per unit)
-# Only furniture that neither opens by hand (PropBoxes.OPENS) nor holds items on shelves or a top: those need
-# door_N / drawer_N / surface_N markers first (fridge, cupboard, counter, sink, dresser, bookcase, crates,
-# trash can, workbench). The chair's seat lands at 0.48 m, like its placeholder's.
+# Furniture pack: OBJ in units of about 0.2 m, front -Z (turned to +Z here). The kitchen pieces are made
+# 0.995 m wide (4.3 units) so a run of them closes up. Doors become door_N parts (hinged on their left, -X:
+# the kit's handles are on the right), and surface_N planes where items lie (docs/MODELS.md); counters and
+# sinks keep their door shut (CDDA's counter and sink hold nothing). Not converted: the crates and the bin
+# (one piece, no lid), the dresser (the kit has none) and the workbench, which keep their placeholders.
+# (file, out name, metres per unit up and front to back, metres per unit across, {OBJ group: part},
+#  [(N, height, x0, z0, x1, z1, part or None)] in metres from the bottom centre, x before the widening)
+KITCHEN_X = 0.995 / 4.3
 OBJS = [
-    ('kitchenStove', 'f_oven', 0.2),
-    ('chair', 'f_chair', 0.2),
-    ('toilet', 'f_toilet', 0.18),
-    ('washer', 'f_washer', 0.2),
-    ('dryer', 'f_dryer', 0.2),
-    ('cardboardBoxClosed', 'box_small', 0.075),
+    ('kitchenStove', 'f_oven', 0.2, KITCHEN_X, {}, []),
+    ('kitchenFridge', 'f_fridge', 0.2, KITCHEN_X, {'doorFridge': 'door_1', 'doorFreezer': 'door_2'}, [
+        (1, 0.174, -0.36, -0.22, 0.36, 0.08, None),        # the fridge's floor
+        (2, 0.401, -0.27, 0.10, 0.27, 0.20, 'door_1'),     # the door's bins
+        (3, 0.741, -0.27, 0.10, 0.27, 0.20, 'door_1'),
+        (4, 1.081, -0.27, 0.10, 0.27, 0.20, 'door_1'),
+        (5, 1.434, -0.36, -0.22, 0.36, 0.12, None)]),      # the freezer's floor
+    ('kitchenCabinet', 'f_cupboard', 0.2, KITCHEN_X, {'door 5': 'door_1'}, [
+        (1, 0.17, -0.36, -0.33, 0.36, 0.33, None),
+        (2, 0.475, -0.36, -0.33, 0.36, 0.33, None)]),
+    ('kitchenCabinet', 'f_counter', 0.2, KITCHEN_X, {}, [(1, 0.84, -0.41, -0.37, 0.41, 0.43, None)]),
+    ('kitchenSink', 'f_sink', 0.2, KITCHEN_X, {}, [(1, 0.64, -0.27, -0.18, 0.27, 0.24, None)]),
+    ('bookcaseClosed', 'f_bookcase', 0.2, 0.2, {}, [
+        (1, 0.26, -0.38, -0.23, 0.38, 0.19, None),
+        (2, 0.74, -0.38, -0.23, 0.38, 0.19, None),
+        (3, 1.22, -0.38, -0.23, 0.38, 0.19, None),
+        (4, 1.7, -0.38, -0.23, 0.38, 0.23, None)]),
+    ('chair', 'f_chair', 0.2, 0.2, {}, []),
+    ('toilet', 'f_toilet', 0.18, 0.18, {}, []),
+    ('washer', 'f_washer', 0.2, 0.2, {}, []),
+    ('dryer', 'f_dryer', 0.2, 0.2, {}, []),
+    ('cardboardBoxClosed', 'box_small', 0.075, 0.075, {}, []),
 ]
 
 
@@ -287,12 +307,13 @@ def read_mtl(path):
     return out
 
 
-def convert_obj(name, out, unit):
+def convert_obj(name, out, unit, sx, parts, surfaces):
     text = read_capped(os.path.join(FURN, name + '.obj')).decode('utf-8', 'replace')
     mats = read_mtl(os.path.join(FURN, name + '.mtl'))
     vs = []
-    faces = {}   # material -> list of vertex index triples
-    order = []
+    faces = {}   # part ('' = the body) -> {material -> [vertex index triples]}
+    order = []   # materials in first use
+    part = ''
     cur = ''
     for line in text.splitlines():
         p = line.split()
@@ -302,6 +323,8 @@ def convert_obj(name, out, unit):
             vs.append([float(x) for x in p[1:4]])
             if len(vs) > 200000:
                 raise ValueError('too many vertices')
+        elif p[0] in ('g', 'o'):
+            part = parts.get(' '.join(p[1:])[:64], '')
         elif p[0] == 'usemtl':
             cur = ' '.join(p[1:])[:64]
         elif p[0] == 'f' and len(p) >= 4:
@@ -312,71 +335,107 @@ def convert_obj(name, out, unit):
                 if not 0 <= k < len(vs):
                     raise ValueError('bad index')
                 idx.append(k)
-            if cur not in faces:
-                faces[cur] = []
+            if cur not in order:
                 order.append(cur)
+            tris = faces.setdefault(part, {}).setdefault(cur, [])
             for i in range(1, len(idx) - 1):
-                faces[cur].append((idx[0], idx[i], idx[i + 1]))
-    # Front -Z -> +Z (turn 180 about Y), scale to metres, bottom centre at the origin.
-    pts = [[-v[0] * unit, v[1] * unit, -v[2] * unit] for v in vs]
+                tris.append((idx[0], idx[i], idx[i + 1]))
+    if sorted(p for p in faces if p) != sorted(parts.values()):
+        raise ValueError('a part is missing')
+    # Front -Z -> +Z (turn 180 about Y), metres, bottom centre at the origin.
+    pts = [[-v[0] * sx, v[1] * unit, -v[2] * unit] for v in vs]
     lo, hi = bounds(pts)
     c = [(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]
     pts = [[q[0] - c[0], q[1] - c[1], q[2] - c[2]] for q in pts]
     size = [round(hi[i] - lo[i], 4) for i in range(3)]
     binc = bytearray()
     j = {'asset': {'version': '2.0', 'generator': 'CDDA-3D Kenney conversion'}, 'scene': 0,
-         'scenes': [{'name': out, 'nodes': [0]}], 'nodes': [{'name': out, 'mesh': 0}],
-         'meshes': [{'name': 'mesh_0', 'primitives': []}], 'materials': [], 'accessors': [], 'bufferViews': [],
-         'buffers': []}
-    tris = 0
+         'scenes': [{'name': out, 'nodes': [0]}], 'nodes': [{'name': out, 'children': []}],
+         'meshes': [], 'materials': [], 'accessors': [], 'bufferViews': [], 'buffers': []}
     for mi, m in enumerate(order):
-        pos = []
-        nor = []
-        for a, b2, c2 in faces[m]:
-            pa, pb, pc = pts[a], pts[b2], pts[c2]
-            u = [pb[i] - pa[i] for i in range(3)]
-            w = [pc[i] - pa[i] for i in range(3)]
-            n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
-            ln = math.sqrt(sum(x * x for x in n))
-            if ln < 1e-12:
-                continue
-            n = [x / ln for x in n]
-            # The turn by 180 about Y keeps handedness, so the winding stays counter-clockwise.
-            pos += [pa, pb, pc]
-            nor += [n, n, n]
-        if not pos:
-            continue
-        if len(pos) >= 65536:
-            raise ValueError('too many vertices for 16-bit indices')
-        tris += len(pos) // 3
-        prim = {'attributes': {}, 'material': len(j['materials']), 'mode': 4}
-        for key, data in (('POSITION', pos), ('NORMAL', nor)):
-            off = len(binc)
-            for q in data:
-                binc += struct.pack('<fff', *q)
-            j['bufferViews'].append({'buffer': 0, 'byteOffset': off, 'byteLength': len(binc) - off, 'target': 34962})
-            acc = {'bufferView': len(j['bufferViews']) - 1, 'componentType': 5126, 'count': len(data), 'type': 'VEC3'}
-            if key == 'POSITION':
-                lo2, hi2 = bounds(data)
-                acc['min'], acc['max'] = lo2, hi2
-            j['accessors'].append(acc)
-            prim['attributes'][key] = len(j['accessors']) - 1
-        off = len(binc)
-        for i in range(len(pos)):
-            binc += struct.pack('<H', i)
-        binc += b'\0' * (-len(binc) % 4)
-        j['bufferViews'].append({'buffer': 0, 'byteOffset': off, 'byteLength': len(pos) * 2, 'target': 34963})
-        j['accessors'].append({'bufferView': len(j['bufferViews']) - 1, 'componentType': 5123, 'count': len(pos),
-                               'type': 'SCALAR'})
-        prim['indices'] = len(j['accessors']) - 1
         kd = mats.get(m, [0.8, 0.8, 0.8])
         j['materials'].append({'name': safe_name(m, mi), 'pbrMetallicRoughness': {
             'baseColorFactor': [srgb_to_linear(x) for x in kd] + [1.0], 'metallicFactor': 0.0, 'roughnessFactor': 0.8}})
-        j['meshes'][0]['primitives'].append(prim)
+
+    def view(data, fmt, target):
+        off = len(binc)
+        for q in data:
+            binc.extend(struct.pack(fmt, *q) if isinstance(q, (list, tuple)) else struct.pack(fmt, q))
+        binc.extend(b'\0' * (-len(binc) % 4))
+        j['bufferViews'].append({'buffer': 0, 'byteOffset': off, 'byteLength': len(data) * struct.calcsize(fmt),
+                                 'target': target})
+        return len(j['bufferViews']) - 1
+
+    def primitive(pos, nor, material):
+        if len(pos) >= 65536:
+            raise ValueError('too many vertices for 16-bit indices')
+        prim = {'attributes': {}, 'material': material, 'mode': 4}
+        for key, data in (('POSITION', pos), ('NORMAL', nor)):
+            acc = {'bufferView': view(data, '<fff', 34962), 'componentType': 5126, 'count': len(data), 'type': 'VEC3'}
+            if key == 'POSITION':
+                acc['min'], acc['max'] = bounds(data)
+            j['accessors'].append(acc)
+            prim['attributes'][key] = len(j['accessors']) - 1
+        j['accessors'].append({'bufferView': view(range(len(pos)), '<H', 34963), 'componentType': 5123,
+                               'count': len(pos), 'type': 'SCALAR'})
+        prim['indices'] = len(j['accessors']) - 1
+        return prim
+
+    def mesh(by_material, shift):
+        """A mesh of the faces (flat shaded), moved by -shift; [mesh index, triangles]."""
+        prims = []
+        n = 0
+        for mi, m in enumerate(order):
+            pos = []
+            nor = []
+            for a, b2, c2 in by_material.get(m, []):
+                pa, pb, pc = ([pts[i][k] - shift[k] for k in range(3)] for i in (a, b2, c2))
+                u = [pb[i] - pa[i] for i in range(3)]
+                w = [pc[i] - pa[i] for i in range(3)]
+                nv = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+                ln = math.sqrt(sum(x * x for x in nv))
+                if ln < 1e-12:
+                    continue
+                nv = [x / ln for x in nv]
+                pos += [pa, pb, pc]   # the turn keeps handedness, so the winding stays counter-clockwise
+                nor += [nv, nv, nv]
+            if pos:
+                prims.append(primitive(pos, nor, mi))
+                n += len(pos) // 3
+        j['meshes'].append({'name': 'mesh_%d' % len(j['meshes']), 'primitives': prims})
+        return len(j['meshes']) - 1, n
+
+    def add_node(node, parent):
+        j['nodes'].append(node)
+        j['nodes'][parent].setdefault('children', []).append(len(j['nodes']) - 1)
+        return len(j['nodes']) - 1
+
+    body, tris = mesh(faces.get('', {}), [0, 0, 0])
+    add_node({'name': 'body', 'mesh': body}, 0)
+    movers = {}   # part -> [node index, pivot]
+    for pname in sorted(p for p in faces if p):
+        used = {i for t in faces[pname].values() for f in t for i in f}
+        plo, phi = bounds([pts[i] for i in used])
+        if pname.startswith('door_'):   # on the hinge line: its left front edge
+            pivot = [plo[0], plo[1], phi[2]]
+        else:
+            pivot = [(plo[0] + phi[0]) / 2, plo[1], (plo[2] + phi[2]) / 2]
+        leaf, n = mesh(faces[pname], pivot)
+        tris += n
+        at = add_node({'name': pname, 'translation': pivot}, 0)
+        add_node({'name': 'leaf_' + pname.split('_')[1], 'mesh': leaf}, at)
+        movers[pname] = [at, pivot]
+    k = sx / unit
+    for n, y, x0, z0, x1, z1, owner in surfaces:
+        parent, shift = movers[owner] if owner else [0, [0, 0, 0]]
+        quad = [[x * k - shift[0], y - shift[1], z - shift[2]] for x, z in ((x0, z0), (x0, z1), (x1, z1), (x1, z0))]
+        pos = [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]]
+        j['meshes'].append({'name': 'mesh_%d' % len(j['meshes']), 'primitives': [primitive(pos, [[0, 1, 0]] * 6, 0)]})
+        add_node({'name': 'surface_%d' % n, 'mesh': len(j['meshes']) - 1}, parent)
     j['buffers'] = [{'byteLength': len(binc)}]
     path = os.path.join(ROOT, 'assets', 'models', 'furniture' if out.startswith('f_') else 'items', out + '.glb')
-    n = write_glb(path, j, binc)
-    return tris, size, n, len(j['materials'])
+    size_bytes = write_glb(path, j, binc)
+    return tris, size, size_bytes, len(j['materials'])
 
 
 if __name__ == '__main__':
@@ -386,9 +445,9 @@ if __name__ == '__main__':
             print('%-16s %-16s tris %5d size %s bytes %d' % (out, name, t, size, n))
         except Exception as e:
             print('%-16s %-16s ERROR %s %s' % (out, name, type(e).__name__, str(e)[:80]))
-    for name, out, unit in OBJS:
+    for name, out, unit, sx, parts, surfaces in OBJS:
         try:
-            t, size, n, mats = convert_obj(name, out, unit)
+            t, size, n, mats = convert_obj(name, out, unit, sx, parts, surfaces)
             print('%-16s %-16s tris %5d size %s bytes %d materials %d' % (out, name, t, size, n, mats))
         except Exception as e:
             print('%-16s %-16s ERROR %s %s' % (out, name, type(e).__name__, str(e)[:80]))
