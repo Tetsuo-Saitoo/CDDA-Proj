@@ -15,4 +15,4 @@ struct ItemInfo : IdInfo { string category; std::vector<string> materials; int v
 struct MonInfo  : IdInfo { string species, size; int speed; };
 ```
 
-Until libcdda exists, `tools/coverage/` reads the same facts straight from `cdda/data/json`.
+`tools/coverage/` reads them from the id tables file with `--ids` (contracts/id_tables.md); without it, it still reads the same facts straight from `cdda/data/json`.
