@@ -3,7 +3,8 @@ extends Control
 ## Block "Live item tiles": an item's live state (an ItemTile) drawn behind its row in the Tab view or its line in
 ## the hands panel: how full it is as a band in the contents' colour with a solid line along the bottom (slice 2: a
 ## liquid's edge leans and settles back, Slosh, when the Tab view opens, a row is picked up to drag, the view turns
-## or the player steps), a soft edge for
+## or the player steps), a see-through container's glass (a faint sheen, its floor and a glint, empty or not:
+## slice 4), a soft edge for
 ## frozen, cold or hot, a spoilage strip at the left for things that rot, and soot over a fouled gun. The band and
 ## soot are faint, so the row's text stays readable over them; the amount itself is a Label in the row
 ## (InspectView). Takes no mouse input: clicks, selection and drags reach the row under it.
@@ -16,6 +17,8 @@ const SOOT := Color(0.16, 0.12, 0.08)
 const SOOT_ALPHA := 0.45     # the soot film at full grime
 const SPECKS := 40           # soot specks at full grime
 const SPECK := Vector2(2, 2)
+const GLASS := Color(0.85, 0.93, 1.0)   # a see-through container, full or empty
+const GLASS_ALPHA := 0.07
 
 const LEAN_PX := 10.0        # how far the fill's edge leans at full slosh (top one way, bottom the other)
 const STIR_MAX := 5.0        # one stir() at most
@@ -115,7 +118,14 @@ func _draw() -> void:
 		for i in int(SPECKS * grime):   # the same specks every time (golden-ratio steps)
 			var at := Vector2(fposmod(i * 0.618034, 1.0), fposmod(0.31 + i * 0.754878, 1.0))
 			draw_rect(Rect2(r.position + at * room, SPECK), Color(SOOT.darkened(0.4), 0.5 + 0.4 * grime))
-	var level := clampf(float(tile.get("level", -1.0)), 0.0, 1.0)
+	var raw_level := float(tile.get("level", -1.0))
+	if tile.get("see_through", false) == true and raw_level >= 0.0:   # glass: a faint sheen, its floor, a glint
+		draw_rect(r, Color(GLASS, GLASS_ALPHA))
+		draw_rect(Rect2(r.position.x, r.end.y - 1.0, r.size.x, 1.0), Color(GLASS, 0.45))
+		if r.size.x > 24.0 and r.size.y > 8.0:
+			draw_line(Vector2(r.end.x - 16.0, r.end.y - 3.0), Vector2(r.end.x - 10.0, r.position.y + 3.0),
+					Color(GLASS, 0.35), 1.0)
+	var level := clampf(raw_level, 0.0, 1.0)
 	var liquid: Color = tile.get("liquid", ItemLook.LIQUID_DEFAULT)
 	if level > 0.0:
 		var w := maxf(r.size.x * level, 2.0)

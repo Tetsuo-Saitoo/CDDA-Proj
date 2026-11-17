@@ -817,6 +817,12 @@ func _test_item_tile() -> void:
 			and floats["temp"] == ItemLook.Temp.HOT and floats["rot"] == 100 and floats["level"] == 0.5
 			and floats["amount"] == "500 ml" and floats["see_through"] and floats["contents"] == "orange juice",
 			"tile: out of range or wrong types show nothing; whole floats count (%s, %s)" % [out_of_range, junk])
+	var jar := ItemTile.of(PackedInt32Array([0, -1, 0, 0, 1, 0, -1]), t)
+	var tin := ItemTile.of(PackedInt32Array([ItemLook.Temp.COLD, -1, 0, 0, 0, 0, -1]), t)
+	_check.call(ItemTile.shows(jar) and jar["level"] == 0.0 and jar["see_through"] and jar["amount"] == ItemTile.EMPTY_TEXT
+			and ItemTile.words(jar) == "Empty, see-through" and not jar["sloshes"] and tin["amount"] == ""
+			and ItemTile.words(tin) == "Cold\nEmpty" and ItemTile.shows(tin),
+			"tile: an empty see-through container shows its glass and \"empty\"; an empty opaque one only says so in words")
 	var sn := Snapshot.new()
 	sn.item_states = {5: PackedInt32Array([ItemLook.Temp.COLD, -1, 250, 1, 1, 250, -1]),
 			6: PackedInt32Array([0, -1, 0, 0, 0, 0, -1])}
