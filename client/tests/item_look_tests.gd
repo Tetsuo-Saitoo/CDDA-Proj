@@ -63,6 +63,13 @@ func _test_snapshot(data: Variant, tables: IdTables) -> void:
 			"item state: the snapshot and ItemLook agree on the format")
 	var old := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void: (d["player"] as Dictionary).erase("item_states")))
 	_check.call(old.is_valid() and old.item_states.is_empty(), "item state: an older bridge sends none")
+	var bag := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void:
+		for sm: Dictionary in d["submaps"]:
+			if Vector3i(int(sm["pos"][0]), int(sm["pos"][1]), int(sm["pos"][2])) == SM:
+				sm["inside"] = [[U_OFF, 701, tables.index_of("itype", "rock"), 0]]
+		(d["player"] as Dictionary)["item_states"] = [GOOD_HOT, [701, 0, 1500, -1, 0, 0, -1, -1], [702, 0, 1500, -1, 0, 0, -1, -1]]))
+	_check.call(bag.is_valid() and Array(bag.item_states.get(701, [])) == [0, 1500, -1, 0, 0, -1, -1] and not bag.item_states.has(702),
+			"item state: what is in a container lying next to the player has its state too (its tray row) " + bag.error)
 	var junk := Snapshot.from_data(_data(data, tables, func(d: Dictionary) -> void: (d["player"] as Dictionary)["item_states"] = {"x": 1}))
 	_check.call(junk.is_valid() and junk.item_states.is_empty(), "item state: a list that isn't one is ignored")
 	# Each bad entry is for U_NONE, next to a good one for U_HOT: the bad one goes, the rest stays.
@@ -136,6 +143,18 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			U_OFF: PackedInt32Array([1]), U_HOT: [1, -1, -1, 0, 0, -1, -1]})
 	view.tick(0.01)
 	_check.call(view.shell_count() == 1 and view.shell(U_ICE) != null, "item state: new states replace the old; malformed ones are left out")
+	view.set_states({U_NONE: PackedInt32Array([0, -1, -1, 0, 0, -1, 5000])})
+	view.tick(0.01)
+	var gun := view.shell(U_NONE)
+	var gun_mat := gun.get_meta(&"mat") as ShaderMaterial if gun != null else null
+	_check.call(gun != null and is_equal_approx(GunGrime.level_of(gun), 0.5) and GunGrime.meshes(gun).size() >= 1
+			and gun_mat.get_shader_parameter(&"frost") == 0.0 and gun_mat.get_shader_parameter(&"heat") == 0.0
+			and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, 0])) and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, -1]))
+			and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, 99999])),
+			"item state: a fouled gun lying in the world gets GunGrime's grime (half at 5000) and nothing else; clean or bad dirt shows nothing")
+	if gun != null:
+		ItemLookView.paint(gun, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+	_check.call(gun != null and GunGrime.level_of(gun) == 0.0, "item state: the grime goes when the gun is clean")
 	view.set_states({})
 	view.tick(0.01)
 	_check.call(view.shell_count() == 0 and view.get_child_count() == 0, "item state: no states, no shells")
