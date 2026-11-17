@@ -713,6 +713,38 @@ func _test_hands_panel(root: Node) -> void:
 	panel.show_held({"seq": 4, "main": {}, "off": "junk", "activity": 5})
 	_check.call(not panel.visible, "hands: hidden with empty hands (junk off hand ignored)")
 	panel.free()
+	# Live item tiles behind the held items, by the hand's uid.
+	var uids := [{"uid": 7}, {"uid": 7.0}, {}, {"uid": 0}, {"uid": -3}, {"uid": "7"}, {"uid": 1.5}, {"uid": INF},
+			{"uid": NAN}, {"uid": 1e30}].map(func(h: Dictionary) -> int: return HandsPanel.uid_of(h))
+	_check.call(uids == [7, 7, 0, 0, 0, 0, 0, 0, 0, 0], "hands: a held uid is a whole number above 0, else none %s" % [uids])
+	var jug := {"level": 0.5, "sloshes": true, "liquid": Color(0.2, 0.4, 1.0), "temp": ItemLook.Temp.NORMAL}
+	var states := {7: jug, 8: {"level": -1.0, "grime": 0.4}, 9: "junk"}
+	panel = HandsPanel.new()
+	panel.tile_of = func(uid: int) -> Variant: return states.get(uid, {})
+	root.add_child(panel)
+	var jug_hand := {"name": "jug", "uid": 7, "ml": 500, "capacity_ml": 1000}
+	panel.show_held({"seq": 5, "main": jug_hand, "off": {"name": "gun", "uid": 8}})
+	var jug_row: Dictionary = panel._rows[1]   # right-handed: the main hand on the right
+	var gun_row: Dictionary = panel._rows[0]
+	var jt := jug_row["tile"] as ItemTileView
+	_check.call(jt != null and jt.uid == 7 and jt.slosh != null and (jug_row["box"] as Node).get_child(0) == jt
+			and (gun_row["tile"] as ItemTileView) != null and (gun_row["tile"] as ItemTileView).slosh == null,
+			"hands: each held item with a state gets its tile behind its line; a jug's liquid sloshes")
+	_check.call(not (jug_row["bar"] as ProgressBar).visible, "hands: the tile shows how full; no bar besides")
+	panel.show_held({"seq": 6, "main": jug_hand, "off": {"name": "gun", "uid": 8}, "activity": "ACT_FILL_LIQUID"})
+	_check.call(jug_row["tile"] == jt and (jug_row["bar"] as ProgressBar).visible,
+			"hands: the same state keeps its tile; the bar shows while a fill runs")
+	jt.kick()
+	states[7] = {"level": 0.75, "sloshes": true, "liquid": Color(0.2, 0.4, 1.0), "temp": ItemLook.Temp.NORMAL}
+	panel.refresh_tiles()
+	var jt2 := jug_row["tile"] as ItemTileView
+	_check.call(jt2 != null and jt2 != jt and is_equal_approx(float(jt2.tile["level"]), 0.75) and jt2.slosh == jt.slosh,
+			"hands: a new state replaces the tile, its moving surface goes on")
+	panel.show_held({"seq": 7, "main": {"name": "jug", "uid": 9}, "off": {"name": "rock"}})
+	_check.call(jug_row["tile"] == null and gun_row["tile"] == null and (jug_row["box"] as Node).get_child_count() == 1,
+			"hands: a junk state, or no uid (an older bridge): no tile")
+	ItemTileView._carried.clear()
+	panel.free()
 	# VR: the same data on a controller, label plus a level gauge.
 	var vh := VrHeld.new("Left")
 	root.add_child(vh)
@@ -785,6 +817,13 @@ func _test_item_tile() -> void:
 			and floats["temp"] == ItemLook.Temp.HOT and floats["rot"] == 100 and floats["level"] == 0.5
 			and floats["amount"] == "500 ml" and floats["see_through"] and floats["contents"] == "orange juice",
 			"tile: out of range or wrong types show nothing; whole floats count (%s, %s)" % [out_of_range, junk])
+	var sn := Snapshot.new()
+	sn.item_states = {5: PackedInt32Array([ItemLook.Temp.COLD, -1, 250, 1, 1, 250, -1]),
+			6: PackedInt32Array([0, -1, 0, 0, 0, 0, -1])}
+	_check.call(ItemTile.for_item(sn, t, 5)["temp"] == ItemLook.Temp.COLD and ItemTile.for_item(sn, t, 6).is_empty()
+			and ItemTile.for_item(sn, t, 4).is_empty() and ItemTile.for_item(null, t, 5).is_empty()
+			and ItemTile.for_item(sn, t, 0).is_empty(),
+			"tile: an item's tile from the snapshot; none for no state, nothing to show, no snapshot or no uid")
 	var tv := ItemTileView.new(gun, -INF)
 	_check.call(tv.mouse_filter == Control.MOUSE_FILTER_IGNORE and tv.focus_mode == Control.FOCUS_NONE and tv.inset == 0.0,
 			"tile: the view takes no mouse input or focus")

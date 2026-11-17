@@ -39,6 +39,9 @@ var view_cam: ViewCamera       # C9: shoulder and top views, following the eyes
 var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
+var _stir_heading := NAN       # live item tiles: the view's heading last frame (a turn sloshes held liquids)
+var _stir_pos: Variant = null  # the player's square at the last snapshot (a step sloshes them)
+var _stir_step := 1.0          # each step rocks the other way
 var sun: DirectionalLight3D
 var weather: WeatherView       # C6 / I2: sky, sun and fog by CDDA's weather
 var hud: Label
@@ -397,6 +400,12 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		_ask_character()
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
+	if hands_panel != null:
+		hands_panel.refresh_tiles()   # the held items' states came with this snapshot
+	if _stir_pos != null and _stir_pos != snap.player_pos:   # a step: held liquids rock
+		_stir_step = -_stir_step
+		ItemTileView.stir(ItemTileView.STEP_STIR * _stir_step)
+	_stir_pos = snap.player_pos
 	if hints != null and vr == null and live != null and _in_main_loop():
 		hints.trigger("start")   # G6: once, ever (seen ids are kept)
 		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
@@ -1529,6 +1538,8 @@ func _setup_hud() -> void:
 	layer.add_child(look_panel)
 	hands_panel = HandsPanel.new()
 	hands_panel.left_handed = hud_settings.left_handed()
+	hands_panel.tile_of = func(uid: int) -> Dictionary:   # live item tiles behind the held items
+		return ItemTile.for_item(world.snapshot, world.tables, uid)
 	layer.add_child(hands_panel)
 	hud_view = HudView.new()
 	hud_view.data = hud_data
@@ -1682,6 +1693,9 @@ func _process(_delta: float) -> void:
 	_place_player_body()
 	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)
+	if not is_nan(_stir_heading):   # a turn: held liquids lean against it
+		ItemTileView.stir(wrapf(compass.heading_deg - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
+	_stir_heading = compass.heading_deg
 	if compass.visible:   # creatures the player perceives, by bearing from the view
 		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
 				world.coords.ms_center_to_world))
