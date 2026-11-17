@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Sim test: a paused cooking craft survives a real save, quit and load (the pot keeps its handle, the craft its link and progress); the sim thread now reloads after every save-and-quit.
 - 2026-11-17 — Bridge: the item table gives each type's `phase` (solid, liquid, gas, plasma), for lead-ui's liquid tiles. Ids test checks it.
 - 2026-11-17 — Sim test: the real-time checks stretch their turn slot when a busy machine makes turns longer than it, instead of failing; passes on Linux under deliberate load.
 - 2026-11-17 — Bridge: `player.item_states` in the snapshot for live item tiles: temperature, rot, fill level and content, see-through and gun fouling of carried items and items lying in reach. Snapshot test checks each field.
