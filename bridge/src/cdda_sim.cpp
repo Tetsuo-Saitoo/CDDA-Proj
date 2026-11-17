@@ -80,6 +80,9 @@ Dictionary request_dict( const fp3d::ui_request &r )
         entries.push_back( ed );
     }
     d["entries"] = entries;
+    if( r.kind == fp3d::request_kind::menu ) {
+        d["selected"] = r.selected;
+    }
     godot::PackedStringArray actions;
     for( const std::string &a : r.actions ) {
         actions.push_back( to_godot( a ) );

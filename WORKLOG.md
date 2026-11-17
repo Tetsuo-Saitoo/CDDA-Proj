@@ -29,6 +29,8 @@
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
+- 2026-11-17 — Bridge: `player.item_states` in the snapshot for live item tiles: temperature, rot, fill level and content, see-through and gun fouling of carried items and items lying in reach. Snapshot test checks each field.
+- 2026-11-17 — Bridge: menu requests carry `selected`, the entry CDDA highlights (for lead-ui's tap-E default action). Sim test `actions` checks it.
 - 2026-11-17 — Fork tests: each test binary has its own user folder (`fp3d_user_sim`, `_events`, `_ids`, `_snapshot`, `_chargen`; the range test keeps `fp3d_user`), so the order tests run in no longer changes their results.
 - 2026-11-16 — Bridge: action allow-list for the main loop (only the actions the client sends; `debug` only with cheats allowed) and bounded polling (a CDDA screen that only polls is told to close after 256 polls, then asked). Sim test `actions` checks both.
 - 2026-11-16 — Bridge: character names, input validation for every source (random names, a name taken over in play); the save id is set once when a new game starts. Chargen test and sim test `names` check it.
