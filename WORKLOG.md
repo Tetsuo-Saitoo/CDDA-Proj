@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — VR body slots: holsters and sheaths sit at your hips and pouches on your chest; reach there to draw what's inside, let go there to put something in, and let go of your gun at the holster to holster it. Client tests pass.
 - 2026-11-17 — In VR, when the game turns down lighting or putting out a fire, your hand buzzes and the reason shows by it; a refused cook shows the reason on the pot's card. Client tests pass.
 - 2026-11-17 — In VR, punching or swinging hard at a wall, window, door or furniture next to you smashes it, as the strike keys do on the flat screen. Client tests pass.
 - 2026-11-17 — VR radial menus: with an empty hand on a sink, stove or other furniture next to you, the trigger uses it; a quick press does the game's default, holding it shows the choices as a wheel around your hand, and you point with the stick or a flick of the hand and let go to pick. Client tests pass.
