@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
 - 2026-11-17 — Sim test: a paused cooking craft survives a real save, quit and load (the pot keeps its handle, the craft its link and progress); the sim thread now reloads after every save-and-quit.
 - 2026-11-17 — Bridge: the item table gives each type's `phase` (solid, liquid, gas, plasma), for lead-ui's liquid tiles. Ids test checks it.
