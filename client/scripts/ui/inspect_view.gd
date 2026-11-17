@@ -357,13 +357,7 @@ func tick_box(uid: int) -> Label:
 ## snapshot has none for it or it shows nothing. Its row gets an ItemTileView behind it and the amount.
 func tile_of(uid: int) -> Dictionary:
 	var w: WorldView = hands.world if hands != null else null
-	if w == null or w.snapshot == null:
-		return {}
-	var s: Variant = w.snapshot.item_states.get(uid)
-	if s == null:
-		return {}
-	var t := ItemTile.of(s, w.tables)
-	return t if ItemTile.shows(t) else {}
+	return ItemTile.for_item(w.snapshot, w.tables, uid) if w != null else {}
 
 
 # --- selecting several ---

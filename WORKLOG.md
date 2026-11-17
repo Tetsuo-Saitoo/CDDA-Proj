@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Item tiles, slice 3: the hands panel shows each held item's state behind its line (how full, frozen / cold / hot, spoilage, gun grime), and a held liquid sloshes as you turn and walk. Client tests pass.
 - 2026-11-17 — The client reads each item type's phase (solid, liquid, gas, plasma) from the item table; in the Tab view only liquids slosh now, and frozen ones don't. Client tests pass.
 - 2026-11-17 — Item tiles, slice 2: in the Tab view the fill line of a liquid sloshes and settles when the view opens or you pick the item up to drag it. Client tests pass.
 - 2026-11-17 — Tester AppImage test-2026-11-17 (private test repo, pre-release, not a release) from main 6b99094 + fork 5190675, after the QA lead's OK for the range since test-2026-11-16; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range/game-over live tests). An earlier build of the same day was dropped: appimage.sh writes BUILD_INFO from HEAD at the end, so merge nothing while it runs.

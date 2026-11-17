@@ -64,6 +64,18 @@ static func of(state: Variant, tables: IdTables) -> Dictionary:
 	return t
 
 
+## Item `uid`'s tile from `snap`'s item_states, {} when the snapshot has no state for it (the bridge leaves out
+## items with nothing to show) or it shows nothing.
+static func for_item(snap: Snapshot, tables: IdTables, uid: int) -> Dictionary:
+	if snap == null or uid <= 0:
+		return {}
+	var s: Variant = snap.item_states.get(uid)
+	if s == null:
+		return {}
+	var t := of(s, tables)
+	return t if shows(t) else {}
+
+
 ## Whether a tile has anything to draw: some contents, a temperature, spoilage (anything that rots) or grime. An
 ## empty container, a clean gun or a plain item shows nothing.
 static func shows(t: Dictionary) -> bool:
