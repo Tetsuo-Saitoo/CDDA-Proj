@@ -96,6 +96,8 @@ func _wait(id: int, label: String, turns: int) -> bool:
 	_check(w["done"], "%s pass by themselves (%d of %d turns in %.0f s)" % [label, w["turns"], turns, w["ms"] / 1000.0])
 	_check(w["silent"] <= SILENT_MS, "the client hears from the game while it waits %s (longest silence %.1f s, limit %.1f)"
 			% [label, w["silent"] / 1000.0, SILENT_MS / 1000.0])
+	if w["ms"] > 3000 and _main.get("busy_note") != null:   # a stretch long enough for the note (BusyNote, lead-ui)
+		_check(w["noted"], "the screen says \"Time passes\" while it waits %s" % label)
 	return w["done"]
 
 
@@ -120,8 +122,9 @@ func _sleep() -> void:
 
 ## Watches the game run on by itself from turn `turn0` until `turns` have passed (or `timeout_ms`), calling `each`
 ## on every look. {done, turns, ms, rate (ms a turn), seen (snapshots with a new turn), silent (the longest time
-## without one, ms)}.
+## without one, ms), noted (main's "Time passes" line showed meanwhile)}.
 func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dictionary:
+	var noted := false
 	var seen := 0
 	var last_turn := turn0
 	var t0 := Time.get_ticks_msec()
@@ -134,6 +137,8 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dict
 		elif not _hold:
 			_answer(_live.request)
 		var now := Time.get_ticks_msec()
+		var note: Variant = _main.get("busy_note")
+		noted = noted or (note is Label and (note as Label).visible and (note as Label).text.begins_with("Time passes"))
 		var t: int = _main.world.snapshot.turn
 		if t != last_turn:
 			seen += 1
@@ -150,7 +155,8 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dict
 	if not done:
 		silent = maxi(silent, Time.get_ticks_msec() - last_ms)
 	var passed := last_turn - turn0
-	return {"done": done, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen, "silent": silent}
+	return {"done": done, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen, "silent": silent,
+			"noted": noted}
 
 
 ## Waits until the game is back at rest (the snapshot's turn unchanged for a while, nothing queued); the turn.
