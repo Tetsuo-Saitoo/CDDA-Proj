@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Sim test: the real-time checks stretch their turn slot when a busy machine makes turns longer than it, instead of failing; passes on Linux under deliberate load.
 - 2026-11-17 — Bridge: `player.item_states` in the snapshot for live item tiles: temperature, rot, fill level and content, see-through and gun fouling of carried items and items lying in reach. Snapshot test checks each field.
 - 2026-11-17 — Bridge: menu requests carry `selected`, the entry CDDA highlights (for lead-ui's tap-E default action). Sim test `actions` checks it.
 - 2026-11-17 — Fork tests: each test binary has its own user folder (`fp3d_user_sim`, `_events`, `_ids`, `_snapshot`, `_chargen`; the range test keeps `fp3d_user`), so the order tests run in no longer changes their results.
