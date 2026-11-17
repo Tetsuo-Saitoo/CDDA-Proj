@@ -11,6 +11,11 @@ extends SceneTree
 ##  4. The machete is wielded and the main hand strikes the zombie next to you, aimed at its head (a stun call):
 ##     each aimed swing is answered and resolved; the techniques CDDA used are listed (none expected: the machete
 ##     has only a block technique, and the range has no skill cheat for the others; the sim test covers them).
+##  5. A live grenade on a zombie's square seven squares ahead goes off after its countdown (turns pass with
+##     "pause"): an `explosion` event, ExplosionView's blast and a shake, the zombie's death, its body lying there
+##     (CreatureView) and its blood on the ground (GoreView). The player is invincible (the range's cheat) meanwhile:
+##     CDDA's shrapnel kills in the open out to some 30 squares. Fire fields aren't tried: the range's only explosive
+##     with a countdown is the plain grenade.
 ## Strikes go through main's own code (AimController.strike_action, main._queue_act) with the crosshair at the
 ## screen centre: headless has no captured mouse. A misfire isn't tried: nothing in the range fouls a gun (the sim
 ## test covers it). Uses this run's own CDDA folder, never the player's saves.
@@ -38,6 +43,8 @@ var _events: Array[Dictionary] = []
 var _shots := 0       # AimController.shot_went
 var _swings: Array = []        # [uid, hit] per HitFeedback.swing_resolved
 var _techniques: Array = []    # technique names per HitFeedback.technique_used
+var _blast_live := 0           # ExplosionView.live_count() at the end of a frame that brought an explosion event
+var _blast_shake := 0.0        # and its shake_strength()
 
 
 func _initialize() -> void:
@@ -97,6 +104,8 @@ func _run() -> void:
 		await _reach_live()
 	if _live.state == "running":
 		await _melee_live()
+	if _live.state == "running":
+		await _explosion_live()
 	if _live.state != "running":
 		_check(false, "the game kept running (%s %s)" % [_live.state, _live.error])
 	await _stop()
@@ -203,6 +212,86 @@ func _melee_live() -> void:
 			"machete: aimed strikes at the head next to you are answered and resolve (%d aimed, %d resolved, %d HP lost)"
 			% [aimed, resolved, lost])
 	print("    techniques used: %s" % [_techniques.slice(tech0)])
+
+
+## 5: a live grenade on a zombie's square seven squares ahead: the blast, the death, the body and its blood.
+func _explosion_live() -> void:
+	var gid := _cp.tables.index_of("itype", "grenade_act")
+	if gid < 0:
+		print("  (explosions not tried: no grenade_act in this game's data)")
+		return
+	var target := Vector3i.ZERO
+	var placed := false
+	for off: Vector2i in [Vector2i(7, 0), Vector2i(6, 1), Vector2i(6, -1), Vector2i(7, 2), Vector2i(7, -2),
+			Vector2i(6, 0), Vector2i(5, 2), Vector2i(5, -2)]:
+		target = _ahead(off.x, off.y)
+		if _main.world.snapshot.creature_at(target) == null and await _spawn_zombie(target):
+			placed = true
+			break
+	_check(placed, "a zombie five to seven squares ahead for the grenade (%s)" % target)
+	if not placed:
+		return
+	# CDDA's shrapnel kills in the open out to some 30 squares: the player is invincible while the grenade goes off.
+	var shielded := _live.set_cheat("invincible", true)
+	if shielded:
+		shielded = await _pass_turn() and bool(_live.cheats().get("invincible", false))
+	_check(shielded, "the player is invincible for the blast (the range's cheat)")
+	if not shielded:
+		return
+	var z := _main.world.snapshot.creature_at(target)
+	var zuid := z.uid if z != null else 0
+	var bodies0 := _main.creature_view.corpse_count()
+	var gore0 := _main.gore.count()
+	_clear()
+	_blast_live = 0
+	_blast_shake = 0.0
+	_check(await _op_id(_live.range_spawn_item(gid, 1, target), "Spawn grenade_act") == "",
+			"a live grenade on the zombie's square")
+	var of_kind := func(kind: String) -> Array:
+		return _events.filter(func(e: Dictionary) -> bool: return e.get("kind") == kind)
+	var turns := 0
+	var t0 := _main.world.snapshot.turn
+	while of_kind.call("explosion").is_empty() and turns < 12 and _live.state == "running":
+		if not await _pass_turn():
+			print("    (a turn didn't pass: turn %d)" % _main.world.snapshot.turn)
+		turns += 1
+	print("    turns %d -> %d" % [t0, _main.world.snapshot.turn])
+	await process_frame   # the deferred note of the blast
+	var blasts: Array = of_kind.call("explosion")
+	var b: Dictionary = blasts[0] if not blasts.is_empty() else {}
+	var at: Variant = b.get("pos")
+	_check(not blasts.is_empty() and str(b.get("text")) == "blast" and _blast_live > 0 and _blast_shake > 0.0,
+			"it goes off after %d turn(s): a blast event at %s, ExplosionView draws it (%d live) and shakes the view (%.2f)"
+			% [turns, at, _blast_live, _blast_shake])
+	var died := func() -> bool:
+		return of_kind.call("death").any(func(e: Dictionary) -> bool: return int(e.get("uid", 0)) == zuid)
+	_check(zuid != 0 and await _until(died, OP_TIMEOUT_MS, false), "the blast kills the zombie (a death event)")
+	var body := func() -> bool: return _main.creature_view.corpse_count() > bodies0
+	# No turn passes meanwhile: the body must show once the death fall ends, not on the next snapshot.
+	_check(await _until(body, OP_TIMEOUT_MS, false),
+			"its body lies there (CreatureView: %d -> %d bodies; %d corpse pile(s) near in the snapshot)"
+			% [bodies0, _main.creature_view.corpse_count(), _corpse_piles_near(target, 3)])
+	var bled := func() -> bool: return _main.gore.count() > gore0
+	_check(await _until(bled, ASK_TIMEOUT_MS, false), "its blood is on the ground (GoreView: %d -> %d)"
+			% [gore0, _main.gore.count()])
+	var hurt: Array = of_kind.call("damage").filter(func(e: Dictionary) -> bool:
+			return int(e.get("uid", 0)) == _main.aim.hits.player_uid())
+	print("    the player took %d hit(s) from seven squares, unhurt (invincible)" % hurt.size())
+	_live.set_cheat("invincible", false)
+
+
+## Piles holding a corpse within `r` squares of `sq` (same level) in the current snapshot.
+func _corpse_piles_near(sq: Vector3i, r: int) -> int:
+	var n := 0
+	for sm: Snapshot.Submap in _main.world.snapshot.submaps.values():
+		var base := CddaCoords.sm_to_ms(sm.pos)
+		for j in range(0, sm.items.size() - Snapshot.PILE_STRIDE + 1, Snapshot.PILE_STRIDE):
+			var t := sm.items[j]
+			var p := base + Vector3i(t % CddaCoords.SEEX, t / CddaCoords.SEEX, 0)
+			var near := p.z == sq.z and absi(p.x - sq.x) <= r and absi(p.y - sq.y) <= r
+			if near and sm.items[j + Snapshot.PILE_CORPSE] != 0:
+				n += 1
+	return n
 
 
 ## Faces `sq` (the first-person camera looks at it, `up` metres over the ground), then picks the main hand's strike
@@ -314,9 +403,27 @@ func _hp_lost(uid: int) -> int:
 
 
 func _on_events(events: Array) -> void:
+	var blast := false
 	for e: Variant in events:
 		if e is Dictionary and _events.size() < MAX_EVENTS:
 			_events.append(e)
+			blast = blast or (e as Dictionary).get("kind") == "explosion"
+	if blast:
+		_note_blast.call_deferred()   # after every handler of this batch, main's ExplosionView included
+
+
+func _note_blast() -> void:
+	_blast_live = maxi(_blast_live, _main.explosions.live_count())
+	_blast_shake = maxf(_blast_shake, _main.explosions.shake_strength())
+
+
+## One turn passes: CDDA's main loop takes "pause" (it waits a turn); true once the snapshot's turn moved on.
+func _pass_turn() -> bool:
+	var t0 := _main.world.snapshot.turn
+	if not _live.queue_action("pause"):
+		return false
+	var next := func() -> bool: return _main.world.snapshot.turn > t0 and _in_loop()
+	return await _until(next, ASK_TIMEOUT_MS, false)
 
 
 ## Presses a range control and waits for the game's answer: "" done, else the error (or why it wasn't sent).

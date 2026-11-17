@@ -1522,7 +1522,7 @@ func _setup_hud() -> void:
 	key_menu.add_hud_settings(hud_settings)
 	hints = Hints.new()   # G6: one-time tips (the first turn, the first Tab view, the first question)
 	hints.persist = get_tree().get_script() == null   # a test runner's SceneTree script: never the player's file
-	var hints_why := hints.load_file()
+	var hints_why := hints.load_file() if hints.persist else ""   # nor read it: runs are the same everywhere
 	if hints_why != "":
 		push_warning("hints: " + hints_why)
 	layer.add_child(hints)
