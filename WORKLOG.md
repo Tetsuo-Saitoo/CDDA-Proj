@@ -4,6 +4,7 @@
 - 2026-11-17 — Gun grime on any model (combat lead, client): GunGrime puts CDDA's fouling as a grime shell over a gun model's meshes (any .glb or prop, its own materials untouched) and is the one dirt-to-grime mapping for the viewmodel, models and icons (Live item tiles, gun part). Client tests pass.
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
+- 2026-11-17 — Radial menu, slice 3: a quick tap of E does the object's default action (the one the game highlights); hold E for the wheel. Client tests pass.
 - 2026-11-17 — Radial menu, slice 2: with a gamepad, A works like E; hold it on an object, point with the stick and let go to pick. Client tests pass.
 - 2026-11-17 — Radial menu, slice 1: E on an object shows its choices as a wheel with a fixed place for each kind of action; point and let go of E (or click) to pick. The F1 menu can switch to a click wheel or the old list. Client tests pass.
 - 2026-11-16 — More hints: the first time something hostile is in sight, you get hungry or thirsty, or you bleed, a tip says which keys help. Client tests pass.
