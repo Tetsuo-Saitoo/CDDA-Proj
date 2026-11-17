@@ -1566,6 +1566,50 @@ func _test_wheel() -> void:
 			"wheel: want_wheel's `down` true: held; false or not a bool: a tap picks the default; a later request doesn't keep it (%s %s %s)"
 			% [down_tap, down_odd, answers])
 	answers.clear()
+	# F2: a quick tap's answer is only for the menu E itself caused: another key, click or pad button before it
+	# comes cancels the wheel (that key's menu shows as a list, nothing picked unseen); E, releases, a modifier
+	# alone, the mouse wheel and motion don't
+	InputActions.ensure(false)   # E is `use_held`
+	var e_key := InputEventKey.new()
+	e_key.physical_keycode = KEY_E
+	e_key.pressed = true
+	var shift := InputEventKey.new()
+	shift.physical_keycode = KEY_SHIFT
+	shift.keycode = KEY_SHIFT
+	shift.pressed = true
+	var e_up := e_key.duplicate() as InputEventKey
+	e_up.pressed = false
+	var scroll := InputEventMouseButton.new()
+	scroll.button_index = MOUSE_BUTTON_WHEEL_UP
+	scroll.pressed = true
+	var kept_by := []
+	ui.want_wheel(5000, true)
+	for ev: InputEvent in [e_key, shift, e_up, scroll, InputEventMouseMotion.new()]:
+		ui.note_input(ev)
+		if ui.wheel_until >= 0:
+			kept_by.append(ev.get_class())
+	var g_key := InputEventKey.new()
+	g_key.physical_keycode = KEY_G
+	g_key.pressed = true
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	var pad_b := InputEventJoypadButton.new()
+	pad_b.button_index = JOY_BUTTON_B
+	pad_b.pressed = true
+	var undone_by := []
+	for ev: InputEvent in [g_key, click, pad_b]:
+		ui.want_wheel(5000, true, func() -> bool: return false)
+		ui.note_input(ev)
+		if ui.wheel_until < 0 and not ui.wheel_down.is_valid():
+			undone_by.append(ev.get_class())
+	ui.want_wheel(5000, true)
+	ui.note_input(g_key)
+	_show(_req("menu", {"entries": sink, "selected": 1}))
+	_check.call(kept_by.size() == 5 and undone_by.size() == 3 and ui.widget is ListRequestWidget and answers.is_empty(),
+			"wheel: another key, click or pad button after E cancels the wheel: its menu is a list, nothing picked unseen; "
+			+ "E, a release, Shift alone, the mouse wheel and motion keep it (%s, %s)" % [kept_by, undone_by])
+	ui.clear()
 	ui.want_wheel(5000, false)
 	_show(_req("menu", {"entries": sink}))
 	var stick := InputEventJoypadMotion.new()
