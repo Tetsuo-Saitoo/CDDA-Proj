@@ -178,6 +178,20 @@ func _test_user_files() -> void:
 	_check(cdda.begins_with(ProjectSettings.globalize_path(root)), "CDDA's default folder is the run's too (%s)" % cdda)
 	for f in files:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(root.path_join(f.trim_prefix("user://"))))
+	# What a dead run with the same process id left as its user files goes; this run's own folder and anything
+	# outside a run's user files folder stay.
+	var dead := TestDir.ROOT.path_join(TestDir.PREFIX + str(1000000000 + OS.get_process_id() * 10 + 9))
+	DirAccess.make_dir_recursive_absolute(dead.path_join("user/bug_reports"))
+	FileAccess.open(dead.path_join("user/vr.json"), FileAccess.WRITE).store_string("{}")
+	FileAccess.open(dead.path_join("user/bug_reports/r.txt"), FileAccess.WRITE).store_string("x")
+	var now := int(Time.get_unix_time_from_system())
+	var kept := not UserFiles.drop_stale(dead.path_join("user"), now - 3600) and FileAccess.file_exists(dead.path_join("user/vr.json"))
+	var refused := not UserFiles.drop_stale(dead, now + 3600) and not UserFiles.drop_stale("user://", now + 3600) \
+			and not UserFiles.drop_stale(dead.path_join("user/../user"), now + 3600) and FileAccess.file_exists(dead.path_join("user/vr.json"))
+	var dropped := UserFiles.drop_stale(dead.path_join("user"), now + 3600) and not DirAccess.dir_exists_absolute(dead.path_join("user")) \
+			and DirAccess.dir_exists_absolute(dead)
+	_check(kept and refused and dropped, "a dead run's user files folder is removed, a newer one and anything else is not (%s %s %s)" % [kept, refused, dropped])
+	DirAccess.remove_absolute(dead)
 	# A check run of the game itself (--vr-check: VrCheck's scenarios) has its own folder too; a plain start doesn't.
 	_check(UserFiles.check_run(PackedStringArray(["--vr", "--vr-check=report,loot"])) and UserFiles.check_run(PackedStringArray(["--vr-check"]))
 			and not UserFiles.check_run(PackedStringArray(["--vr", "--live", "--vr-checks", "--vr-move=hand"]))
