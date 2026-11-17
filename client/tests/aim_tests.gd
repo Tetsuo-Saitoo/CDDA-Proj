@@ -94,6 +94,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
 	_test_grime(root, tables)
+	_test_gun_grime(root)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
 	_test_misfires(root, aim, tables)
@@ -1565,6 +1566,99 @@ func _test_strike_runs(aim: AimController, me: int, head: int, torso: int) -> vo
 
 
 ## A gun model's named parts (later models carry the same names as markers).
+## Gun fouling on any model (GunGrime): the one dirt mapping, CDDA's symbol steps, and grime shells over a model's
+## meshes that leave its own materials and overlay alone, come off at 0 and stay bounded.
+func _test_gun_grime(root: Node) -> void:
+	var same := true
+	for dd: int in [-99999, -1, 0, 1, 1000, 2000, 4999, 6000, 9999, 10000, 10001, 99999]:
+		same = same and GunGrime.grime_for(dd) == WeaponViewmodel.grime_for(dd)
+	var steps := [-1, 0, 1999, 2000, 3999, 4000, 9999, 10000, 99999].map(func(d: int) -> int: return GunGrime.step_for(d))
+	_check.call(same and GunGrime.grime_for(6000) == 0.6 and GunGrime.grime_for(-1) == 0.0
+			and steps == [0, 0, 0, 1, 1, 2, 4, 5, 5], "gun grime: one mapping for models, viewmodel and icons; CDDA's symbol steps (%s)" % [steps])
+
+	var sh: Shader = load("res://scripts/combat/grime_overlay.gdshader")
+	var names := []
+	if sh != null:
+		for u: Dictionary in sh.get_shader_uniform_list():
+			names.append(u.get("name"))
+	_check.call(sh != null and sh.get_mode() == Shader.MODE_SPATIAL
+			and ["grime", "box_centre", "half_extents", "push"].all(func(x: String) -> bool: return x in names),
+			"gun grime: the shell shader loads with its uniforms (%s)" % [names])
+
+	# A model: a box body, a barrel nested under it, a node with no mesh, an empty mesh; an outline overlay and own
+	# materials that must stay as they are.
+	var model := Node3D.new()
+	root.add_child(model)
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.04, 0.12, 0.2)
+	body.mesh = bm
+	var own := StandardMaterial3D.new()
+	body.material_override = own
+	var outline := StandardMaterial3D.new()
+	body.material_overlay = outline
+	model.add_child(body)
+	var barrel := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.01
+	cm.bottom_radius = 0.01
+	cm.height = 0.3
+	barrel.mesh = cm
+	barrel.position = Vector3(0, 0.04, -0.2)
+	body.add_child(barrel)
+	model.add_child(Node3D.new())
+	var empty := MeshInstance3D.new()
+	model.add_child(empty)
+	var shells := func() -> Array:
+		return GunGrime.meshes(model).map(func(mi: MeshInstance3D) -> Variant: return mi.get_node_or_null(GunGrime.SHELL))
+	var n := GunGrime.apply(model, 0.5)
+	var s: Array = shells.call()
+	var bs := body.get_node_or_null(GunGrime.SHELL) as MeshInstance3D
+	var bmat := bs.material_override as ShaderMaterial if bs != null else null
+	_check.call(n == 2 and s.size() == 2 and s.all(func(x: Variant) -> bool: return x is MeshInstance3D) and bs != null
+			and bs.mesh == bm and bmat != null and bmat.shader == sh and bmat.get_shader_parameter("grime") == 0.5
+			and bmat.get_shader_parameter("half_extents") == bm.get_aabb().size / 2.0
+			and bmat.get_shader_parameter("box_centre") == bm.get_aabb().get_center()
+			and bs.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+			"gun grime: each mesh of a model wears a shell sized to its box, at the level (%d meshes)" % n)
+	_check.call(body.material_override == own and body.material_overlay == outline and bm.material == null
+			and barrel.material_overlay == null, "gun grime: the model's own materials and overlay are left alone")
+	var count_before := body.get_child_count()
+	n = GunGrime.apply(model, 0.8)
+	_check.call(n == 2 and body.get_child_count() == count_before and is_equal_approx(GunGrime.level_of(model), 0.8)
+			and ((barrel.get_node(GunGrime.SHELL) as MeshInstance3D).material_override as ShaderMaterial)
+					.get_shader_parameter("grime") == 0.8,
+			"gun grime: a new level changes the shells, adds none")
+	n = GunGrime.apply(model, 0.0)
+	_check.call(n == 0 and (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+			and GunGrime.level_of(model) == 0.0 and body.material_overlay == outline, "gun grime: level 0 takes the shells off")
+	GunGrime.apply(model, 0.6)
+	var junk := [GunGrime.apply(model, NAN), GunGrime.apply(model, -2.0), GunGrime.apply(null, 0.5)]
+	var cleaned := (shells.call() as Array).all(func(x: Variant) -> bool: return x == null)
+	GunGrime.apply(model, 7.0)
+	_check.call(junk == [0, 0, 0] and cleaned and GunGrime.level_of(model) == 1.0,
+			"gun grime: NaN or below 0 is clean, above 1 is 1, no model is nothing")
+	model.free()
+
+	# Bounded: a huge model gets MAX_MESHES shells, a deep one only MAX_DEPTH levels down.
+	var wide := Node3D.new()
+	for i in GunGrime.MAX_MESHES + 40:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		wide.add_child(mi)
+	var deep := Node3D.new()
+	var at: Node = deep
+	for i in GunGrime.MAX_DEPTH + 4:
+		var mi := MeshInstance3D.new()
+		mi.mesh = bm
+		at.add_child(mi)
+		at = mi
+	_check.call(GunGrime.apply(wide, 0.5) == GunGrime.MAX_MESHES and GunGrime.apply(deep, 0.5) == GunGrime.MAX_DEPTH,
+			"gun grime: at most %d meshes, %d levels deep" % [GunGrime.MAX_MESHES, GunGrime.MAX_DEPTH])
+	wide.free()
+	deep.free()
+
+
 func _test_gun_parts() -> void:
 	var VM := WeaponViewmodel
 	var want := {"pistol": ["Muzzle", "Grip", "MagWell", "Magazine", "Slide"], "long": ["Muzzle", "Grip", "MagWell",
