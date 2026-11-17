@@ -1092,12 +1092,13 @@ func _live_action(event: InputEvent) -> bool:
 	return true
 
 
-## A hand or key action out to CDDA; a strike at a square (AimController.strike_square, a knight's move off) goes
-## by queue_action_at, and one whose square is gone isn't sent.
+## A hand or key action out to CDDA; a strike at a square (AimController.strike_square: a knight's move off, or a
+## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
+## isn't sent.
 func _queue_act(act: String) -> bool:
-	if act == AimController.AT_ACTION:
+	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
-		return sq is Vector3i and live.queue_action_at(act, sq)
+		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
 	return live.queue_action(act)
 
 
