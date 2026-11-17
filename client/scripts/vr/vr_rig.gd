@@ -538,7 +538,11 @@ func update_hands(delta: float, all_hands := false) -> void:
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
-				(n as Grabbable).drag_hand(c.global_position)
+				var g := n as Grabbable
+				var bumped := g.bumps
+				g.drag_hand(c.global_position)
+				if g.bumps != bumped:   # L8: it met a stop (open, shut, or a locked one's play): felt in the hand
+					feel(c, 0.6 if g.last_bump == "locked" else 0.3, 0.05)
 			else:
 				hands.cancel(id)
 		elif _fly_t[i] >= 0.0:

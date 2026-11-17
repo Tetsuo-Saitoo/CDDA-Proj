@@ -12,6 +12,10 @@ extends Node3D
 ## parts with a CDDA open / closed pair (open_id / close_id) ask the sim, past OPEN_FRAC / under CLOSE_FRAC of
 ## max_amount; the others are the client's alone. Their "Leaf" child moves and carries what `contents()` holds.
 ## `mech` tells the two apart: "" for terrain doors, "hinge" or "slide" for parts.
+## Feel (L8): a grab that pushes a part or leaf against a stop (fully open, shut, a locked one's play) counts a bump
+## (`bumps`, `last_bump`; VrRig buzzes the hand on one). A part without a CDDA pair let go while moving at least
+## FLING_MIN_* swings or slides on, slowing by FLING_DRAG_*, until it stops or meets a stop (a shove shuts a drawer);
+## parts with a pair and terrain doors don't, since CDDA decides their state.
 
 const OPEN_AT := deg_to_rad(30.0)
 const CLOSE_AT := deg_to_rad(8.0)
@@ -38,6 +42,12 @@ const MAX_EXTENT := 4.0            # size, handle and surfaces stay within this 
 const MAX_ID := 128                # characters in id / open_id / close_id
 const MAX_NODES := 256             # nodes in a part's model
 const MAX_STATES := 16384          # part entries in WorldView.door_state (more are not remembered)
+const FLING_MIN_HINGE := 1.5       # rad/s: a part let go turning at least this fast swings on ...
+const FLING_MIN_SLIDE := 0.4       # m/s: ... sliding at least this fast slides on
+const FLING_MAX_HINGE := 8.0       # rad/s at most
+const FLING_MAX_SLIDE := 3.0       # m/s at most
+const FLING_DRAG_HINGE := 5.0      # rad/s² it slows by
+const FLING_DRAG_SLIDE := 2.0      # m/s² it slows by
 
 var kind := "door"
 var mech := ""           # "" terrain door, "hinge" or "slide" furniture part
@@ -66,6 +76,12 @@ var _hand_offset := 0.0           # hand: leaf yaw minus hand yaw at the grab (p
 var _asked := false               # asked the sim during this grab, waiting for its answer
 var _swing := NAN                 # where a leaf moving on its own is heading (fixed when it starts)
 var _lit := false
+var bumps := 0                    # times a grab pushed it against a stop
+var last_bump := ""               # that stop: "open", "shut" or "locked"
+var _stop := ""                   # the stop it is against now during a grab ("" none)
+var _vel := 0.0                   # amount per second while grabbed (parts; _process measures it)
+var _vel_prev := NAN
+var _coast := 0.0                 # amount per second it swings or slides on after a fling
 
 static var _meshes := {}   # colour + glass -> BoxMesh
 static var _outline: StandardMaterial3D
@@ -377,6 +393,7 @@ func set_angle(a: float) -> void:
 	_apply()
 	_state()["angle"] = angle
 	if grabbed:
+		_bump_at(absf(a), lim)
 		_threshold(a)
 
 
@@ -384,11 +401,26 @@ func set_angle(a: float) -> void:
 func set_amount(a: float) -> void:
 	if mech == "" or not is_finite(a):
 		return
-	amount = clampf(a, 0.0, _limit())
+	var lim := _limit()
+	amount = clampf(a, 0.0, lim)
 	_apply_part()
 	_state()["amount"] = amount
 	if grabbed:
+		_bump_at(a, lim)
 		_threshold_part(a)
+
+
+## A grab asking for `a` (a terrain leaf: its size) against limit `lim`: one bump each time it gets to a stop.
+func _bump_at(a: float, lim: float) -> void:
+	var s := ""
+	if a >= lim:
+		s = "locked" if locked and not cdda_open else "open"
+	elif a <= 0.0 and mech != "":
+		s = "shut"
+	if s != "" and s != _stop:
+		bumps += 1
+		last_bump = s
+	_stop = s
 
 
 func _limit() -> float:
@@ -445,7 +477,15 @@ func begin_grab(point: Vector3) -> void:
 	_asked = false
 	_swing = NAN
 	_grab_local = leaf.global_transform.affine_inverse() * point
-	set_process(false)
+	_vel = 0.0
+	_vel_prev = NAN
+	_coast = 0.0
+	_stop = ""
+	if mech != "" and amount <= 0.0:
+		_stop = "shut"
+	elif mech != "" and amount >= _limit():
+		_stop = "locked" if locked and not cdda_open else "open"
+	set_process(true)   # measures how fast it moves (_vel) while held
 
 
 func begin_hand(hand: Vector3) -> void:
@@ -463,6 +503,14 @@ func begin_hand(hand: Vector3) -> void:
 func end_grab() -> void:
 	grabbed = false
 	_swing = NAN
+	_coast = 0.0
+	if mech != "" and not paired() and is_finite(_vel):
+		var lo := FLING_MIN_SLIDE if mech == "slide" else FLING_MIN_HINGE
+		var hi := FLING_MAX_SLIDE if mech == "slide" else FLING_MAX_HINGE
+		if absf(_vel) >= lo:
+			_coast = clampf(_vel, -hi, hi)   # let go while moving: it goes on (_process_part)
+	_vel = 0.0
+	_vel_prev = NAN
 	set_process(true)
 
 
@@ -645,7 +693,13 @@ func highlighted() -> bool:
 
 
 func _process(delta: float) -> void:
-	if grabbed or Time.get_ticks_msec() < int(_state().get("until", 0)):
+	if grabbed:
+		if mech != "" and is_finite(delta) and delta > 0.0:
+			if not is_nan(_vel_prev):
+				_vel = lerpf(_vel, (amount - _vel_prev) / delta, 0.5)
+			_vel_prev = amount
+		return
+	if Time.get_ticks_msec() < int(_state().get("until", 0)):
 		return
 	if mech != "":
 		_process_part(delta)
@@ -661,6 +715,19 @@ func _process(delta: float) -> void:
 
 
 func _process_part(delta: float) -> void:
+	if _coast != 0.0 and is_finite(delta) and delta > 0.0:
+		var a := amount + _coast * delta
+		var lim := _limit()
+		amount = clampf(a, 0.0, lim)
+		_apply_part()
+		_state()["amount"] = amount
+		if a <= 0.0 or a >= lim:
+			_coast = 0.0   # against a stop: it stays there
+		else:
+			_coast = move_toward(_coast, 0.0, (FLING_DRAG_SLIDE if mech == "slide" else FLING_DRAG_HINGE) * delta)
+		if _coast != 0.0:
+			return
+		_swing = NAN   # stopped: it settles from where it is
 	if is_nan(_swing):
 		_swing = rest_amount()
 	amount = move_toward(amount, _swing, (SLIDE_SPEED if mech == "slide" else SWING_SPEED) * delta)

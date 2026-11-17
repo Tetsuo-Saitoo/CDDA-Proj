@@ -32,6 +32,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_game_over(root)
 	_test_options()
 	_test_hints()
+	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
 
@@ -1182,6 +1183,47 @@ func _test_hints() -> void:
 	big.path = path
 	_check.call(big.load_file().contains("over"), "hints: an oversized file is ignored")
 	big.free()
+
+## Handedness (HudSettings.main_hand, flat screen): the F1 picker sets and saves it, a bad value is ignored there and
+## in the file; keys 1 / 2 strike with the left / right hand whichever is main; the hands panel puts the main hand on
+## the left for a left-hander.
+func _test_main_hand(root: Node) -> void:
+	var path := preload("res://tests/test_dir.gd").path("hud_hands.cfg")
+	var hs := HudSettings.new()
+	var menu := KeyMenu.new()
+	menu.add_hud_settings(hs, path)
+	var right_first := hs.main_hand == "right" and not hs.left_handed() and menu.main_pick.selected == 0 \
+			and menu.main_pick.item_count == 2 and menu.main_pick.get_item_text(1) == "Left-handed"
+	menu.main_pick.select(1)
+	menu.main_pick.item_selected.emit(1)
+	menu.main_pick.item_selected.emit(7)
+	menu.set_option(&"main_hand", "both")
+	menu.set_option(&"main_hand", 1)
+	hs.main_hand = "LEFT"
+	var back := HudSettings.new()
+	back.load_file(path)
+	_check.call(right_first and hs.main_hand == "left" and back.main_hand == "left" and back.left_handed(),
+			"main hand: right unless picked; the F1 picker sets and saves left, bad values are ignored")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hands]\nmain=\"middle\"\n")
+	f.close()
+	var junk := HudSettings.new()
+	junk.main_hand = "left"
+	junk.load_file(path)
+	_check.call(junk.main_hand == "right", "main hand: anything else in the file is right")
+	_check.call(HudSettings.hand_for("left", false) == "off" and HudSettings.hand_for("right", false) == "main"
+			and HudSettings.hand_for("left", true) == "main" and HudSettings.hand_for("right", true) == "off",
+			"main hand: the left key strikes with the off hand, or the main one when left-handed")
+	var panel := HandsPanel.new()
+	root.add_child(panel)
+	panel.show_held({"seq": 1, "main": {"name": "knife"}, "off": {"name": "torch"}})
+	var right_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	panel.left_handed = true
+	var left_rows: Array = [(panel._rows[0]["label"] as Label).text, (panel._rows[1]["label"] as Label).text]
+	_check.call(right_rows == ["Left: torch", "Right: knife"] and left_rows == ["Left: knife", "Right: torch"],
+			"main hand: the hands panel shows a left-hander's main hand on the left (%s %s)" % [right_rows, left_rows])
+	panel.free()
+	menu.free()
 
 
 func _test_game_over(root: Node) -> void:

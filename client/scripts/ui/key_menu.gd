@@ -43,6 +43,7 @@ var look_slider: HSlider
 var invert_check: CheckBox
 var ui_slider: HSlider
 var weather_pick: OptionButton
+var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
 ## G6 (add_hints): the hints and their on / off box.
@@ -238,6 +239,17 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	look_slider.tooltip_text = "How far the view turns for a mouse move."
 	invert_check = _option_check(opt_row, "Invert Y", "Moving the mouse up looks down.", &"invert_y",
 			settings.invert_y)
+	main_pick = OptionButton.new()
+	for h: String in HudSettings.MAIN_HANDS:
+		main_pick.add_item("%s-handed" % h.capitalize())
+	main_pick.tooltip_text = ("Your main hand: the keys for the left and right hand strike with that hand, and the gun "
+			+ "rests on that side. The headset has its own in its menu.")
+	main_pick.focus_mode = Control.FOCUS_NONE
+	main_pick.select(maxi(HudSettings.MAIN_HANDS.find(settings.main_hand), 0))
+	main_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.MAIN_HANDS.size():
+			set_option(&"main_hand", HudSettings.MAIN_HANDS[i]))
+	opt_row.add_child(main_pick)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -346,7 +358,9 @@ func _option_check(row: HBoxContainer, text: String, tip: String, key: StringNam
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand"]:
+		return
+	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
 		return
 	hud.set(key, v)
 	_show_options()
@@ -480,6 +494,7 @@ func open() -> void:
 		_show_compass_value()
 		look_slider.set_value_no_signal(hud.look_speed)
 		invert_check.set_pressed_no_signal(hud.invert_y)
+		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
 		ui_slider.set_value_no_signal(hud.ui_scale)
