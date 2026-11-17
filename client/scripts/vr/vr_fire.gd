@@ -12,6 +12,7 @@ extends Node3D
 ##   item: the trigger lights it with that item (a campfire: drop the fuel there first).
 ## While a hand is on such a square a short line by it says what the trigger does (update). One square gets at most
 ## one op per PRESS_S. Everything here comes from the snapshot and the hands; LiveSession checks every op again.
+## With `results` (VrRig's) each op goes with a tag, and CDDA's answer shows by the hand that pressed (VrRig).
 
 const UP_M := 1.2           # the hand at most this high over the square's floor ...
 const DOWN_M := 0.2         # ... and at most this far under it
@@ -24,6 +25,8 @@ const EXTINGUISH := "extinguish"
 var world: WorldView
 ## LiveSession (VrRig passes its cook backend; null in the mock): light_fire / extinguish_fire, looked up by name.
 var backend: Object = null
+## VrRig's: the tags the ops go with ({kind "fire", op, pos, hand} comes back with the answer); null: no tags.
+var results: VrResults = null
 var hints: Array[Label3D] = [null, null]   # the line by each hand
 var sent := 0               # ops the backend took (tests)
 var _last := {}             # square -> clock of its last op
@@ -70,9 +73,9 @@ func target_at(pt: Vector3, held: Variant) -> Dictionary:
 	return {"op": LIGHT, "pos": sq, "item": it, "text": _light_text(it, tables, "trigger: light a fire here")}
 
 
-## The trigger with a hand at `pt` holding `held`: "" nothing to do there, LIGHT / EXTINGUISH sent, "wait" (that
-## square had one less than PRESS_S ago), "refused" (the backend said no; nothing sent).
-func press(pt: Vector3, held: Variant) -> String:
+## The trigger with hand `hand` (0 left, 1 right) at `pt` holding `held`: "" nothing to do there, LIGHT / EXTINGUISH
+## sent, "wait" (that square had one less than PRESS_S ago), "refused" (the backend said no; nothing sent).
+func press(pt: Vector3, held: Variant, hand := -1) -> String:
 	var t := target_at(pt, held)
 	if t.is_empty():
 		return ""
@@ -80,15 +83,18 @@ func press(pt: Vector3, held: Variant) -> String:
 	if _clock < float(_last.get(sq, -INF)) + PRESS_S:
 		return "wait"
 	var me := world.snapshot.player_pos
+	var tag := results.open({"kind": "fire", "op": t["op"], "pos": sq, "hand": hand}) if results != null else 0
 	var ok: Variant = false
 	if t["op"] == EXTINGUISH:
-		ok = backend.call("extinguish_fire", sq, me)
+		ok = backend.call("extinguish_fire", sq, me, tag)
 	elif t["item"] != null:
 		var it: ItemRef = t["item"]
-		ok = backend.call("light_fire", sq, me, float(it.uid), float(it.type))
+		ok = backend.call("light_fire", sq, me, float(it.uid), float(it.type), tag)
 	else:
-		ok = backend.call("light_fire", sq, me)
+		ok = backend.call("light_fire", sq, me, -1.0, -1.0, tag)
 	if not (ok is bool and ok):
+		if results != null:
+			results.close(tag)
 		return "refused"
 	_last[sq] = _clock
 	sent += 1

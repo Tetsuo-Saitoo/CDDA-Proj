@@ -7,6 +7,7 @@
 - 2026-11-17 — The Tab view's rows and pockets show the game's own numbers when the bridge sends them: a stack's count next to its name ("rock (15)"), weight and volume with contents, nothing counted twice. Older bridges still show the type numbers. Client tests pass.
 - 2026-11-17 — An item in your hand shows its state too: frost, heat shimmer, spoilage, its liquid level and gun grime, updated as it warms or goes off (lead-world). Client tests pass.
 - 2026-11-17 — Item tiles and items in the world now decide what is a liquid the same way (one shared check), so a tile sloshes exactly when the 3D item shows a liquid level. Client tests pass.
+- 2026-11-17 — In VR, when the game turns down lighting or putting out a fire, your hand buzzes and the reason shows by it; a refused cook shows the reason on the pot's card. Client tests pass.
 - 2026-11-17 — In VR, punching or swinging hard at a wall, window, door or furniture next to you smashes it, as the strike keys do on the flat screen. Client tests pass.
 - 2026-11-17 — VR radial menus: with an empty hand on a sink, stove or other furniture next to you, the trigger uses it; a quick press does the game's default, holding it shows the choices as a wheel around your hand, and you point with the stick or a flick of the hand and let go to pick. Client tests pass.
 - 2026-11-17 — In VR, items in the item tray and the backpack now show frost, heat, spoilage, the liquid level and gun grime the way items lying in the world do. Client tests pass.

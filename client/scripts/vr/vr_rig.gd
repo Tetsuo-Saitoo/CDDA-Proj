@@ -58,7 +58,9 @@ extends XROrigin3D
 ## when its pot is put back on a lit heat or its heat is lit. Fires (VrFire `fire`, the same backend): the trigger
 ## with a hand low over a fire square next to you puts out a burning one, lights an unlit one (with the carried item
 ## the hand holds, else CDDA's pick), or lights the fuel lying there while the hand holds a carried item; a line by
-## the hand says which.
+## the hand says which. CDDA's answers to these ops (VrResults `results`: the bridge's item_result events, from the
+## backend's events_arrived): a fire op refused buzzes the hand that pressed and says why by it, done shows CDDA's
+## last message about it there; a refused cook puts CDDA's reason on its pot's card.
 ## Radial menus (VrWheel `wheel`): the trigger with an empty hand on furniture next to you (or terrain with an
 ## examine action) uses it in CDDA: a tap does CDDA's default, held its choices show as a wheel around the hand (the
 ## panel hidden, no moving), the hand's stick or a flick of the hand points, letting go picks; B / Y cancel.
@@ -193,6 +195,8 @@ var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature s
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
+var results := VrResults.new()   # L9: tags of the cook and fire ops and CDDA's answers to them
+var _events_from: Object = null  # the backend whose events_arrived is connected to on_events
 var wheel: VrWheel         # radial menus: furniture used by hand, CDDA's choices around the hand (built in _build)
 var strength := STRENGTH   # how much a hand carries without lag (ItemRef.two_handed's rule)
 var notes: Array[Label3D] = [null, null]   # CDDA's reason for a refusal, by the left / right hand
@@ -310,6 +314,7 @@ func _build() -> void:
 	add_child(pack)
 	cook = VrCook.new()
 	cook.world = world
+	cook.results = results
 	tray = ItemTray.new()
 	tray.world = world
 	tray.head = camera
@@ -319,6 +324,7 @@ func _build() -> void:
 	add_child(cook)
 	fire = VrFire.new()
 	fire.world = world
+	fire.results = results
 	add_child(fire)
 	wheel = VrWheel.new()
 	wheel.world = world
@@ -428,6 +434,8 @@ func _process(delta: float) -> void:
 	place_hud(delta)
 	cook.update(delta)   # looks for pots every VrCook.TICK_S, turns the cards every frame
 	fire.backend = cook.backend
+	hook_events()
+	results.tick(delta)
 	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
 			world.snapshot != null and not ui_open())
 	update_wheel()
@@ -1103,7 +1111,8 @@ func fire_press(c: XRController3D) -> bool:
 		return false
 	fire.backend = cook.backend
 	var i := 0 if c == left else 1
-	match fire.press(c.global_position, held_item(i)):
+	hook_events()
+	match fire.press(c.global_position, held_item(i), i):
 		VrFire.LIGHT, VrFire.EXTINGUISH:
 			feel(c, 0.3, 0.05)
 			return true
@@ -1114,6 +1123,42 @@ func fire_press(c: XRController3D) -> bool:
 			say(i, "You can't do that now.")
 			return true
 	return false
+
+
+## L9: on_events listens to the cook backend's events_arrived (LiveSession's; none in the mock), and only to the
+## current one's: a new backend lets go of the old and forgets the answers it was waiting for.
+func hook_events() -> void:
+	var b: Object = cook.backend if cook != null and is_instance_valid(cook.backend) else null
+	if b == _events_from:
+		return
+	if is_instance_valid(_events_from) and _events_from.has_signal("events_arrived") \
+			and _events_from.is_connected("events_arrived", on_events):
+		_events_from.disconnect("events_arrived", on_events)
+	_events_from = b
+	results = VrResults.new()
+	cook.results = results
+	fire.results = results
+	if b != null and b.has_signal("events_arrived"):
+		b.connect("events_arrived", on_events)
+
+
+## L9: the bridge's events: CDDA's answers to the cook and fire ops sent from here (VrResults). A fire op refused:
+## a buzz in the hand that pressed and why by it; done: CDDA's last message since (if any) there. A cook: its pot's
+## card (VrCook.on_result).
+func on_events(events: Variant) -> void:
+	for r: Dictionary in results.on_events(events):
+		var info: Dictionary = r["info"]
+		var kind: Variant = info.get("kind")
+		if kind is String and kind == "cook":
+			cook.on_result(int(info.get("uid", 0)), r["done"], r["why"])
+			continue
+		var h: Variant = info.get("hand")
+		var i: int = h if h is int and (h == 0 or h == 1) else (0 if main_ctrl() == left else 1)
+		if not r["done"]:
+			_feel(_ctrl(i))
+			say(i, r["why"])
+		elif not str(r["said"]).is_empty():
+			say(i, r["said"])
 
 
 ## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.

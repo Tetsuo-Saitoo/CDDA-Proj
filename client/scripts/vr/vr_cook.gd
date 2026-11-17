@@ -29,7 +29,9 @@ extends Node3D
 ## - else the trigger with an empty hand on a "+" line starts that one (press_at; the card says how);
 ## - a paused craft (taking the pot off the heat pauses it) goes on when the pot comes back onto a lit heat out of
 ##   the player's hands, or when its heat is lit under it (not when the player just walks up to it);
-## - for STARTING_S after a send the card says "starting <name>...".
+## - for STARTING_S after a send the card says "starting <name>...";
+## - with `results` (VrRig's) the cook goes with a tag; CDDA refusing it puts its reason on the card for REFUSED_S
+##   instead (the recipe lines stay under it; nothing starts by itself again for those contents and heat).
 ## Recipe ids come from the bridge's answers and the snapshot: only ones LiveSession.recipe_ok takes are used, and
 ## LiveSession checks every op again. A refused send (false) is tried again on the next look.
 
@@ -58,6 +60,7 @@ const BAR_W := 0.2
 const BAR_H := 0.014
 const PIXEL := 0.0006       # Label3D metres per pixel (font 32: a line is about 2 cm high)
 const STEAM_PUFFS := 6
+const REFUSED_S := 6.0      # CDDA's reason for a refused cook stays on the card this long
 const FONT := 32            # the card's font size (pixels)
 const STARTING_S := 4.0     # "starting <name>..." shows this long after a cook was sent
 const PICK_Z := 0.06        # press_at: the hand this near the card's plane ...
@@ -96,12 +99,15 @@ var backend: Object = null:
 		_results.clear()
 		_retry.clear()
 		_sent.clear()
+		_refused.clear()
 		if b != null and is_instance_valid(b) and b.has_signal("recipes_matched"):
 			b.connect("recipes_matched", _on_matched)
 var cards := {}             # uid -> Card shown now (≤ MAX_CARDS)
 var queries_sent := 0       # match_recipes calls that got a query id (tests)
 var redraws := 0            # label texts set (tests: only on a change)
 var cooks_sent := 0         # cook_item calls the backend took (tests)
+## VrRig's: the tags cooks go with ({kind "cook", uid, name} comes back with the answer, on_result); null: no tags.
+var results: VrResults = null
 var _free: Array[Card] = [] # hidden cards for reuse
 var _pending := {}          # uid -> {sig, id, at}: the query in flight for that pot
 var _results := {}          # uid -> clean_result + {sig, until}
@@ -110,6 +116,7 @@ var _sig := {}              # uid -> signature, the pots near the head at the la
 var _seen := {}             # uid -> clock it was last near the head
 var _sent := {}             # uid -> {sig, name, at}: the cook sent for that pot's contents and heat
 var _hold := {}             # uid -> contents_sig a craft sent from here left: not started again by itself
+var _refused := {}          # uid -> {why, until}: CDDA said no to the cook sent for that pot
 var _lit := {}              # uid -> its heat lit at the last look (pots near the head)
 var _paused := {}           # uid -> type: pots seen with a craft in them on a heat
 var _carried := {}          # uid -> true: a paused pot the player held (off the heat) at the last look
@@ -257,9 +264,30 @@ func can_cook() -> bool:
 ## What the card says is starting in pot `uid` ("" nothing): for STARTING_S after a cook for these contents and heat.
 func starting(uid: int) -> String:
 	var s: Dictionary = _sent.get(uid, {})
-	if s.is_empty() or s["sig"] != _sig.get(uid) or _clock >= float(s["at"]) + STARTING_S:
+	if s.is_empty() or s["sig"] != _sig.get(uid) or _clock >= float(s["at"]) + STARTING_S or not refusal(uid).is_empty():
 		return ""
 	return s["name"]
+
+
+## CDDA's reason for refusing the cook sent for pot `uid`, for REFUSED_S after it came; "" none.
+func refusal(uid: int) -> String:
+	var r: Dictionary = _refused.get(uid, {})
+	if r.is_empty():
+		return ""
+	if _clock >= float(r["until"]):
+		_refused.erase(uid)
+		return ""
+	return r["why"]
+
+
+## CDDA's answer to the cook sent for pot `uid` (VrRig, from VrResults): refused, `why` shows on its card.
+func on_result(uid: int, done: bool, why: String) -> void:
+	if done or not _sent.has(uid):
+		_refused.erase(uid)
+		return
+	_refused[uid] = {"why": VrResults.clean(why), "until": _clock + REFUSED_S}
+	while _refused.size() > MAX_KEPT:
+		_refused.erase(_refused.keys()[0])
 
 
 ## The card line under the hand at `pt` (world): {uid, line (0 = the top one), match (the clean_match it lists,
@@ -485,9 +513,12 @@ func card_text(p: Dictionary, snap: Snapshot) -> String:
 		lines.append(craft_text(cw, tables))
 	elif not cw.contents.is_empty() and can_ask():
 		var st := starting(p["uid"])
+		var no := refusal(p["uid"])
 		if not st.is_empty():
 			lines.append(_cap("starting %s..." % st))
 		else:
+			if not no.is_empty():
+				lines.append(_cap(no))
 			lines.append_array(_recipe_lines(p, snap))
 	return "\n".join(lines)
 
@@ -575,9 +606,13 @@ func _maybe_cook(snap: Snapshot, p: Dictionary) -> void:
 func _cook(p: Dictionary, recipe: String, nm: String) -> bool:
 	var uid: int = p["uid"]
 	var cw: Snapshot.Cookware = p["cw"]
-	var v: Variant = backend.call("cook_item", float(uid), float(cw.type), p["square"], recipe)
+	var tag := results.open({"kind": "cook", "uid": uid, "name": nm}) if results != null else 0
+	var v: Variant = backend.call("cook_item", float(uid), float(cw.type), p["square"], recipe, 1, tag)
 	if not (v is bool and v):
+		if results != null:
+			results.close(tag)
 		return false
+	_refused.erase(uid)
 	cooks_sent += 1
 	_sent[uid] = {"sig": _sig.get(uid, 0), "name": nm, "at": _clock}
 	return true
@@ -627,7 +662,7 @@ func _prune() -> void:
 	for uid: int in _seen.keys():
 		if _clock - float(_seen[uid]) > FORGET_S or (_seen.size() > MAX_KEPT and not _sig.has(uid)):
 			_seen.erase(uid)
-	for d: Dictionary in [_results, _retry, _sent, _hold, _paused]:
+	for d: Dictionary in [_results, _retry, _sent, _hold, _paused, _refused]:
 		for uid: int in d.keys():
 			if not _seen.has(uid):
 				d.erase(uid)
