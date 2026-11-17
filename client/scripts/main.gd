@@ -223,6 +223,7 @@ func _ready() -> void:
 		item_bodies.held = item_actions.hidden   # items being taken stay static
 		add_child(item_bodies)
 		hands.bodies = item_bodies
+		item_looks.body_slot = item_bodies.slot   # items in reach are bodies: their state shells follow them
 		# Slices 3-4: a body at rest somewhere new is told to CDDA (bridge ops "spot" / "place"). Inert until the
 		# live session has place_item / spot_item (the mock has neither): nothing is sent, bodies behave as before.
 		item_placer = ItemPlacer.new()

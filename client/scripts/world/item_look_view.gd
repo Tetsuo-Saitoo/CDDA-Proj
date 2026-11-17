@@ -23,6 +23,9 @@ enum { S_TEMP, S_ROT, S_FILL, S_TYPE, S_SEE, S_ML, S_DIRT, S_SIZE }
 static var _shader: Shader
 
 var world: WorldView
+## Where an item is drawn when WorldView hides its static copy for a physics body (E2; main sets ItemBodies.slot):
+## uid -> an entry like WorldView.item_slot, [] when it has none. Items in reach, the ones with states, are bodies.
+var body_slot := Callable()
 ## Where the player is (world space): shells go to the items nearest to it.
 var focus := Vector3.ZERO
 var _states := {}      # uid -> PackedInt32Array (S_SIZE), only items with something to show
@@ -80,18 +83,29 @@ func tick(delta: float) -> void:
 		_pick_in = PICK_EVERY_S
 		_pick()
 	for uid: int in _shells.keys():
-		var slot: Array = world.item_slot(uid) if world != null else []
+		var slot := slot_of(uid)
 		var sh: Node3D = _shells[uid]
 		sh.visible = not slot.is_empty()
 		if sh.visible:
 			_place(sh, slot)
 
 
+## Where item `uid` is drawn: WorldView's static copy, else its physics body (body_slot); [] when neither shows it
+## (in a hand, gone, its drawer shut). A body's entry is checked for shape before it is used.
+func slot_of(uid: int) -> Array:
+	var slot: Array = world.item_slot(uid) if world != null else []
+	if slot.is_empty() and body_slot.is_valid():
+		var b: Variant = body_slot.call(uid)
+		if b is Array and (b as Array).size() >= 6 and b[1] is int and b[3] is Vector3 and b[4] is Transform3D 				and (b[3] as Vector3).is_finite() and (b[4] as Transform3D).is_finite():
+			slot = b
+	return slot
+
+
 func _pick() -> void:
 	var near := []   # [distance², uid, slot]
 	if world != null:
 		for uid: int in _states:
-			var slot: Array = world.item_slot(uid)
+			var slot := slot_of(uid)
 			if not slot.is_empty():
 				near.append([(slot[3] as Vector3).distance_squared_to(focus), uid, slot])
 	near.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
