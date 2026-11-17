@@ -410,7 +410,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	_stir_pos = snap.player_pos
 	if hints != null and vr == null and live != null and _in_main_loop():
 		hints.trigger("start")   # G6: once, ever (seen ids are kept)
-		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding
+		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding, tiredness
 			hints.trigger(id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,

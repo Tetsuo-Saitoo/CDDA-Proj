@@ -290,6 +290,15 @@ func _test_cdda_keys() -> void:
 	bang.physical_keycode = KEY_1
 	_check.call(InputActions.pressed(bang, &"cdda_safemode") and not InputActions.pressed(bang, &"hand_off"),
 			"keys: Shift+1 is safe mode, not the left hand")
+	var zz := eat.duplicate() as InputEventKey
+	zz.physical_keycode = KEY_S
+	var long := eat.duplicate() as InputEventKey
+	long.physical_keycode = KEY_PERIOD
+	_check.call(InputActions.pressed(zz, &"cdda_sleep") and not InputActions.pressed(zz, &"move_back")
+			and InputActions.pressed(long, &"cdda_wait") and not InputActions.pressed(long, &"wait")
+			and InputActions.CDDA.get(&"cdda_sleep") == "sleep" and InputActions.CDDA.get(&"cdda_wait") == "wait",
+			"keys: Shift+S sleeps and Shift+. waits longer (CDDA's sleep and wait, both on the bridge's allow-list), "
+			+ "not a step back or one turn")
 
 
 ## Rebinding: hostile key files, save/load, and the key menu.

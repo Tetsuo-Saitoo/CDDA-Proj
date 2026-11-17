@@ -1342,11 +1342,18 @@ func _test_hints() -> void:
 	var every := Hints.due(snap, hud)
 	hud.needs["thirst"] = {"value": 50, "word": "Thirsty", "level": HudData.HURT}
 	var thirsty := Hints.due(Snapshot.new(), hud)
+	var rested := HudData.new()
+	rested.needs["sleepiness"] = {"value": HudData.TIRED - 1, "word": "", "level": HudData.need_level("sleepiness", HudData.TIRED - 1)}
+	var awake := Hints.due(null, rested)
+	rested.needs["sleepiness"] = {"value": HudData.TIRED, "word": "Tired", "level": HudData.need_level("sleepiness", HudData.TIRED)}
+	var tired := Hints.due(null, rested)
+	rested.needs["sleepiness"] = {"value": 1, "word": "", "level": "x"}
 	_check.call(calm.is_empty() and with_friend.is_empty() and engorged == (["hostile"] as Array[String])
 			and every == (["hostile", "eat", "bleed"] as Array[String])
-			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty(),
-			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding (%s, %s, %s)"
-			% [engorged, every, thirsty])
+			and thirsty == (["eat", "bleed"] as Array[String]) and Hints.due(null, null).is_empty()
+			and awake.is_empty() and tired == (["tired"] as Array[String]) and Hints.due(null, rested).is_empty(),
+			"hints: due() finds a hostile (not a friend), hunger (not engorged) or thirst, bleeding, tiredness from "
+			+ "CDDA's Tired on (%s, %s, %s, %s)" % [engorged, every, thirsty, tired])
 	var h := Hints.new()
 	h.path = path
 	var fresh := h.load_file() == "" and h.enabled and h.seen.is_empty() and not h.visible
