@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-16 — Tester AppImage test-2026-11-16 (private test repo, not a release) from main cac1f60 (5110d78 + a build-script fix) + fork 9cd86a0, after the QA lead's security sign-off of the range since test-2026-11-14; no personal strings; QA smoke passes (town, menu, `--live --quick`, `--vr` without a runtime, chargen/live/range/game-over live tests). `tools/build/wsl_build.sh` now leaves `.claude/` (session worktrees) out of the copy. Three CC0 Kenney kits (furniture, food, survival; from opengameart.org) are in the gitignored `tools/out/cc0/` for lead-world to turn into first real models.
+- 2026-11-16 — Options: a Weather sounds slider next to Volume (rain, wind and thunder on their own; it takes effect once the weather uses the new channel). Client tests pass.
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
