@@ -89,6 +89,7 @@ static func _shell_for(mi: MeshInstance3D) -> MeshInstance3D:
 		return null
 	var m := ShaderMaterial.new()
 	m.shader = OVERLAY_SHADER
+	m.render_priority = WorldLighting.UNDER_PRIORITY   # drawn before the light pass: darkened at night, no glow
 	m.set_shader_parameter("box_centre", box.get_center())
 	m.set_shader_parameter("half_extents", box.size / 2.0)
 	var shell := MeshInstance3D.new()

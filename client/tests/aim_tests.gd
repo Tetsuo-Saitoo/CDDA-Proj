@@ -1619,7 +1619,8 @@ func _test_gun_grime(root: Node) -> void:
 			and bs.mesh == bm and bmat != null and bmat.shader == sh and bmat.get_shader_parameter("grime") == 0.5
 			and bmat.get_shader_parameter("half_extents") == bm.get_aabb().size / 2.0
 			and bmat.get_shader_parameter("box_centre") == bm.get_aabb().get_center()
-			and bs.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+			and bs.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			and bmat.render_priority == WorldLighting.UNDER_PRIORITY,
 			"gun grime: each mesh of a model wears a shell sized to its box, at the level (%d meshes)" % n)
 	_check.call(body.material_override == own and body.material_overlay == outline and bm.material == null
 			and barrel.material_overlay == null, "gun grime: the model's own materials and overlay are left alone")
