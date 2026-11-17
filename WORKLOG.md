@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Bridge: `player.item_amounts` in the snapshot: each carried or in-reach item's stack count, weight and volume as CDDA counts them (G2, exact numbers in the Tab view). Snapshot test checks a bottle with water and a stack of rounds.
 - 2026-11-17 — Bridge: a gun shot's `projectile` event names its ammo (`detail` = the ammo's itype), so the client can show what flies. Events test and sim test check it.
 - 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
