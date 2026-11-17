@@ -636,6 +636,16 @@ func _test_target_names(o: Vector3i) -> void:
 	_check.call(texts == ["zombie (hostile, uninjured)   1 E   (1)", odd + " (neutral, nearly dead)   2 S, 2 E   (2)",
 			"3 E   (3)", "someone (friendly, heavily injured)   2 N, 4 E   (4)", "creature (hostile, nearly dead)   5 W   (5)"],
 			"target names: name, attitude and health per creature; NPCs someone, unknown types creature %s" % [texts])
+	var ann := Snapshot.Creature.new()
+	ann.kind = Snapshot.Creature.NPC
+	ann.name = "Ann Smith"
+	ann.attitude = Snapshot.Creature.HOSTILE
+	var rex := Snapshot.Creature.new()
+	rex.type = 1
+	rex.name = "Rex"
+	var said := [TargetRequestWidget.creature_text(ann, tables), TargetRequestWidget.creature_text(rex, tables)]
+	_check.call(said[0] == "Ann Smith (hostile, uninjured)" and (said[1] as String).begins_with("zombie ("),
+			"target names: an NPC by the snapshot's name; a monster by its type %s" % [said])
 	var cols := []
 	for b in w.candidate_buttons:
 		cols.append(b.get_theme_color("font_color") if b.has_theme_color_override("font_color") else null)

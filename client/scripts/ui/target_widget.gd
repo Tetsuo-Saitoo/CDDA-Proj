@@ -2,7 +2,7 @@ class_name TargetRequestWidget
 extends RequestWidget
 ## `target` requests (look_around, target_ui): a cursor square, the creatures in view and CDDA's actions.
 ## Candidates are named from the snapshot when `world_state` gives one (name, hostile / friendly, health in
-## words; NPCs are "someone": the snapshot has no NPC names).
+## words; NPCs by the snapshot's name, "someone" without one).
 ## Keys: arrows / numpad move the cursor (relative to the screen), < > change level, Tab / Shift+Tab next /
 ## previous creature, Enter = the main action (FIRE, else CONFIRM or SELECT, else the first), Space checks
 ## the square (CDDA asks again with a new status), 1-9 press an action, Esc cancels. Mouse: click a creature,
@@ -180,11 +180,13 @@ func primary_index() -> int:
 	return 0 if not actions.is_empty() else -1
 
 
-## "zombie (hostile, lightly injured)": the creature's name (monsters from the id tables, NPCs "someone"), how
-## it stands to the player, and its health in words.
+## "zombie (hostile, lightly injured)": the creature's name (monsters from the id tables, NPCs from the snapshot,
+## "someone" when it has none), how it stands to the player, and its health in words.
 static func creature_text(c: Snapshot.Creature, tables: IdTables) -> String:
 	var who := "someone"
-	if c.kind == Snapshot.Creature.MONSTER:
+	if c.kind == Snapshot.Creature.NPC and not c.name.is_empty():
+		who = c.name
+	elif c.kind == Snapshot.Creature.MONSTER:
 		var d: IdTables.Def = tables.def_at("mtype", c.type) if tables != null else null
 		who = plain_name(d.name) if d != null else ""
 		if who.is_empty():

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Targeting names people: when you aim or look around, an NPC shows by name instead of "someone". Client tests pass.
 - 2026-11-17 — Item tiles, slice 4: a glass jar or clear bottle shows as glass in the Tab view and the hands panel, and an empty one says "empty". Client tests pass.
 - 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
