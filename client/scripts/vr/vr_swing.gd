@@ -126,7 +126,7 @@ func strike_lines(i: int) -> Array:
 
 
 ## The point of `node`'s meshes (their boxes' corners; MAX_NODES nodes at most) farthest from `from`, in the world;
-## null when it has none or a bad pose.
+## null when it has none or a bad pose. A copy's live look (ItemLookView.DRESS) isn't counted.
 static func tip_of(node: Node3D, from: Vector3) -> Variant:
 	var best: Variant = null
 	var best_d := -1.0
@@ -135,6 +135,8 @@ static func tip_of(node: Node3D, from: Vector3) -> Variant:
 	while not todo.is_empty() and seen < MAX_NODES:
 		var n: Node = todo.pop_back()
 		seen += 1
+		if n.name == ItemLookView.DRESS:
+			continue   # a copy's live look (ItemLookView.dress): its shells sit 2 mm out over the copy's own meshes
 		todo.append_array(n.get_children())
 		var m := n as MeshInstance3D
 		if m == null or m.mesh == null or not m.is_inside_tree():

@@ -57,6 +57,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_put_in()
 	_test_same_pocket()
 	_test_quick_switch()
+	_test_dress()
 	_test_pending()
 	_test_refused()
 	_test_close()
@@ -462,6 +463,32 @@ func _test_quick_switch() -> void:
 	_rig.update_hands(0.016, true)
 	_check.call(none and _snap.seq == seq3 + 1 and int(_row(PLANK)[1]) == 0 and _clean(),
 			"vr pack: quick switch into a hand CDDA holds something in: nothing sent, it stays a carried copy")
+
+
+## A model in the pack wears its item's live look as items lying in the world do (ItemLookView.dress_from), again on
+## a newer snapshot; the state gone: the look comes off.
+func _test_dress() -> void:
+	var pack := _rig.pack
+	var model := func(uid: int) -> Node3D:
+		for e: Dictionary in pack.items:
+			if e["uid"] == uid and is_instance_valid(e.get("visual")):
+				return e["visual"]
+		return null
+	_snap.item_states[HAMMER] = PackedInt32Array([3, -1, -1, 0, 0, -1, -1])
+	_snap.seq += 1
+	_mock.changed.emit(_snap)
+	_rig.update_hands(0.016, true)
+	var v: Node3D = model.call(HAMMER)
+	var on := v != null and v.get_node_or_null(ItemLookView.DRESS) != null
+	var plank: Node3D = model.call(PLANK)
+	var plain := plank != null and plank.get_node_or_null(ItemLookView.DRESS) == null
+	_snap.item_states.erase(HAMMER)
+	_snap.seq += 1
+	_mock.changed.emit(_snap)
+	_rig.update_hands(0.016, true)
+	v = model.call(HAMMER)
+	_check.call(on and plain and v != null and v.get_node_or_null(ItemLookView.DRESS) == null,
+			"vr pack: a model wears its item's live look (frozen) on a newer snapshot, others don't; it comes off with the state")
 
 
 ## An action in flight: its model dims and can't be gripped; done: back to normal.
