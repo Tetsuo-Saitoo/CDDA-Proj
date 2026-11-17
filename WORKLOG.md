@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Live item state on 3D items (lead-world): items lying near you get frost when frozen (fainter when cold), a heat shimmer when hot, a brown tint as food goes off and, in see-through containers, the liquid up to its level, once the bridge sends the states; the values are shared with the item icons. Client tests pass.
 - 2026-11-17 — Counter corners (lead-world): an L of counters now meets in a Kenney corner cabinet, flush with the counters' backs, instead of two counters overlapping; the converter can turn a piece and stretch it to a rect for that. Client tests pass.
 - 2026-11-16 — A monster killed with nothing else happening now lies dead as soon as its fall ends, instead of vanishing until the next turn (lead-world; found by the combat lead's grenade check). Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
