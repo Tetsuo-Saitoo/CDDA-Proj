@@ -47,7 +47,9 @@ extends XROrigin3D
 ## the biggest one off (nothing worn: a buzz); letting go in front leaves it floating open there, one compartment
 ## per CDDA pocket. Looking costs nothing (no CDDA action). A free hand on an item in it holds that item
 ## (Hands.adopt) and lets it go the usual way; letting go of any held item over a compartment puts it into that
-## pocket. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
+## pocket. Quick switch: an item taken out of the pack and carried SWITCH_M from it goes into that hand in CDDA too
+## (main: wielded; off: held), when that hand holds nothing there (quick_switch), so a hose and a can, a weapon or
+## a drink in hand work at once; the off-hand item let go over its own pocket is just put away. Grip its frame or handle to carry it again; let go over the shoulder, or press the trigger with a hand
 ## on its frame (or holding it), to close it. It stays put in the world while you walk or teleport and closes
 ## itself past VrPack.CLOSE_M from the head or when the bag is gone.
 ## Cooking (block L9, VrCook `cook`): a card over each pot on a heat square near the head (heat, contents, CDDA's
@@ -165,6 +167,7 @@ const VEL_RATE := 25.0     # 1/s: hand speed smoothing (about the last 40 ms)
 const MAX_HAND_SPEED := 15.0   # m/s: a faster reading is a tracking jump, not a throw
 const THROW_FLAT_SPEED := 1.5  # m/s: a throw needs at least this much level speed (else a slam down: put down)
 const HAND_OVER_M := 0.2       # a grip this near the other hand's item's grip point takes it over
+const SWITCH_M := 0.3          # an item taken out of the open pack and carried this far from it: into that CDDA hand
 const GRAVITY := 9.8
 
 ## The shared hands (main.gd); null: the controllers grab nothing.
@@ -205,6 +208,7 @@ var _pointed: Array[Dictionary] = [{}, {}]     # the item each hand's pull ray m
 var _ray_wait: Array[float] = [0.0, 0.0]       # seconds to the next look
 var _fly_from: Array[Transform3D] = [Transform3D(), Transform3D()]   # where a pulled copy lay
 var _fly_t: Array[float] = [-1.0, -1.0]        # seconds into its flight; < 0: none
+var _from_pack: Array[int] = [-1, -1]          # uid each hand took out of the open pack, until quick_switch; -1 none
 
 
 ## Options after `--` over the defaults (VrSettings.ARGS: --vr-move= --vr-turn= --vr-snap= ...).
@@ -506,6 +510,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 		var held := hands.holding(id)
 		if held.is_empty():
 			_fly_t[i] = -1.0
+			_from_pack[i] = -1
 			var t := {}
 			var pt := {}   # the open pack goes first, the tray, then what the hand touches, then what its pull ray meets
 			var tt := {}
@@ -535,6 +540,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 		_pointed[i] = {}
 		_ray_wait[i] = 0.0
 		pack.show_drop(i, c.global_position if held.get("kind") == "item" else Vector3.INF)
+		quick_switch(i)
 		if held.get("kind") == "door":
 			var n: Variant = held.get("node")   # untyped: a leaf can be freed under a hand (D5)
 			if is_instance_valid(n):
@@ -550,6 +556,27 @@ func update_hands(delta: float, all_hands := false) -> void:
 		elif drawn[i] is Transform3D:
 			_weigh(i, drawn[i], delta)
 	_sync_held()
+
+
+## Hand i holds an item it took out of the open pack and has carried it SWITCH_M from the pack (or the pack closed):
+## CDDA moves it into that hand (Hands.hold: main = wield, off = held), once, and only when that hand holds nothing
+## in CDDA (nothing is put away to make room; it stays a carried copy as before). Returns the hand asked for, "" if
+## none. A refusal buzzes and shows CDDA's reason (Hands.refused); the copy stays in the hand.
+func quick_switch(i: int) -> String:
+	if _from_pack[i] < 0 or hands == null:
+		return ""
+	var c := _ctrl(i)
+	var it: ItemRef = hands.holding(HAND_IDS[i]).get("item")
+	if it == null or it.uid != _from_pack[i] or not it.carried:
+		_from_pack[i] = -1
+		return ""
+	if pack.near(c.global_position, SWITCH_M):
+		return ""   # still at the pack
+	_from_pack[i] = -1
+	if cdda_holds(c) != null:
+		return ""
+	var into := "main" if c == main_ctrl() else "off"
+	return into if hands.hold(HAND_IDS[i], it, into) else ""
 
 
 ## Hand i is the main hand and a gun shows in it (VrGun).
@@ -752,6 +779,8 @@ func grab_with(c: XRController3D) -> bool:
 	var ok := false
 	if not pt.is_empty():
 		ok = pack.grip(i, pt)
+		if ok and pt.get("kind") == "item" and pt.get("item") is ItemRef:
+			_from_pack[i] = (pt["item"] as ItemRef).uid
 	elif not tt.is_empty() and t.is_empty():
 		ok = false   # the tray's frame or a page arrow: the trigger works those
 	elif t.is_empty() and looks and not pack.is_open() and over_shoulder(camera.global_transform, c.global_position):
