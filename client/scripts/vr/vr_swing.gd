@@ -9,6 +9,9 @@ extends RefCounted
 ## the main controller is CDDA's main hand) and the aim AimController kept answers CDDA's `swing` request
 ## (contracts/ui_requests.md, Melee). CDDA rolls the hit and owns time, damage and reach: how hard you swing changes
 ## nothing.
+## A line that meets no creature but ends in a wall, window, door or furniture next to the player (a hand at least
+## SMASH_SPEED fast: a bit more than a strike, so brushing a wall smashes nothing) smashes that square: CDDA's smash
+## (AimController.SMASH_AT and smash_square, as the flat screen's strike keys at furniture) through the same queue.
 ## One strike per swing: the hand must slow under REARM_SPEED before it strikes again, at least GAP_S apart, and no
 ## hand strikes, or even looks for a figure (that would replace the kept aim), while a strike is in flight: until
 ## CDDA's swing request was answered (AimController used the kept aim up), FLIGHT_S at most. No strikes while a menu
@@ -25,6 +28,7 @@ extends RefCounted
 signal struck(hand: String, dir: String, uid: int)
 
 const SWING_SPEED := 2.5   # m/s: a hand this fast swings ...
+const SMASH_SPEED := 3.0   # ... and this fast smashes what its line ends in (no creature on it)
 const REARM_SPEED := 1.0   # ... and strikes again only after slowing under this
 const GAP_S := 0.4         # seconds between a hand's strikes at least
 const FLIGHT_S := 1.5      # a strike sent blocks the next this long, or until its swing request was answered
@@ -49,6 +53,7 @@ var queue_action := Callable()
 var strikes := 0           # strikes sent (tests)
 var hits := 0              # strikes CDDA confirmed as hits (tests)
 var misses := 0            # strikes CDDA said missed (tests)
+var smashes := 0           # smashes sent (tests)
 var label: Label3D        # the technique's name by the hand that struck; null until one shows
 var _label_left := 0.0    # seconds before it is gone
 var _armed: Array[bool] = [true, true]
@@ -79,8 +84,16 @@ func update(delta: float) -> void:
 			continue
 		if rig.ui_open() or not can_swing(i):
 			continue
-		for line: Array in strike_lines(i):
+		var lines := strike_lines(i)
+		var spent := false
+		for line: Array in lines:
 			if _strike(i, line[0], line[1], snap):
+				spent = true
+				break
+		if spent or speed < SMASH_SPEED:
+			continue
+		for line: Array in lines:
+			if _smash(i, line[0], line[1], snap):
 				break
 
 
@@ -234,6 +247,29 @@ func _fade_label(d: float) -> void:
 	label.modulate.a = clampf(_label_left / LABEL_FADE_S, 0.0, 1.0)
 	label.outline_modulate.a = label.modulate.a
 	label.visible = _label_left > 0.0
+
+
+## The line from a to b, no creature on it: when it ends in a wall, window, door or furniture in a square next to
+## the player (AimController.smash_at within the line's length), CDDA's smash goes out at that square for hand i.
+## True when it did, or when the queue didn't take it (the hand is spent for this swing either way).
+func _smash(i: int, a: Vector3, b: Vector3, snap: Snapshot) -> bool:
+	var am := aim if aim != null else rig.gun.aim
+	var q := queue_action if queue_action.is_valid() else rig.gun.queue_action
+	if am == null or not q.is_valid():
+		return false
+	var sq: Variant = am.smash_at(a, b - a, snap.player_pos, false, a.distance_to(b))
+	if not sq is Vector3i:
+		return false
+	_armed[i] = false
+	_cool[i] = GAP_S
+	am.smash_square = sq
+	var ok: Variant = q.call(AimController.SMASH_AT)
+	if not (ok is bool and ok):
+		am.smash_square = null   # nothing went out: no square left for a later smash
+		return true
+	smashes += 1
+	rig.feel(rig._ctrl(i), 0.8, 0.1)
+	return true
 
 
 ## The line from a to b: when it meets a figure standing 1 - 2 squares off the player along one of the 8 ways
