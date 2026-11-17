@@ -2,9 +2,11 @@ class_name ItemLookView
 extends Node3D
 ## Live item state on the 3D items lying in the world (block "Live item tiles"; values and colours: ItemLook):
 ## frost on cold and frozen items, a heat shimmer on hot ones, a spoilage tint on food going off, and the
-## liquid in a see-through container up to its level. Each such item near `focus` gets a thin see-through shell
-## over its own mesh (its model's meshes, or its placeholder's box) with shaders/item_state.gdshader; items
-## with nothing to show get none, so the cost is only for the few that have a state.
+## liquid in a see-through container up to its level, grime on a fouled gun. Each such item near `focus` gets a
+## thin see-through shell over its own mesh (its model's meshes, or its placeholder's box) with
+## shaders/item_state.gdshader, plus GunGrime's shells under those meshes for a fouled gun (lying guns are drawn
+## as shared multimeshes, so the grime can't go on the gun's own meshes); items with nothing to show get none,
+## so the cost is only for the few that have a state.
 ## States come from the snapshot (`player.item_states`, Snapshot.item_states: carried items and those lying in
 ## the player's reach) through set_states; where an item lies, and whether it is shown (not in a hand, its
 ## drawer open), from WorldView.item_slot, so carried items get no shell here. Shells follow their items every
@@ -47,10 +49,15 @@ func set_states(states: Dictionary) -> void:
 
 
 ## Whether a state has anything to show on a 3D item: cold, frozen or hot, rot past ItemLook.TINT_FROM, or a
-## see-through container holding some liquid.
+## see-through container holding some liquid, or a fouled gun.
 static func shows(s: PackedInt32Array) -> bool:
 	return ItemLook.temp_of(s[S_TEMP]) != ItemLook.Temp.NORMAL or ItemLook.rot_strength(ItemLook.rot_of(s[S_ROT])) > 0.0 \
-			or (s[S_SEE] == 1 and ItemLook.level(s[S_FILL]) > 0.0)
+			or (s[S_SEE] == 1 and ItemLook.level(s[S_FILL]) > 0.0) or grime_of(s) > 0.0
+
+
+## A gun's fouling as grime 0..1 (GunGrime, the held gun's mapping); 0 for a clean gun or anything else.
+static func grime_of(s: PackedInt32Array) -> float:
+	return GunGrime.grime_for(ItemLook.dirt_of(s[S_DIRT]))
 
 
 func shell_count() -> int:
@@ -166,6 +173,7 @@ static func paint(sh: Node3D, s: PackedInt32Array, liquid: Color) -> void:
 	var lv := ItemLook.level(s[S_FILL]) if s[S_SEE] == 1 else 0.0
 	sh.set_meta(&"level", lv)
 	mat.set_shader_parameter(&"liquid", Color(liquid.r, liquid.g, liquid.b, LIQUID_ALPHA if lv > 0.0 else 0.0))
+	GunGrime.apply(sh, grime_of(s))   # a grime shell under each of the shell's meshes; none when clean
 
 
 ## For a shell that isn't placed by this view (in a hand): the liquid's surface from the shell's place now.

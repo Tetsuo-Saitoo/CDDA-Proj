@@ -136,6 +136,18 @@ func _test_shells(root: Node, data: Variant, tables: IdTables) -> void:
 			U_OFF: PackedInt32Array([1]), U_HOT: [1, -1, -1, 0, 0, -1, -1]})
 	view.tick(0.01)
 	_check.call(view.shell_count() == 1 and view.shell(U_ICE) != null, "item state: new states replace the old; malformed ones are left out")
+	view.set_states({U_NONE: PackedInt32Array([0, -1, -1, 0, 0, -1, 5000])})
+	view.tick(0.01)
+	var gun := view.shell(U_NONE)
+	var gun_mat := gun.get_meta(&"mat") as ShaderMaterial if gun != null else null
+	_check.call(gun != null and is_equal_approx(GunGrime.level_of(gun), 0.5) and GunGrime.meshes(gun).size() >= 1
+			and gun_mat.get_shader_parameter(&"frost") == 0.0 and gun_mat.get_shader_parameter(&"heat") == 0.0
+			and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, 0])) and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, -1]))
+			and not ItemLookView.shows(PackedInt32Array([0, -1, -1, 0, 0, -1, 99999])),
+			"item state: a fouled gun lying in the world gets GunGrime's grime (half at 5000) and nothing else; clean or bad dirt shows nothing")
+	if gun != null:
+		ItemLookView.paint(gun, PackedInt32Array([1, -1, -1, 0, 0, -1, -1]), ItemLook.LIQUID_DEFAULT)
+	_check.call(gun != null and GunGrime.level_of(gun) == 0.0, "item state: the grime goes when the gun is clean")
 	view.set_states({})
 	view.tick(0.01)
 	_check.call(view.shell_count() == 0 and view.get_child_count() == 0, "item state: no states, no shells")
