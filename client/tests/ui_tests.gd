@@ -1333,6 +1333,17 @@ func _test_busy_note() -> void:
 	n.tick(8000 + a, true)
 	_check.call(none_yet and shown and gone and not n.visible and n.quiet_since == -1,
 			"busy note: shown once the game went quiet, gone with the next request; a stop forgets the quiet")
+	var s := Snapshot.new()
+	s.asleep = true
+	n.on_snapshot(s)
+	n.on_request({}, 9000)
+	n.tick(9000 + BusyNote.ACTIVITY_MS - 1, true)
+	var not_yet := not n.visible
+	n.tick(9000 + BusyNote.ACTIVITY_MS, true)
+	var sleeping := n.visible and n.text == "Sleeping."
+	n.tick(9000, false)
+	_check.call(not_yet and sleeping and n.word == "" and not n.visible, "busy note: with the snapshot's word it "
+			+ "shows after %d ms (%s); a stop forgets the word" % [BusyNote.ACTIVITY_MS, n.text])
 	n.free()
 
 

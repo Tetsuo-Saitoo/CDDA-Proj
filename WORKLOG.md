@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — The waiting line now says what you are doing: "Sleeping...", "Waiting..." or the game's own word for a longer task, once the bridge sends it. Client tests pass.
 - 2026-11-17 — While you wait or sleep, "Time passes..." shows under the crosshair, so the still screen doesn't look frozen. Client tests pass; not seen on screen yet.
 - 2026-11-17 — New keys: Shift+S sleeps and Shift+. waits longer (the game asks how long), and a one-time hint says so when you first get tired. Client tests pass; not tried in a live game yet.
 - 2026-11-17 — The Tab view's rows and pockets show the game's own numbers when the bridge sends them: a stack's count next to its name ("rock (15)"), weight and volume with contents, nothing counted twice. Older bridges still show the type numbers. Client tests pass.

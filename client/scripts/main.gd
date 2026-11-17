@@ -962,6 +962,7 @@ func _on_live_snapshot(snap: Snapshot) -> void:
 	_submit_ms = Time.get_ticks_msec()
 	if _first_live_snapshot:
 		_boot_log("first snapshot fetched and parsed (%d submaps)" % snap.submaps.size())
+	busy_note.on_snapshot(snap)   # "Sleeping...", "Waiting..." while the game runs on
 	world.submit(snap)
 
 
