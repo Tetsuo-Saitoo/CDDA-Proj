@@ -20,6 +20,7 @@
 - 2026-11-16 — Options: a Volume slider in the F1 menu for all the game's sounds (0 is silent), saved between games, in VR too. Client tests pass.
 - 2026-11-16 — Options: a Weather setting (High, Low, Minimal) in the F1 menu, for slower graphics cards; it shows at once. Client tests pass.
 - 2026-11-16 — Options: menu size (75 to 200 %) in the F1 menu, for big or small screens; it applies when the menu closes. Client tests pass.
+- 2026-11-16 — Bridge: action allow-list for the main loop (only the actions the client sends; `debug` only with cheats allowed) and bounded polling (a CDDA screen that only polls is told to close after 256 polls, then asked). Sim test `actions` checks both.
 - 2026-11-16 — Bridge: character names, input validation for every source (random names, a name taken over in play); the save id is set once when a new game starts. Chargen test and sim test `names` check it.
 - 2026-11-16 — Bridge: L9 cooking, the rest of the bridge side. A pot's craft pauses when the pot leaves its heat or the heat goes out and goes on with `cook` again; the finished food or water lands in the pot; new item ops `light` and `extinguish` (CDDA's own fire starting and fireplace "Extinguish fire"); `pour` works from a pot standing in reach. Sim test `cooking` covers each.
 - 2026-11-16 — Puddles on the open ground (lead-world): they fill in rain, more slowly than the ground wets, dry in game time after it, hide under snow, and draw nothing while dry; none at minimal weather quality. Client tests pass; render check pictures look right.
