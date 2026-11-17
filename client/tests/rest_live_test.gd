@@ -27,6 +27,7 @@ const STALL_MS := 60000             # no new turn for this long: a watch gives u
 const NIGHT_TURNS := 8 * 3600
 const NIGHT_MINUTE := 22 * 60       # the time of day the sleep starts at
 const OP_TIMEOUT_MS := 30000
+const SAID_MAX := 12
 
 var _failed := 0
 var _main: Main
@@ -34,6 +35,7 @@ var _live: LiveSession
 var _done := {}           # range op id -> error ("" = done), from LiveSession.range_done
 var _answered := 0
 var _hold := false        # true: requests are left to the step waiting for them
+var _said: Array[String] = []   # CDDA's latest messages (the bridge's message events), at most SAID_MAX
 
 
 func _initialize() -> void:
@@ -55,6 +57,7 @@ func _run() -> void:
 	await process_frame
 	_live = _main.live
 	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
+	_live.events_arrived.connect(_on_events)
 	var r := _find_button(_main.main_menu, "Test range") if _main.main_menu != null else null
 	_check(r != null, "the menu has \"Test range\"")
 	if r == null:
@@ -122,6 +125,7 @@ func _wait(id: int, label: String, turns: int) -> bool:
 ## CDDA's sleep, with a tired character.
 func _sleep() -> void:
 	var turn0: int = await _settled()
+	_said.clear()
 	_hold = true   # the questions are this step's: _sleep_reply
 	_check(_live.queue_action("sleep"), "CDDA's \"sleep\" queued")
 	var asked := PackedStringArray()
@@ -135,6 +139,11 @@ func _sleep() -> void:
 	var passed: int = _main.world.snapshot.turn - turn0
 	print("  sleep: asked %s" % [asked])
 	print("  sleep: seen asleep in a snapshot: %s" % ["yes" if slept[0] or _asleep() else "no"])
+	print("  sleep: CDDA said %s" % [_said])
+	if not w["done"]:   # what the game waits for, when the turns stopped
+		var req := _live.request
+		print("  sleep: the game now asks: %s %s timed %s \"%s\" %s" % [req.get("kind", "nothing"), req.get("context", ""),
+				req.get("timed", false), str(req.get("text", req.get("title", ""))).left(80), _labels(req)])
 	print("  sleep: %d turns (%.1f h of game time) in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s"
 			% [passed, passed / 3600.0, w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0])
 	print("  at that rate a night (%d turns) takes %.0f s of real time" % [NIGHT_TURNS, NIGHT_TURNS * w["rate"] / 1000.0])
@@ -215,6 +224,15 @@ func _stop() -> void:
 	_check(stopped, "stop() ends the game (%.1f s, state %s)" % [(Time.get_ticks_msec() - t0) / 1000.0, _live.state])
 	_main.queue_free()
 	await process_frame
+
+
+## The bridge's events: CDDA's messages are kept (the latest SAID_MAX), to print what it said about the sleep.
+func _on_events(events: Array) -> void:
+	for ev: Variant in events:
+		if ev is Dictionary and (ev as Dictionary).get("kind") is String and ev["kind"] == "message":
+			_said.append(str((ev as Dictionary).get("text", "")).left(100))
+	while _said.size() > SAID_MAX:
+		_said.pop_front()
 
 
 ## The latest snapshot has the character asleep (CDDA's sleep effect; player.asleep on a client that reads it).
