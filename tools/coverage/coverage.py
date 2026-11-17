@@ -83,6 +83,15 @@ def name_of(obj):
     return n if isinstance(n, str) else ""
 
 
+def csv_cell(value):
+    """A report cell as plain text: ids and names come from game data and mods, and a spreadsheet takes text
+    that starts with = + - @, a tab or a carriage return for a formula. Such text gets a leading quote; numbers
+    stay numbers."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
 def walk_strings(node, out, depth=0):
     """Count every string inside a JSON node (used for 'is referenced' weights)."""
     if depth > 64:
@@ -373,7 +382,7 @@ def main():
         with open(os.path.join(a.out, f"coverage_{kind}.csv"), "w", newline="", encoding="utf-8") as f:
             cw = csv.writer(f)
             cw.writerow(["id", "name", "spawn_weight", "status", "via"])
-            cw.writerows(rows)
+            cw.writerows([csv_cell(c) for c in r] for r in rows)
         todo = [r for r in rows if r[3] == "placeholder"][: a.top]
         if todo:
             print("    next to make: " + ", ".join(r[0] for r in todo))
