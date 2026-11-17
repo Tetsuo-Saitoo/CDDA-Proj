@@ -137,8 +137,13 @@ func press(i: int, pt: Vector3) -> bool:
 	_at = pt
 	_down[i] = true
 	if wheels() and request_ui != null and is_instance_valid(request_ui):
-		request_ui.want_wheel(WAIT_MS, true, func() -> bool: return _down[i])
+		request_ui.want_wheel(WAIT_MS, true, is_down.bind(i))   # a bound method: invalid once this is freed
 	return true
+
+
+## Hand i's trigger is still down since it asked for a wheel (RequestUI's `down`).
+func is_down(i: int) -> bool:
+	return i >= 0 and i < _down.size() and _down[i]
 
 
 ## Hand i's trigger let go: a wheel held open picks what it points at (nothing: a tap picks CDDA's default, a longer
