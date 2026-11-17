@@ -14,6 +14,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	print("compass")
 	_test_bearings()
 	_test_hostiles(data)
+	_test_activity(data)
 	_test_opacity(root)
 
 
@@ -38,6 +39,33 @@ func _creature(uid: int, kind: int, p: Vector3i, attitude: Variant = null) -> Di
 	if attitude != null:
 		c["attitude"] = attitude
 	return c
+
+
+## player.activity and player.asleep (for BusyNote): read strictly, never failing the snapshot; the note's word.
+func _test_activity(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var p := d["player"] as Dictionary
+	var none := Snapshot.from_data(d)
+	p["activity"] = {"id": "ACT_WAIT", "verb": "<color_white>waiting</color>\n"}
+	var wait := Snapshot.from_data(d)
+	p["asleep"] = true
+	var sleep := Snapshot.from_data(d)
+	_check.call(none.activity_id == "" and none.activity_verb == "" and not none.asleep and wait.activity_id == "ACT_WAIT"
+			and wait.activity_verb == "waiting" and not wait.asleep and sleep.asleep, "snapshot: activity id and verb "
+			+ "(cleaned) and asleep read; none sent: empty")
+	var bad := []
+	for a: Variant in [{"id": "../x", "verb": 5}, {"id": "A".repeat(Snapshot.MAX_ACTIVITY_ID + 1), "verb": ""},
+			{"id": 7, "verb": "v".repeat(500)}, "ACT_WAIT", [1, 2], null]:
+		p["activity"] = a
+		p["asleep"] = "yes"
+		var s := Snapshot.from_data(d)
+		if not s.is_valid() or s.activity_id != "" or s.asleep or s.activity_verb.length() > Snapshot.MAX_ACTIVITY_VERB:
+			bad.append(a)
+	_check.call(bad.is_empty(), "snapshot: a bad activity id or asleep is left out, a long verb capped, never a "
+			+ "failed snapshot %s" % [bad])
+	_check.call(BusyNote.word_for(none) == "" and BusyNote.word_for(wait) == "Waiting"
+			and BusyNote.word_for(sleep) == BusyNote.SLEEPING and BusyNote.word_for(null) == "",
+			"busy note: asleep comes first, else the verb with a capital")
 
 
 func _test_hostiles(data: Variant) -> void:

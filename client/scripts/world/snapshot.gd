@@ -72,6 +72,8 @@ const MAX_EFFECT_SECONDS := 366 * 86400   # longer reads as "unknown" (-1)
 const MAX_MORALE := 32                    # morale entries kept (the contract sends at most 12)
 const MAX_MORALE_NAME := 64
 const MAX_NPC_NAME := 40                  # creatures' `name` (NPCs only), the contract's 40 columns
+const MAX_ACTIVITY_ID := 64               # player.activity id, bytes
+const MAX_ACTIVITY_VERB := 40             # player.activity verb, columns
 const MAX_MOOD_FACE := 16
 const EFFECT_GOOD := 1                    # player.effects rating
 const EFFECT_NEUTRAL := 0
@@ -172,6 +174,12 @@ var player_mood := {}
 ## player.move_mode: index into the id tables' move_mode list (walk, run, crouch, prone); -1 when not sent or bad
 ## (HUD-only: never fails the snapshot).
 var player_move_mode := -1
+## player.activity while one runs (a long wait, a craft): CDDA's activity type id (letters, digits and _, up to
+## MAX_ACTIVITY_ID bytes, else "") and its verb ("waiting", cleaned, up to MAX_ACTIVITY_VERB); "" for none or not
+## sent. player.asleep: CDDA's sleep effect (not lying awake trying). HUD-only: never fails the snapshot.
+var activity_id := ""
+var activity_verb := ""
+var asleep := false
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
 var sun_alt_deg := 45.0
@@ -382,6 +390,15 @@ func _read_player(v: Variant) -> void:
 	player_morale = morale_from((md as Dictionary).get("entries") if md is Dictionary else null)
 	var mm: Variant = _whole((v as Dictionary).get("move_mode"), 0, MAX_ID)
 	player_move_mode = mm if mm is int else -1
+	var act: Variant = (v as Dictionary).get("activity")
+	if act is Dictionary:
+		var id: Variant = (act as Dictionary).get("id")
+		# ASCII only, so its length is its size in bytes
+		if id is String and (id as String).length() <= MAX_ACTIVITY_ID and IdTables._is_word(id):
+			activity_id = id
+		activity_verb = plain_text((act as Dictionary).get("verb"), MAX_ACTIVITY_VERB)
+	var sl: Variant = (v as Dictionary).get("asleep")
+	asleep = sl is bool and sl
 
 
 ## player.effects, cleaned: anything malformed is left out (HUD-only data never fails a snapshot).

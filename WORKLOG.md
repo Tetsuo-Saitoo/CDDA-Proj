@@ -2,6 +2,7 @@
 
 - 2026-11-17 — Bridge: the game library no longer loads tileset images it never draws (B2): it reads only the tile sizes. About 550 MB less memory on Windows and 525 MB on Linux, and about a second less at the first game load; turn times as before. All fork tests pass on both, client tests pass.
 - 2026-11-17 — Art coverage tool: `--ids` reads the ids, names and looks_like from the bridge's id tables file instead of the game's JSON (B6 follow-up); the JSON still gives the spawn weights. Same percentages as before for terrain and furniture; monsters and vehicle parts now list everything the game loads.
+- 2026-11-17 — The waiting line now says what you are doing: "Sleeping...", "Waiting..." or the game's own word for a longer task, once the bridge sends it. Client tests pass.
 - 2026-11-17 — While you wait or sleep, "Time passes..." shows under the crosshair, so the still screen doesn't look frozen. Client tests pass; not seen on screen yet.
 - 2026-11-17 — New keys: Shift+S sleeps and Shift+. waits longer (the game asks how long), and a one-time hint says so when you first get tired. Client tests pass; not tried in a live game yet.
 - 2026-11-17 — The Tab view's rows and pockets show the game's own numbers when the bridge sends them: a stack's count next to its name ("rock (15)"), weight and volume with contents, nothing counted twice. Older bridges still show the type numbers. Client tests pass.
