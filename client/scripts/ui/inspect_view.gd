@@ -42,7 +42,6 @@ const ROW_H := 32.0              # rows, [ ] boxes and bar buttons: tall enough 
 const MAX_BATCH := 256           # items one drag moves, and the most that can be selected
 const MARQUEE_MIN_PX := 4.0      # a press on empty space that moves less is a click (selects none)
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
-const NOT_YET := "Taking a carried item into your hands: not yet."
 const CANT := "You can't move that there now."
 const CANT_TAKE := "You can't take that now."
 
@@ -742,13 +741,20 @@ func _drop_one(data: Variant, target: Dictionary) -> String:
 				_say(CANT_TAKE)
 			refresh()
 			return "take" if ok else ""
-		"not_yet":
-			_say(p["why"])
+		"hold":
+			_say("")
+			var held := hands.hold(HAND, it, p["hand"])
+			if not held and status == "":
+				_say(CANT)
+			refresh()
+			return "hold" if held else ""
 	return ""
 
 
-## What a drop of `data` on `target` would do: {do: "move" (drop: for Hands.move) | "take" (hand) | "not_yet" (why)
-## | "none", item: ItemRef}.
+## What a drop of `data` on `target` would do: {do: "move" (drop: for Hands.move) | "take" (hand: a lying item) |
+## "hold" (hand: a carried one into CDDA's main or off hand, Hands.hold; worn ones have no rows) | "none",
+## item: ItemRef}. Onto the Hands column itself: the free hand (_free_hand); already in that hand: none. The
+## off-hand item onto its own pocket is a put: CDDA takes it out of the hand (it lies in that pocket all along).
 func plan(data: Variant, target: Dictionary) -> Dictionary:
 	var none := {"do": "none"}
 	var it := _dragged(data)
@@ -767,14 +773,19 @@ func plan(data: Variant, target: Dictionary) -> Dictionary:
 		return none
 	match col["kind"]:
 		"hands":
-			if it.carried:
-				return {"do": "not_yet", "item": it, "why": NOT_YET}
 			var hand: String = key if kind == "group" and key is String and key in ["main", "off"] else _free_hand()
-			return {"do": "take", "item": it, "hand": hand}
+			if not it.carried:
+				return {"do": "take", "item": it, "hand": hand}
+			if kind != "group" and (it.is_wielded() or it.is_off_hand()):
+				return none   # in a hand already: onto the column means nothing new
+			if it.flags & (Snapshot.CARRIED_WIELDED if hand == "main" else Snapshot.CARRIED_OFFHAND):
+				return none
+			return {"do": "hold", "item": it, "hand": hand}
 		"worn":
 			var c: ItemRef = col["container"]
 			var pocket: int = key if kind == "group" and key is int and key >= 0 else -1
-			if c == null or c.uid == it.uid or (it.carried and it.parent == c.uid and (pocket < 0 or pocket == it.pocket)):
+			if c == null or c.uid == it.uid or (it.carried and it.parent == c.uid and (pocket < 0 or pocket == it.pocket)
+					and not it.is_off_hand()):
 				return none
 			var d := {"kind": "container", "container": c}
 			if pocket >= 0:
