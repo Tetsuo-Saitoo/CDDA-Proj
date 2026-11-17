@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Radial menu, slice 1: E on an object shows its choices as a wheel with a fixed place for each kind of action; point and let go of E (or click) to pick. The F1 menu can switch to a click wheel or the old list. Client tests pass.
 - 2026-11-16 — More hints: the first time something hostile is in sight, you get hungry or thirsty, or you bleed, a tip says which keys help. Client tests pass.
 - 2026-11-16 — Kenney dresser and sealed crate (lead-world): the dresser (the kit's drawer vanity without its sink) has two drawers that pull out with items in them; the sealed crate is a plain box. The PropBoxes tests pin both back to their placeholders. Client tests pass.
 - 2026-11-16 — Kenney bin, chest, workbench and open crate (lead-world): the bin's and the chest's lids lift by hand like the placeholders' did, and items lie inside them, on the workbench and in the open crate. Client tests pass.

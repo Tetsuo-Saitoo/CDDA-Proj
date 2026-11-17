@@ -65,6 +65,12 @@ var ui_scale := 1.0
 ## lead-world's weather detail (WeatherView.quality: MINIMAL, LOW, HIGH), flat screen and headset alike. Saved as
 ## [weather] quality; anything but a whole number leaves HIGH, a number out of range is clamped.
 var weather_quality := WeatherView.HIGH
+## How E shows an object's menu (radial menus, user 2026-11-16): MENU_HOLD a wheel, releasing E picks; MENU_CLICK a
+## wheel that stays until a click; MENU_LIST CDDA's list. Saved as [controls] context_menu; anything but a whole
+## number leaves MENU_HOLD, a number out of range is clamped.
+enum { MENU_HOLD, MENU_CLICK, MENU_LIST }
+const MENU_NAMES := ["E: wheel (hold)", "E: wheel (click)", "E: list"]
+var context_menu := MENU_HOLD
 ## G7: the game's loudness, 0 (silent) .. 1 (as made), on the Master bus where every sound plays. Saved as [sound]
 ## volume, clamped like the other numbers.
 const VOLUMES := Vector2(0.0, 1.0)
@@ -163,6 +169,8 @@ func load_file(path := FILE) -> String:
 	ui_scale = clamp_to(cfg.get_value("display", "ui_scale", 1.0), UI_SCALES, 1.0)
 	var wq: Variant = cfg.get_value("weather", "quality", WeatherView.HIGH)
 	weather_quality = clampi(wq, WeatherView.MINIMAL, WeatherView.HIGH) if wq is int else WeatherView.HIGH
+	var cm: Variant = cfg.get_value("controls", "context_menu", MENU_HOLD)
+	context_menu = clampi(cm, MENU_HOLD, MENU_LIST) if cm is int else MENU_HOLD
 	volume = clamp_to(cfg.get_value("sound", "volume", 1.0), VOLUMES, 1.0)
 	ambience_volume = clamp_to(cfg.get_value("sound", "ambience", 1.0), VOLUMES, 1.0)
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
@@ -192,6 +200,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("display", "vsync", vsync)
 	cfg.set_value("display", "ui_scale", snappedf(clamp_to(ui_scale, UI_SCALES, 1.0), 0.01))
 	cfg.set_value("weather", "quality", clampi(weather_quality, WeatherView.MINIMAL, WeatherView.HIGH))
+	cfg.set_value("controls", "context_menu", clampi(context_menu, MENU_HOLD, MENU_LIST))
 	cfg.set_value("sound", "volume", snappedf(clamp_to(volume, VOLUMES, 1.0), 0.01))
 	cfg.set_value("sound", "ambience", snappedf(clamp_to(ambience_volume, VOLUMES, 1.0), 0.01))
 	return cfg.save(path)

@@ -1056,6 +1056,8 @@ func _live_action(event: InputEvent) -> bool:
 		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
 		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
+		if vr == null and hud_settings.context_menu != HudSettings.MENU_LIST:   # the object's menu, if any, as a wheel
+			request_ui.want_wheel(WHEEL_WAIT_MS, hud_settings.context_menu == HudSettings.MENU_HOLD)
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
 	elif InputActions.pressed(event, &"stow_off"):
@@ -1414,7 +1416,8 @@ func _setup_environment() -> void:
 	weather.aim_sun(45.0, 0.0)
 
 
-const BASE_LOOK := 0.003   # the cameras' own look speed, radians per pixel
+const BASE_LOOK := 0.003
+const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon after shows as a wheel   # the cameras' own look speed, radians per pixel
 
 
 ## G7 options: the volume on the Master bus (headset too); the look speed, invert Y and field of view on the
