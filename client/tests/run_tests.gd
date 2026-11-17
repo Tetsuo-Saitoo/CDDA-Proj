@@ -482,6 +482,16 @@ func _test_id_tables(t: IdTables) -> void:
 	_check(pt.is_valid() and pt.def_named("itype", "i_water").phase == "liquid" and pt.def_named("itype", "i_gas").phase == "gas"
 			and pt.def_named("itype", "i_odd").phase == "" and pt.def_named("itype", "i_x").phase == "",
 			"itype phase: CDDA's four kept; unknown or missing: \"\"")
+	var examined: Dictionary = base.duplicate(true)
+	examined["furn"].append_array([{"id": "f_fire", "examine": "fireplace"}, {"id": "f_odd", "examine": "rm -rf /"},
+			{"id": "f_none", "examine": ""}])
+	examined["ter"].append({"id": "t_spring", "examine": "water_source"})
+	var et := IdTables.from_data(examined)
+	_check.call(et.is_valid() and et.has_examine and et.def_named("furn", "f_fire").examine == "fireplace"
+			and et.def_named("ter", "t_spring").examine == "water_source" and et.def_named("furn", "f_odd").examine == ""
+			and et.def_named("furn", "f_none").examine == "" and et.def_named("ter", "t_x").examine == ""
+			and not IdTables.from_data(base).has_examine,
+			"ter/furn examine: an id kept, anything but letters, digits and _: \"\"; has_examine only when sent")
 	var bad := func(f: Callable, what: String) -> void:
 		var d: Dictionary = base.duplicate(true)
 		f.call(d)
@@ -497,6 +507,8 @@ func _test_id_tables(t: IdTables) -> void:
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["id"] = 7, "id not a string")
 	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = 1, "phase not a string")
 	bad.call(func(d: Dictionary) -> void: d["itype"][1]["phase"] = "p".repeat(500), "phase too long")
+	bad.call(func(d: Dictionary) -> void: d["ter"][1]["examine"] = ["fireplace"], "examine not a string")
+	bad.call(func(d: Dictionary) -> void: d["ter"][1]["examine"] = "e".repeat(500), "examine too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["name"] = "n".repeat(5000), "name too long")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = "FLAT", "flags not a list")
 	bad.call(func(d: Dictionary) -> void: d["ter"][1]["flags"] = [1], "flag not a string")

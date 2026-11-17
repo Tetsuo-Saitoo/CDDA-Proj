@@ -1,8 +1,9 @@
 class_name ItemTileView
 extends Control
-## Block "Live item tiles": an item's live state (an ItemTile) drawn behind its row in the Tab view: how full it is
-## as a band in the contents' colour with a solid line along the bottom (slice 2: a liquid's edge leans and settles
-## back, Slosh, when the Tab view opens or the row is picked up to drag), a soft edge for
+## Block "Live item tiles": an item's live state (an ItemTile) drawn behind its row in the Tab view or its line in
+## the hands panel: how full it is as a band in the contents' colour with a solid line along the bottom (slice 2: a
+## liquid's edge leans and settles back, Slosh, when the Tab view opens, a row is picked up to drag, the view turns
+## or the player steps), a soft edge for
 ## frozen, cold or hot, a spoilage strip at the left for things that rot, and soot over a fouled gun. The band and
 ## soot are faint, so the row's text stays readable over them; the amount itself is a Label in the row
 ## (InspectView). Takes no mouse input: clicks, selection and drags reach the row under it.
@@ -20,11 +21,13 @@ const LEAN_PX := 10.0        # how far the fill's edge leans at full slosh (top 
 const STIR_MAX := 5.0        # one stir() at most
 const DRAG_KICK := 3.0       # a row picked up to drag
 const OPEN_STIR := 1.5       # the Tab view opening (main)
+const TURN_STIR := 0.035     # per degree the view turns (main): a quick quarter turn is about a drag's kick
+const STEP_STIR := 1.2       # a step (main), each one rocking the other way
 const CARRY_MS := 1000       # a still-moving surface goes on in its item's next row made within this
 const MAX_CARRIED := 64
 
-## Slice 2: every sloshing tile feels the same stirs (main: the Tab view opening), as a running sum each tile
-## catches up with in its own frame.
+## Slice 2: every sloshing tile feels the same stirs (main: the Tab view opening, the view turning, a step), as a
+## running sum each tile catches up with in its own frame.
 static var stirred := 0.0
 ## uid -> [Slosh, msec]: surfaces still moving when their row went (the Tab view rebuilds its rows each turn).
 static var _carried := {}

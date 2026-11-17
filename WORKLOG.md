@@ -2,6 +2,8 @@
 
 - 2026-11-17 — Bridge: the id tables give each terrain's and furniture's `examine` action id (fireplace, water_source, cardreader, ...), for the crosshair prompt's word. Ids test checks it.
 - 2026-11-17 — Bridge: `get_held()` gives each hand's item `uid` (its snapshot handle), for the hands panel's item tiles. Sim test checks both hands.
+- 2026-11-17 — Radial menu, slice 5: the line by the crosshair says what E does at what you face (light, drink, craft, ... or examine), and names terrain you can do something with, like a water source. Client tests pass.
+- 2026-11-17 — Item tiles, slice 3: the hands panel shows each held item's state behind its line (how full, frozen / cold / hot, spoilage, gun grime), and a held liquid sloshes as you turn and walk. Client tests pass.
 - 2026-11-17 — Pain shown live (combat lead): the live combat test lets zombies hurt the player for real and checks that the game's pain rises and the pain edge on screen picks it up. Live tests pass.
 - 2026-11-17 — VR muzzle flash (combat lead): a gun held in VR now flashes at its muzzle when a round goes off, like the flat screen's: under 3 times a second, none with a suppressor or with the flash setting off. Client tests pass.
 - 2026-11-17 — Pain and stamina at the screen's edges (combat lead): pain greys and softly blurs the edges of the view, more the worse it is; low stamina darkens them. Both fade steadily and turn off with the Hurt tint box. Flat screen only. Client tests pass.
