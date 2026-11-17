@@ -813,6 +813,10 @@ static func _extent(prop: PropCatalog.Prop, itype: int, xf: Transform3D, size: f
 
 
 ## An item's bounds before its scale: its model's, else its shape's (ITEM_BOX).
+static func item_box(prop: PropCatalog.Prop, itype: int) -> AABB:
+	return _item_box(prop, itype)
+
+
 static func _item_box(prop: PropCatalog.Prop, itype: int) -> AABB:
 	if itype != 0 and prop.model != null and prop.model.aabb.has_volume():
 		return prop.model.aabb

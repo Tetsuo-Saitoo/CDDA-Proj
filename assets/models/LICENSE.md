@@ -18,7 +18,7 @@ with flat colours. Registry entries: `assets/registry/models_kenney.json`.
   rolling_pin, whisk, spatula, cutting_board.
 - **Survival Kit (2.0):** `items/` bucket, hammer, hatchet, shovel, pickaxe, hoe; `furniture/` f_firering,
   f_workbench, f_crate_o, f_crate_c, f_chest (its lid kept as a part, its animations dropped).
-- **Furniture Pack (1.0):** `furniture/` f_oven, f_fridge, f_cupboard, f_counter, f_sink, f_bookcase, f_chair,
+- **Furniture Pack (1.0):** `furniture/` f_oven, f_fridge, f_cupboard, f_counter, f_counter_corner, f_sink, f_bookcase, f_chair,
   f_toilet, f_washer, f_dryer, f_trashcan, f_dresser (the drawer vanity without its sink, made taller);
   `items/` box_small. The doors and drawers were split off as parts (the bin's top as its lid) and shelf
   planes added.

@@ -79,6 +79,7 @@ var text_dock: TextKeysDock       # the on-screen keyboard for the focused text 
 var _test_args_done := false      # --test / --cheats are applied once, when the game first runs
 var viewmodel: WeaponViewmodel    # the wielded weapon, low right of the first-person view
 var creature_view: CreatureView   # placeholder figures for NPCs and monsters (C4)
+var item_looks: ItemLookView       # frost, heat, spoilage and liquid level on items lying near the player
 var player_body: PlayerBody       # the player's own body and clothes (all views; head hidden in first person/VR)
 var _demo_step := 0
 var live: LiveSession
@@ -143,6 +144,10 @@ func _ready() -> void:
 	creature_view.name = "Creatures"
 	creature_view.smooth = str(_args.get("creatures", "smooth")) != "snap"
 	add_child(creature_view)
+	item_looks = ItemLookView.new()
+	item_looks.name = "ItemLooks"
+	item_looks.world = world
+	add_child(item_looks)
 	player_body = PlayerBody.new()
 	player_body.name = "PlayerBody"
 	add_child(player_body)
@@ -372,6 +377,7 @@ func _show(snap: Snapshot) -> void:
 func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	creature_view.show_player = false   # PlayerBody draws the player
 	creature_view.apply(snap, world)
+	item_looks.apply(snap)
 	gore.view_z_max = world.things_z_max()
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
