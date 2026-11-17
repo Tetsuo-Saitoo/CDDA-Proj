@@ -4,10 +4,11 @@ extends SceneTree
 ## 1. `wait`: CDDA's "Wait for how long?" menu comes as a request (after its alarm clock question); 30 minutes is
 ##    picked and the game passes those 1800 turns by itself.
 ## 2. Three waits of 6 hours, so the character is tired: long stretches of turns the game passes by itself.
-## 3. The range's clock is set to NIGHT_MINUTE: daylight wakes a sleeper, and by now it is close to dawn.
-## 4. `sleep`: CDDA's questions are answered (yes, no alarm, keep trying and don't ask again); an hour or more
-##    passes by itself, the character lying down or asleep (which one is CDDA's dice: printed, not checked).
-## 5. stop() ends the game.
+## 3. `sleep`: CDDA's questions are answered (yes, no alarm, keep trying and don't ask again); the character lies
+##    down and time passes by itself, until an hour has passed or the character is up again. How long that takes
+##    is CDDA's dice (the range's hub is lit, and "It's too bright to sleep." wakes a sleeper at any hour): printed
+##    with what CDDA said, not checked.
+## 4. stop() ends the game.
 ## While the game runs on by itself the client must still hear from it: a snapshot with a new turn at least every
 ## SILENT_MS of real time, or the screen stands still (clock, light, needs) and looks hung.
 ## It prints how long a turn takes then, and what a night's sleep comes to at that rate.
@@ -25,14 +26,11 @@ const SLEEP_LIMIT_MS := 300000
 const SILENT_MS := 2000             # the longest the client may go without a snapshot with a new turn
 const STALL_MS := 60000             # no new turn for this long: a watch gives up
 const NIGHT_TURNS := 8 * 3600
-const NIGHT_MINUTE := 22 * 60       # the time of day the sleep starts at
-const OP_TIMEOUT_MS := 30000
 const SAID_MAX := 12
 
 var _failed := 0
 var _main: Main
 var _live: LiveSession
-var _done := {}           # range op id -> error ("" = done), from LiveSession.range_done
 var _answered := 0
 var _hold := false        # true: requests are left to the step waiting for them
 var _said: Array[String] = []   # CDDA's latest messages (the bridge's message events), at most SAID_MAX
@@ -56,7 +54,6 @@ func _run() -> void:
 	root.add_child(_main)
 	await process_frame
 	_live = _main.live
-	_live.range_done.connect(func(id: int, err: String) -> void: _done[id] = err)
 	_live.events_arrived.connect(_on_events)
 	var r := _find_button(_main.main_menu, "Test range") if _main.main_menu != null else null
 	_check(r != null, "the menu has \"Test range\"")
@@ -72,21 +69,9 @@ func _run() -> void:
 		for i in 3:
 			tired = tired and await _wait(8, "6 hours", 6 * 3600)
 		if tired:
-			await _settled()
-			var e := await _op(_live.range_set_time(NIGHT_MINUTE))
-			_check(e.is_empty(), "the range's clock is set to %d:00, the night ahead (%s)" % [NIGHT_MINUTE / 60, e])
 			await _sleep()
 	await _stop()
 	_finish()
-
-
-## Waits for range_done of op `id` (0 = refused before sending); "" when it was done.
-func _op(id: int) -> String:
-	if id < 1:
-		return "not sent"
-	if not await _until(func() -> bool: return _done.has(id), OP_TIMEOUT_MS):
-		return "no answer"
-	return _done[id]
 
 
 ## CDDA's wait for the menu entry `id` (or one whose label has `label`), `turns` long. False when it didn't pass.
@@ -133,34 +118,39 @@ func _sleep() -> void:
 	var look := func() -> void:
 		_sleep_reply(asked)
 		slept[0] = slept[0] or _asleep()
-	var w: Dictionary = await _watch(turn0, 3600, SLEEP_LIMIT_MS, look)
+	var up := func() -> bool:   # the questions answered, time has passed, and the main loop asks for the next action
+		var req := _live.request
+		return not asked.is_empty() and _main.world.snapshot.turn > turn0 and req.get("kind", "") == "key" \
+				and req.get("context", "") == "DEFAULTMODE"
+	var w: Dictionary = await _watch(turn0, 3600, SLEEP_LIMIT_MS, look, up)
 	_hold = false
 	await _settled()
 	var passed: int = _main.world.snapshot.turn - turn0
 	print("  sleep: asked %s" % [asked])
 	print("  sleep: seen asleep in a snapshot: %s" % ["yes" if slept[0] or _asleep() else "no"])
 	print("  sleep: CDDA said %s" % [_said])
-	if not w["done"]:   # what the game waits for, when the turns stopped
+	if not w["done"] and not w["ended"]:   # what the game waits for, when the turns stopped
 		var req := _live.request
 		print("  sleep: the game now asks: %s %s timed %s \"%s\" %s" % [req.get("kind", "nothing"), req.get("context", ""),
 				req.get("timed", false), str(req.get("text", req.get("title", ""))).left(80), _labels(req)])
 	print("  sleep: %d turns (%.1f h of game time) in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s"
 			% [passed, passed / 3600.0, w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0])
 	print("  at that rate a night (%d turns) takes %.0f s of real time" % [NIGHT_TURNS, NIGHT_TURNS * w["rate"] / 1000.0])
-	_check(w["done"], "the character lies down to sleep: an hour or more passes by itself (%.1f h in %.0f s)"
-			% [passed / 3600.0, w["ms"] / 1000.0])
+	_check(w["done"] or (w["ended"] and passed > 0), "the character lies down to sleep and time passes by itself (%.0f min in %.1f s, %s)"
+			% [passed / 60.0, w["ms"] / 1000.0, "and it goes on" if w["done"] else ("then up again" if w["ended"] else "then nothing")])
 	_check(w["silent"] <= SILENT_MS, "the client hears from the game while the character sleeps (longest silence %.1f s, limit %.1f)"
 			% [w["silent"] / 1000.0, SILENT_MS / 1000.0])
 	if w["ms"] > 3000 and _main.get("busy_note") != null:
 		_check(w["noted"] != "", "the screen says that time passes while the character sleeps (\"%s\")" % w["noted"])
 
 
-## Watches the game run on by itself from turn `turn0` until `turns` have passed (or `timeout_ms`), calling `each`
-## on every look. {done, turns, ms, rate (ms a turn), seen (snapshots with a new turn), silent (the longest time
-## without one, ms), noted (what main's busy note said meanwhile, "Time passes" or CDDA's word, without its dots;
-## "" when it never showed)}.
-func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dictionary:
+## Watches the game run on by itself from turn `turn0` until `turns` have passed (or `timeout_ms`, or `until`
+## says so), calling `each` on every look. {done (the turns passed), ended (`until` said so first), turns, ms, rate
+## (ms a turn), seen (snapshots with a new turn), silent (the longest time without one, ms), noted (what main's
+## busy note said meanwhile, "Time passes" or CDDA's word, without its dots; "" when it never showed)}.
+func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until := Callable()) -> Dictionary:
 	var noted := ""
+	var ended := false
 	var seen := 0
 	var last_turn := turn0
 	var t0 := Time.get_ticks_msec()
@@ -185,15 +175,18 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable()) -> Dict
 		if t >= turn0 + turns:
 			done = true
 			break
+		if until.is_valid() and until.call():
+			ended = true
+			break
 		if now - last_ms > STALL_MS:
 			break   # nothing new for a long while: the game stopped passing turns
 		await create_timer(0.05).timeout
 	var ms := Time.get_ticks_msec() - t0
-	if not done:
+	if not done and not ended:
 		silent = maxi(silent, Time.get_ticks_msec() - last_ms)
 	var passed := last_turn - turn0
-	return {"done": done, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen, "silent": silent,
-			"noted": noted}
+	return {"done": done, "ended": ended, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen,
+			"silent": silent, "noted": noted}
 
 
 ## Waits until the game is back at rest (the snapshot's turn unchanged for a while, nothing queued); the turn.
