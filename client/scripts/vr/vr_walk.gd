@@ -67,7 +67,7 @@ func can_stand(p: Vector3i) -> bool:
 		var fd := _def("furn", f, snap.furn_names)
 		if fd != null and fd.move_cost < 0:
 			return false
-	return true
+	return not VehicleView.blocks(snap, world.tables, p)   # a car's walls, closed doors, windows (C5)
 
 
 ## Definition of a snapshot id: by index when the tables match the snapshot, else by the snapshot's name.

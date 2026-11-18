@@ -104,7 +104,13 @@ struct vehicle_view {
     string name;                  // color tags and control characters removed, up to 60 columns (240 bytes)
     std::vector<vehicle_part_view> parts;   // cap 4096
 };
-struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled */ };
+struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled */
+                           int8 dx, dy, dz; };
+    // JSON row: [mount_x, mount_y, vpart, hp_frac, state, dx, dy, dz] (2026-11-17; older bridges send the first 5).
+    // (dx, dy, dz): the square the part is on, from the vehicle's `pos`; each -127..127. Place parts by it, not
+    // by turning the mount by face_deg: CDDA turns mounts in steps along a ray around a pivot that isn't sent, so
+    // the two differ at most angles. dz is 0 except on ramps, where a vehicle can have parts a level up or down.
+    // Only real parts are listed, in CDDA's order.
 
 struct player_view {
     uint64 uid; ui_point pos; float facing_deg; int32 moves; uint32 move_mode;

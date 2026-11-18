@@ -17,6 +17,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_walk(world)
 	_test_rig(root, world)
 	_test_stair_point(root, world)
+	_test_vehicle(root, data, tables)
 	preload("res://tests/vr_comfort_tests.gd").new().run(root, check, world)
 	world.free()
 
@@ -44,6 +45,46 @@ func _find(world: WorldView, w: VrWalk, z: int, kind: int, west_free := false) -
 			if not west_free or w.can_stand(p - Vector3i(1, 0, 0)):
 				return p
 	return null
+
+
+## Walking into cars (C5): VrWalk.can_stand asks VehicleView.blocks. A teleport arc shot east from the player lands
+## on open road; a car part on that square then blocks the landing, and a car next to it has a closed door (blocks),
+## an open door and a seat (standable: a seated player stays in the car).
+func _test_vehicle(root: Node, data: Variant, tables: IdTables) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	d["vehicles"] = []
+	var world := WorldView.new()
+	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	root.add_child(world)
+	world.set_id_tables(tables)
+	world.apply_snapshot(Snapshot.from_data(d))
+	var w := VrWalk.new(world)
+	var player := world.snapshot.player_pos
+	var head := world.coords.ms_center_to_world(player) + Vector3(0, 1.2, 0)
+	var free := w.teleport_arc(head, Vector3(1, 0.3, 0), 0)
+	var land := w.square_at(free["pos"], 0)
+	var row := player + Vector3i(3, 1, 0)
+	var was_free: bool = free["valid"] and land != player and w.can_stand(row) and w.can_stand(row + Vector3i(1, 0, 0)) \
+			and w.can_stand(row + Vector3i(2, 0, 0))
+	var v := func(id: String) -> int: return tables.index_of("vpart", id)
+	var frame: int = v.call("frame")
+	d["vehicles"] = [
+		{"uid": 1, "name": "Wall", "pos": [land.x, land.y, 0], "face_deg": 0.0,
+				"parts": [[0, 0, frame, 255, 0, 0, 0, 0], [0, 0, v.call("board"), 255, 0, 0, 0, 0]]},
+		{"uid": 2, "name": "Car", "pos": [row.x, row.y, 0], "face_deg": 0.0, "parts": [
+			[0, 0, frame, 255, 0, 0, 0, 0], [0, 0, v.call("door"), 255, 0, 0, 0, 0],
+			[1, 0, frame, 255, 0, 1, 0, 0], [1, 0, v.call("door"), 255, Snapshot.VPART_OPEN, 1, 0, 0],
+			[2, 0, frame, 255, 0, 2, 0, 0], [2, 0, v.call("seat"), 255, 0, 2, 0, 0]]},
+	]
+	world.apply_snapshot(Snapshot.from_data(d))
+	var blocked := w.teleport_arc(head, Vector3(1, 0.3, 0), 0)
+	_check.call(was_free and not w.can_stand(row) and w.can_stand(row + Vector3i(1, 0, 0)) and w.can_stand(row + Vector3i(2, 0, 0)),
+			"vr: a car's closed door blocks walking; an open door and a seat don't")
+	_check.call(was_free and w.square_at(blocked["pos"], 0) == land and not blocked["valid"],
+			"vr: a teleport arc onto a car's wall is not valid (it was on the bare road)")
+	world.set_id_tables(null)
+	_check.call(w.can_stand(row), "vr: without id tables car parts don't block")
+	world.free()
 
 
 func _test_walk(world: WorldView) -> void:
