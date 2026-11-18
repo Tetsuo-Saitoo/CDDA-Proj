@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Gun mods at a bench vise on the flat screen: E on a vise next to you with a gun in hand clamps the gun in it and shows its mods beside it, with Take off and Fit buttons; Esc, E again or walking off takes it back. Client tests pass.
 - 2026-11-18 — Gun mods on the flat screen: E fits the gunmod in the off hand onto the wielded gun, the Tab view lists the gun's mods with a Take off button and takes a gunmod dropped on the gun. Client tests pass.
 - 2026-11-18 — rest_live_test (QA lead) tells the bridge from the screen: the bridge must have a newer snapshot every 2 s while time passes, the screen gets 5 s to show one. A busy machine made the old single 2 s limit fail once though the bridge was on time.
 - 2026-11-17 — The gun in your hands on the flat screen now shows the mods installed on it (simple boxes at their places, as in VR), and with a scope or sight fitted, aiming brings the gun up so you look over the sight. It shows up once the game sends the gun's mods (coming with the gun-mod work). Client tests pass.

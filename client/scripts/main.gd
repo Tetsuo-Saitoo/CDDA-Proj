@@ -67,7 +67,8 @@ var world_collision: WorldCollision   # E2 item physics: floor / wall / furnitur
 var item_bodies: ItemBodies           # E2 item physics: the items near the player as physics bodies
 var item_placer: ItemPlacer           # E2 item physics: tells CDDA where a body came to rest (live game)
 var mock_items: MockItems         # mock mode: item actions done on the client's own snapshot
-var inspect: InspectView          # Tab: hands, worn containers and the ground in reach; drag items between them
+var vise_bench: ViseBench       # V2: the gun in a bench vise and its mods (flat screen)
+var inspect: InspectView         # Tab: hands, worn containers and the ground in reach; drag items between them
 var hotbar: Hotbar                # G2: number keys put a set item type into the main hand
 var hints: Hints                  # G6: one-time tips at the top right (flat screen)
 var busy_note := BusyNote.new()   # "Time passes..." while the game runs on by itself (flat screen)
@@ -215,8 +216,8 @@ func _ready() -> void:
 	item_actions = ItemActions.new()
 	add_child(item_actions)
 	item_actions.refused.connect(func(_it: ItemRef, op: String, why: String) -> void:   # F1: CDDA's no to a fit / take-off
-		if vr == null and op in ["mod_add", "mod_remove"] and not why.is_empty():
-			grab.flash(why, true))
+		if vr == null and op in ["mod_add", "mod_remove"] and not why.is_empty() and not vise_bench.clamped():
+			grab.flash(why, true))   # (at the vise its panel says it: ViseBench.on_refused)
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
@@ -261,6 +262,17 @@ func _ready() -> void:
 	request_ui.get_parent().add_child(inspect)
 	request_ui.get_parent().move_child(inspect, request_ui.get_index())   # prompts and F1 draw over it
 	inspect.character = character_data   # G2: carried weight and volume against the limits, from the sheet
+	vise_bench = ViseBench.new()   # V2: E on a bench vise in reach with the gun wielded: the gun in it, its mods beside
+	vise_bench.actions = item_actions
+	vise_bench.world = world
+	vise_bench.model_parent = world
+	vise_bench.jaws = func(uid: int) -> Variant: return Vise.jaws(hands.picker, uid)
+	request_ui.get_parent().add_child(vise_bench)
+	request_ui.get_parent().move_child(vise_bench, inspect.get_index())   # prompts and the Tab view draw over it
+	vise_bench.released.connect(func(why: String) -> void:
+		if not why.is_empty():
+			grab.flash(why))
+	item_actions.refused.connect(vise_bench.on_refused)
 	hotbar = Hotbar.new()   # G2: 3..9 and 0 put a set item type into the main hand; set in the Tab view
 	hotbar.world = world
 	hotbar.actions = item_actions
@@ -728,6 +740,7 @@ func _start_live() -> void:
 		item_placer.backend = live
 		live.events_arrived.connect(item_placer.on_events)   # item_result: the answer to a place / spot op
 	world.applied.connect(func(snap: Snapshot, _n: int) -> void: item_actions.on_snapshot(snap))
+	world.applied.connect(func(_snap: Snapshot, _n: int) -> void: vise_bench.on_snapshot())   # V2: walked off, unwielded
 	get_tree().auto_accept_quit = false   # closing the window saves first (_save_and_quit)
 	# --live alone: continues the game in LIVE_WORLD (its first save), or starts one there if it has none.
 	# --live --new: a new game in LIVE_WORLD, replacing it and its saves. --world=<name> and/or --save=<character>
@@ -1066,6 +1079,10 @@ func _on_live_events(events: Array) -> void:
 func _context_line() -> String:
 	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
 		return ""
+	var v := _vise_under()
+	if v > 0:   # V2: what E does on a bench vise with the gun wielded
+		return "%s: %s" % [InputActions.key_of(&"use_held"), "take the gun back" if v == vise_bench.vise_uid
+				else "clamp the gun in the vise"]
 	var p := GunModFit.held_pair(hud_data.held.get("main"), hud_data.held.get("off"), world.snapshot, world.tables)
 	if not p.is_empty():   # F1: what E does with the gun and a gunmod in hand
 		return "%s: fit the %s" % [InputActions.key_of(&"use_held"),
@@ -1383,7 +1400,7 @@ func _update_aim() -> void:
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
 	viewmodel.sway_arcmin = aim.shown_dispersion
-	viewmodel.visible = _fp_active() and view_mode == "first"
+	viewmodel.visible = _fp_active() and view_mode == "first" and not vise_bench.clamped()   # V2: the gun is in the vise
 	viewmodel.set_item(world.snapshot.player_wielded if world.snapshot != null else 0, world.tables)
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
@@ -1421,6 +1438,38 @@ func _fit_held_mod() -> bool:
 		grab.flash(GunModFit.fitting_line(world.snapshot, mod.uid, InventoryModel.clean(mod.display_name(world.tables))))
 	else:
 		grab.flash("You can't fit that now.", true)
+	return true
+
+
+## V2 (gun modification at a bench vise, flat screen): the bench vise under the pointer that lies in reach (Vise.near)
+## while the gun is wielded; -1 if none.
+func _vise_under() -> int:
+	if vr != null or world.snapshot == null or grab.carrying() or grab.item_hover.is_empty():
+		return -1
+	var it: Variant = grab.item_hover.get("item")
+	var t := world.tables.index_of("itype", Vise.ITEM) if world.tables != null else -1
+	if not it is ItemRef or t <= 0 or (it as ItemRef).type != t \
+			or not GunModFit.is_wielded_gun(hud_data.held.get("main"), world.snapshot) \
+			or not (it as ItemRef).uid in Vise.near(world.snapshot, world.tables):
+		return -1
+	return (it as ItemRef).uid
+
+
+## V2: E on a bench vise in reach with the gun wielded puts the gun in its jaws with its mods beside it (ViseBench);
+## E on that vise again takes it back. False when the pointer isn't on such a vise (E goes on as usual).
+func _clamp_at_vise() -> bool:
+	var v := _vise_under()
+	if v <= 0:
+		return false
+	if vise_bench.clamped():
+		var same := v == vise_bench.vise_uid
+		vise_bench.release()
+		if same:
+			return true
+	var cam := get_viewport().get_camera_3d()
+	var across := cam.global_basis.x if cam != null else Vector3.RIGHT
+	if not vise_bench.clamp_gun(v, hud_data.held.get("main"), Vise.jaws(hands.picker, v), across):
+		grab.flash("You can't clamp your gun now.", true)
 	return true
 
 
@@ -1715,6 +1764,10 @@ func _setup_back_out() -> void:
 			func() -> bool:
 				grab.close_tray()
 				return true)
+	back_out.add("vise", func() -> bool: return vise_bench != null and vise_bench.clamped(),
+			func() -> bool:
+				vise_bench.release()
+				return true)
 	back_out.add("carry", func() -> bool: return vr == null and grab != null and grab.carrying(),
 			func() -> bool: return grab.handle_event(BackOut.esc(), get_viewport().get_camera_3d(), _pointer()))
 	back_out.add("wheel", func() -> bool: return request_ui != null and request_ui.wheel_waiting(),
@@ -1979,6 +2032,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and live != null and _in_main_loop() and InputActions.pressed(event, &"use_held") \
+			and _clamp_at_vise():
+		return   # V2: E on a bench vise in reach with the gun wielded clamps it there (again: takes it back)
 	if vr == null and live != null and _in_main_loop() and InputActions.pressed(event, &"use_held") \
 			and _fit_held_mod():
 		return   # F1: the gun wielded and a gunmod in the off hand: E fits it
