@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Delta snapshots, client side (slice 3, lead-world): a snapshot can be read on top of the one held, taking the submaps the bridge didn't resend; anything that doesn't fit fails it and a full one is fetched at once (counted, logged now and then). The live game asks for deltas once the bridge has the call; older bridges work as before. Client tests pass.
 - 2026-11-18 — rest_live_test (QA lead) tells the bridge from the screen: the bridge must have a newer snapshot every 2 s while time passes, the screen gets 5 s to show one. A busy machine made the old single 2 s limit fail once though the bridge was on time.
 - 2026-11-18 — Gun mods on the flat screen: E fits the gunmod in the off hand onto the wielded gun, the Tab view lists the gun's mods with a Take off button and takes a gunmod dropped on the gun. Client tests pass.
 - 2026-11-17 — The gun in your hands on the flat screen now shows the mods installed on it (simple boxes at their places, as in VR), and with a scope or sight fitted, aiming brings the gun up so you look over the sight. It shows up once the game sends the gun's mods (coming with the gun-mod work). Client tests pass.

@@ -91,6 +91,14 @@ var cheats_allowed := false
 ## Snapshot fetch and parse run on a WorkerThreadPool task (~0.85 MB of JSON, ~125 ms): -1 when none runs.
 var _snap_task := -1
 var _snap_job: SnapJob
+## The last snapshot the delta call gave (it has key rows): the next fetch asks for what changed since it. Read by
+## the worker while the world shows it, so nothing may change it or its Submaps (only mock mode edits Submaps).
+var _base: Snapshot
+## Deltas read, and deltas that didn't fit the snapshot held and were asked for again whole (logged now and then).
+var deltas_read := 0
+var delta_fallbacks := 0
+var _fallback_logged_ms := -1
+const FALLBACK_LOG_MS := 10000
 ## () -> bool: the world is still putting the last snapshot on screen (WorldView.busy); no new fetch meanwhile.
 var busy := Callable()
 
@@ -572,6 +580,7 @@ func _make_sim() -> bool:
 		error = "bridge not loaded: build fp3d-cdda (docs/BUILD.md)"
 		return false
 	_sim = ClassDB.instantiate("CddaSim")
+	_base = null
 	_char_query = 0
 	_push_cheats_allowed()
 	return true
@@ -582,6 +591,7 @@ func stop() -> void:
 		WorkerThreadPool.wait_for_task_completion(_snap_task)
 		_snap_task = -1
 		_snap_job = null
+	_base = null
 	if _sim != null:
 		_sim.stop()
 
@@ -992,6 +1002,12 @@ func _poll_snapshot() -> bool:
 		snapshot_seq = maxi(_snap_job.seq, snap.seq) if snap.is_valid() else _snap_job.seq
 		if snap.is_valid() and snap.ids_generation != ids_generation:
 			_use_id_tables(snap.ids_generation, _snap_job.tables)
+		# the next delta is built on this one only when it came from the delta call (key rows) and was read whole
+		_base = snap if snap.is_valid() and not snap.submap_hash.is_empty() else null
+		if snap.is_valid() and snap.base_seq >= 0:
+			deltas_read += 1
+		if not _snap_job.fallback_why.is_empty():
+			_count_fallback(_snap_job.fallback_why)
 		if snap.is_valid():
 			snapshot_ready.emit(snap)
 		else:
@@ -1002,28 +1018,50 @@ func _poll_snapshot() -> bool:
 		return true
 	if busy.is_valid() and busy.call():
 		return false   # the world still shows the last one: fetch the newest when it is done, not each in between
-	_snap_job = SnapJob.new(_sim, seq, ids_generation)
+	_snap_job = SnapJob.new(_sim, seq, ids_generation, _base)
 	_snap_task = WorkerThreadPool.add_task(_snap_job.run, false, "snapshot parse")
 	return false
 
 
+## A delta that didn't fit was asked for again whole: counted, and logged at most once per FALLBACK_LOG_MS.
+func _count_fallback(why: String) -> void:
+	delta_fallbacks += 1
+	var now := Time.get_ticks_msec()
+	if _fallback_logged_ms < 0 or now - _fallback_logged_ms >= FALLBACK_LOG_MS:
+		_fallback_logged_ms = now
+		push_warning("live snapshot: %d deltas didn't fit and were fetched whole (last: %s)" % [delta_fallbacks,
+				why.left(200)])
+
+
 ## One fetch and parse on a worker thread. The bridge hands out an immutable snapshot under a mutex, so the
 ## call is safe off the main thread; the job touches nothing else. `seq` is read before the fetch, so a newer
-## snapshot taken meanwhile is fetched again next time (never skipped).
+## snapshot taken meanwhile is fetched again next time (never skipped). A bridge with the delta call
+## (contracts/snapshot.md "Deltas") is asked for what changed since `base`; a delta that doesn't fit it is
+## dropped whole and the snapshot fetched again in full. `base` is only read.
 class SnapJob:
 	var sim: RefCounted
 	var seq: int
 	var known_generation: int
+	var base: Snapshot     # the snapshot held, from the delta call; null: ask for a full one
 	var snap: Snapshot
 	var tables: IdTables   # fetched too when the snapshot wants a generation other than known_generation
+	var fallback_why := "" # a delta that didn't fit: why (the snapshot was then fetched whole)
 
-	func _init(s: RefCounted, q: int, generation: int) -> void:
+	func _init(s: RefCounted, q: int, generation: int, held: Snapshot = null) -> void:
 		sim = s
 		seq = q
 		known_generation = generation
+		base = held
 
 	func run() -> void:
-		snap = Snapshot.parse_text(sim.get_snapshot_json(Z_BELOW, Z_ABOVE))
+		if sim.has_method("get_snapshot_delta_json"):
+			snap = Snapshot.parse_text(sim.get_snapshot_delta_json(Z_BELOW, Z_ABOVE, base.seq if base != null else 0),
+					base)
+			if not snap.is_valid() and base != null:
+				fallback_why = snap.error
+				snap = Snapshot.parse_text(sim.get_snapshot_delta_json(Z_BELOW, Z_ABOVE, 0))
+		else:
+			snap = Snapshot.parse_text(sim.get_snapshot_json(Z_BELOW, Z_ABOVE))
 		if snap.is_valid() and snap.ids_generation != known_generation:
 			tables = IdTables.parse_text(sim.get_id_tables_json())
 
