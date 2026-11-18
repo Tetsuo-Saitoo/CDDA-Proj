@@ -49,6 +49,7 @@ class CddaSim : public godot::RefCounted
 
         int64_t get_snapshot_seq() const;
         godot::String get_snapshot_json( int64_t z_below, int64_t z_above ) const;
+        godot::String get_snapshot_delta_json( int64_t z_below, int64_t z_above, int64_t since ) const;
         godot::String get_id_tables_json() const;
         godot::Array drain_events();
         int64_t get_events_dropped() const;

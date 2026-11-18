@@ -207,6 +207,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_queued_actions" ), &CddaSim::get_queued_actions );
     ClassDB::bind_method( D_METHOD( "get_snapshot_seq" ), &CddaSim::get_snapshot_seq );
     ClassDB::bind_method( D_METHOD( "get_snapshot_json", "z_below", "z_above" ), &CddaSim::get_snapshot_json );
+    ClassDB::bind_method( D_METHOD( "get_snapshot_delta_json", "z_below", "z_above", "since" ),
+                          &CddaSim::get_snapshot_delta_json );
     ClassDB::bind_method( D_METHOD( "get_id_tables_json" ), &CddaSim::get_id_tables_json );
     ClassDB::bind_method( D_METHOD( "drain_events" ), &CddaSim::drain_events );
     ClassDB::bind_method( D_METHOD( "get_events_dropped" ), &CddaSim::get_events_dropped );
@@ -774,6 +776,20 @@ String CddaSim::get_snapshot_json( int64_t z_below, int64_t z_above ) const
         uint64_t seq = 0;
         return to_godot( fp3d_session::snapshot_json( static_cast<int>( std::clamp<int64_t>( z_below, 0, 64 ) ),
                          static_cast<int>( std::clamp<int64_t>( z_above, 0, 64 ) ), seq ) );
+    } catch( const std::exception &e ) {
+        godot::UtilityFunctions::push_error( String( "CddaSim: snapshot JSON failed: " ) + e.what() );
+        return String();
+    }
+}
+
+String CddaSim::get_snapshot_delta_json( int64_t z_below, int64_t z_above, int64_t since ) const
+{
+    try {
+        uint64_t seq = 0;
+        // `since` comes from the client: anything below 1 means "nothing held"; the rest is only looked up.
+        return to_godot( fp3d_session::snapshot_delta_json( static_cast<int>( std::clamp<int64_t>( z_below, 0, 64 ) ),
+                         static_cast<int>( std::clamp<int64_t>( z_above, 0, 64 ) ),
+                         since > 0 ? static_cast<uint64_t>( since ) : 0, seq ) );
     } catch( const std::exception &e ) {
         godot::UtilityFunctions::push_error( String( "CddaSim: snapshot JSON failed: " ) + e.what() );
         return String();
