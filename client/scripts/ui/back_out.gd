@@ -13,6 +13,7 @@ const ORDER: PackedStringArray = [
 	"character",       # the character screen (P)
 	"inventory",       # the Tab view: its selection first, then the view
 	"tray",            # the items of a bag or pile laid out
+	"vise",            # the gun in a bench vise, its mods beside it (ViseBench)
 	"carry",           # an item carried with the mouse
 	"wheel",           # E's wheel, asked for and not shown yet
 	"ascii",           # the ASCII view (F3)
