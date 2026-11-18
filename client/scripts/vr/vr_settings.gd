@@ -11,15 +11,17 @@ const MAX_FILE_BYTES := 4096
 ## play: the rig's origin stands this far over the level's floor). `grip`: "hold" carries while the grip is held,
 ## "toggle" takes on one press and lets go on the next. `wrist_hud`: the HUD panel inside the off forearm (VrHud).
 ## `panel_text`: the size of everything on the menu / prompt panel (VrPanel.text_scale), 1 = as designed.
+## `mood_cues`: the player's mood as a soft edge tint in the headset (VrMood).
 const DEFAULTS := {"move": "smooth", "move_dir": "head", "turn": "snap", "snap_deg": 45.0, "turn_speed": 120.0,
 		"speed": 2.0, "vignette": 0.6, "blink": true, "layout": "auto", "hands": "auto", "swap_sticks": false,
-		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0, "wrist_hud": "on", "panel_text": 1.0}
+		"compass": "wrist", "main_hand": "right", "grip": "hold", "height": 0.0, "wrist_hud": "on", "panel_text": 1.0,
+		"mood_cues": "on"}
 ## Key -> allowed words, or [min, max, menu step] for numbers. Bools are on/off.
 const SPEC := {
 	"move": ["smooth", "teleport"], "move_dir": ["head", "hand"], "turn": ["snap", "smooth", "off"],
 	"layout": ["auto", "quest", "vive"], "hands": ["auto", "buttons", "boxes"],
 	"compass": ["wrist", "belt", "both", "off"], "main_hand": ["right", "left"], "grip": ["hold", "toggle"],
-	"wrist_hud": ["on", "off"],
+	"wrist_hud": ["on", "off"], "mood_cues": ["on", "off"],
 	"snap_deg": [15.0, 90.0, 15.0], "turn_speed": [30.0, 360.0, 30.0], "speed": [0.5, 5.0, 0.5],
 	"vignette": [0.0, 1.0, 0.2], "height": [-0.5, 1.0, 0.05], "panel_text": [0.8, 1.6, 0.1], "blink": [],
 	"swap_sticks": [],
@@ -29,7 +31,7 @@ const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", 
 		"vr-turn-speed": "turn_speed", "vr-speed": "speed", "vr-vignette": "vignette", "vr-blink": "blink",
 		"vr-layout": "layout", "vr-hands": "hands", "vr-swap-sticks": "swap_sticks", "vr-compass": "compass",
 		"vr-main-hand": "main_hand", "vr-grip": "grip", "vr-height": "height", "vr-hud": "wrist_hud",
-		"vr-panel-text": "panel_text"}
+		"vr-panel-text": "panel_text", "vr-mood": "mood_cues"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
 const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open",
 		"report": "press to save one"}
@@ -40,7 +42,7 @@ const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move sp
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
 		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
-		["wrist_hud", "Wrist HUD"], ["panel_text", "Menu text size"], ["height", "Height"],
+		["wrist_hud", "Wrist HUD"], ["mood_cues", "Mood tint"], ["panel_text", "Menu text size"], ["height", "Height"],
 		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["keys", "Keys and HUD settings"],
 		["report", "Report a bug"]]
 
@@ -177,4 +179,6 @@ static func label(key: String, v: Variant) -> String:
 					"off": "off"}[v]
 		"wrist_hud":
 			return {"on": "inside the off forearm (turn it to you)", "off": "off"}.get(v, str(v))
+		"mood_cues":
+			return {"on": "soft edge tint at low / high mood", "off": "off"}.get(v, str(v))
 	return str(v)

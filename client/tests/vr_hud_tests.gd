@@ -182,24 +182,36 @@ func _test_state_lines(tables: IdTables) -> void:
 			and (VrHud._line_of({"text": "m".repeat(500)})[0] as String).length() == VrHud.MAX_MOOD,
 			"vr hud: a state line is {text, level}; anything else is no line")
 	var mood := {"value": -20, "word": "Unhappy", "level": HudData.HURT, "text": "Mood: Unhappy (Wet -12, Cold -8, +2 more)",
-			"reasons": [{"name": "Wet", "value": -12}, {"name": "Cold", "value": -8}], "cue": -0.4}
-	_check.call(VrHud.mood_text(mood) == ["Unhappy (Wet)", HudData.HURT]
-			and VrHud.mood_text({"word": "Content", "level": HudData.OK, "reasons": []}) == ["Content", HudData.OK]
-			and VrHud.mood_text({"word": "Sad", "reasons": [7, {"name": 5}]}) == ["Sad", HudData.UNKNOWN]
+			"reasons": [{"name": "Wet", "value": -12}, {"name": "Cold", "value": -8}], "more": 2, "cue": -0.4}
+	_check.call(VrHud.mood_text(mood) == ["Mood: Unhappy", HudData.HURT]
+			and VrHud.mood_text({"word": "Content", "level": HudData.OK, "reasons": []}) == ["Mood: Content", HudData.OK]
+			and VrHud.mood_text({"word": "Sad", "reasons": [7, {"name": 5}]}) == ["Mood: Sad", HudData.UNKNOWN]
 			and VrHud.mood_text({"text": "Mood: fine", "level": HudData.OK}) == ["Mood: fine", HudData.OK]
 			and VrHud.mood_text("Calm") == ["Calm", HudData.UNKNOWN] and VrHud.mood_text({}) == []
 			and VrHud.mood_text(null) == [] and VrHud.mood_text(5) == [],
-			"vr hud: the mood line is the mood's word and its strongest reason; odd moods give no line")
+			"vr hud: the mood line is the mood's word; odd moods give no line")
+	var strong := []
+	for i in 6:
+		strong.append({"name": "R%d" % i, "value": 10 - i})
+	_check.call(VrHud.reasons_text(mood) == "Wet -12, Cold -8, +2 more"
+			and VrHud.reasons_text({"reasons": strong}) == "R0 +10, R1 +9, R2 +8, +3 more"
+			and VrHud.reasons_text({"reasons": [7, {"name": 5, "value": 1}, {"name": "Hot", "value": 1.5},
+				{"name": "", "value": 3}, {"name": "Sun", "value": 2}], "more": "x"}) == "Sun +2"
+			and VrHud.reasons_text({"reasons": [], "more": 4}) == "" and VrHud.reasons_text({"reasons": "Wet"}) == ""
+			and VrHud.reasons_text(null) == "" and VrHud.reasons_text("Wet") == "",
+			"vr hud: the reasons line names the 3 strongest and counts the rest; odd entries skipped")
 	if "mood" in h:
 		h.set("mood", mood)
 		h.changed.emit(PackedStringArray(["mood"]))
-		_check.call(hud.mood_label.visible and hud.mood_label.text == "Unhappy (Wet)"
-				and hud.mood_label.get_theme_color("font_color") == HudData.level_color(HudData.HURT),
-				"vr hud: the mood line shows HudData's mood")
+		_check.call(hud.mood_label.visible and hud.mood_label.text == "Mood: Unhappy"
+				and hud.mood_label.get_theme_color("font_color") == HudData.level_color(HudData.HURT)
+				and hud.why_label.visible and hud.why_label.text == "Wet -12, Cold -8, +2 more",
+				"vr hud: the mood line and its reasons show HudData's mood")
 	else:
 		_check.call(hud.mood_line().is_empty() and not hud.mood_label.visible, "vr hud: HudData has no mood yet: no mood line")
 	hud.data = null
-	_check.call(VrHud.shown(hud.effect_labels).is_empty() and not hud.move_label.visible and not hud.mood_label.visible,
+	_check.call(VrHud.shown(hud.effect_labels).is_empty() and not hud.move_label.visible and not hud.mood_label.visible
+			and not hud.why_label.visible,
 			"vr hud: data taken away: the state lines are empty again")
 	hud.free()
 

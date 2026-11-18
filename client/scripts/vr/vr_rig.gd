@@ -201,6 +201,7 @@ var tray: ItemTray         # L8: a lying container's contents or a big pile laid
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
+var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
@@ -353,6 +354,9 @@ func _build() -> void:
 	hurt = VrHurt.new()   # its own ring, behind the vignette and under its render priority
 	hurt.rig = self
 	camera.add_child(hurt)
+	mood = VrMood.new()   # its own ring, behind the hurt edge
+	mood.rig = self
+	camera.add_child(mood)
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
@@ -459,6 +463,7 @@ func _process(delta: float) -> void:
 ## The HUD panel inside the off forearm (setting `wrist_hud`): shows while turned to the eyes.
 func place_hud(delta: float) -> void:
 	hud.enabled = settings["wrist_hud"] == "on"
+	mood.enabled = settings["mood_cues"] == "on"
 	hud.place(self, delta)
 
 
