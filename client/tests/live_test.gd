@@ -102,6 +102,9 @@ func _run() -> void:
 			{"op": "consume", "item": 0, "type": 3}, {"op": "consume", "item": 5},
 			{"op": "consume", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)},
 			{"op": "consume", "item": 5, "type": 3, "pos": Vector3(1, 2, 0)},
+			{"op": "consume", "item": 5, "type": 3, "part": ""}, {"op": "consume", "item": 5, "type": 3, "part": 3},
+			{"op": "consume", "item": 5, "type": 3, "part": "arm l"},
+			{"op": "consume", "item": 5, "type": 3, "part": "a".repeat(33)}, take.merged({"part": "arm_l"}, true),
 			take.merged({"container": 7}, true), take.merged({"container_type": 3}, true),
 			take.merged({"container": 7, "container_type": 0}, true),
 			take.merged({"container": 0, "container_type": 3}, true)])

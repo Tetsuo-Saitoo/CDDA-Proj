@@ -584,6 +584,17 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         }
         a.batch = static_cast<int>( batch );
     }
+    // consume: optionally the body part first aid goes on; no other op has it. The sim checks the id's letters
+    // again and that it is one of the avatar's own parts.
+    if( !field( d, "part", Variant::STRING, v ) || ( d.has( "part" ) && a.op != fp3d::item_op::consume ) ) {
+        return false;
+    }
+    if( d.has( "part" ) ) {
+        a.part = to_std( v );
+        if( a.part.empty() || a.part.size() > fp3d::max_item_part_bytes ) {
+            return false;
+        }
+    }
     const auto ref = [&d]( const char *uid_key, const char *type_key, fp3d::item_ref & r ) {
         Variant u;
         Variant t;

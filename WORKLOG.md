@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Bridge: first aid can be put on a body part the client names (for VR: press a bandage to the hurt arm), without the game's body part menu. A part that needs nothing, or a broken limb, is refused with the game's own reason. The game data now also says which items are first aid and what each treats. The VR side comes next (VR lead). Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-18 — Delta snapshots, client side (slice 3, lead-world): a snapshot can be read on top of the one held, taking the submaps the bridge didn't resend; anything that doesn't fit fails it and a full one is fetched at once (counted, logged now and then). The live game asks for deltas once the bridge has the call; older bridges work as before. Client tests pass.
 - 2026-11-18 — rest_live_test (QA lead) tells the bridge from the screen: the bridge must have a newer snapshot every 2 s while time passes, the screen gets 5 s to show one. A busy machine made the old single 2 s limit fail once though the bridge was on time.
 - 2026-11-18 — Gun mods on the flat screen: E fits the gunmod in the off hand onto the wielded gun, the Tab view lists the gun's mods with a Take off button and takes a gunmod dropped on the gun. Client tests pass.
