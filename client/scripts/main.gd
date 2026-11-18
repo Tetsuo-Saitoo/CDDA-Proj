@@ -103,6 +103,7 @@ var status := ""
 var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and click pick
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
+var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
 var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
@@ -1657,6 +1658,59 @@ func _setup_hud() -> void:
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
 	layer.add_child(text_dock)
+	_setup_back_out()
+
+
+## What Esc / pad Start backs out of, one per press (BackOut.ORDER); the parts are read when the key comes.
+func _setup_back_out() -> void:
+	back_out.add("keyboard", func() -> bool: return text_dock != null and text_dock.is_open(),
+			func() -> bool:
+				text_dock.close()
+				return true)
+	back_out.add("prompt", func() -> bool: return request_ui != null and request_ui.is_showing() and not request_ui.is_held(),
+			func() -> bool: return request_ui.handle_input(BackOut.esc()))
+	back_out.add("teleport pick", func() -> bool: return tele_pick.picking,
+			func() -> bool:
+				tele_pick.picking = false
+				status = "teleport: cancelled"
+				return true)
+	back_out.add("character", func() -> bool: return character != null and character.visible,
+			func() -> bool: return character.handle_key(BackOut.esc()))
+	back_out.add("inventory", func() -> bool: return inspect != null and inspect.visible,
+			func() -> bool: return inspect.handle_key(BackOut.esc()))
+	back_out.add("tray", func() -> bool: return grab != null and grab.tray_open(),
+			func() -> bool:
+				grab.close_tray()
+				return true)
+	back_out.add("carry", func() -> bool: return vr == null and grab != null and grab.carrying(),
+			func() -> bool: return grab.handle_event(BackOut.esc(), get_viewport().get_camera_3d(), _pointer()))
+	back_out.add("wheel", func() -> bool: return request_ui != null and request_ui.wheel_waiting(),
+			func() -> bool:
+				request_ui.cancel_wheel()
+				return true)
+	back_out.add("ascii", func() -> bool: return classic != null and classic.visible,
+			func() -> bool:
+				classic.toggle()
+				return true)
+	back_out.add("look", _look_open,
+			func() -> bool:
+				_clear_look()
+				return true)
+
+
+## A look is showing (its panel text, the line to what was looked at, or the teleport marker).
+func _look_open() -> bool:
+	return (look_panel != null and not look_panel.text.is_empty()) or _look_line != null or _look_marker != null
+
+
+## Esc / pad Start that nothing else took: backs out of one thing (back_out), or with nothing open opens the game
+## menu (in a game or the viewer; the title menu keeps its own Esc). True when used.
+func back_event(event: InputEvent) -> bool:
+	if not BackOut.is_back(event) or main_menu != null or key_menu.visible:
+		return false
+	if back_out.step().is_empty():
+		_open_key_menu()
+	return true
 
 
 func _open_key_menu() -> void:
@@ -1817,7 +1871,7 @@ func _help() -> String:
 		out += "%s move  %s/%s up/down  %s fast  wheel speed  %s level  %s roofs  %s reload  %s player  %s first person" % [
 				walk, k.call(&"fly_up"), k.call(&"fly_down"), k.call(&"move_fast"), cut, k.call(&"roofs_toggle"),
 				k.call(&"reload"), k.call(&"frame_player"), k.call(&"view_toggle")]
-	return out + "  F1 keys, HUD"
+	return out + "  Esc back / menu  F1 keys, HUD"
 
 
 ## Live game: the CDDA action keys and the hands, from the current bindings.
@@ -1847,7 +1901,8 @@ static func _keys(actions: Array) -> String:
 
 func _input(event: InputEvent) -> void:
 	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
-	request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
+	if not BackOut.is_back(event):   # (Esc / Start while E's wheel is on its way: back_out's "wheel" step)
+		request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
 	if key_menu.visible or inspect.visible or character.visible:
 		tele_pick.picking = false   # a menu came up meanwhile (main's _input sees its clicks before its buttons do)
 	var pick := tele_pick.pick_event(event)   # the cheat's "pick a square": this click is the square
@@ -1856,6 +1911,8 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif pick == TeleportPick.CANCEL:
 		status = "teleport: cancelled"
+		get_viewport().set_input_as_handled()
+	elif back_event(event):   # Esc / Start nothing above took: one thing backed out, or the game menu
 		get_viewport().set_input_as_handled()
 
 
@@ -1940,9 +1997,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if live != null and _live_action(event):
 		return
-	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
-		_clear_look()
-	elif InputActions.pressed(event, &"cutaway_up"):
+	if InputActions.pressed(event, &"cutaway_up"):   # (Esc: back_event, in _input)
 		world.step_view_z(1)
 	elif InputActions.pressed(event, &"cutaway_down"):
 		world.step_view_z(-1)

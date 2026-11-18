@@ -17,6 +17,7 @@ const FILE_VERSION := 2
 ## saved there before doesn't now do two things (version 2: left click went from look_at to click).
 const MOVED := {&"look_at": ["mouse:1"]}
 const MENU_KEY := KEY_F1      # opens the key menu; fixed so it can't be lost
+const MENU_PAD := JOY_BUTTON_START   # a pad's Esc (BackOut): backs out, then opens the key menu; can't be bound
 
 ## Every action: [name, group, label, default bindings]. A binding is the text form `event_text` reads:
 ## "W", "Shift+E", "Kp 8", "mouse:1" (left) / "mouse:2" (right), "pad:0", "axis:1-" / "axis:1+".

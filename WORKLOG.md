@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Esc and a pad's Start back out of one thing per press (a prompt, the Tab view, the tray, the look and others, topmost first) and open the F1 menu when nothing is open. Client tests pass.
 - 2026-11-17 — Teleport cheat goes past creatures: J and the F1 entry aim through monsters and NPCs, a look marks its square and J goes there while it is open, and the F1 page can teleport to the next clicked square (Esc or right click cancels). Client tests pass.
 - 2026-11-17 — Tester AppImage test-2026-11-17b (private test repo, pre-release, not a release) from main b1cbd50 + fork 45f2334, after the QA lead's OK for the range since test-2026-11-17 and the VR cooking card line fix (4aafa1e) found in that review; QA smoke and personal-strings check pass on the file.
 - 2026-11-17 — Client test runs check their own paths more strictly (QA lead): a path with ".." opens nothing wherever it starts, and a run folder that is a link, or lies under one, is never emptied through it. Tests in run_tests; all suites pass.

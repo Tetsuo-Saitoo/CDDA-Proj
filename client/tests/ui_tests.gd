@@ -34,6 +34,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_hints()
 	_test_busy_note()
 	_test_wheel()
+	_test_back_out()
 	_test_main_hand(root)
 	ui.free()
 	_test_hands_panel(root)
@@ -1792,3 +1793,71 @@ func _test_world_setup() -> void:
 	_show(_req("world_setup", {"text": "nope"}))
 	_key(KEY_ESCAPE)
 	_expect({"id": 7, "cancel": true}, "world widget: bad catalog can still cancel")
+
+## Esc / pad Start (BackOut): which events count, one thing per press in ORDER whatever order they were added in,
+## a part that won't back out lets the next go, nothing open is "" (main opens the game menu); a prompt and E's
+## waiting wheel take the Start-made Esc.
+func _test_back_out() -> void:
+	print("ui: back out")
+	var key := func(code: Key, pressed: bool, echo: bool, shift: bool) -> InputEventKey:
+		var k := InputEventKey.new()
+		k.keycode = code
+		k.physical_keycode = code
+		k.pressed = pressed
+		k.echo = echo
+		k.shift_pressed = shift
+		return k
+	var pad := func(b: JoyButton, pressed: bool) -> InputEventJoypadButton:
+		var e := InputEventJoypadButton.new()
+		e.button_index = b
+		e.pressed = pressed
+		return e
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	var backs := [key.call(KEY_ESCAPE, true, false, false), key.call(KEY_ESCAPE, true, false, true), pad.call(JOY_BUTTON_START, true),
+			BackOut.esc()].map(func(e: InputEvent) -> bool: return BackOut.is_back(e))
+	var others := [key.call(KEY_ESCAPE, false, false, false), key.call(KEY_ESCAPE, true, true, false), key.call(KEY_F1, true, false, false),
+			pad.call(JOY_BUTTON_START, false), pad.call(JOY_BUTTON_B, true), pad.call(JOY_BUTTON_BACK, true), click, null] \
+			.map(func(e: InputEvent) -> bool: return BackOut.is_back(e))
+	_check.call(backs == [true, true, true, true] and not others.has(true),
+			"back out: Esc (any modifiers) and pad Start count; a repeat, a release, F1, B, Back, a click don't (%s, %s)"
+			% [backs, others])
+	var b := BackOut.new()
+	var up := {}
+	var names := Array(BackOut.ORDER)
+	names.reverse()   # added backwards: ORDER still decides
+	for n: String in names:
+		up[n] = true
+		b.add(n, func() -> bool: return up[n], func() -> bool:
+			up[n] = false
+			return true)
+	_check.call(b.open_now() == BackOut.ORDER, "back out: every step open, in ORDER (%s)" % [b.open_now()])
+	var went := PackedStringArray()
+	for i in BackOut.ORDER.size() + 1:
+		went.append(b.step())
+	var want := BackOut.ORDER.duplicate()
+	want.append("")
+	_check.call(went == want and b.open_now().is_empty(),
+			"back out: one step per press, topmost first: %s, then nothing (the game menu)" % [went])
+	_check.call(not b.add("nope", func() -> bool: return true, func() -> bool: return true) and b.step() == "",
+			"back out: a name not in ORDER isn't added")
+	up["prompt"] = true
+	up["look"] = true
+	b.add("prompt", func() -> bool: return up["prompt"], func() -> bool: return false)   # a prompt that can't cancel
+	_check.call(b.step() == "look" and b.step() == "" and up["prompt"],
+			"back out: a part that won't back out lets the next one go, then the menu")
+	# the real prompt and wheel steps, as main adds them, with the Esc Start stands for
+	var p := BackOut.new()
+	p.add("prompt", func() -> bool: return ui.is_showing() and not ui.is_held(),
+			func() -> bool: return ui.handle_input(BackOut.esc()))
+	p.add("wheel", func() -> bool: return ui.wheel_waiting(), func() -> bool:
+		ui.cancel_wheel()
+		return true)
+	_show(_req("menu", {"title": "Wait for how long?", "entries": _entries(["Wait 5 minutes", "Sleep"], 10)}))
+	ui.want_wheel(500, false)
+	var first := p.step()
+	_expect({"id": 7, "cancel": true}, "back out: Start on a list cancels it first (%s)" % first)
+	var second := p.step()
+	_check.call(first == "prompt" and second == "wheel" and not ui.wheel_waiting() and p.step() == "",
+			"back out: then E's waiting wheel, then nothing (%s, %s)" % [first, second])
