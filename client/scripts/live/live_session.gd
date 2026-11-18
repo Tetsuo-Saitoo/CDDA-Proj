@@ -670,6 +670,27 @@ func consume_item(uid: float, type: float, tag := 0) -> bool:
 	return bool(_sim.queue_item_action(a))
 
 
+## Gun modification by hand: fit the carried gunmod `uid` onto the wielded gun `gun` (bridge op "mod_add"), or take the
+## installed gunmod `uid` off it ("mod_remove"); `tag` 1..MAX_ITEM_TAG answers with an item_result (0: none). An older
+## bridge refuses the op (false).
+func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+	return _mod_item("mod_add", uid, type, gun, gun_type, tag)
+
+
+func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+	return _mod_item("mod_remove", uid, type, gun, gun_type, tag)
+
+
+func _mod_item(op: String, uid: float, type: float, gun: float, gun_type: float, tag: int) -> bool:
+	if _sim == null or not handle_ok(uid, type) or not handle_ok(gun, gun_type) or uid == gun or tag < 0 \
+			or tag > MAX_ITEM_TAG:
+		return false
+	var a := {"op": op, "item": int(uid), "type": int(type), "container": int(gun), "container_type": int(gun_type)}
+	if tag > 0:
+		a["tag"] = tag
+	return bool(_sim.queue_item_action(a))
+
+
 ## A snapshot item handle: uid 1..MAX_UID-1 and itype 1..MAX_ID, whole and finite.
 static func handle_ok(uid: float, type: float) -> bool:
 	return is_finite(uid) and is_finite(type) and uid == floorf(uid) and type == floorf(type) and uid >= 1.0 \

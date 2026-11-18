@@ -287,8 +287,9 @@ func _read_table(table: String, v: Variant) -> void:
 			if r.has("gun"):
 				def.gun = _str(r.get("gun"), MAX_FLAG_LEN, what + ".gun")
 			def.gun_ammo = _str(r.get("gun_ammo"), MAX_FLAG_LEN, what + ".gun_ammo")
-			if r.get("gunmod_location") != null:
-				def.gunmod_location = _location(r["gunmod_location"], what + ".gunmod_location")
+			var gl: Variant = r.get("gunmod_location")
+			if gl != null and not (gl is String and (gl as String).is_empty()):   # "": none, as when not sent
+				def.gunmod_location = _location(gl, what + ".gunmod_location")
 			if r.get("mod_locations") != null:
 				def.mod_locations = _mod_locations(r["mod_locations"], what + ".mod_locations")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
