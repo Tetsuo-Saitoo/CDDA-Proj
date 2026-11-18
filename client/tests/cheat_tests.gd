@@ -377,7 +377,15 @@ func _test_unstoppable() -> void:
 			== p.kit_button.get_index() + 1 and p.grabs_button.get_index() < p.teleport_button.get_index(),
 			"unstoppable: F1 toggle says how to attack (%s), Break all grabs after the kit" % hit)
 	p.grabs_button.pressed.emit()
-	_check.call(sim.breaks == 8 and p.status.text.contains("next turn"), "unstoppable: the F1 button breaks grabs (%s)" % p.status.text)
+	var asked := p.status.text
+	p.on_range_done(10, "Not now.")
+	var refused := p.status.text
+	p.grabs_button.pressed.emit()
+	p.on_range_done(10, "")
+	_check.call(sim.breaks == 9 and asked.contains("Break all grabs: asked for") and refused == "Break all grabs: Not now."
+			and p.status.text == "Break all grabs: done.",
+			"unstoppable: the F1 button breaks grabs, the outcome on the status line (%s / %s / %s)"
+			% [asked, refused, p.status.text])
 	sim.calls.clear()
 	t.button_pressed = true
 	_check.call(sim.calls == [["unstoppable", true]] and p.status.text.contains("Attack with " + InputActions.key_of(&"hand_off")),

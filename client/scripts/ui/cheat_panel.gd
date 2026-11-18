@@ -156,9 +156,12 @@ static func unstoppable_note() -> String:
 			InputActions.key_of(&"hand_main")]
 
 
+## The one-go break: the op id kept like the range buttons', so range_done's outcome (done, or the game's refusal)
+## reaches the status line.
 func break_grabs() -> void:
-	if CheatModel.apply(backend, CheatModel.BREAK_GRABS):
-		_say("Break all grabs: at the next turn.", false)
+	var id: Variant = backend.call("cheat_break_grabs") if _has("cheat_break_grabs") else 0
+	if id is int and id > 0:
+		_sent("Break all grabs", id)
 	else:
 		_say("Not done: no running game, cheats aren't allowed, or the bridge hasn't got it.", true)
 
