@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-17 — Tester AppImage test-2026-11-17b (private test repo, pre-release, not a release) from main b1cbd50 + fork 45f2334, after the QA lead's OK for the range since test-2026-11-17 and the VR cooking card line fix (4aafa1e) found in that review; QA smoke and personal-strings check pass on the file.
+- 2026-11-17 — Client test runs check their own paths more strictly (QA lead): a path with ".." opens nothing wherever it starts, and a run folder that is a link, or lies under one, is never emptied through it. Tests in run_tests; all suites pass.
 - 2026-11-17 — Fix: while a pot's card shows why the game refused a cook, pointing at a recipe line now starts that recipe, not the next one, and pointing at the reason starts nothing. Client tests pass.
 - 2026-11-17 — Bridge: snapshots are taken one at a time and always handed over in order, also when the game asks a question in the middle of taking one. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — A quick tap of E now only picks the default in the menu E itself opened. A menu that another key opened right after E shows as usual instead of being answered unseen. Client tests pass.
