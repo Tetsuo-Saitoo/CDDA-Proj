@@ -38,6 +38,11 @@ extends Node3D
 ##   let go sooner: it snaps back. Refused: it snaps back, the reason by the hand. CDDA puts the mod in the pack (else
 ##   on the ground); it lands in the hand that pulled it if that grip is still down when it shows carried. A mod CDDA
 ##   can't take off (`mods` flag 1) says so.
+## - A bench vise (V1, Vise): the main grip let go within VISE_M of the jaws of a `bench_vise` lying in reach leaves the
+##   gun there (`vise`; CDDA still wields it, only shown so): the main hand is free (VrRig._gun_hand false) and fits or
+##   pulls off mods and racks like the off hand (the magazine stays the off hand's); the trigger doesn't fire, no live
+##   aim. The main grip on the gun's Grip takes it back; the head more than VISE_LEAVE_M away, or the vise taken or
+##   gone: back in the hand (UNCLAMPED).
 ## The sim decides every outcome. Snapshot data is checked and capped here; per frame only a pose and a few distances.
 
 const SHAPES: Array[String] = ["pistol", "long", "launcher"]   # WeaponViewmodel shapes with the named parts
@@ -86,6 +91,10 @@ const MOD_REACH_M := 0.04     # the off grip this near an installed mod's box ho
 const MOD_PULL_M := 0.05      # ... pulled this far from where it was gripped: CDDA takes it off
 const MOD_TRAVEL := 0.03      # ... its box follows the hand this far at most
 const STUCK := "The %s can't be taken off."
+const VISE_M := 0.15          # the main grip let go this near a bench vise's jaws: the gun stays in the vise
+const VISE_LEAVE_M := 2.0     # the head farther than this from the gun in a vise: back in the hand
+const TAKE_M := 0.1           # the main grip this near the Grip of the gun in a vise takes it back
+const UNCLAMPED := "You take your gun out of the vise."
 const NO_FIT := "That doesn't fit this gun."
 
 var rig: VrRig
@@ -149,6 +158,8 @@ var ghost: MeshInstance3D     # where it goes: a see-through box at its slot (gr
 var _hint := ""               # the line last said by the off hand for `fit`
 var _pull := {}               # an installed mod the off grip holds: {uid, type, hand, start (model space), box, rest}
 var _take_mod := {}           # a mod CDDA took off: {uid, hand}: into that hand once carried, if its grip is still down
+var vise := {}                # the bench vise the gun is held in: {uid, pose (the gun's, world)}; {}: in the hand
+var _vises: Array[int] = []   # the bench vises in reach (Vise.near), per snapshot
 var _hint_left := 0.0
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
@@ -190,8 +201,11 @@ func update(delta: float) -> void:
 	var s := rig.world.snapshot
 	if s != _snap or (s != null and s.seq != _seq):
 		_refresh(s)
+	if clamped() and (not Vise.jaws(rig.hands.picker if rig.hands != null else null, int(vise["uid"])) is Vector3 \
+			or rig.camera.global_position.distance_to((vise["pose"] as Transform3D).origin) > VISE_LEAVE_M):
+		_unclamp(UNCLAMPED)   # walked off, or the vise was picked up or is gone
 	var on := model != null and is_inside_tree() \
-			and (rig.hands == null or rig.hands.proxy(rig.hand_id(rig.main_ctrl())) == null)
+			and (clamped() or rig.hands == null or rig.hands.proxy(rig.hand_id(rig.main_ctrl())) == null)
 	if on != shown:
 		shown = on
 		visible = on
@@ -224,7 +238,7 @@ func update(delta: float) -> void:
 ## The main trigger (VrRig.press, after the pack): true when the gun took it (it shows). Fires from the muzzle;
 ## nothing to fire at yet: queues CDDA's `fire` once.
 func trigger() -> bool:
-	if not shown or rig == null:
+	if not shown or rig == null or clamped():
 		return false
 	var c := rig.main_ctrl()
 	if aim == null:
@@ -257,13 +271,16 @@ func trigger() -> bool:
 ## The off hand's grip (VrRig.press, before grabbing): on the Slide / Bolt it starts a rack, at MagWell with a
 ## magazine inside it takes the magazine out. True when the gun took it.
 func grip(c: XRController3D) -> bool:
-	if not shown or rig == null or c == rig.main_ctrl() or rig.hands == null or rig.menu_open():
+	if not shown or rig == null or (c == rig.main_ctrl() and not clamped()) or rig.hands == null or rig.menu_open():
 		return false
 	var i := _index(c)
 	if not rig.hands.holding(rig.hand_id(c)).is_empty() or rig.pack.hand == i:
 		return false
 	_update_hold()
 	var p := c.global_position
+	if c == rig.main_ctrl() and p.distance_to(part_pose("Grip").origin) <= TAKE_M:
+		_unclamp()   # the main hand takes the gun out of the vise
+		return true
 	var rack_part := ""
 	var rack_d := INF
 	for part: String in RACK_PARTS:
@@ -272,7 +289,8 @@ func grip(c: XRController3D) -> bool:
 			rack_d = dd
 			rack_part = part
 	var well_d := p.distance_to(part_pose("MagWell").origin) if _local.has("MagWell") else INF
-	var can_out := mag != null and gun != null and actions != null and _op.is_empty() and well_d <= MAG_OUT_M
+	var can_out := c == rig.off_ctrl() and mag != null and gun != null and actions != null and _op.is_empty() \
+			and well_d <= MAG_OUT_M
 	var mod_hit := _mod_at(p)
 	var mod_d: float = mod_hit[1]
 	if mod_d <= MOD_REACH_M and mod_d < rack_d and (not can_out or mod_d < well_d):
@@ -315,25 +333,76 @@ func release(c: XRController3D) -> bool:
 	return true
 
 
-## The off hand let go of `it` (VrRig.let_go, first): a gunmod within FIT_M of its slot that CDDA says fits (or doesn't
+## The gun is held in a bench vise (`vise`), not by the main hand.
+func clamped() -> bool:
+	return not vise.is_empty()
+
+
+## The main grip let go with the gun in it (VrRig.let_go, before the body slots): within VISE_M of the jaws of a bench
+## vise in reach, the gun stays where it is, held by the vise (only shown so: CDDA still wields it); the main hand is
+## free. True when it did.
+func let_go_gun(c: XRController3D) -> bool:
+	if not shown or rig == null or rig.hands == null or c != rig.main_ctrl() or clamped():
+		return false
+	var best := -1
+	var best_d := VISE_M
+	for uid: int in _vises:
+		var j: Variant = Vise.jaws(rig.hands.picker, uid)
+		if j is Vector3 and c.global_position.distance_to(j) <= best_d:
+			best = uid
+			best_d = c.global_position.distance_to(j)
+	if best < 0:
+		return false
+	_update_hold()
+	vise = {"uid": best, "pose": _hold}
+	_kick = 0.0
+	fire_wait = 0.0
+	rig.feel(c)
+	rig.sync_held()
+	return true
+
+
+## The gun out of the vise, back in the main hand (`why` said by it); a pull or rack that hand had ends.
+func _unclamp(why := "") -> void:
+	if vise.is_empty():
+		return
+	vise = {}
+	if rig == null:
+		return
+	var c := rig.main_ctrl()
+	if _pull.get("hand") == _index(c):
+		var bx: Variant = _pull.get("box")
+		if is_instance_valid(bx):
+			(bx as Node3D).position = _pull["rest"]
+		_pull = {}
+	if _rack.get("hand") == _index(c):
+		_rack = {}
+		_pose_parts()
+	rig.feel(c)
+	if not why.is_empty():
+		rig.say(_index(c), why)
+	rig.sync_held()
+
+
+## A free hand let go of `it` (VrRig.let_go, first; the off hand, either in a vise): a gunmod within FIT_M of its slot that CDDA says fits (or doesn't
 ## judge) goes to CDDA's mod_add; the hand lets go, nothing dropped, the ghost stays white until CDDA answers. True
 ## when it took it; false (let go as usual) for anything else, a mod that doesn't fit too (its reason is by the hand).
 func let_go_mod(c: XRController3D, it: ItemRef) -> bool:
-	if not shown or rig == null or rig.hands == null or c != rig.off_ctrl() or it == null or gun == null \
-			or actions == null or not _op.is_empty():
+	if not shown or rig == null or rig.hands == null or (c != rig.off_ctrl() and not clamped()) or it == null \
+			or gun == null or actions == null or not _op.is_empty():
 		return false
 	var f := _mod_near(c)
 	if f.is_empty() or not f["near"] or not f["ok"] or f["uid"] != it.uid:
 		return false
 	rig.hands.release(rig.hand_id(c), {})   # the hand lets go, nothing sent: CDDA has the mod until it is fitted
-	var o := {"op": "mod_add", "uid": it.uid, "item": it, "fit": f}
+	var o := {"op": "mod_add", "uid": it.uid, "item": it, "fit": f, "hand": _index(c)}
 	_op = o
 	_hint = ""
 	if actions.mod_add(it, gun):
 		return true   # (a backend that answers inside the call has had _on_finished / _on_refused run already)
 	if is_same(_op, o):
 		_op = {}
-	_readopt(it)
+	_readopt(it, _index(c))
 	rig.feel(c)
 	rig.say(_index(c), CANT_CLEAR)
 	return true
@@ -433,7 +502,8 @@ func _take_off(s: Snapshot) -> void:
 
 func _type_name(t: int) -> String:
 	var def: IdTables.Def = rig.world.tables.def_at("itype", t) if rig.world.tables != null else null
-	return def.name if def != null and not def.name.is_empty() else "mod"
+	var n := InventoryModel.clean(def.name) if def != null else ""
+	return n if not n.is_empty() else "mod"
 
 
 ## CDDA's judgement of carried gunmod `uid` against this gun (player_gun `fits`): {uid, ok, chance, risk, reason}; {}
@@ -489,9 +559,16 @@ func _mod_near(c: XRController3D) -> Dictionary:
 ## it changes (again every HINT_S while it stays).
 func _hover_mod(d: float) -> void:
 	var busy: bool = _op.get("op") == "mod_add"
-	var f := {} if busy or rig.menu_open() or not _rack.is_empty() else _mod_near(rig.off_ctrl())
+	var hc := rig.off_ctrl()
+	var f := {}
+	if not busy and not rig.menu_open() and _rack.is_empty():
+		f = _mod_near(hc)
+		if f.is_empty() and clamped():
+			hc = rig.main_ctrl()   # in a vise either hand fits mods
+			f = _mod_near(hc)
 	if busy:
 		f = _op.get("fit", {})
+		hc = rig.left if int(_op.get("hand", _index(hc))) == 0 else rig.right
 	fit = f
 	_show_ghost()
 	if f.is_empty() or busy:
@@ -502,7 +579,7 @@ func _hover_mod(d: float) -> void:
 	if text != _hint or _hint_left <= 0.0:
 		_hint = text
 		_hint_left = HINT_S
-		rig.say(_index(rig.off_ctrl()), text)
+		rig.say(_index(hc), text)
 
 
 ## The ghost at `fit`'s slot (made once per model, under it), hidden without one.
@@ -534,7 +611,8 @@ func _show_ghost() -> void:
 
 func _gun_name() -> String:
 	var def: IdTables.Def = rig.world.tables.def_at("itype", gun_type) if rig.world.tables != null else null
-	return def.name if def != null and not def.name.is_empty() else "gun"
+	var n := InventoryModel.clean(def.name) if def != null else ""
+	return n if not n.is_empty() else "gun"
 
 
 ## Asks CDDA to clear the jam: ItemActions.clear_jam (the bridge's "clear" op, refused with a reason when the gun isn't
@@ -561,7 +639,7 @@ func rack_hand() -> int:
 
 ## AimController.live_aim: the muzzle now ({origin, sight}) while the gun shows, else {}.
 func live_pose() -> Dictionary:
-	if not shown or not _local.has("Muzzle"):
+	if not shown or clamped() or not _local.has("Muzzle"):
 		return {}
 	var m := part_pose("Muzzle")
 	var sight := -m.basis.z
@@ -661,6 +739,9 @@ func _refresh(s: Snapshot) -> void:
 	var f: Variant = g.get("faults")
 	var j := WeaponViewmodel.jam_of((f as Array).slice(0, MAX_FAULTS)) if f is Array else ""
 	_find_rows(s, t)
+	_vises = Vise.near(s, tables)
+	if clamped() and not int(vise["uid"]) in _vises:
+		_unclamp(UNCLAMPED)   # the vise is gone from reach
 	if not _take_mod.is_empty():
 		_take_off(s)
 	if j != jam:
@@ -698,6 +779,8 @@ func _clear() -> void:
 	fit = {}
 	_pull = {}
 	_take_mod = {}
+	vise = {}
+	_vises = []
 	shape = ""
 	gun_type = 0
 	gun = null
@@ -822,6 +905,9 @@ func _place() -> void:
 
 
 func _update_hold() -> void:
+	if clamped():
+		_hold = vise["pose"]   # held still by the vise
+		return
 	var g: Vector3 = (_local.get("Grip", Transform3D.IDENTITY) as Transform3D).origin
 	_hold = hold_pose(grip_pose(rig.main_ctrl()), g)
 
@@ -980,9 +1066,9 @@ func _drop_copy() -> void:
 	_sync_mag()
 
 
-## Hands an item back to the off hand while CDDA still has it (a refused or unsent reload).
-func _readopt(it: ItemRef) -> void:
-	var c := rig.off_ctrl()
+## Hands an item back to the off hand (or hand i) while CDDA still has it (a refused or unsent reload or mod).
+func _readopt(it: ItemRef, i := -1) -> void:
+	var c := rig.off_ctrl() if i < 0 else (rig.left if i == 0 else rig.right)
 	var id := rig.hand_id(c)
 	if rig.hands == null or not rig.hands.holding(id).is_empty():
 		return
@@ -1031,11 +1117,12 @@ func _on_refused(item: ItemRef, op: String, reason: String) -> void:
 	var o := _op
 	_op = {}
 	_drop_copy()   # a magazine coming out snaps back into the gun
-	var c := rig.off_ctrl()
+	var hi := int(o.get("hand", -1))   # a mod's: the hand that let it go or pulled it
+	var c := rig.off_ctrl() if hi < 0 else (rig.left if hi == 0 else rig.right)
 	rig.feel(c)
 	rig.say(_index(c), reason)
 	if op in ["reload", "mod_add"] and o.get("item") is ItemRef:
-		_readopt(o["item"])
+		_readopt(o["item"], hi)
 	var bx: Variant = o.get("box")
 	if op == "mod_remove" and is_instance_valid(bx):
 		(bx as Node3D).position = o["rest"]   # it stays on the gun
