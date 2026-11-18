@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Client test runs check their own paths more strictly (QA lead): a path with ".." opens nothing wherever it starts, and a run folder that is a link, or lies under one, is never emptied through it. Tests in run_tests; all suites pass.
 - 2026-11-17 — Fix: while a pot's card shows why the game refused a cook, pointing at a recipe line now starts that recipe, not the next one, and pointing at the reason starts nothing. Client tests pass.
 - 2026-11-17 — Bridge: snapshots are faster again: 23 -> 14 ms on Windows and 12 -> 8 ms on Linux (133 and 72 ms this morning). The game now looks each map block up once instead of six times per square. What the client gets is unchanged: a test compares every square with the old way. Fork tests pass on Windows and Linux; client tests and the live rest test pass.
 - 2026-11-17 — Bridge: taking a snapshot is about 6 times faster (133 -> 23 ms on Windows, 72 -> 12 ms on Linux): the game now copies only the z-levels the client reads, not all 21. What the client gets is unchanged. Fork tests pass on Windows and Linux; client tests and the live rest test pass.
