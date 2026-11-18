@@ -306,6 +306,7 @@ func _gun_mods_live() -> void:
 		_check(refused and said[0][0] == "mod_add" and why.contains(str(fit.get("reason", "?")))
 				and _carried(mod_t) != null and ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == false,
 				"gun mods: one that doesn't fit is refused in CDDA's words and stays carried (\"%s\")" % why)
+		await _fit_key_live(mod_t, str(fit.get("reason", "")))
 		print("  (the %s doesn't fit here, so fitting and taking off weren't tried)" % GUN_MOD)
 		return
 	if int(fit.get("chance", 0)) < 100:   # CDDA would ask for tools: a menu this check doesn't answer
@@ -328,6 +329,39 @@ func _gun_mods_live() -> void:
 				and m != null and m.uid == mod.uid
 	_check(sent and await _until(off, OP_TIMEOUT_MS, true),
 			"gun mods: mod_remove takes it off: carried again with its handle (%d turns)" % [_main.world.snapshot.turn - turn0])
+
+
+## The flat screen's key for it (lead-ui's F1; skipped on a client without main._fit_held_mod): with the gun in the
+## main hand and the gunmod of itype `mod_t` in the off hand, the crosshair line offers to fit it, and E on one the
+## snapshot says doesn't fit shows CDDA's `reason` by the crosshair and sends nothing.
+func _fit_key_live(mod_t: int, reason: String) -> void:
+	if not _main.has_method("_fit_held_mod"):
+		print("  (no key for fitting a gun mod in this client: not checked)")
+		return
+	var acts: ItemActions = _main.item_actions
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var mod := _carried(mod_t)
+	if mod == null or not acts.hold(mod, "off"):
+		_check(false, "gun mods: the gunmod goes into the off hand (%s)" % ["sent" if mod != null else "not carried"])
+		return
+	var in_off := func() -> bool:
+		var h: Variant = _main.hud_data.held.get("off")
+		return h is ItemRef and (h as ItemRef).type == mod_t and acts.pending((h as ItemRef).uid) == "" and in_loop.call()
+	var held := await _until(in_off, OP_TIMEOUT_MS, true)
+	var line: String = _main._context_line()
+	_check(held and line.contains("fit the"), "gun mods: gun and gunmod in hand, the crosshair line offers to fit it (\"%s\")" % line)
+	if not held:
+		return
+	_main.grab._flash = ""
+	root.push_input(_key_of(&"use_held"))
+	await create_timer(0.3).timeout
+	var said: String = _main.grab._flash
+	var uid: int = (_main.hud_data.held.get("off") as ItemRef).uid
+	_check(not reason.is_empty() and said.contains(reason) and acts.pending(uid) == "" and _carried(mod_t) != null,
+			"gun mods: E on one that doesn't fit says why by the crosshair and sends nothing (\"%s\")" % said)
+	root.push_input(_key_of(&"stow_off"))   # the hands as they were
+	await _until(func() -> bool: return _main.hud_data.held.get("off") == null and in_loop.call(), OP_TIMEOUT_MS, true)
 
 
 ## The first carried item of itype `t`, null for none.
