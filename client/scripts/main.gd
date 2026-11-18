@@ -1106,8 +1106,6 @@ func _live_action(event: InputEvent) -> bool:
 		# what the hands hold, used on the square you face (a hose + a container on a vehicle siphons); E only: a
 		# stray left click must not fill, refuel or siphon
 		act = "fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))]
-		if vr == null and hud_settings.context_menu != HudSettings.MENU_LIST:   # the object's menu, if any, as a wheel
-			request_ui.want_wheel(WHEEL_WAIT_MS, hud_settings.context_menu == HudSettings.MENU_HOLD)
 	elif InputActions.pressed(event, &"hold_off"):
 		act = "fp3d_hold_off"
 	elif InputActions.pressed(event, &"stow_off"):
@@ -1132,7 +1130,12 @@ func _live_action(event: InputEvent) -> bool:
 		return false
 	if _in_main_loop():
 		grab.ask = {}   # a key's own action: its prompts are the player's to answer
-		_queue_act(act)
+		var sent := _queue_act(act)
+		# E: the object's menu, if any, as a wheel; only once E's own action is on its way (request_ui.note_input
+		# undoes it when another key comes first)
+		if sent and InputActions.pressed(event, &"use_held") and vr == null \
+				and hud_settings.context_menu != HudSettings.MENU_LIST:
+			request_ui.want_wheel(WHEEL_WAIT_MS, hud_settings.context_menu == HudSettings.MENU_HOLD)
 	return true
 
 
@@ -1803,6 +1806,7 @@ static func _keys(actions: Array) -> String:
 
 func _input(event: InputEvent) -> void:
 	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
+	request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
 
 
 func _unhandled_input(event: InputEvent) -> void:

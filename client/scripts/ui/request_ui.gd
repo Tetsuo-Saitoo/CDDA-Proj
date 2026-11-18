@@ -178,6 +178,31 @@ func want_wheel(wait_ms: int, hold: bool, down := Callable()) -> void:
 	wheel_down = down
 
 
+## The wheel asked for (want_wheel) is only for the request E itself causes: any other key, mouse or pad button
+## pressed before that request comes (main: every event) cancels it, so a menu that key caused shows as usual and a
+## quick tap of E never answers it unseen. Not cancelling: E (`use_held`) itself, releases, modifiers alone, the
+## mouse wheel, motion.
+func note_input(event: InputEvent) -> void:
+	if wheel_until < 0 or not event.is_pressed() or event.is_echo() or InputActions.pressed(event, &"use_held"):
+		return
+	var k := event as InputEventKey
+	var mods := [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]
+	if k != null and (k.keycode in mods or k.physical_keycode in mods):
+		return
+	var m := event as InputEventMouseButton
+	if m != null and m.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN, MOUSE_BUTTON_WHEEL_LEFT,
+			MOUSE_BUTTON_WHEEL_RIGHT]:
+		return
+	if k != null or m != null or event is InputEventJoypadButton:
+		cancel_wheel()
+
+
+## No wheel for the next request (want_wheel undone).
+func cancel_wheel() -> void:
+	wheel_until = -1
+	wheel_down = Callable()
+
+
 ## Hides the request; its widget answers nothing more.
 func clear() -> void:
 	if widget != null:
