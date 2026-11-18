@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — In VR, "Time passes..." (or "Sleeping...", "Waiting...") now shows low in your view while the game runs on by itself, and the VR menu has a Character row. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR your wrist now shows your mood and its main reasons ("Mood: Unhappy", "Wet -12, Cold -8, +2 more"), and a low or high mood softly tints the edges of your view (cold when low, faintly warm when high); a "Mood tint" VR setting turns it off. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR a bench vise lying next to you holds your gun: let go of the gun at the vise and it stays there, both hands free to fit or pull off mods; grip it to take it back, or walk away and it's back in your hand. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR you can take a mod off your gun by hand: grip it with your other hand and pull; let go early and it clicks back. The game decides (a fixed mod says it can't come off) and the mod lands in your hand. Client tests pass; not yet tried in a headset.

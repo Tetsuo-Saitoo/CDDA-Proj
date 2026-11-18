@@ -572,6 +572,7 @@ func _start_vr() -> void:
 	vr.gun.aim = aim   # L2 guns by hand: fired from the muzzle (fire_from, live_aim), haptics on shots and kills
 	vr.gun.flashes = hud_settings.weather_flash   # its muzzle flash follows the flash setting too
 	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
+	vr.busy.source = busy_note   # "Time passes..." low in the headset's view while the game runs on
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
@@ -1704,7 +1705,7 @@ func _process(_delta: float) -> void:
 	if _fp_active() and live != null and not typing:
 		_fp_live_step(false)
 	compass.visible = vr == null
-	busy_note.tick(Time.get_ticks_msec(), vr == null and live != null and live.state == "running")
+	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)

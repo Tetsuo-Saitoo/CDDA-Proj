@@ -202,6 +202,7 @@ var gun: VrGun             # L2: the wielded gun in the main hand (built in _bui
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
+var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
@@ -357,6 +358,8 @@ func _build() -> void:
 	mood = VrMood.new()   # its own ring, behind the hurt edge
 	mood.rig = self
 	camera.add_child(mood)
+	busy = VrBusy.new()
+	camera.add_child(busy)
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
