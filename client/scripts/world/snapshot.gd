@@ -56,6 +56,10 @@ const MAX_COUNT := 2147483647              # an item_amounts count (charges), 1 
 const MAX_AMOUNT := 1_000_000_000          # an item_amounts weight in g / volume in ml
 const MAX_STATE_ML := 100000000           # 100 m3
 const MAX_DIRT := 10000                   # a gun's fouling, as wielded_gun.dirt
+const MAX_GUN_MODS := 16                  # wielded_gun.mods: the gunmods installed (gun modification)
+const MAX_GUN_FITS := 32                  # wielded_gun.fits: carried gunmods judged against the gun
+const MAX_GUN_SLOTS := 16                 # wielded_gun.slots: its mod locations as it is now
+const MAX_FIT_REASON := 80                # a fit's reason (plain_text)
 const MAX_POCKET := 255
 const CARRIED_WORN := 1
 const CARRIED_WIELDED := 2
@@ -161,7 +165,8 @@ var z_max := CddaCoords.Z_MAX_DEFAULT
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
-var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed}, {} for none
+var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed; mods, fits,
+                                           # slots only when sent}, {} for none
 var player_parts: Array[BodyPart] = []     # the player's main body parts (hp, wounds), snapshot order
 var player_worn: Array[Worn] = []          # what the player wears, inner to outer
 var carried := PackedInt64Array()          # CARRIED_STRIDE ints per carried item, depth first
@@ -525,6 +530,70 @@ static func plain_text(v: Variant, cap: int) -> String:
 	return "".join(out).left(cap).strip_edges()
 
 
+## Gun modification: wielded_gun.mods, cleaned: [[uid, type, location id, flags], ...] -> [{uid, type, location, flags
+## (1 irremovable)}]. Entries that aren't whole or repeat a uid are left out (never fails the snapshot); at most
+## MAX_GUN_MODS looked at.
+static func mods_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_GUN_MODS):
+		if not e is Array or (e as Array).size() < 4:
+			continue
+		var a: Array = e
+		var uid: Variant = _whole(a[0], 1, MAX_UID - 1)
+		var t: Variant = _whole(a[1], 1, MAX_ID)
+		var flags: Variant = _whole(a[3], 0, 255)
+		if uid == null or t == null or flags == null or seen.has(uid) or not IdTables.is_location(a[2]):
+			continue
+		seen[uid] = true
+		out.append({"uid": uid, "type": t, "location": a[2], "flags": flags})
+	return out
+
+
+## wielded_gun.fits, cleaned: [[uid, ok 0/1, chance 0..100, risk 0..100, reason], ...] -> [{uid, ok (bool), chance,
+## risk, reason (plain_text, MAX_FIT_REASON)}]; bad or repeated entries left out, at most MAX_GUN_FITS looked at.
+static func fits_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_GUN_FITS):
+		if not e is Array or (e as Array).size() < 5:
+			continue
+		var a: Array = e
+		var uid: Variant = _whole(a[0], 1, MAX_UID - 1)
+		var ok: Variant = _whole(a[1], 0, 1)
+		var chance: Variant = _whole(a[2], 0, 100)
+		var risk: Variant = _whole(a[3], 0, 100)
+		if uid == null or ok == null or chance == null or risk == null or seen.has(uid):
+			continue
+		seen[uid] = true
+		out.append({"uid": uid, "ok": ok == 1, "chance": chance, "risk": risk, "reason": plain_text(a[4], MAX_FIT_REASON)})
+	return out
+
+
+## wielded_gun.slots, cleaned: [[location id, slots, free], ...] -> [{location, slots, free}] (free at most slots, both
+## 0..IdTables.MAX_MOD_SLOTS); bad or repeated locations left out, at most MAX_GUN_SLOTS looked at.
+static func slots_from(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_GUN_SLOTS):
+		if not e is Array or (e as Array).size() < 3:
+			continue
+		var a: Array = e
+		var n: Variant = _whole(a[1], 0, IdTables.MAX_MOD_SLOTS)
+		var free: Variant = _whole(a[2], 0, IdTables.MAX_MOD_SLOTS)
+		if n == null or free == null or free > n or not IdTables.is_location(a[0]) or seen.has(a[0]):
+			continue
+		seen[a[0]] = true
+		out.append({"location": a[0], "slots": n, "free": free})
+	return out
+
+
 ## player.wielded_gun: {type (itype index), dirt (0..10000, -1 absent), faults (fault ids), rounds (-1 absent),
 ## suppressed (a gunmod quiets it; only a JSON true counts)}.
 func _read_gun(v: Variant) -> Dictionary:
@@ -554,6 +623,12 @@ func _read_gun(v: Variant) -> Dictionary:
 			return {}
 		faults.append(s)
 	gun["faults"] = faults
+	if d.has("mods"):   # gun modification: cleaned, never fail the snapshot; the keys only when sent
+		gun["mods"] = mods_from(d["mods"])
+	if d.has("fits"):
+		gun["fits"] = fits_from(d["fits"])
+	if d.has("slots"):
+		gun["slots"] = slots_from(d["slots"])
 	return gun if is_valid() else {}
 
 

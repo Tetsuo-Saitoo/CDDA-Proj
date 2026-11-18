@@ -22,6 +22,9 @@ const MAX_GROUPS := 64
 const MAX_GROUP_BITS := 62
 const TABLES := ["ter", "furn", "trap", "field", "itype", "mtype", "vpart"]
 const MAX_POCKETS := 32               # per itype, the contract's cap
+const MAX_MOD_LOCATION := 32          # a gunmod location id, bytes (gun modification; is_location)
+const MAX_MOD_LOCATIONS := 16         # per gun, its mod_locations
+const MAX_MOD_SLOTS := 16             # slots at one location
 const POCKET_RIGID := 1               # itype pocket flags (contracts/id_tables.md)
 const POCKET_WATERTIGHT := 2
 const POCKET_AIRTIGHT := 4
@@ -59,6 +62,8 @@ class Def:
 	var location := ""       # vpart: CDDA's mount location ("structure", "center", "on_roof", "under", ...); "" none
 	var phase := ""          # itype: one of PHASES; "" when not sent (an older bridge), not set or unknown
 	var gun_ammo := ""       # itype, guns: the first ammo type (9mm, 223, shot, arrow, ...)
+	var gunmod_location := ""   # itype, gunmods: CDDA's location it goes on ("sights", "stock mount", ...); "" none
+	var mod_locations: Array[Dictionary] = []   # itype, guns: [{location, slots}] (valid_mod_locations); [] none
 	var weakpoints := {}     # mtype: CDDA weak point ids (head, eye, arm, leg, ...) -> true
 	var gun := ""            # itype: the skill a gun uses (pistol, rifle, archery, ...), "" if not a gun
 	var volume_ml := 0
@@ -282,6 +287,10 @@ func _read_table(table: String, v: Variant) -> void:
 			if r.has("gun"):
 				def.gun = _str(r.get("gun"), MAX_FLAG_LEN, what + ".gun")
 			def.gun_ammo = _str(r.get("gun_ammo"), MAX_FLAG_LEN, what + ".gun_ammo")
+			if r.get("gunmod_location") != null:
+				def.gunmod_location = _location(r["gunmod_location"], what + ".gunmod_location")
+			if r.get("mod_locations") != null:
+				def.mod_locations = _mod_locations(r["mod_locations"], what + ".mod_locations")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
 			if r.has("pockets"):
@@ -368,6 +377,59 @@ static func _is_word(s: String) -> bool:
 		if not ((c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 95):
 			return false
 	return true
+
+
+## A gunmod location id (gun modification): letters, digits, space, _ and -, 1..MAX_MOD_LOCATION bytes. The one
+## check the tables, the snapshot (Snapshot.mods_from, slots_from) and GunMods use.
+static func is_location(v: Variant) -> bool:
+	if not v is String:
+		return false
+	var s: String = v
+	if s.is_empty() or s.to_utf8_buffer().size() > MAX_MOD_LOCATION:
+		return false
+	for i in s.length():
+		var c := s.unicode_at(i)
+		if not ((c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 95 or c == 32
+				or c == 45):
+			return false
+	return true
+
+
+func _location(v: Variant, what: String) -> String:
+	if not is_valid():
+		return ""
+	if not is_location(v):
+		_fail("%s: expected a gunmod location (letters, digits, space, _ and -, at most %d bytes)" % [what, MAX_MOD_LOCATION])
+		return ""
+	return v
+
+
+## A gun's mod_locations: [[location id, slots 0..MAX_MOD_SLOTS], ...], each location once, at most MAX_MOD_LOCATIONS;
+## strict like the other fields (a bad one fails the tables).
+func _mod_locations(v: Variant, what: String) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not is_valid():
+		return out
+	if not v is Array or (v as Array).size() > MAX_MOD_LOCATIONS:
+		_fail("%s: expected a list of at most %d" % [what, MAX_MOD_LOCATIONS])
+		return out
+	var seen := {}
+	for i in (v as Array).size():
+		var w := "%s[%d]" % [what, i]
+		var e: Variant = v[i]
+		if not e is Array or (e as Array).size() != 2 or not (e[1] is int or e[1] is float):
+			_fail(w + ": expected [location, slots]")
+			return []
+		var loc := _location(e[0], w + "[0]")
+		var n := _int(e[1], 0, MAX_MOD_SLOTS, w + "[1]")
+		if not is_valid():
+			return []
+		if seen.has(loc):
+			_fail("%s: %s appears twice" % [w, loc])
+			return []
+		seen[loc] = true
+		out.append({"location": loc, "slots": n})
+	return out
 
 
 func _str(v: Variant, cap: int, what: String) -> String:
