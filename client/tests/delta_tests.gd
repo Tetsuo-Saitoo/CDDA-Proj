@@ -2,7 +2,8 @@ extends RefCounted
 ## Delta snapshots (contracts/snapshot.md "Deltas"), read as hostile input: the `submap_keys` rows are checked
 ## against the bodies; a delta takes each submap it doesn't send from the snapshot held, only when that holds the
 ## position with the same revisions and hash (same id tables); anything that doesn't add up fails the snapshot (the
-## caller then asks for a full one) and leaves the held snapshot as it was. Run by run_tests.gd.
+## caller then asks for a full one) and leaves the held snapshot as it was. LiveSession's fetch (SnapJob) with a
+## stand-in bridge. Run by run_tests.gd.
 
 var _check: Callable
 
@@ -20,6 +21,7 @@ func run(check: Callable, data: Variant) -> void:
 	_test_bad_delta(data, full, base)
 	_test_moved(full, base)
 	_test_derived(full)
+	_test_live(full)
 
 
 ## The mock town as a full answer (seq 1) with its key rows; the hash is made up (the client keeps it, never computes it).
@@ -182,6 +184,77 @@ func _test_moved(full: Dictionary, base: Snapshot) -> void:
 		d["submap_keys"].append([11, 27, 0, 0, 0, 0])
 	_check.call(not Snapshot.from_data(_delta(full, [], out), base).is_valid(),
 			"deltas: a row the moved bubble doesn't hold fails")
+
+
+## A stand-in bridge with the delta call: hands out `answers` in turn and notes each `since` asked for.
+class FakeSim extends RefCounted:
+	var seq := 0
+	var answers: Array = []
+	var asked: Array = []
+
+	func get_snapshot_seq() -> int:
+		return seq
+
+	func get_snapshot_delta_json(_below: int, _above: int, since: int) -> String:
+		asked.append(since)
+		return answers.pop_front() if not answers.is_empty() else ""
+
+	func stop() -> void:
+		pass
+
+
+## An older bridge: only the full call.
+class OldSim extends RefCounted:
+	var text := ""
+
+	func get_snapshot_json(_below: int, _above: int) -> String:
+		return text
+
+
+## LiveSession's fetch: the first snapshot whole (since 0), the next a delta on it, a delta that doesn't fit asked
+## for again whole and counted; stopping forgets the base; an older bridge keeps the full call.
+func _test_live(full: Dictionary) -> void:
+	var sim := FakeSim.new()
+	var ls := LiveSession.new()
+	ls._sim = sim
+	ls.ids_generation = 1
+	var got: Array[Snapshot] = []
+	ls.snapshot_ready.connect(func(s: Snapshot) -> void: got.append(s))
+	var poll := func(seq: int, answers: Array) -> void:
+		sim.seq = seq
+		sim.answers = answers
+		for _k in 5000:
+			if ls._poll_snapshot():
+				return
+			OS.delay_msec(1)
+	poll.call(1, [JSON.stringify(full)])
+	_check.call(got.size() == 1 and got[0].seq == 1 and sim.asked == [0] and ls._base == got[0] and ls.deltas_read == 0,
+			"deltas live: the first fetch asks for everything (since 0) and keeps it as the base %s" % [sim.asked])
+	poll.call(2, [JSON.stringify(_delta(full, [0]))])
+	_check.call(got.size() == 2 and got[1].base_seq == 1 and got[1].reused_submaps == 362 and sim.asked == [0, 1]
+			and ls._base == got[1] and ls.deltas_read == 1 and ls.delta_fallbacks == 0,
+			"deltas live: the next fetch is a delta on it %s" % [sim.asked])
+	var bad := _delta(full, [0], func(d: Dictionary) -> void: d["base"] = 7)
+	bad["seq"] = 3
+	var whole := full.duplicate(true)
+	whole["seq"] = 3
+	poll.call(3, [JSON.stringify(bad), JSON.stringify(whole)])
+	_check.call(got.size() == 3 and got[2].seq == 3 and got[2].base_seq == -1 and got[2].reused_submaps == 0
+			and sim.asked == [0, 1, 2, 0] and ls._base == got[2] and ls.delta_fallbacks == 1,
+			"deltas live: a delta that doesn't fit is fetched again whole and counted %s" % [sim.asked])
+	ls.stop()
+	_check.call(ls._base == null, "deltas live: stopping forgets the base")
+	ls.free()
+	var job := LiveSession.SnapJob.new(sim, 4, 1, got[2])
+	sim.answers = [JSON.stringify(bad), "{"]
+	job.run()
+	var old := OldSim.new()
+	old.text = JSON.stringify(whole)
+	var old_job := LiveSession.SnapJob.new(old, 3, 1, got[2])
+	old_job.run()
+	_check.call(not job.snap.is_valid() and not job.fallback_why.is_empty() and got[2].is_valid()
+			and old_job.snap.is_valid() and old_job.snap.base_seq == -1 and old_job.fallback_why.is_empty(),
+			"deltas live: a bad delta and a bad full one fail, the base unharmed; an older bridge keeps the full call")
 
 
 ## What a snapshot works out from all its submaps (lights listed, containers, item uids) counts the reused ones too.
