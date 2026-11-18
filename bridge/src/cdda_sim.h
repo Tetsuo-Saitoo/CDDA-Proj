@@ -83,6 +83,7 @@ class CddaSim : public godot::RefCounted
         // The teleport cheat, in any game while cheats are allowed (contracts/bridge_api.md "Cheats").
         int64_t cheat_teleport( const godot::Vector3i &pos );
         int64_t cheat_set_weather( const godot::String &id, double wind );
+        int64_t cheat_break_grabs();
 
         int64_t match_recipes( const godot::Dictionary &container );
         int64_t query_character();

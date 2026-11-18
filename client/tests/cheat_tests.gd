@@ -29,6 +29,13 @@ class FakeSim extends RefCounted:
 		kits += 1
 		return true
 
+	var breaks := 0
+	var break_id: Variant = 9
+
+	func cheat_break_grabs() -> Variant:
+		breaks += 1
+		return break_id
+
 	func set_auto_pause(on: bool) -> void:
 		auto = on
 
@@ -53,6 +60,7 @@ func run(check: Callable) -> void:
 	_test_menu_and_panel()
 	_test_args()
 	_test_range_entry()
+	_test_unstoppable()
 
 
 func _session(sim: FakeSim) -> LiveSession:
@@ -189,9 +197,9 @@ func _test_model() -> void:
 	for r: Dictionary in off:
 		keys.append(r["key"])
 		dead = dead and not r["enabled"] and not r["on"]
-	var want := Array(LiveSession.CHEATS) + [CheatModel.AUTO_PAUSE, CheatModel.TEST_KIT]
+	var want := Array(LiveSession.CHEATS) + [CheatModel.BREAK_GRABS, CheatModel.AUTO_PAUSE, CheatModel.TEST_KIT]
 	_check.call(keys == want and dead and off[-1]["kind"] == CheatModel.ACTION and off[0]["kind"] == CheatModel.TOGGLE,
-			"cheat model: cheats, auto-pause, test kit in order; all greyed out without a game (%s)" % [keys])
+			"cheat model: cheats, break grabs, auto-pause, test kit in order; all greyed out without a game (%s)" % [keys])
 	var c := _all_off()
 	c["invincible"] = true
 	c["no_needs"] = "yes"
@@ -329,3 +337,50 @@ func _find_button(n: Node, text: String) -> Button:
 		if (c as Button).text == text and not c.is_queued_for_deletion():
 			return c
 	return null
+
+
+## The Unstoppable cheat and "Break all grabs" (2026-11-17): a known cheat name for the bridge, the one-go break as a
+## range op (cheats allowed and a bridge that has it), the F1 row and button, and the text on how to attack.
+func _test_unstoppable() -> void:
+	var sim := FakeSim.new()
+	sim.cheats = _all_off()
+	var ls := _session(sim)
+	_check.call("unstoppable" in LiveSession.CHEATS and ls.set_cheat("unstoppable", true)
+			and sim.calls == [["unstoppable", true]], "unstoppable: a cheat name the sim gets")
+	ls.cheats_allowed = false
+	_check.call(ls.cheat_break_grabs() == 0 and sim.breaks == 0 and not ls.can_break_grabs(),
+			"unstoppable: break grabs refused while cheats aren't allowed")
+	ls.cheats_allowed = true
+	_check.call(ls.can_break_grabs() and ls.cheat_break_grabs() == 9 and sim.breaks == 1,
+			"unstoppable: break grabs sent, its op id back")
+	for junk: Variant in [0, -4, "9", 2.5e30, null]:
+		sim.break_id = junk
+		_check.call(ls.cheat_break_grabs() == 0, "unstoppable: a junk op id is no op (%s)" % [junk])
+	sim.break_id = 10
+	var rows := CheatModel.read(ls)
+	var keys := rows.map(func(r: Dictionary) -> String: return r["key"])
+	var g: Dictionary = rows[keys.find(CheatModel.BREAK_GRABS)]
+	_check.call(g["enabled"] and g["kind"] == CheatModel.ACTION and CheatModel.apply(ls, CheatModel.BREAK_GRABS)
+			and sim.breaks == 7, "unstoppable: the model's break-grabs row works (%d sent)" % sim.breaks)
+	ls.cheats_allowed = false
+	rows = CheatModel.read(ls)
+	_check.call(not rows[keys.find(CheatModel.BREAK_GRABS)]["enabled"] and not CheatModel.apply(ls, CheatModel.BREAK_GRABS)
+			and sim.breaks == 7, "unstoppable: greyed out while cheats aren't allowed")
+	ls.cheats_allowed = true
+	var p := CheatPanel.new()
+	p.backend = ls
+	p.refresh()
+	var t: CheckButton = p.toggles["unstoppable"]
+	var hit := InputActions.key_of(&"hand_main")
+	_check.call(not t.disabled and t.text == CheatModel.LABELS["unstoppable"] and t.tooltip_text.contains("swaps places")
+			and t.tooltip_text.contains(hit) and not p.grabs_button.disabled and p.grabs_button.get_index()
+			== p.kit_button.get_index() + 1 and p.grabs_button.get_index() < p.teleport_button.get_index(),
+			"unstoppable: F1 toggle says how to attack (%s), Break all grabs after the kit" % hit)
+	p.grabs_button.pressed.emit()
+	_check.call(sim.breaks == 8 and p.status.text.contains("next turn"), "unstoppable: the F1 button breaks grabs (%s)" % p.status.text)
+	sim.calls.clear()
+	t.button_pressed = true
+	_check.call(sim.calls == [["unstoppable", true]] and p.status.text.contains("Attack with " + InputActions.key_of(&"hand_off")),
+			"unstoppable: turning it on says to attack with the strike keys (%s)" % p.status.text)
+	p.free()
+	ls.free()

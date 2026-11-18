@@ -21,6 +21,7 @@ const WEATHER_GAME := "Weather as the game decides"
 var backend: Object
 var toggles := {}   # cheat name -> CheckButton
 var kit_button: Button
+var grabs_button: Button   # "Break all grabs", one go (CheatModel.BREAK_GRABS)
 var auto_pause: CheckButton
 var status: Label
 ## K7 test range controls, shown only in a range game (backend.in_range()): zones, monsters frozen, heal, time,
@@ -77,7 +78,7 @@ func _init() -> void:
 	var row := HBoxContainer.new()
 	for r: Dictionary in CheatModel.rows({}, false):
 		var key: String = r["key"]
-		if r["kind"] == CheatModel.ACTION:
+		if key == CheatModel.TEST_KIT:
 			kit_button = Button.new()
 			kit_button.text = r["label"]
 			kit_button.tooltip_text = "Backpack, guns and ammo, tools, light, food and water; what doesn't fit drops at your feet."
@@ -85,6 +86,11 @@ func _init() -> void:
 			kit_button.pressed.connect(give_kit)
 			row.add_child(kit_button)
 			continue
+		if key == CheatModel.BREAK_GRABS:
+			grabs_button = _button(r["label"], break_grabs)
+			grabs_button.name = "BreakGrabs"
+			grabs_button.tooltip_text = "Everything holding you (or your mount) lets go, once. Unstoppable does it at every action."
+			continue   # placed after the kit
 		var b := CheckButton.new()
 		b.text = r["label"]
 		b.focus_mode = Control.FOCUS_NONE   # keys stay with the menu
@@ -95,6 +101,9 @@ func _init() -> void:
 		else:
 			grid.add_child(b)
 			toggles[key] = b
+	if toggles.has("unstoppable"):
+		(toggles["unstoppable"] as CheckButton).tooltip_text = unstoppable_note()
+	row.add_child(grabs_button)
 	teleport_button = _button("Teleport to the crosshair", teleport_here)
 	teleport_button.name = "Teleport"
 	row.add_child(teleport_button)
@@ -112,8 +121,8 @@ func refresh() -> void:
 	for r: Dictionary in CheatModel.read(backend):
 		var key: String = r["key"]
 		live = live or r["enabled"]
-		var b: BaseButton = kit_button if key == CheatModel.TEST_KIT else (auto_pause if key == CheatModel.AUTO_PAUSE
-				else toggles[key])
+		var b: BaseButton = kit_button if key == CheatModel.TEST_KIT else (grabs_button if key == CheatModel.BREAK_GRABS
+				else (auto_pause if key == CheatModel.AUTO_PAUSE else toggles[key]))
 		b.disabled = not r["enabled"]
 		if b is CheckButton:
 			b.set_pressed_no_signal(r["on"])
@@ -140,10 +149,26 @@ func give_kit() -> void:
 		_say("No test kit: no running game, or cheats aren't allowed.", true)
 
 
+## Unstoppable's F1 text: walking into an enemy pushes past it, so attacks take the hand strike keys.
+static func unstoppable_note() -> String:
+	return ("Grabs break as soon as you act, and walking into an enemy swaps places with it instead of attacking. "
+			+ "Attack with %s / %s (the hand strikes) or aim and fire.") % [InputActions.key_of(&"hand_off"),
+			InputActions.key_of(&"hand_main")]
+
+
+func break_grabs() -> void:
+	if CheatModel.apply(backend, CheatModel.BREAK_GRABS):
+		_say("Break all grabs: at the next turn.", false)
+	else:
+		_say("Not done: no running game, cheats aren't allowed, or the bridge hasn't got it.", true)
+
+
 func _on_toggled(on: bool, key: String) -> void:
 	if not CheatModel.apply(backend, key, on):
 		_say("Not changed: no running game, or cheats aren't allowed.", true)
 		refresh()
+	elif key == "unstoppable" and on:
+		_say("Unstoppable on: applies at the next turn. " + unstoppable_note(), false)
 	elif key != CheatModel.AUTO_PAUSE:
 		_say("%s %s: applies at the next turn." % [CheatModel.LABELS[key], "on" if on else "off"], false)
 
