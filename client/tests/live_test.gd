@@ -16,6 +16,7 @@ const TURN_TIMEOUT_MS := 60000
 const EXPECT_FILE := "live_test_expect.json"
 ## The run's own scratch folder (shared user:// otherwise collides between parallel runs); run 2 uses run 1's.
 const TestDir := preload("res://tests/test_dir.gd")
+const SnapSame := preload("res://tests/snapshot_same.gd")
 
 var _failed := 0
 var _sim: RefCounted
@@ -698,7 +699,7 @@ func _result(tag: int) -> Dictionary:
 
 ## The bridge's delta call read by the client's parser (Snapshot.parse_text with the snapshot held): a full answer
 ## first, then after each of a few waited turns a delta on the one held, which must come out the same as the plain
-## snapshot of that moment (_same_snapshot). Then a delta the held snapshot doesn't fit must fail and leave the held
+## snapshot of that moment (SnapSame.diff). Then a delta the held snapshot doesn't fit must fail and leave the held
 ## one alone. Skipped, said so, on a bridge without the call or a client without the parser. Returns the main loop's
 ## request to go on with ({} when the game stopped).
 func _check_deltas(req: Dictionary) -> Dictionary:
@@ -731,7 +732,7 @@ func _check_deltas(req: Dictionary) -> Dictionary:
 			break
 		if next.base_seq != held.seq:
 			diffs.append("turn %d: built on %d, %d was held" % [i, next.base_seq, held.seq])
-		var d := _same_snapshot(next, plain)
+		var d := SnapSame.diff(next, plain)
 		if not d.is_empty():
 			diffs.append("turn %d: %s" % [i, d])
 		reused.append(next.reused_submaps)
@@ -745,24 +746,3 @@ func _check_deltas(req: Dictionary) -> Dictionary:
 	_check((not wrong.is_valid() or first.seq == held.seq) and first.is_valid() and first.submaps.size() == before,
 			"deltas: a delta read against another snapshot than its base fails and leaves that one whole (%s)" % wrong.error)
 	return req
-
-
-## "" when `a` (read from a delta) and `b` (the plain snapshot of the same moment) are the same: seq, turn, the
-## player's square, and every submap's revisions, terrain, furniture, traps, items, handles, fields, flags, vis and
-## light; else what differs first.
-func _same_snapshot(a: Snapshot, b: Snapshot) -> String:
-	if a.seq != b.seq or a.turn != b.turn or a.player_pos != b.player_pos:
-		return "seq %d / %d, turn %d / %d, player %s / %s" % [a.seq, b.seq, a.turn, b.turn, a.player_pos, b.player_pos]
-	if a.submaps.size() != b.submaps.size():
-		return "%d submaps, the plain one has %d" % [a.submaps.size(), b.submaps.size()]
-	for p: Vector3i in b.submaps:
-		var x: Snapshot.Submap = a.submaps.get(p)
-		var y: Snapshot.Submap = b.submaps[p]
-		if x == null:
-			return "no submap %s" % p
-		if x.revision != y.revision or x.detail_revision != y.detail_revision:
-			return "submap %s: revisions %d.%d / %d.%d" % [p, x.revision, x.detail_revision, y.revision, y.detail_revision]
-		for f: String in ["ter", "furn", "trap", "items", "handles", "fields", "flags", "vis", "light"]:
-			if x.get(f) != y.get(f):
-				return "submap %s: %s differs" % [p, f]
-	return ""
