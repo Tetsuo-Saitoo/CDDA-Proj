@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Gun modification by hand: the client now reads the game's list of mods on the held gun, which carried mods fit and why not, and the gun's free mod slots (with the bridge's part still to come). Client tests pass.
 - 2026-11-17 — Bridge: the snapshot now says which square each vehicle part is on (and its level, for ramps), so the client can draw cars where the game has them (lead-world's side comes next). Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Vehicles are drawn (C5 slice 1, lead-world): every part of a car on its square as a simple shape per kind, turned to its facing and tinted by damage; car walls, windows and closed doors block walking (free walk, VR, teleport) and catch dropped items; look-at names the vehicle and the part. Client tests
 - 2026-11-17 — Tester AppImage test-2026-11-17b (private test repo, pre-release, not a release) from main b1cbd50 + fork 45f2334, after the QA lead's OK for the range since test-2026-11-17 and the VR cooking card line fix (4aafa1e) found in that review; QA smoke and personal-strings check pass on the file.

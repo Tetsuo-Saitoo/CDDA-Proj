@@ -2,19 +2,106 @@ extends RefCounted
 ## Gun modification by hand, S1 (GunMods): each gun shape has a slot for CDDA's main gunmod locations where a mod of
 ## that kind goes (sights on top, muzzle past the muzzle, stock behind the grip, ...); mounts sit by their part,
 ## smaller; an unknown location still gets a place; more mods at one location step along it; the location charset;
-## hostile `mods` lists; the boxes on a built model (meta, replaced, none for a shape without slots).
-## Built data only. Run by run_tests.gd.
+## hostile `mods` lists; the boxes on a built model (meta, replaced, none for a shape without slots). S1 part 2: the
+## snapshot's wielded_gun mods / fits / slots (cleaned, never failing it) and the id tables' gunmod_location /
+## mod_locations (strict). Built data and the mock snapshot. Run by run_tests.gd.
 
 var _check: Callable
 
 
-func run(check: Callable) -> void:
+func run(check: Callable, data: Variant) -> void:
 	_check = check
 	print("gun mods")
 	_test_slots()
 	_test_locations()
 	_test_mods_of()
 	_test_dress()
+	_test_snapshot(data)
+	_test_tables()
+
+
+## wielded_gun.mods / fits / slots: parsed when sent, junk entries left out without failing the snapshot, capped;
+## not sent: the old keys only. GunMods.mods_of takes the parsed list as it is.
+func _test_snapshot(data: Variant) -> void:
+	var dd: Dictionary = (data as Dictionary).duplicate(true)
+	var long_reason := "a".repeat(500)
+	dd["player"]["wielded_gun"] = {"type": 5, "rounds": 3,
+		"mods": [[501, 7, "muzzle", 0], [502, 8, "stock mount", 1], [501, 9, "sights", 0], [0, 7, "rail", 0],
+			[503, 7, "<b>", 0], [504, 7.5, "rail", 0], [505, 7, "rail"], "x", null, [506, 7, "rail", 300],
+			[507.0, 7.0, "rail", 0.0, "more"]],
+		"fits": [[601, 1, 100, 0, ""], [602, 0, 40, 30, "<color_red>requires at least 3 in marksmanship</color>"],
+			[603, 2, 0, 0, ""], [604, 0, 101, 0, ""], [605, 0, -1, 0, "x"], [601, 1, 0, 0, "again"], [606, 0, 0, 0, 5],
+			[607, 0, 0, 0, long_reason], {"uid": 608}],
+		"slots": [["sights", 1, 0], ["rail", 2, 1], ["rail", 2, 2], ["muzzle", 1, 2], ["bad/one", 1, 1], ["stock", 99, 0],
+			["barrel", 1]]}
+	var s := Snapshot.from_data(dd)
+	var g := s.player_gun
+	var mods: Array = g.get("mods", [])
+	var fits: Array = g.get("fits", [])
+	var slots: Array = g.get("slots", [])
+	var uids := []
+	for m: Dictionary in mods:
+		uids.append(m["uid"])
+	var fit_uids := []
+	for f: Dictionary in fits:
+		fit_uids.append(f["uid"])
+	var m_ok: bool = uids == [501, 502, 507] and mods[1] == {"uid": 502, "type": 8, "location": "stock mount", "flags": 1} \
+			and mods[2]["uid"] is int and mods[2]["type"] is int and mods[2]["flags"] is int
+	var f_ok: bool = fit_uids == [601, 602, 606, 607] and fits[0]["ok"] == true and fits[0]["chance"] == 100 \
+			and fits[1]["ok"] == false and fits[1]["risk"] == 30 \
+			and fits[1]["reason"] == "requires at least 3 in marksmanship" and fits[2]["reason"] == "" \
+			and (fits[3]["reason"] as String).length() == Snapshot.MAX_FIT_REASON
+	var s_ok: bool = slots == [{"location": "sights", "slots": 1, "free": 0}, {"location": "rail", "slots": 2, "free": 1}]
+	_check.call(s.is_valid() and m_ok and f_ok and s_ok and GunMods.mods_of(g).size() == 3,
+			"gun mods: wielded_gun mods / fits / slots parse; junk entries left out, the snapshot still valid (%s %s %s %s)"
+			% [s.error, mods, fits, slots])
+	var many := []
+	for i in 40:
+		many.append([1000 + i, 7, "rail", 0])
+	dd["player"]["wielded_gun"] = {"type": 5, "mods": many, "fits": "junk", "slots": {"sights": 1}}
+	var capped := Snapshot.from_data(dd)
+	dd["player"]["wielded_gun"] = {"type": 5}
+	var old := Snapshot.from_data(dd)
+	_check.call(capped.is_valid() and (capped.player_gun["mods"] as Array).size() == Snapshot.MAX_GUN_MODS
+			and (capped.player_gun["fits"] as Array).is_empty() and (capped.player_gun["slots"] as Array).is_empty()
+			and old.is_valid() and not old.player_gun.has("mods") and not old.player_gun.has("fits")
+			and not old.player_gun.has("slots"),
+			"gun mods: a long mods list is capped at %d, a wrong-shaped one is empty; not sent: no keys" % Snapshot.MAX_GUN_MODS)
+
+
+## The id tables' gunmod_location (gunmods) and mod_locations (guns): read when sent; a bad one fails the tables.
+func _test_tables() -> void:
+	var base := {"generation": 3, "ter": [{"id": "t_null"}], "furn": [{"id": "f_null"}], "trap": [], "field": [],
+			"itype": [{"id": ""}, {"id": "gun_x", "mod_locations": [["sights", 1], ["stock mount", 1], ["rail", 2]]},
+				{"id": "scope_x", "gunmod_location": "sights"}, {"id": "rock_x", "gunmod_location": null}]}
+	var t := IdTables.from_data(base)
+	var gun: IdTables.Def = t.def_named("itype", "gun_x") if t.is_valid() else null
+	var scope: IdTables.Def = t.def_named("itype", "scope_x") if t.is_valid() else null
+	var rock: IdTables.Def = t.def_named("itype", "rock_x") if t.is_valid() else null
+	_check.call(t.is_valid() and gun != null and gun.mod_locations == [{"location": "sights", "slots": 1},
+			{"location": "stock mount", "slots": 1}, {"location": "rail", "slots": 2}] and gun.gunmod_location == ""
+			and scope.gunmod_location == "sights" and scope.mod_locations.is_empty() and rock.gunmod_location == "",
+			"gun mods: id tables read a gun's mod locations and a gunmod's location (%s)" % t.error)
+	var seventeen := []
+	for i in IdTables.MAX_MOD_LOCATIONS + 1:
+		seventeen.append(["loc %d" % i, 1])
+	var bad_rows: Array = [
+		{"gunmod_location": "<b>sights</b>"}, {"gunmod_location": ""}, {"gunmod_location": 5},
+		{"gunmod_location": "x".repeat(IdTables.MAX_MOD_LOCATION + 1)}, {"gunmod_location": ["sights"]},
+		{"mod_locations": "sights"}, {"mod_locations": [["sights"]]}, {"mod_locations": [["sights", 1, 2]]},
+		{"mod_locations": [["sights", -1]]}, {"mod_locations": [["sights", IdTables.MAX_MOD_SLOTS + 1]]},
+		{"mod_locations": [["sights", 1.5]]}, {"mod_locations": [["bad/x", 1]]}, {"mod_locations": [["sights", null]]},
+		{"mod_locations": [["sights", 1], ["sights", 2]]}, {"mod_locations": seventeen}, {"mod_locations": [{"sights": 1}]},
+	]
+	var let_in := []
+	for r: Dictionary in bad_rows:
+		var d: Dictionary = base.duplicate(true)
+		var row := {"id": "bad_x"}
+		row.merge(r)
+		d["itype"].append(row)
+		if IdTables.from_data(d).is_valid():
+			let_in.append(r)
+	_check.call(let_in.is_empty(), "gun mods: a bad gunmod_location or mod_locations fails the id tables (%s)" % [let_in])
 
 
 func _test_slots() -> void:

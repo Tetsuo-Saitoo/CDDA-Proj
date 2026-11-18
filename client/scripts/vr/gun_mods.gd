@@ -10,7 +10,7 @@ extends RefCounted
 ##   location), replacing what was there.
 
 const MAX_MODS := 16              # mods shown on one gun (the snapshot's cap)
-const MAX_LOC := 32               # a location id's length (bytes; the id charset is ASCII)
+const MAX_LOC := IdTables.MAX_MOD_LOCATION   # a location id's length (bytes)
 const MAX_UID := 1 << 53
 const HOLDER := "Mods"
 const COLOR := Color(0.3, 0.32, 0.35)   # a bit lighter than the gun's metal, so a mod reads as added
@@ -69,19 +69,10 @@ const ALIAS := {
 }
 
 
-## A CDDA gunmod location id as the bridge may send it: letters, digits, space, _ and -, 1..MAX_LOC long.
+## A CDDA gunmod location id as the bridge may send it (IdTables.is_location: letters, digits, space, _ and -, 1..MAX_LOC
+## bytes).
 static func valid_location(v: Variant) -> bool:
-	if not v is String:
-		return false
-	var s: String = v
-	if s.is_empty() or s.length() > MAX_LOC:
-		return false
-	for i in s.length():
-		var c := s.unicode_at(i)
-		if not ((c >= 0x61 and c <= 0x7a) or (c >= 0x41 and c <= 0x5a) or (c >= 0x30 and c <= 0x39)
-				or c == 0x20 or c == 0x5f or c == 0x2d):
-			return false
-	return true
+	return IdTables.is_location(v)
 
 
 ## Where the k-th mod at `location` sits on a gun of `shape`: {at, size} in the model's space; {} for a shape with no
