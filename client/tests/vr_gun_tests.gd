@@ -76,6 +76,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_long_gun()
 	_test_mods()
 	_test_mod_install()
+	_test_mod_remove()
 	_test_hostile()
 	_test_no_gun()
 	_aim.crosshair.free()
@@ -715,6 +716,10 @@ class ModStub extends RefCounted:
 		calls.append([uid, type, gun, gun_type, tag])
 		return true
 
+	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append(["remove", uid, type, gun, gun_type, tag])
+		return true
+
 	func queued_actions() -> int:
 		return 0
 
@@ -793,6 +798,84 @@ func _test_mod_install() -> void:
 	_actions.backend = _mock
 	_remove(sup)
 	sdef.gunmod_location = was
+	_snap.player_gun = {"type": gun_t, "dirt": 0, "faults": [], "rounds": 0}
+	_captured()
+	_rest_hands()
+	_frame()
+
+
+## Gun modification, S3: the off grip on an installed mod's box holds it; let go before 5 cm: it snaps back; pulled
+## 5 cm: mod_remove with a tag, the box out meanwhile; refused: back on, CDDA's reason; done and shown carried while
+## the grip is still down: it lands in that hand. A mod CDDA can't take off says so.
+func _test_mod_remove() -> void:
+	var g := _rig.gun
+	var gun_t: int = _it["glock_19"]
+	var las_t: int = _it["laser_sight"]
+	var las := 7001
+	var sup := 7002
+	_snap.player_gun = {"type": gun_t, "dirt": 0, "faults": [], "rounds": 15, "fits": [],
+			"mods": [{"uid": las, "type": las_t, "location": "rail", "flags": 0},
+				{"uid": sup, "type": _it["suppressor"], "location": "muzzle", "flags": 1}]}
+	_captured()
+	_rest_hands()
+	_frame()
+	var stub := ModStub.new()
+	_actions.backend = stub
+	var boxes := _part(GunMods.HOLDER)
+	var lbox := boxes.get_child(0) as Node3D
+	var rest := lbox.position
+	_rig.left.global_position = (boxes.get_child(1) as Node3D).global_position
+	_rig.press(_rig.left, "grip_click")
+	var sname: String = _world.tables.def_at("itype", _it["suppressor"]).name
+	var stuck: bool = _rig.notes[0].visible and _rig.notes[0].text == VrGun.STUCK % sname and _hands.holding("vr_l").is_empty()
+	_rig.release(_rig.left, "grip_click")
+	var at := lbox.global_position
+	var out := lbox.global_transform.basis.x.normalized()
+	_rig.left.global_position = at
+	_rig.press(_rig.left, "grip_click")
+	_rig.left.global_position = at + out * 0.03
+	_frame()
+	var follows: bool = lbox.position.distance_to(rest) > 0.025 and stub.calls.is_empty()
+	_rig.release(_rig.left, "grip_click")
+	_frame()
+	var back: bool = lbox.position.is_equal_approx(rest) and stub.calls.is_empty() and _hands.holding("vr_l").is_empty()
+	_check.call(stuck and follows and back,
+			"vr gun: a mod CDDA can't take off says so; a gripped mod follows the hand, let go before 5 cm it snaps back")
+	_rig.left.global_position = at
+	_rig.press(_rig.left, "grip_click")
+	_rig.left.global_position = at + out * 0.07
+	_frame()
+	var sent: bool = stub.calls.size() == 1 and stub.calls[0][0] == "remove" and int(stub.calls[0][1]) == las \
+			and int(stub.calls[0][2]) == las_t and int(stub.calls[0][3]) == _gun and int(stub.calls[0][4]) == gun_t \
+			and _actions.pending(las) == "mod_remove" and absf(lbox.position.distance_to(rest) - VrGun.MOD_TRAVEL) < 0.001
+	var tag: int = int(stub.calls[0][5]) if not stub.calls.is_empty() else 0
+	_actions.on_events([{"kind": "item_result", "detail": tag, "amount": 0, "text": "You can't unload the laser sight."}])
+	_frame()
+	var refused: bool = lbox.position.is_equal_approx(rest) and _rig.notes[0].text == "You can't unload the laser sight." \
+			and _actions.pending(las) == ""
+	_rig.release(_rig.left, "grip_click")
+	_rig.left.global_position = at
+	_rig.press(_rig.left, "grip_click")
+	_rig.left.global_position = at + out * 0.07
+	_frame()
+	var tag2: int = int(stub.calls[-1][5]) if not stub.calls.is_empty() else 0
+	_actions.on_events([{"kind": "item_result", "detail": tag2, "amount": 1, "text": ""}])
+	_snap.player_gun["mods"] = [(_snap.player_gun["mods"] as Array)[1]]   # off the gun, into the pack (same uid)
+	var rows := _snap.carried
+	rows.append_array(PackedInt64Array([las, las_t, 0, -1, 0]))
+	_snap.carried = rows
+	_captured()
+	_frame()
+	var held: ItemRef = _hands.holding("vr_l").get("item")
+	var landed: bool = stub.calls.size() == 2 and held != null and held.uid == las and g.mods.size() == 1 \
+			and _part(GunMods.HOLDER).get_child_count() == 1
+	_check.call(sent and refused and landed,
+			"vr gun: pulled 5 cm: mod_remove with a tag, the box out; refused: back on with CDDA's reason; done: in the still-gripping hand (%s)"
+			% [stub.calls])
+	_hands.release("vr_l", {})
+	_rig.release(_rig.left, "grip_click")
+	_actions.backend = _mock
+	_remove(las)
 	_snap.player_gun = {"type": gun_t, "dirt": 0, "faults": [], "rounds": 0}
 	_captured()
 	_rest_hands()

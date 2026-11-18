@@ -32,6 +32,12 @@ extends Node3D
 ##   mod_add (ItemActions.mod_add, tagged), the hand lets go and the ghost stays white until CDDA answers; refused
 ##   (or "Never mind." to its question): back in the hand with the reason. One that doesn't fit is let go as usual.
 ##   A bridge without `fits` (older): no ghost.
+## - Taking a mod off (S3): the off grip within MOD_REACH_M of an installed mod's box (nearer than the slide / bolt and
+##   the well) holds it; the box follows the hand out (MOD_TRAVEL at most); pulled MOD_PULL_M from where it was
+##   gripped, CDDA's mod_remove goes out (ItemActions.mod_remove, tagged) and the box stays out until CDDA answers;
+##   let go sooner: it snaps back. Refused: it snaps back, the reason by the hand. CDDA puts the mod in the pack (else
+##   on the ground); it lands in the hand that pulled it if that grip is still down when it shows carried. A mod CDDA
+##   can't take off (`mods` flag 1) says so.
 ## The sim decides every outcome. Snapshot data is checked and capped here; per frame only a pose and a few distances.
 
 const SHAPES: Array[String] = ["pistol", "long", "launcher"]   # WeaponViewmodel shapes with the named parts
@@ -76,6 +82,10 @@ const GHOST_OK := Color(0.35, 1.0, 0.45, 0.45)
 const GHOST_NO := Color(1.0, 0.35, 0.3, 0.45)
 const GHOST_BUSY := Color(1.0, 1.0, 1.0, 0.3)
 const FITS := "Let go to fit it"
+const MOD_REACH_M := 0.04     # the off grip this near an installed mod's box holds it
+const MOD_PULL_M := 0.05      # ... pulled this far from where it was gripped: CDDA takes it off
+const MOD_TRAVEL := 0.03      # ... its box follows the hand this far at most
+const STUCK := "The %s can't be taken off."
 const NO_FIT := "That doesn't fit this gun."
 
 var rig: VrRig
@@ -137,6 +147,8 @@ var mods: Array[Dictionary] = []   # the installed gunmods shown (GunMods.mods_o
 var fit := {}
 var ghost: MeshInstance3D     # where it goes: a see-through box at its slot (green fits, red doesn't, white in flight)
 var _hint := ""               # the line last said by the off hand for `fit`
+var _pull := {}               # an installed mod the off grip holds: {uid, type, hand, start (model space), box, rest}
+var _take_mod := {}           # a mod CDDA took off: {uid, hand}: into that hand once carried, if its grip is still down
 var _hint_left := 0.0
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
@@ -185,6 +197,7 @@ func update(delta: float) -> void:
 		visible = on
 		if not on:
 			_rack = {}
+			_pull = {}
 			fire_wait = 0.0
 			fit = {}
 			_show_ghost()
@@ -199,6 +212,8 @@ func update(delta: float) -> void:
 		_copy.transform = rig.off_ctrl().global_transform
 	if fire_wait > 0.0:
 		_tick_fire(d)
+	if not _pull.is_empty():
+		_tick_pull()
 	if not _rack.is_empty():
 		_tick_rack()
 	elif not rig.menu_open():
@@ -258,6 +273,10 @@ func grip(c: XRController3D) -> bool:
 			rack_part = part
 	var well_d := p.distance_to(part_pose("MagWell").origin) if _local.has("MagWell") else INF
 	var can_out := mag != null and gun != null and actions != null and _op.is_empty() and well_d <= MAG_OUT_M
+	var mod_hit := _mod_at(p)
+	var mod_d: float = mod_hit[1]
+	if mod_d <= MOD_REACH_M and mod_d < rack_d and (not can_out or mod_d < well_d):
+		return _grip_mod(c, int(mod_hit[0]))
 	if rack_d <= RACK_REACH_M and (not can_out or rack_d <= well_d):
 		_rack = {"part": rack_part, "hand": i, "start": (_hold.affine_inverse() * p).z, "max": 0.0}
 		return true
@@ -267,8 +286,15 @@ func grip(c: XRController3D) -> bool:
 	return false
 
 
-## The grip let go (VrRig.release, first): ends that hand's rack. True when it did.
+## The grip let go (VrRig.release, first): ends that hand's rack, or puts back the mod it held before it came off.
+## True when it did.
 func release(c: XRController3D) -> bool:
+	if not _pull.is_empty() and rig != null and _pull.get("hand") == _index(c):
+		var bx: Variant = _pull.get("box")
+		if is_instance_valid(bx):
+			(bx as Node3D).position = _pull["rest"]
+		_pull = {}
+		return true
 	if _rack.is_empty() or rig == null or _rack.get("hand") != _index(c):
 		return false
 	var pulled: float = _rack["max"]
@@ -311,6 +337,103 @@ func let_go_mod(c: XRController3D, it: ItemRef) -> bool:
 	rig.feel(c)
 	rig.say(_index(c), CANT_CLEAR)
 	return true
+
+
+## The installed mod whose box is nearest world point p: [index in `mods`, distance (m) to its box]; [-1, INF] none.
+func _mod_at(p: Vector3) -> Array:
+	var h := model.get_node_or_null(GunMods.HOLDER) as Node3D if model != null else null
+	var best := [-1, INF]
+	if h == null:
+		return best
+	for i in mini(h.get_child_count(), mods.size()):
+		var b := h.get_child(i) as MeshInstance3D
+		if b == null or not b.mesh is BoxMesh:
+			continue
+		var l := b.global_transform.affine_inverse() * p
+		var half := (b.mesh as BoxMesh).size * 0.5
+		var d := (l - l.clamp(-half, half)).length()
+		if is_finite(d) and d < float(best[1]):
+			best = [i, d]
+	return best
+
+
+## The off grip on installed mod i: one CDDA can't take off (or a gun busy with another action) says so with a buzz;
+## else it is held to be pulled off (_pull). True: the grip is the gun's.
+func _grip_mod(c: XRController3D, i: int) -> bool:
+	var m: Dictionary = mods[i]
+	if (int(m["flags"]) & 1) != 0:
+		rig.feel(c)
+		rig.say(_index(c), STUCK % _type_name(int(m["type"])))
+		return true
+	var h := model.get_node_or_null(GunMods.HOLDER)
+	var box := h.get_child(i) as Node3D if h != null and i < h.get_child_count() else null
+	if box == null or actions == null or gun == null or not _op.is_empty():
+		rig.feel(c)
+		rig.say(_index(c), CANT_CLEAR)
+		return true
+	_pull = {"uid": m["uid"], "type": m["type"], "hand": _index(c), "box": box, "rest": box.position,
+			"start": model.global_transform.affine_inverse() * c.global_position}
+	return true
+
+
+## The held mod's box follows the hand out (MOD_TRAVEL at most); pulled MOD_PULL_M from where it was gripped:
+## CDDA's mod_remove goes out, the box stays out until CDDA answers.
+func _tick_pull() -> void:
+	var c := rig.left if int(_pull["hand"]) == 0 else rig.right
+	var bx: Variant = _pull.get("box")
+	if not is_instance_valid(bx) or model == null:
+		_pull = {}   # the boxes were made again (the snapshot changed the mods)
+		return
+	var box: Node3D = bx
+	var off := model.global_transform.affine_inverse() * c.global_position - (_pull["start"] as Vector3)
+	if not off.is_finite():
+		return
+	box.position = (_pull["rest"] as Vector3) + off.limit_length(MOD_TRAVEL)
+	if off.length() < MOD_PULL_M:
+		return
+	var o := {"op": "mod_remove", "uid": _pull["uid"], "type": _pull["type"], "hand": _pull["hand"], "box": box,
+			"rest": _pull["rest"]}
+	_pull = {}
+	_op = o
+	_take_mod = {}   # an older one is given up
+	rig.feel(c)
+	if actions.mod_remove(int(o["uid"]), int(o["type"]), gun):
+		return   # (a backend that answers inside the call has had _on_finished / _on_refused run already)
+	if is_same(_op, o):
+		_op = {}
+	box.position = o["rest"]
+	rig.say(_index(c), CANT_CLEAR)
+
+
+## The itype of installed mod `uid` (0 when it isn't listed).
+func _type_of(uid: int) -> int:
+	for m: Dictionary in mods:
+		if m["uid"] == uid:
+			return m["type"]
+	return 0
+
+
+## A mod CDDA took off: into the hand that pulled it once the snapshot shows it carried, if that grip is still down
+## and the hand empty; else it stays where CDDA put it (the pack, or the ground: then it never shows carried).
+func _take_off(s: Snapshot) -> void:
+	var uid: int = _take_mod["uid"]
+	var it := _carried_ref(s, uid)
+	if it == null:
+		if _type_of(uid) == 0:
+			_take_mod = {}   # off the gun and not carried: on the ground
+		return
+	var c := rig.left if int(_take_mod["hand"]) == 0 else rig.right
+	_take_mod = {}
+	var id := rig.hand_id(c)
+	if rig.hands == null or not rig.hands.holding(id).is_empty() or not rig.grip_down(c):
+		return
+	rig.hands.set_hand_pose(id, c.global_transform, true)
+	rig.hands.adopt(id, it)
+
+
+func _type_name(t: int) -> String:
+	var def: IdTables.Def = rig.world.tables.def_at("itype", t) if rig.world.tables != null else null
+	return def.name if def != null and not def.name.is_empty() else "mod"
 
 
 ## CDDA's judgement of carried gunmod `uid` against this gun (player_gun `fits`): {uid, ok, chance, risk, reason}; {}
@@ -538,6 +661,8 @@ func _refresh(s: Snapshot) -> void:
 	var f: Variant = g.get("faults")
 	var j := WeaponViewmodel.jam_of((f as Array).slice(0, MAX_FAULTS)) if f is Array else ""
 	_find_rows(s, t)
+	if not _take_mod.is_empty():
+		_take_off(s)
 	if j != jam:
 		jam = j
 		_clearing = ""   # a new jam (or none): the next rack may ask again
@@ -571,6 +696,8 @@ func _clear() -> void:
 	mods = []      # their boxes too
 	ghost = null   # and the ghost
 	fit = {}
+	_pull = {}
+	_take_mod = {}
 	shape = ""
 	gun_type = 0
 	gun = null
@@ -600,6 +727,7 @@ func _build_model(sh: String, gr: float) -> void:
 	add_child(model)
 	shape = sh
 	ghost = null   # went with the old model
+	_pull = {}
 	count = Label3D.new()   # goes with the model
 	count.name = "RoundCount"
 	count.pixel_size = COUNT_PX
@@ -886,6 +1014,8 @@ func _on_finished(item: ItemRef, op: String) -> void:
 	_drop_copy()
 	if op == "unload":
 		_take_out(int(o.get("mag", 0)))
+	elif op == "mod_remove":
+		_take_mod = {"uid": o["uid"], "hand": o["hand"]}
 
 
 func _on_refused(item: ItemRef, op: String, reason: String) -> void:
@@ -906,6 +1036,9 @@ func _on_refused(item: ItemRef, op: String, reason: String) -> void:
 	rig.say(_index(c), reason)
 	if op in ["reload", "mod_add"] and o.get("item") is ItemRef:
 		_readopt(o["item"])
+	var bx: Variant = o.get("box")
+	if op == "mod_remove" and is_instance_valid(bx):
+		(bx as Node3D).position = o["rest"]   # it stays on the gun
 	if op == "mod_add" and o.get("fit") is Dictionary:
 		_hint = str((o["fit"] as Dictionary).get("text", ""))   # CDDA's reason stays by the hand a while
 		_hint_left = HINT_S

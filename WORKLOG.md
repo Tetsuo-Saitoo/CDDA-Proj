@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — In VR you can take a mod off your gun by hand: grip it with your other hand and pull; let go early and it clicks back. The game decides (a fixed mod says it can't come off) and the mod lands in your hand. Client tests pass; not yet tried in a headset.
 - 2026-11-17 — In VR you can fit a mod to your gun by hand: hold a mod in your other hand near the gun, the place it goes lights up green (or red, with the game's reason, when it doesn't fit) and shows the odds; let go there and the game fits it. Client tests pass; not yet tried in a headset.
 - 2026-11-17 — Gun modification by hand: the client now reads the game's list of mods on the held gun, which carried mods fit and why not, and the gun's free mod slots (with the bridge's part still to come). Client tests pass.
 - 2026-11-17 — Bridge: the snapshot now says which square each vehicle part is on (and its level, for ramps), so the client can draw cars where the game has them (lead-world's side comes next). Fork tests pass on Windows and Linux, client tests pass.
