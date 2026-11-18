@@ -76,7 +76,7 @@ extends XROrigin3D
 
 signal level_changed(z: int)
 ## A VR menu row asked for one of the game's own menus (VrSettings.UI_ROWS: "keys" the F1 menu, "inventory" the Tab
-## view): main.gd opens it on the panel. The settings menu closes first, so the laser works the panel.
+## view, "character" the character screen): main.gd opens it on the panel. The settings menu closes first, so the laser works the panel.
 signal ui_asked(which: String)
 ## The main-hand trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's
 ## actions.
