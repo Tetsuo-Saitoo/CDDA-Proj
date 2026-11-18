@@ -78,6 +78,9 @@ signal level_changed(z: int)
 ## A VR menu row asked for one of the game's own menus (VrSettings.UI_ROWS: "keys" the F1 menu, "inventory" the Tab
 ## view, "character" the character screen): main.gd opens it on the panel. The settings menu closes first, so the laser works the panel.
 signal ui_asked(which: String)
+## A VR-only one-time hint is due (VrGun: the first gun in hand, a mod near it, a vise in reach; Hints.VR_TEXTS ids):
+## main.gd triggers it in Hints, which shows each once, ever.
+signal hint_due(id: String)
 ## The main-hand trigger pointed at stairs (StairUse.find's dictionary). In a live game main.gd queues CDDA's
 ## actions.
 signal stair_used(stair: Dictionary)
@@ -203,6 +206,7 @@ var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature s
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
 var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
+var hint: VrHint           # G6: the one-time hint shown now, low in front (main.gd gives the flat Hints)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
@@ -360,6 +364,9 @@ func _build() -> void:
 	camera.add_child(mood)
 	busy = VrBusy.new()
 	camera.add_child(busy)
+	hint = VrHint.new()   # top level: placed in world space, following the head lazily
+	hint.rig = self
+	add_child(hint)
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
@@ -1613,6 +1620,17 @@ func _menu_action(key: String) -> void:
 		if menu_open():
 			toggle_menu()
 		ui_asked.emit(VrSettings.UI_ROWS[key])
+	elif VrSettings.CDDA_ROWS.has(key):
+		if menu_open():
+			toggle_menu()   # its questions come on the panel: the laser is free for them
+		if not queue_cdda(VrSettings.CDDA_ROWS[key]):
+			_feel(left)
+
+
+## Queues CDDA action `act` ("wait", "sleep"; the bridge's allow-list decides) through main's queue (VrGun's
+## queue_action). False when there is none or it refused.
+func queue_cdda(act: String) -> bool:
+	return gun.queue_action.is_valid() and gun.queue_action.call(act) == true
 
 
 ## Menu row "Report a bug" (VrReport): the menu goes, the state is written down, and two frames later (the menu

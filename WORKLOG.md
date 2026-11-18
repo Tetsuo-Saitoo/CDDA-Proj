@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — VR now has its own one-time hints, low in your view, saying which button does what (walk and turn, take, your pack, your wrist, the menu, answering the game, danger, tiredness, the gun, unloading, fitting and pulling off mods, the vise). They share the flat hints' on/off switch and "Show hints again". The VR menu also has Wait and Sleep rows. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR, "Time passes..." (or "Sleeping...", "Waiting...") now shows low in your view while the game runs on by itself, and the VR menu has a Character row. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — rest_live_test (QA lead) tells the bridge from the screen: the bridge must have a newer snapshot every 2 s while time passes, the screen gets 5 s to show one. A busy machine made the old single 2 s limit fail once though the bridge was on time.
 - 2026-11-18 — Gun mods on the flat screen: E fits the gunmod in the off hand onto the wielded gun, the Tab view lists the gun's mods with a Take off button and takes a gunmod dropped on the gun. Client tests pass.

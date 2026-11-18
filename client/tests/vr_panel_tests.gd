@@ -362,6 +362,20 @@ func _test_ui_rows() -> void:
 			"vr panel: the menu rows are never saved as settings")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(rows_file))
 	_rig.ui_asked.disconnect(on_ask)
+	var sent: Array[String] = []
+	var was: Callable = _rig.gun.queue_action
+	_rig.gun.queue_action = func(a: String) -> bool:
+		sent.append(a)
+		return true
+	var closed := true
+	for want: String in ["wait", "sleep"]:
+		_rig.press(_rig.left, "menu_button")
+		_rig.menu.row = _rig.menu.row_of(want)
+		_rig.press(_rig.off_ctrl(), "trigger_click")
+		closed = closed and not _rig.menu_open()
+	_check.call(sent == ["wait", "sleep"] and closed and asked.size() == 3,
+			"vr panel: the VR menu rows Wait and Sleep queue CDDA's own actions and close the settings menu (%s)" % [sent])
+	_rig.gun.queue_action = was
 
 
 ## The bug report: its text names the runtime, the controllers, the changed settings, both hands and the log's end;
