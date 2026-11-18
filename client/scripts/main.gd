@@ -285,8 +285,8 @@ func _ready() -> void:
 	inspect.opened.connect(func() -> void:
 		hotbar.show_empty = true
 		ItemTileView.stir(ItemTileView.OPEN_STIR)   # the liquids in the rows settle as it opens
-		if vr == null and hints != null:
-			hints.trigger("inspect"))
+		if hints != null:
+			hints.trigger("inspect" if vr == null else "vr_inspect"))
 	inspect.closed.connect(func() -> void: hotbar.show_empty = false)
 	inspect.opened.connect(_ask_character)
 	inspect.opened.connect(func() -> void:   # the mouse is the view's while it is open
@@ -438,10 +438,16 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 		_stir_step = -_stir_step
 		ItemTileView.stir(ItemTileView.STEP_STIR * _stir_step)
 	_stir_pos = snap.player_pos
-	if hints != null and vr == null and live != null and _in_main_loop():
-		hints.trigger("start")   # G6: once, ever (seen ids are kept)
+	if hints != null and live != null and _in_main_loop():
+		if vr == null:
+			hints.trigger("start")   # G6: once, ever (seen ids are kept)
+		else:
+			for id in Hints.VR_START:   # VR: its own first-turn hints, one after another
+				hints.trigger(id)
 		for id in Hints.due(snap, hud_data):   # the first hostile, hunger or thirst, bleeding, tiredness
-			hints.trigger(id)
+			var shown_id: String = id if vr == null else Hints.vr_id(id)   # VR: its own words; "" when VR has none yet
+			if shown_id != "":
+				hints.trigger(shown_id)
 	classic.show_world(snap, world.tables)
 	status = "rebuilt %d of %d submaps in %d ms, %d k vertices, %d furniture, %d items" % [n,
 			snap.submaps.size(), Time.get_ticks_msec() - t0, world.vertex_count / 1000,
@@ -569,6 +575,15 @@ func _toggle_view() -> void:
 
 
 ## The headset view (block L1). OpenXR only starts when Godot runs with --xr-mode on.
+## G6 in VR: the rig draws the flat Hints' hint in VR words and asks for its VR-only ones (both made: once each).
+func _vr_hints() -> void:
+	if vr == null or hints == null:
+		return
+	vr.hint.source = hints
+	if not vr.hint_due.is_connected(hints.trigger):
+		vr.hint_due.connect(hints.trigger)
+
+
 func _start_vr() -> void:
 	var xr := XRServer.find_interface("OpenXR")
 	if xr == null or not xr.is_initialized():
@@ -591,8 +606,10 @@ func _start_vr() -> void:
 	vr.gun.flashes = hud_settings.weather_flash   # its muzzle flash follows the flash setting too
 	vr.hurt.source = hurt_cue   # F3: the flat cue's level and setting, as a red edge in the headset
 	vr.busy.source = busy_note   # "Time passes..." low in the headset's view while the game runs on
+	_vr_hints()
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
+	vr.mouth.actions = item_actions   # food or a drink brought to the mouth: CDDA's consume
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	vr.wheel.request_ui = request_ui   # radial menus by hand: CDDA's menu as a wheel around the hand
 	vr.wheel.queue_action = vr.gun.queue_action
@@ -1054,8 +1071,8 @@ func _on_live_request(req: Dictionary) -> void:
 		return
 	if not request_ui.show_request(req):
 		push_warning("live: request without a usable id or kind: %s" % req)
-	elif vr == null and hints != null and not str(req.get("kind", "")) in ["chargen", "world_setup"]:
-		hints.trigger("prompt")   # G6: the first question from the game in play
+	elif hints != null and not str(req.get("kind", "")) in ["chargen", "world_setup"]:
+		hints.trigger("prompt" if vr == null else "vr_prompt")   # G6: the first question from the game in play
 
 
 func _on_request_answered(a: Dictionary) -> void:
@@ -1716,6 +1733,7 @@ func _setup_hud() -> void:
 	if hints_why != "":
 		push_warning("hints: " + hints_why)
 	layer.add_child(hints)
+	_vr_hints()
 	layer.add_child(busy_note)
 	key_menu.add_hints(hints)
 	cheat_panel = CheatPanel.new()

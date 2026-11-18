@@ -33,6 +33,7 @@ var _gun := 0                  # uids: the glock, its magazine, its rounds
 var _mag := 0
 var _round := 0
 var _req := {}
+var _hints_due: Array[String] = []   # VrRig.hint_due ids
 
 
 ## LiveSession's item backend for an action that doesn't land at once (MockItems answers inside the call).
@@ -124,6 +125,7 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 	_hands.defer_steps = false
 	_rig = VrRig.new(_world, {"blink": false, "hands": "boxes"})
 	_rig.hands = _hands
+	_rig.hint_due.connect(func(id: String) -> void: _hints_due.append(id))
 	root.add_child(_rig)
 	_rig.camera.position = Vector3(0, 1.6, 0)
 	_rig.go_to_square(P)
@@ -954,6 +956,10 @@ func _test_vise() -> void:
 	_frame()
 	_check.call(back and again and off and g.shown,
 			"vr gun: the main grip on the gun's grip takes it out of the vise; walking off puts it back in the hand")
+	var once := true
+	for id: String in ["vr_gun", "vr_mag", "vr_mods", "vr_mod_off", "vr_vise"]:
+		once = once and _hints_due.count(id) == 1 and Hints.known(id)
+	_check.call(once, "vr gun: the VR hints for the gun, mods and the vise are asked for once each (%s)" % [_hints_due])
 
 
 ## Junk in player_gun: no gun, or a pistol with junk ignored; a long fault list is capped.

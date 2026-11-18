@@ -160,6 +160,7 @@ var _pull := {}               # an installed mod the off grip holds: {uid, type,
 var _take_mod := {}           # a mod CDDA took off: {uid, hand}: into that hand once carried, if its grip is still down
 var vise := {}                # the bench vise the gun is held in: {uid, pose (the gun's, world)}; {}: in the hand
 var _vises: Array[int] = []   # the bench vises in reach (Vise.near), per snapshot
+var _hinted := {}             # VR hint ids asked for this run (VrRig.hint_due; Hints shows each once, ever)
 var _hint_left := 0.0
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
@@ -216,6 +217,12 @@ func update(delta: float) -> void:
 			fit = {}
 			_show_ghost()
 			_pose_parts()
+		else:
+			_ask_hint("vr_gun")
+			if _local.has("MagWell"):
+				_ask_hint("vr_mag")
+			if not mods.is_empty():
+				_ask_hint("vr_mod_off")
 		rig.sync_held()
 	if not on:
 		return
@@ -331,6 +338,13 @@ func release(c: XRController3D) -> bool:
 			rig.say(_index(c), CANT_CLEAR)
 	rig.feel(c)
 	return true
+
+
+## Asks for VR hint `id` once this run (VrRig.hint_due; Hints decides whether it shows).
+func _ask_hint(id: String) -> void:
+	if rig != null and not _hinted.has(id):
+		_hinted[id] = true
+		rig.hint_due.emit(id)
 
 
 ## The gun is held in a bench vise (`vise`), not by the main hand.
@@ -569,6 +583,8 @@ func _hover_mod(d: float) -> void:
 	if busy:
 		f = _op.get("fit", {})
 		hc = rig.left if int(_op.get("hand", _index(hc))) == 0 else rig.right
+	elif not f.is_empty():
+		_ask_hint("vr_mods")
 	fit = f
 	_show_ghost()
 	if f.is_empty() or busy:
@@ -740,6 +756,10 @@ func _refresh(s: Snapshot) -> void:
 	var j := WeaponViewmodel.jam_of((f as Array).slice(0, MAX_FAULTS)) if f is Array else ""
 	_find_rows(s, t)
 	_vises = Vise.near(s, tables)
+	if shown and not _vises.is_empty() and not clamped():
+		_ask_hint("vr_vise")
+	if shown and not mods.is_empty():
+		_ask_hint("vr_mod_off")
 	if clamped() and not int(vise["uid"]) in _vises:
 		_unclamp(UNCLAMPED)   # the vise is gone from reach
 	if not _take_mod.is_empty():

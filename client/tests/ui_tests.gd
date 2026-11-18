@@ -32,6 +32,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_game_over(root)
 	_test_options()
 	_test_hints()
+	_test_hints_vr()
 	_test_busy_note()
 	_test_wheel()
 	_test_back_out()
@@ -1464,6 +1465,42 @@ func _test_hints() -> void:
 	big.path = path
 	_check.call(big.load_file().contains("over"), "hints: an oversized file is ignored")
 	big.free()
+
+
+## The VR hints (lead-vr) in Hints: their own ids beside the flat ones, in the same file.
+func _test_hints_vr() -> void:
+	var path: String = preload("res://tests/test_dir.gd").path("hints_vr.cfg")
+	_check.call(Hints.text_of("") == "" and Hints.text_of("nope") == "" and Hints.text_of("vr_x") == ""
+			and Hints.text_of("vr_gun") == Hints.VR_TEXTS["vr_gun"] and Hints.vr_id("hostile") == "vr_hostile"
+			and Hints.vr_id("bleed") == "" and Hints.vr_id("") == "" and Hints.vr_id("vr_gun") == "",
+			"hints vr: text_of is \"\" for none or unknown; vr_id maps a flat id to its VR one, \"\" without")
+	var a := Hints.new()
+	a.path = path
+	var flat := a.trigger("hostile")
+	var twin := a.trigger("vr_hostile")   # the flat one seen does not hide the VR one
+	a.free()
+	var b := Hints.new()
+	b.path = path
+	var kept := b.load_file() == "" and b.seen.has("vr_hostile") and b.seen.has("hostile")
+	var again := not b.trigger("vr_hostile")
+	b.free()
+	_check.call(flat and twin and kept and again,
+			"hints vr: a seen flat id does not hide its VR twin; a VR id seen survives save and load")
+	var ids: Array = []
+	for i in 40:
+		ids.append("vr_x%d" % i)   # a newer build's ids first ...
+	ids.append_array(["start", "start", "vr_gun"])   # ... and a repeat do not push known ones past the cut
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string("[hints]\nenabled=true\nseen=%s\n" % JSON.stringify(ids))
+	f.close()
+	var c := Hints.new()
+	c.path = path
+	var why := c.load_file()
+	var read := c.seen.keys()
+	c.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_check.call(why == "" and read.size() == 2 and read.has("start") and read.has("vr_gun"),
+			"hints vr: unknown \"vr_\" ids in the file are dropped; known ones after them are kept (%s)" % [read])
 
 
 func _test_wheel() -> void:
