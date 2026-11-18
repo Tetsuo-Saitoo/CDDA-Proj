@@ -1339,6 +1339,7 @@ func _update_aim() -> void:
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
 	viewmodel.suppressed = world.snapshot != null and world.snapshot.player_gun.get("suppressed", false) == true
+	viewmodel.set_mods(GunMods.mods_of(world.snapshot.player_gun if world.snapshot != null else null))
 
 
 func _in_main_loop() -> bool:

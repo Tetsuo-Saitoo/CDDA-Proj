@@ -97,6 +97,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_gun_grime(root)
 	_test_gun_parts()
 	_test_muzzle_flash(root, tables)
+	_test_viewmodel_mods(root, tables)
 	_test_misfires(root, aim, tables)
 	_test_queue_at()
 	_test_hurt_cue(root, aim)
@@ -1837,6 +1838,47 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm._process(1.0)
 	vm.kick()
 	_check.call(hushed and vm.flashing(), "muzzle flash: none from a suppressed gun (it still recoils), back without one")
+	vm.free()
+
+
+## Gunmods on the flat viewmodel: the held gun's installed mods as GunMods' boxes (junk entries dropped, the same
+## list not made again, none on a melee shape, back with the gun), and a sight mod raising the aimed pose so its top
+## sits just under the eye line; a muzzle mod doesn't.
+func _test_viewmodel_mods(root: Node, tables: IdTables) -> void:
+	var VM := WeaponViewmodel
+	var rifle := tables.index_of("itype", "remington_870")
+	var knife := tables.index_of("itype", "knife_combat")
+	var vm := WeaponViewmodel.new()
+	root.add_child(vm)
+	vm.set_item(rifle, tables)
+	var scope := {"uid": 11, "type": 5, "location": "sights", "flags": 0}
+	var choke := {"uid": 12, "type": 6, "location": "muzzle", "flags": 0}
+	var bare := vm.aimed_pose() == VM.AIMED and vm._root.get_node_or_null(GunMods.HOLDER) == null
+	vm.set_mods(GunMods.mods_of({"mods": [choke]}))
+	var muzzle_only := vm._root.get_node_or_null("Mods/Mod0") != null and vm.aimed_pose() == VM.AIMED
+	vm.set_mods(GunMods.mods_of({"mods": [choke, scope, "junk", {"uid": -1, "type": 1, "location": "sights"}]}))
+	var holder := vm._root.get_node_or_null(GunMods.HOLDER)
+	var two := holder != null and holder.get_child_count() == 2 and vm.mods.size() == 2
+	var s := GunMods.slot("long", "sights")
+	var p := vm.aimed_pose()
+	var top: float = p.y + (s["at"] as Vector3).y + (s["size"] as Vector3).y * 0.5
+	var over := p.y > VM.AIMED.y and absf(top + VM.SIGHT_GAP) < 1e-5 and absf(p.x + (s["at"] as Vector3).x) < 1e-6
+	vm.aimed = true
+	for f in 100:
+		vm._process(0.02)
+	var raised := vm._base.distance_to(p) < 0.01
+	vm.aimed = false
+	vm.set_mods(GunMods.mods_of({"mods": [choke, scope]}))
+	var kept := is_instance_valid(holder) and vm._root.get_node_or_null(GunMods.HOLDER) == holder
+	vm.set_item(knife, tables)
+	var melee := vm._root.get_node_or_null(GunMods.HOLDER) == null and vm.aimed_pose() == VM.AIMED
+	vm.set_item(rifle, tables)
+	var back := vm._root.get_node_or_null("Mods/Mod1") != null
+	vm.set_mods(GunMods.mods_of({}))
+	var gone := vm._root.get_node_or_null(GunMods.HOLDER) == null and vm.aimed_pose() == VM.AIMED
+	_check.call(rifle > 0 and knife > 0 and bare and muzzle_only and two and over and raised and kept and melee
+			and back and gone, "viewmodel mods: boxes at slots, a sight raises the aim (%s %s %s %s %s %s %s %s %s %s)"
+			% [bare, muzzle_only, two, over, p, raised, kept, melee, back, gone])
 	vm.free()
 
 

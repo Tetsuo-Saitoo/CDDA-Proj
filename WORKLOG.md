@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — The gun in your hands on the flat screen now shows the mods installed on it (simple boxes at their places, as in VR), and with a scope or sight fitted, aiming brings the gun up so you look over the sight. It shows up once the game sends the gun's mods (coming with the gun-mod work). Client tests pass.
 - 2026-11-17 — Bridge: the snapshot also lists the extra squares a car blocks when it stands at an angle (the game fills the diagonal gaps between its boards and doors), so the client can show and block them like the game does. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Gun modification by hand: the client now reads the game's list of mods on the held gun, which carried mods fit and why not, and the gun's free mod slots (with the bridge's part still to come). Client tests pass.
 - 2026-11-17 — Bridge: the snapshot now says which square each vehicle part is on (and its level, for ramps), so the client can draw cars where the game has them (lead-world's side comes next). Fork tests pass on Windows and Linux, client tests pass.
