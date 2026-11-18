@@ -57,6 +57,7 @@ var _look_line: MeshInstance3D   # player -> what was clicked
 var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows the player (_update_look_line)
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var fields_view: FieldView       # fire, sparks, smoke and gas fields
+var vehicles_view: VehicleView   # CDDA's vehicles, part by part (C5)
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
@@ -184,6 +185,9 @@ func _ready() -> void:
 	fields_view = FieldView.new()
 	add_child(fields_view)
 	world.coords.origin_shifted.connect(fields_view.shift)
+	vehicles_view = VehicleView.new()
+	add_child(vehicles_view)
+	world.coords.origin_shifted.connect(vehicles_view.shift)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -398,6 +402,8 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	gore.apply(snap, world)
 	fields_view.view_z_max = world.things_z_max()
 	fields_view.apply(snap, world)
+	vehicles_view.view_z_max = world.things_z_max()
+	vehicles_view.apply(snap, world)
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)

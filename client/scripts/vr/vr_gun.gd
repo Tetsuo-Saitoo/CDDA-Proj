@@ -24,6 +24,8 @@ extends Node3D
 ## - Rack: the off grip within RACK_REACH_M of the Slide / Bolt, pulled back along the bore past RACK_PULL_M and let
 ##   go: a jammed gun queues CDDA's reload_weapon (the fork clears the jam), a clean one only racks and buzzes. A jam
 ##   showing up says what jammed by the main hand.
+## - Mods: the gunmods CDDA lists as installed (player_gun `mods`) show as GunMods boxes at their slots, made again only
+##   when the list (or the model) changes.
 ## The sim decides every outcome. Snapshot data is checked and capped here; per frame only a pose and a few distances.
 
 const SHAPES: Array[String] = ["pistol", "long", "launcher"]   # WeaponViewmodel shapes with the named parts
@@ -114,6 +116,7 @@ var flashes := true           # muzzle flashes at all (main.gd: the flash settin
 var suppressed := false       # the wielded gun has a suppressor (Snapshot.player_gun): no flash
 var flashed := 0              # muzzle flashes shown (tests)
 var count: Label3D            # the loaded rounds (player_gun.rounds) over the grip; hidden for a gun that takes none
+var mods: Array[Dictionary] = []   # the installed gunmods shown (GunMods.mods_of player_gun)
 var fire_wait := 0.0          # > 0: CDDA's `fire` went out, seconds left to fire at its request
 var kicks := 0                # shots kicked (tests)
 var misfires := 0             # misfire clicks felt (tests)
@@ -369,7 +372,8 @@ func _refresh(s: Snapshot) -> void:
 	dirt = _int_of(g.get("dirt"), 0, WeaponViewmodel.DIRT_MAX, -1)
 	suppressed = g.get("suppressed", false) == true
 	var gr := WeaponViewmodel.grime_for(dirt)
-	if model == null or sh != shape:
+	var built := model == null or sh != shape
+	if built:
 		_build_model(sh, gr)
 	elif gr != grime:
 		for m: ShaderMaterial in _grime_mats:
@@ -378,6 +382,10 @@ func _refresh(s: Snapshot) -> void:
 	gun_type = t
 	rounds = _int_of(g.get("rounds"), 0, MAX_ROUNDS, -1)
 	_sync_count()
+	var ms := GunMods.mods_of(g)
+	if built or ms != mods:
+		mods = ms
+		GunMods.dress(model, shape, mods)
 	var f: Variant = g.get("faults")
 	var j := WeaponViewmodel.jam_of((f as Array).slice(0, MAX_FAULTS)) if f is Array else ""
 	_find_rows(s, t)
@@ -411,6 +419,7 @@ func _clear() -> void:
 		model.free()
 	model = null
 	count = null   # freed with the model
+	mods = []      # their boxes too
 	shape = ""
 	gun_type = 0
 	gun = null
