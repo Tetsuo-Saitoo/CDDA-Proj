@@ -5,7 +5,8 @@ extends Node3D
 ## the back of the same wrist). It shows when you turn the inner wrist toward your eyes (`facing`) and fades in
 ## and out. Content: the body as a doll (your left on the left) coloured by level, broken parts crossed, bleeding
 ## ones dotted red; the needs CDDA has words for; the warnings, worst first; how you move ("Running (stamina 23%)")
-## and your mood (HudData `mood`, read duck-typed: its word and strongest reason, "Unhappy (Wet)"); the other effects ("Stunned",
+## and your mood (HudData `mood`, read duck-typed: "Mood: Unhappy", its strongest reasons under it, "Wet -12, Cold -8,
+## +2 more"; the edge tint is VrMood's); the other effects ("Stunned",
 ## "Hurt (left arm)"), bad ones first, the last line counting what doesn't fit; the last messages; an amber
 ## "CHEATS: a, b" line while testing cheats are on (K7: HudData `cheats`, read duck-typed). Text is plain
 ## Label text, capped per line.
@@ -17,8 +18,8 @@ extends Node3D
 ## A new bad warning came in (VrRig buzzes the off controller).
 signal alerted
 
-const SIZE_M := Vector2(0.12, 0.10)   # the panel, metres
-const PX := Vector2i(480, 400)        # its texture, 4 px per mm
+const SIZE_M := Vector2(0.12, 0.102)  # the panel, metres
+const PX := Vector2i(480, 408)        # its texture, 4 px per mm
 const ALL_PARTS: PackedStringArray = ["body", "needs", "warnings", "messages", "cheats", "effects", "move", "mood"]
 const LIFT := 0.035     # metres from the wrist line out of the inner forearm (over the body's arm)
 const BACK := 0.075     # the panel's middle this far from the wrist toward the elbow
@@ -35,6 +36,9 @@ const EFFECT_COLS := 3
 const EFFECT_CHARS := 17
 const STATE_CHARS := 22  # the move line and the mood line, side by side
 const MAX_MOOD := 64     # characters read from a mood line
+const WHY_CHARS := 52    # the mood's reasons line, full width
+const WHY_SHOWN := 3     # reasons named on it (HudData.MOOD_REASONS_SHOWN), the rest counted
+const WHY_COLOR := Color(0.82, 0.84, 0.88)
 const WARN_CHARS := 30   # per line, so a line fits its label
 const NEED_CHARS := 16
 const MSG_CHARS := 52
@@ -80,6 +84,7 @@ var msg_labels: Array[Label] = []
 var effect_labels: Array[Label] = []
 var move_label: Label     # how the player moves (HudData.move)
 var mood_label: Label     # the mood line (HudData `mood`, when it has one)
+var why_label: Label      # its strongest reasons, under it
 var cheat_label: Label    # "CHEATS: ..." while any testing cheat is on
 var _quad: MeshInstance3D
 var _mat: StandardMaterial3D
@@ -284,8 +289,37 @@ func mood_line() -> Array:
 	return mood_text(data.get("mood") if data != null else null)
 
 
-## [text, level] for a mood ({word, level, reasons: [{name, value}], text, ...}): its word and the strongest reason
-## ("Unhappy (Wet)": the wrist line is short), else its ready text; a plain text works too. [] for anything else.
+## The mood's reasons line (HudData `mood`), "" when there is none.
+func why_line() -> String:
+	return reasons_text(data.get("mood") if data != null else null)
+
+
+## The strongest reasons of a mood ({reasons: [{name, value}], more}): up to WHY_SHOWN as "Wet -12, Cold -8", then
+## "+N more" for the rest (`more`, or the reasons not named); entries without a text name and a whole value are
+## skipped. "" for anything else.
+static func reasons_text(m: Variant) -> String:
+	var rs: Variant = (m as Dictionary).get("reasons") if m is Dictionary else null
+	if not rs is Array:
+		return ""
+	var bits := PackedStringArray()
+	var valid := 0
+	for r: Variant in (rs as Array).slice(0, HudData.MAX_MOOD_REASONS * 2):
+		var n: Variant = (r as Dictionary).get("name") if r is Dictionary else null
+		var v: Variant = (r as Dictionary).get("value") if r is Dictionary else null
+		if not n is String or (n as String).is_empty() or not v is int:
+			continue
+		valid += 1
+		if bits.size() < WHY_SHOWN:
+			bits.append("%s %+d" % [(n as String).left(MAX_MOOD), clampi(v, -9999, 9999)])
+	var mv: Variant = (m as Dictionary).get("more")
+	var more := maxi(clampi(mv, 0, 9999) if mv is int else 0, valid - bits.size())
+	if more > 0 and not bits.is_empty():
+		bits.append("+%d more" % more)
+	return ", ".join(bits)
+
+
+## [text, level] for a mood ({word, level, reasons, text, ...}): "Mood: <word>" (its reasons are the line under it,
+## why_line), else its ready text; a plain text works too. [] for anything else.
 static func mood_text(m: Variant) -> Array:
 	if m is String:
 		return _line_of({"text": m})
@@ -294,13 +328,7 @@ static func mood_text(m: Variant) -> Array:
 	var w: Variant = (m as Dictionary).get("word")
 	if not w is String or (w as String).is_empty():
 		return _line_of(m)
-	var text := (w as String).left(MAX_MOOD)
-	var rs: Variant = (m as Dictionary).get("reasons")
-	var first: Variant = (rs as Array)[0] if rs is Array and not (rs as Array).is_empty() else null
-	var n: Variant = (first as Dictionary).get("name") if first is Dictionary else null
-	if n is String and not (n as String).is_empty():
-		text += " (%s)" % (n as String).left(MAX_MOOD)
-	return [text, _level((m as Dictionary).get("level"))]
+	return ["Mood: " + (w as String).left(MAX_MOOD), _level((m as Dictionary).get("level"))]
 
 
 ## [text, level] from a {text, level} line, [] for anything else or an empty text.
@@ -370,6 +398,9 @@ func _show(parts: PackedStringArray, seeding: bool) -> void:
 		any = true
 	if "mood" in parts or "needs" in parts:   # morale is a need: a mood line may come with it
 		_set_line(mood_label, mood_line(), STATE_CHARS)
+		var why := why_line()
+		why_label.visible = not why.is_empty()
+		why_label.text = fit(why, WHY_CHARS)
 		any = true
 	if "cheats" in parts:
 		# HudData gets `cheats` with lead-ui's K7 work: until then get() is null and the line stays hidden.
@@ -519,20 +550,24 @@ func _build_panel() -> Control:
 	mood_label = _label("Mood", 18, Vector2(half - 4, 24))
 	mood_label.position = Vector2(col + half, 180)
 	root.add_child(mood_label)
+	why_label = _label("MoodWhy", 16, Vector2(PX.x - 24, 22))   # the mood's reasons, full width under move | mood
+	why_label.position = Vector2(12, 205)
+	why_label.add_theme_color_override("font_color", WHY_COLOR)
+	root.add_child(why_label)
 	var ew := (PX.x - 24) / float(EFFECT_COLS)
 	for i in EFFECT_LINES:   # under the doll, EFFECT_COLS per row
 		var l := _label("Effect%d" % i, 18, Vector2(ew - 4, 24))
 		@warning_ignore("integer_division")
-		l.position = Vector2(12 + (i % EFFECT_COLS) * ew, 214 + (i / EFFECT_COLS) * 24)
+		l.position = Vector2(12 + (i % EFFECT_COLS) * ew, 230 + (i / EFFECT_COLS) * 24)
 		root.add_child(l)
 		effect_labels.append(l)
 	cheat_label = _label("Cheats", 18, Vector2(PX.x - 24, 24))   # under the effects
-	cheat_label.position = Vector2(12, 264)
+	cheat_label.position = Vector2(12, 280)
 	cheat_label.add_theme_color_override("font_color", VrCheats.WARN)
 	root.add_child(cheat_label)
 	for i in MSG_LINES:
 		var l := _label("Message%d" % i, 18, Vector2(PX.x - 24, 24))
-		l.position = Vector2(12, 292 + i * 24)
+		l.position = Vector2(12, 308 + i * 24)
 		root.add_child(l)
 		msg_labels.append(l)
 	return root

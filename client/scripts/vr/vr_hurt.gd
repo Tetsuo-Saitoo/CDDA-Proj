@@ -31,9 +31,21 @@ var _mat: StandardMaterial3D
 
 func _init() -> void:
 	name = "HurtEdge"
+	_mat = VrRig._overlay_mat(Color(HurtCue.TINT, 0.0), PRIORITY)
+	_mat.vertex_color_use_as_albedo = true   # the ring's alpha times the level's
+	mesh = edge_ring(FULL, _mat)
+	position = Vector3(0, 0, -DIST)
+	scale = Vector3(HOLE, HOLE, 1.0)
+	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	visible = false
+
+
+## An edge ring in units of its hole (scale it by the hole's radius): clear inside 1, its vertex alpha rising to 1 at
+## `full`, 1 out to OUTER; drawn with `mat` (VrMood's edge too).
+static func edge_ring(full: float, mat: Material) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for ring: Array in [[1.0, FULL, 0.0, 1.0], [FULL, OUTER, 1.0, 1.0]]:
+	for ring: Array in [[1.0, full, 0.0, 1.0], [full, OUTER, 1.0, 1.0]]:
 		for i in SEGMENTS:
 			var a0 := TAU * i / SEGMENTS
 			var a1 := TAU * (i + 1) / SEGMENTS
@@ -44,14 +56,8 @@ func _init() -> void:
 			for v: Array in quad:
 				st.set_color(Color(1, 1, 1, v[1]))
 				st.add_vertex(v[0])
-	_mat = VrRig._overlay_mat(Color(HurtCue.TINT, 0.0), PRIORITY)
-	_mat.vertex_color_use_as_albedo = true   # the ring's alpha times the level's
-	st.set_material(_mat)
-	mesh = st.commit()
-	position = Vector3(0, 0, -DIST)
-	scale = Vector3(HOLE, HOLE, 1.0)
-	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	visible = false
+	st.set_material(mat)
+	return st.commit()
 
 
 func _process(delta: float) -> void:
