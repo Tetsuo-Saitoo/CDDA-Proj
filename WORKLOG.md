@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — First aid on a named body part checked in a running game (QA lead): in actions_live_test a bandage aimed at the unhurt left arm is refused in CDDA's words with no menu, and with no part named CDDA's own menu still comes.
 - 2026-11-18 — Delta snapshots checked across map shifts and levels in a running game (QA lead): range_ui_live_test crosses a submap border, takes the stairs up and down and jumps to another zone, and after each move what the game shows equals a plain snapshot; the bridge sends a full one after a shift or a change of level and deltas again a turn later.
 - 2026-11-18 — Delta snapshots, client side (slice 3, lead-world): a snapshot can be read on top of the one held, taking the submaps the bridge didn't resend; anything that doesn't fit fails it and a full one is fetched at once (counted, logged now and then). The live game asks for deltas once the bridge has the call; older bridges work as before. Client tests pass.
 - 2026-11-18 — VR fixes from QA's review: leaving the game no longer leaves eating stuck, and a keyboard hint queued before the headset started no longer shows in the headset. Client tests pass.
