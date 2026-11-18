@@ -25,11 +25,14 @@ var actions: ItemActions:
 				actions.finished.disconnect(_on_finished)
 			if actions.refused.is_connected(_on_refused):
 				actions.refused.disconnect(_on_refused)
+			if actions.cleared.is_connected(_forget):
+				actions.cleared.disconnect(_forget)
 		actions = a
 		_sent.clear()
 		if a != null:
 			a.finished.connect(_on_finished)
 			a.refused.connect(_on_refused)
+			a.cleared.connect(_forget)
 
 var _at := [0.0, 0.0]          # seconds each hand has been at the mouth
 var _near := [false, false]
@@ -85,6 +88,11 @@ func update(i: int, item: ItemRef, at: Vector3, delta: float) -> int:
 	_sent[item.uid] = i
 	rig.feel(c, 0.3, 0.06)
 	return SENT
+
+
+## The game ended or was left (ItemActions.cleared): nothing it had in flight will be answered.
+func _forget() -> void:
+	_sent.clear()
 
 
 func _ctrl(i: int) -> XRController3D:

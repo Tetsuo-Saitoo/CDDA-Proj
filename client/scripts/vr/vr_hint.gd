@@ -1,7 +1,7 @@
 class_name VrHint
 extends Label3D
-## G6 in VR (VrRig `hint`): the one-time hint Hints shows now (`source.shown`), in its VR words (Hints.text_of a
-## "vr_" id), low in front of the eyes. It follows the head's turn lazily (FOLLOW), so it can be read while looking
+## G6 in VR (VrRig `hint`): the one-time hint Hints shows now (`source.shown`) when it is a VR one (Hints.VR_TEXTS;
+## a flat one queued before the headset started, in keyboard words, is not shown here), low in front of the eyes. It follows the head's turn lazily (FOLLOW), so it can be read while looking
 ## around a little, and starts straight ahead when a new hint comes. Timing, the on / off switch and "Show hints
 ## again" are the flat ones': one Hints for both (main.gd gives it). Placed in world space; billboarded.
 
@@ -51,10 +51,11 @@ func target() -> Vector3:
 	return cam.global_position + f.normalized() * DIST + Vector3.DOWN * DROP
 
 
-## Shows the source's hint (its VR text, capped), moving toward target() for `delta` seconds; hidden with none.
+## Shows the source's hint (its VR text, capped), moving toward target() for `delta` seconds; hidden with none or a
+## flat one.
 func step(delta: float) -> void:
 	var id := source.shown if source != null and is_instance_valid(source) else ""
-	var t := Hints.text_of(id) if id != "" else ""
+	var t: String = Hints.VR_TEXTS.get(id, "")
 	visible = not t.is_empty() and rig != null and rig.camera != null
 	if not visible:
 		_id = ""

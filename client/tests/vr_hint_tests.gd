@@ -70,6 +70,10 @@ func _test_view(rig: VrRig, h: Hints) -> void:
 	v.source = h
 	v.step(0.016)
 	var none := v != null and not v.visible
+	h.trigger("inspect")   # a flat one (queued before the headset started): not in keyboard words in the headset
+	v.step(0.016)
+	none = none and h.shown == "inspect" and not v.visible
+	h.dismiss()
 	h.trigger("vr_start")
 	v.step(0.016)
 	var cam := rig.camera.global_position
@@ -98,4 +102,4 @@ func _test_view(rig: VrRig, h: Hints) -> void:
 	var off_hidden := not v.visible
 	h.set_enabled(true)
 	_check.call(none and placed and part and caught and queued and next and off_hidden,
-			"vr hint: the hint shows low ahead in VR words, follows a head turn lazily; the next one, hints off hide it")
+			"vr hint: the hint shows low ahead in VR words (not a flat one), follows a head turn lazily; the next one, hints off hide it")

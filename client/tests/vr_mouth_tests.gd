@@ -88,6 +88,9 @@ func _test_eat(rig: VrRig, acts: ItemActions, b: Backend, hints: Array[String]) 
 	var bottle := ItemRef.on_player(42, 2, 0, -1, 0, SQ)
 	m.update(1, bottle, at, 0.3)
 	var drink: bool = m.update(1, bottle, at, 0.3) == VrMouth.SENT and b.calls[-1] == [42.0, 2.0]
-	_check.call(said and again and drink,
-			"vr mouth: CDDA's no by that hand; again after leaving the mouth; a bottle in the other hand drinks (%s)"
+	var waiting := m._sent.size() == 2   # the apple and the bottle: CDDA hasn't answered
+	acts.clear()   # the game ended: nothing in flight is answered
+	var cleared := m._sent.is_empty()
+	_check.call(said and again and drink and waiting and cleared,
+			"vr mouth: CDDA's no by that hand; again after leaving the mouth; a bottle in the other hand drinks; the game left forgets what was in flight (%s)"
 			% [b.calls])
