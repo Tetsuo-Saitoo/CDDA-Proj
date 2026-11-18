@@ -69,6 +69,9 @@ uint64_t snapshot_seq();
 // The newest snapshot as JSON (contracts/snapshot.md) with the levels from the player's z - z_below to
 // z + z_above; "" before the first snapshot. `seq` gets the snapshot's seq.
 std::string snapshot_json( int z_below, int z_above, uint64_t &seq );
+// The same with the key rows, and as a delta when the client holds snapshot `since` (0 = none) and the bridge
+// still has it: fp3d::write_client_snapshot_json (fp3d/snapshot.h). "" before the first snapshot.
+std::string snapshot_delta_json( int z_below, int z_above, uint64_t since, uint64_t &seq );
 // The id tables as JSON (contracts/id_tables.md); "" before the game data has loaded.
 std::string id_tables_json( uint32_t &generation );
 

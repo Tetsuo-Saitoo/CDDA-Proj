@@ -127,6 +127,23 @@ func _run() -> void:
 	_check(snap.is_valid(), "live snapshot passes the client's checks (%s)" % snap.error)
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
+	# The delta call (snapshot.md "Deltas"). Nothing held, or a seq the bridge never handed out: a full snapshot
+	# with a key row for every submap. Holding the one it just gave: a delta with only the player's surroundings.
+	var per_range: int = 11 * 11 * 3
+	var whole: Dictionary = _delta_json(0)
+	_check(not whole.has("base") and (whole.get("submap_keys", []) as Array).size() == per_range
+			and (whole.get("submaps", []) as Array).size() == per_range and int(whole.get("seq", 0)) == snap.seq,
+			"delta call, nothing held: a full snapshot with key rows")
+	var part: Dictionary = _delta_json(snap.seq)
+	var part_bodies: int = (part.get("submaps", []) as Array).size()
+	_check(int(part.get("base", 0)) == snap.seq and (part.get("submap_keys", []) as Array).size() == per_range
+			and part_bodies >= 1 and part_bodies <= 4,
+			"delta call, that snapshot held: only the player's surroundings (%d submaps)" % part_bodies)
+	var unknown_full: bool = true
+	for since: int in [-5, snap.seq + 1000, 1 << 62]:
+		var d: Dictionary = _delta_json(since)
+		unknown_full = unknown_full and not d.has("base") and (d.get("submaps", []) as Array).size() == per_range
+	_check(unknown_full, "delta call, a seq the bridge never gave: a full snapshot")
 	# The weather the client shows (WeatherState) comes from the env's weather fields: the bridge sends them
 	# (wind_at_player is -1 when it doesn't), and they give a weather that can be shown.
 	var ws := WeatherState.from_snapshot(snap)
@@ -646,6 +663,15 @@ static func _handle(snap: Snapshot, uid: int, type: int, p: Vector3i) -> Diction
 		if h["type"] == type and by_type.is_empty():
 			by_type = h
 	return by_type
+
+
+## get_snapshot_delta_json for the three levels around the player, for a client holding snapshot `since`; {} when
+## the bridge lacks the call or gives no JSON object.
+func _delta_json(since: int) -> Dictionary:
+	if not _sim.has_method("get_snapshot_delta_json"):
+		return {}
+	var d: Variant = JSON.parse_string(_sim.get_snapshot_delta_json(1, 1, since))
+	return d if d is Dictionary else {}
 
 
 ## [yaw, side] the snapshot's `poses` give item `uid`, [] when none.

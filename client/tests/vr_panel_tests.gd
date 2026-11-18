@@ -341,13 +341,13 @@ func _test_text_scale() -> void:
 	_frame()
 
 
-## The VR menu's "Inventory" and "Keys and HUD settings" rows ask main.gd for that menu (VrRig.ui_asked) and close
+## The VR menu's "Inventory", "Character" and "Keys and HUD settings" rows ask main.gd for that menu (VrRig.ui_asked) and close
 ## the settings menu, so the laser is free for the panel.
 func _test_ui_rows() -> void:
 	var asked: Array[String] = []
 	var on_ask := func(which: String) -> void: asked.append(which)
 	_rig.ui_asked.connect(on_ask)
-	for want: String in ["inventory", "keys"]:
+	for want: String in ["inventory", "character", "keys"]:
 		_rig.press(_rig.left, "menu_button")
 		var open := _rig.menu_open()
 		var row := _rig.menu.row_of(want)
@@ -356,8 +356,9 @@ func _test_ui_rows() -> void:
 		_check.call(open and row >= 0 and asked.back() == want and not _rig.menu_open(),
 				"vr panel: the VR menu row `%s` asks for that menu and closes the settings menu (%s)" % [want, asked])
 	var rows_file: String = preload("res://tests/test_dir.gd").path("vr_rows_test.json")   # this run's own folder
-	_check.call(asked.size() == 2 and VrSettings.save_file(_rig.settings, rows_file)
-			and not FileAccess.get_file_as_string(rows_file).contains("inventory"),
+	_check.call(asked.size() == 3 and VrSettings.save_file(_rig.settings, rows_file)
+			and not FileAccess.get_file_as_string(rows_file).contains("inventory")
+			and not FileAccess.get_file_as_string(rows_file).contains("character"),
 			"vr panel: the menu rows are never saved as settings")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(rows_file))
 	_rig.ui_asked.disconnect(on_ask)

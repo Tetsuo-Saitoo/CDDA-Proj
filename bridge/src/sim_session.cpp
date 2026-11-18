@@ -1139,6 +1139,18 @@ std::string snapshot_json( int z_below, int z_above, uint64_t &seq )
     return out.str();
 }
 
+std::string snapshot_delta_json( int z_below, int z_above, uint64_t since, uint64_t &seq )
+{
+    std::ostringstream out;
+    fp3d::client_snapshot_info info;
+    if( !fp3d::write_client_snapshot_json( out, z_below, z_above, since, info ) ) {
+        seq = 0;
+        return "";
+    }
+    seq = info.seq;
+    return out.str();
+}
+
 std::string id_tables_json( uint32_t &generation )
 {
     const std::shared_ptr<const fp3d::id_tables> t = fp3d::latest_id_tables();
