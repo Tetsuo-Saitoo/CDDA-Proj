@@ -16,9 +16,15 @@ extends Node3D
 ## lightning flash). `flashes` off (main.gd: the HUD's flash setting) shows neither.
 ## `kick()` follows CDDA's real shots (AimController.shot_went); a trigger pull with no round (HitFeedback.misfired)
 ## calls `click()` instead: a dry click, no recoil, no flash.
+## `set_mods()` shows the held gun's installed gunmods (Snapshot.player_gun `mods`) as boxes at their slots, the
+## same layout as the VR gun (GunMods.slot / dress). A sight mod (SIGHT_LOCATIONS) raises the aimed gun so the eye
+## looks over the sight (aimed_pose); the shot still flies along the eye's line, and its spread stays CDDA's
+## (which already counts the sight). Scopes don't zoom: the bridge sends no sight numbers yet.
 
 const REST := Vector3(0.22, -0.2, -0.42)
 const AIMED := Vector3(0.0, -0.13, -0.38)
+const SIGHT_LOCATIONS: Array[String] = ["sights"]   # CDDA's optics sit here (lasers on rail / underbarrel don't count)
+const SIGHT_GAP := 0.004              # aimed over a sight mod: its top this far under the eye line (m)
 const RAISE_RATE := 10.0
 const KICK_BACK := 0.06
 const KICK_RATE := 14.0
@@ -82,6 +88,7 @@ var _flash: Node3D       # under the gun's Muzzle: the star (Star) and the light
 var _flash_t := 0.0      # seconds of the flash left
 var _flash_wait := 0.0   # seconds before the next muzzle flash may come
 var clicks := 0          # misfire clicks played (tests)
+var mods: Array[Dictionary] = []   # the held gun's installed mods as set_mods last had them (GunMods.mods_of)
 var _click_player: AudioStreamPlayer   # made on the first click
 static var _click: AudioStreamWAV
 
@@ -142,7 +149,36 @@ func set_item(index: int, tables: IdTables) -> void:
 		if muzzle != null:
 			_flash = build_flash(FLASH_SIZE.get(s, 0.1))
 			muzzle.add_child(_flash)
+		GunMods.dress(_root, s, mods)
 	_pose_jam()
+
+
+## The held gun's installed mods (GunMods.mods_of(Snapshot.player_gun): checked, at most GunMods.MAX_MODS), drawn
+## as boxes at their slots on a gun shape (GunMods.dress); made again only when the list changes or the model is
+## rebuilt. A shape with no slots (bow, melee, item) shows none.
+func set_mods(list: Array[Dictionary]) -> void:
+	var l := list.slice(0, GunMods.MAX_MODS, 1, true)
+	if l == mods:
+		return
+	mods = l
+	if _root != null:
+		GunMods.dress(_root, shape, mods)
+
+
+## Where the aimed gun sits: AIMED, or with a sight mod on a gun shape the gun raised and centred so the sight's
+## top is SIGHT_GAP under the eye line (the eye looks over it, down the gun).
+func aimed_pose() -> Vector3:
+	if not shape in GUN_SHAPES:
+		return AIMED
+	for m: Dictionary in mods:
+		if m.get("location") in SIGHT_LOCATIONS:
+			var s := GunMods.slot(shape, m["location"])
+			if s.is_empty():
+				break
+			var at: Vector3 = s["at"]
+			var size: Vector3 = s["size"]
+			return Vector3(-at.x, -(at.y + size.y * 0.5) - SIGHT_GAP, AIMED.z)
+	return AIMED
 
 
 ## The held gun's fouling: CDDA's item var `dirt`, 0..DIRT_MAX; negative = no fouling info (a NON-FOULING gun,
@@ -277,7 +313,7 @@ func lit() -> bool:
 func _process(delta: float) -> void:
 	_tick_flash(delta)
 	_kick = move_toward(_kick, 0.0, KICK_RATE * delta * maxf(_kick, 0.2))
-	var goal := (AIMED if aimed and shape != "melee" else rest()) + Vector3(0, 0, KICK_BACK * _kick)
+	var goal := (aimed_pose() if aimed and shape != "melee" else rest()) + Vector3(0, 0, KICK_BACK * _kick)
 	_base = _base.lerp(goal, minf(RAISE_RATE * delta, 1.0))
 	_sway = move_toward(_sway, sway_arcmin / SWAY_FULL_ARCMIN, SWAY_RATE * delta)
 	_sway_t = fmod(_sway_t + delta, 1000.0 / SWAY_HZ)
