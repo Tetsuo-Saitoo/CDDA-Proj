@@ -188,5 +188,6 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   on the game thread, which also calls `SDL_Quit()` before it ends (see TASKS.md "Bridge facts"). It loads no
   tileset images: the tile contexts read only a tileset's tile sizes, which the game's view sizes come from.
 - The DLL links everything statically (vcpkg `x64-windows-static`, static CRT): it imports only system DLLs.
-- `get_snapshot_json` builds the JSON on the calling thread (~tens of ms for 3 levels); call it only when the seq
-  changes.
+- `get_snapshot_json` builds the JSON on the calling thread; call it only when the seq changes. The text of a
+  submap is kept while the submap is unchanged, so it costs tens of ms for 3 levels the first time and after a
+  big change, and about 1 ms plus the changed submaps otherwise.

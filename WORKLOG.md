@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Bridge: handing a snapshot to the client is much cheaper when little changed. The text of each unchanged piece of the map is kept and reused, so writing the three levels the client reads takes about 1 ms instead of 75 ms on Windows (10 ms on Linux); what the client gets is the same, byte for byte. First step toward sending only what changed (plan in TASKS). Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: gun mods by hand, the game side (for lead-vr's feature): the snapshot says which mods the gun in hand has, which slots are free and which carried mods fit and why not, and two new actions fit a mod on the gun or take it off by CDDA's rules, questions and time. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the snapshot also lists the extra squares a car blocks when it stands at an angle (the game fills the diagonal gaps between its boards and doors), so the client can show and block them like the game does. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the snapshot now says which square each vehicle part is on (and its level, for ramps), so the client can draw cars where the game has them (lead-world's side comes next). Fork tests pass on Windows and Linux, client tests pass.
