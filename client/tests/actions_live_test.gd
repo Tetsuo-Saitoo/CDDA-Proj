@@ -247,9 +247,10 @@ func _compass_live() -> void:
 
 
 ## Gun mods by hand in the running game, through ItemActions and the bridge's mod_add / mod_remove: the kit's
-## pistol goes into the main hand, a GUN_MOD spawned at the feet is taken, the snapshot says it fits
-## (wielded_gun.fits), it is fitted (wielded_gun.mods lists it) and taken off again (back among the carried items).
-## Skipped, said so, on a client or a bridge without them.
+## pistol goes into the main hand, a GUN_MOD spawned at the feet is taken and the snapshot judges it
+## (wielded_gun.fits). When it fits it is fitted (wielded_gun.mods lists it) and taken off again (back among the
+## carried items); when it doesn't (the range's character has no gun skills), mod_add is refused in CDDA's words and
+## the mod stays carried. Skipped, said so, on a client or a bridge without them.
 func _gun_mods_live() -> void:
 	var acts: ItemActions = _main.item_actions
 	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
@@ -288,8 +289,24 @@ func _gun_mods_live() -> void:
 	var has := await _until(taken, OP_TIMEOUT_MS, true)
 	var mod := _carried(mod_t)
 	var fit := _fit_of(mod.uid) if mod != null else {}
-	_check(has and fit.get("ok") == true, "gun mods: taken, and the snapshot says it fits the %s (%s)" % [GUN, fit])
-	if not has or fit.get("ok") != true:
+	_check(has and fit.get("ok") is bool, "gun mods: taken, and the snapshot judges it against the %s (%s)" % [GUN, fit])
+	if not has or not fit.get("ok") is bool:
+		return
+	if fit["ok"] != true:   # the range's character lacks the skills: CDDA's refusal, through the client
+		var said := []
+		var on_refused := func(item: ItemRef, op: String, reason: String) -> void:
+			if item != null and item.uid == mod.uid:
+				said.append([op, reason])
+		acts.refused.connect(on_refused)
+		var asked := acts.mod_add(mod, _carried(gun_t))
+		var answered := func() -> bool: return not said.is_empty()
+		var refused: bool = asked and await _until(answered, OP_TIMEOUT_MS, true)
+		acts.refused.disconnect(on_refused)
+		var why: String = str(said[0][1]) if refused else ""
+		_check(refused and said[0][0] == "mod_add" and why.contains(str(fit.get("reason", "?")))
+				and _carried(mod_t) != null and ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == false,
+				"gun mods: one that doesn't fit is refused in CDDA's words and stays carried (\"%s\")" % why)
+		print("  (the %s doesn't fit here, so fitting and taking off weren't tried)" % GUN_MOD)
 		return
 	if int(fit.get("chance", 0)) < 100:   # CDDA would ask for tools: a menu this check doesn't answer
 		print("  (the %s goes on with %d%% only: fitting not tried)" % [GUN_MOD, fit.get("chance", 0)])
