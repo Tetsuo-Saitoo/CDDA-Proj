@@ -262,6 +262,43 @@ struct environment_view {
   the tables its indices belong to.
 - `seq` and creature uids keep counting across `reset_snapshots` (a reload), so they are never reused in a session.
 
+## Deltas
+
+For a client that keeps the snapshot it parsed last and wants only what changed since. The snapshot object is as
+above; only the JSON differs. `fp3d::write_client_snapshot_json` (bridge: `get_snapshot_delta_json(z_below,
+z_above, since)`) writes the newest snapshot like `write_snapshot_json`, plus, right before `submaps`:
+
+- `submap_keys`, always: `[[x, y, z, revision, detail_revision, hash], ...]`, one row for every submap of the
+  levels asked for, in the snapshot's order, each position once. `hash` is the 32-bit FNV-1a (0..4294967295) of
+  the bytes of that submap's object in `submaps` as the bridge wrote it. The client keeps the row with the
+  submap it parsed; it need not compute the hash.
+- `base`, only in a delta: the seq the delta is made against (the `since` asked with).
+- `submaps`: in a full snapshot (no `base`) the object of every key row. In a delta only the objects whose bytes
+  differ from the base's object at that position, or that the base has none for, and always the ones that hold
+  the player's square or a square next to it, in this snapshot and in the base (at most 8).
+
+Everything else (player, creatures, vehicles, env, `ids` for all the submaps of the levels) is whole every time.
+
+`since` is the client's word and is only looked up. The bridge makes a delta only against a snapshot this call
+wrote itself, one of the last 4 (`served_snapshots_kept`), written for the same levels, with the same
+`bubble_origin` and the player on the same level. So a full snapshot comes on a fresh start, after a map shift,
+on another level, for another range, after a reload, and for any `since` it doesn't know (0, made up, too old).
+
+What the client checks (anything off: drop it and ask again with `since` 0, never a failed session):
+
+- `base` is a whole number and equals the seq of the snapshot it holds;
+- `submap_keys` has at most as many rows as a snapshot can have submaps, no position twice, every number in the
+  range `submaps[].pos`, the revisions and a 32-bit value have;
+- every object in `submaps` has a key row with its position and revisions, and goes through the same checks as
+  in a full snapshot;
+- a row without an object names a position the held snapshot has, with the same revisions and hash as the row
+  that snapshot's object came with; a full snapshot has an object for every row.
+
+A client that skips snapshots still loses nothing: a delta is always against the snapshot that client holds.
+Checked by `fp3d-snapshot-test` ("client snapshot: ..."): a stand-in client puts each answer onto what it holds
+and must end up with exactly `write_snapshot_json`'s text, over an unchanged snapshot, a changed submap, a step,
+a change of light, an unknown, made-up and too old `since`, another range, a map shift, another level and a clear.
+
 ## Not yet in the snapshot
 
 Facing and sub-tile offsets (block D1), worn items, animation state (events, block B4), per-part body

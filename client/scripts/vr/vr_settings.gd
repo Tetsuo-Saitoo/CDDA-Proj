@@ -34,16 +34,18 @@ const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", 
 		"vr-panel-text": "panel_text", "vr-mood": "mood_cues"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
 const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open",
+		"character": "press to open",
 		"report": "press to save one"}
 ## Action rows that open one of the game's own menus on the panel (VrRig.ui_asked): row key -> what is asked for.
-const UI_ROWS := {"keys": "keys", "inventory": "inventory"}
+const UI_ROWS := {"keys": "keys", "inventory": "inventory", "character": "character"}
 ## Menu rows: key (a setting or an action), label.
 const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move speed"], ["turn", "Turn"],
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
 		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
 		["wrist_hud", "Wrist HUD"], ["mood_cues", "Mood tint"], ["panel_text", "Menu text size"], ["height", "Height"],
-		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["keys", "Keys and HUD settings"],
+		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["character", "Character"],
+		["keys", "Keys and HUD settings"],
 		["report", "Report a bug"]]
 
 
