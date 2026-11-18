@@ -125,6 +125,7 @@ func _run() -> void:
 		await _character_live()
 		await _compass_live()
 		await _number_live()
+		await _esc_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -240,6 +241,49 @@ func _compass_live() -> void:
 	_check(absf(wrapf(c.heading_deg - h0, -180.0, 180.0) - 90.0) < 1.0 and absf(at2 - (at - 1.0)) < 0.05,
 			"compass: a quarter turn right turns the heading 90 and moves the zombie to the strip's left end (%.2f)" % at2)
 	fp.set_look(yaw0, fp.pitch)
+
+
+## Esc in the running game (main.back_out, lead-ui's BackOut): with a look showing and the Tab view over it, each
+## press backs out of the topmost thing only; the F1 menu opens once nothing is left and Esc closes it again; the
+## game is in its main loop after it all. Skipped on a client without back_out.
+func _esc_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var bo: Variant = _main.get("back_out")
+	if bo == null:
+		print("  (no contextual Esc in this client: its steps not checked)")
+		return
+	if _main.key_menu.visible:
+		_main.key_menu.close()
+	var look := _key_of(&"look_at")
+	if look != null:
+		root.push_input(look)
+	root.push_input(_key_of(&"inspect"))
+	var up: PackedStringArray = bo.open_now()
+	_check(up.has("inventory"), "Esc: the Tab view is up%s (open: %s)" % [" over a look" if up.has("look") else "", up])
+	var went := []          # what was open before each press
+	var in_order := true    # each press took the topmost thing (or a part of it), nothing under it
+	var menu_early := false
+	for i in 8:
+		var before: PackedStringArray = bo.open_now()
+		if before.is_empty():
+			break
+		went.append(before)
+		root.push_input(_esc_key())
+		await create_timer(0.1).timeout
+		var after: PackedStringArray = bo.open_now()
+		in_order = in_order and (after == before or after == before.slice(1))
+		menu_early = menu_early or _main.key_menu.visible
+	_check((bo.open_now() as PackedStringArray).is_empty() and in_order and not menu_early,
+			"Esc: one thing backed out per press, topmost first, no menu meanwhile (%s)" % [went])
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	var menu_up: bool = _main.key_menu.visible
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	_check(menu_up and not _main.key_menu.visible, "Esc with nothing open shows the F1 menu; Esc again closes it")
+	_check(await _until(in_loop, ASK_TIMEOUT_MS, true) and _live.state == "running",
+			"Esc: the game is still running, in its main loop (%s)" % _live.state)
 
 
 ## G4: P shows the character screen with the live game's body and needs; Esc closes it.
