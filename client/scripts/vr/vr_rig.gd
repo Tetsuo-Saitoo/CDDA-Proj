@@ -201,6 +201,7 @@ var tray: ItemTray         # L8: a lying container's contents or a big pile laid
 var gun: VrGun             # L2: the wielded gun in the main hand (built in _build; main.gd wires it)
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
+var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
@@ -353,6 +354,9 @@ func _build() -> void:
 	hurt = VrHurt.new()   # its own ring, behind the vignette and under its render priority
 	hurt.rig = self
 	camera.add_child(hurt)
+	mood = VrMood.new()   # its own ring, behind the hurt edge
+	mood.rig = self
+	camera.add_child(mood)
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
@@ -459,6 +463,7 @@ func _process(delta: float) -> void:
 ## The HUD panel inside the off forearm (setting `wrist_hud`): shows while turned to the eyes.
 func place_hud(delta: float) -> void:
 	hud.enabled = settings["wrist_hud"] == "on"
+	mood.enabled = settings["mood_cues"] == "on"
 	hud.place(self, delta)
 
 
@@ -649,7 +654,7 @@ func slot_take(i: int, pt: Dictionary, tt: Dictionary) -> ItemRef:
 
 ## Hand i is the main hand and a gun shows in it (VrGun).
 func _gun_hand(i: int) -> bool:
-	return gun.shown and _ctrl(i) == main_ctrl()
+	return gun.shown and not gun.clamped() and _ctrl(i) == main_ctrl()   # in a bench vise: the hand is free
 
 
 ## Controller c's grip button is held.
@@ -920,6 +925,8 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 		return ""
 	var held := hands.holding(id)
 	if held.is_empty():
+		if gun.let_go_gun(c):
+			return "vise"   # the gun let go at a bench vise's jaws: it stays there (VrGun)
 		if _gun_hand(0 if c == left else 1) and world.snapshot != null:   # the gun's grip let go at a slot: in it goes
 			var g := cdda_holds(c)
 			var gd := slots.drop_for(c.global_position, g) if g != null else {}
@@ -1283,7 +1290,8 @@ func _sync_held() -> void:
 		var node: VrHeld = left_held if i == 0 else right_held
 		var h: Variant = _held.get("main" if _ctrl(i) == main_ctrl() else "off")
 		node.visible = h is Dictionary and not (h as Dictionary).is_empty() \
-				and (hands == null or hands.proxy(HAND_IDS[i]) == null) and not _gun_hand(i)
+				and (hands == null or hands.proxy(HAND_IDS[i]) == null) and not _gun_hand(i) \
+				and not (gun.clamped() and _ctrl(i) == main_ctrl())   # the wielded gun is in a vise
 
 
 ## The same, now (VrGun when its gun shows or goes).

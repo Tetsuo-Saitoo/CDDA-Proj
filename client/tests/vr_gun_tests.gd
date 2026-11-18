@@ -52,7 +52,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check = check
 	print("vr gun")
 	for id: String in ["rock", "hammer", "2x4", "bag_canvas", "glock_19", "glockmag", "9mm", "remington_870",
-			"suppressor", "rifle_scope", "laser_sight"]:
+			"suppressor", "rifle_scope", "laser_sight", "bench_vise"]:
 		_it[id] = tables.index_of("itype", id)
 	_check.call(VrGun.loadable(ItemRef.on_player(5, _it["glockmag"], 0, -1, 0, P), tables)
 			and VrGun.loadable(ItemRef.on_player(5, _it["9mm"], 0, -1, 0, P), tables)
@@ -77,6 +77,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_mods()
 	_test_mod_install()
 	_test_mod_remove()
+	_test_vise()
 	_test_hostile()
 	_test_no_gun()
 	_aim.crosshair.free()
@@ -90,7 +91,8 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 		var pos: Array = sm["pos"]
 		var at := Vector3i(int(pos[0]), int(pos[1]), int(pos[2]))
 		if at == Vector3i(16, 32, 0):
-			sm["items"] = [[1, 3, [_it["rock"], _it["hammer"], _it["2x4"]]], [13, 1, [_it["bag_canvas"]]]]
+			sm["items"] = [[1, 3, [_it["rock"], _it["hammer"], _it["2x4"]]], [13, 1, [_it["bag_canvas"]]],
+					[12, 1, [_it["bench_vise"]]]]
 		elif at in [Vector3i(15, 32, 0), Vector3i(15, 31, 0), Vector3i(16, 31, 0)]:
 			sm["items"] = []
 		else:
@@ -880,6 +882,78 @@ func _test_mod_remove() -> void:
 	_captured()
 	_rest_hands()
 	_frame()
+
+
+## Gun modification, V1: a bench vise lying next to the player (Vise.near / jaws); the main grip let go at its jaws
+## leaves the gun there: shown in it, the main hand free (no gun hand, VrHeld hidden), the trigger doesn't fire, no live
+## aim; the main hand fits a mod too; the main grip on the gun's Grip takes it back; walking off puts it back in the hand.
+func _test_vise() -> void:
+	var g := _rig.gun
+	var mc := _rig.main_ctrl()
+	var mi := 0 if mc == _rig.left else 1
+	var mid := _rig.hand_id(mc)
+	var vises := Vise.near(_snap, _world.tables)
+	var jaws: Variant = Vise.jaws(_hands.picker, vises[0]) if vises.size() == 1 else null
+	_check.call(jaws is Vector3 and g._vises == vises and Vise.near(null, _world.tables).is_empty(),
+			"vr gun: a bench vise next to the player is found, its jaws where it is drawn (%s)" % [vises])
+	if not jaws is Vector3:
+		return
+	var j: Vector3 = jaws
+	_rest_hands()
+	_frame()
+	_rig.press(mc, "grip_click")
+	mc.global_position = j + Vector3(0.0, 0.05, 0.0)
+	_frame()
+	_rig.release(mc, "grip_click")
+	_frame()
+	var pose := g.global_transform
+	_rest_hands()
+	_frame()
+	var b := _rig.buzzes.duplicate()
+	var fired := g.trigger()
+	var stays: bool = g.clamped() and g.shown and g.global_transform.is_equal_approx(pose) and not _rig._gun_hand(mi) \
+			and g.live_pose().is_empty() and not fired and _rig.buzzes == b \
+			and not (_rig.left_held if mi == 0 else _rig.right_held).visible
+	var ldef: IdTables.Def = _world.tables.def_at("itype", _it["laser_sight"])
+	var was_loc := ldef.gunmod_location
+	ldef.gunmod_location = "rail"
+	_snap.player_gun["fits"] = []
+	_captured()
+	var las := _mock.give(_it["laser_sight"], 0, 0)
+	_hands.adopt(mid, VrGun._carried_ref(_snap, las))
+	mc.global_position = g.model.global_transform * (GunMods.slot(g.shape, "rail", 0)["at"] as Vector3)
+	_frame()
+	var main_fits: bool = g.fit.get("uid") == las and g.fit.get("near") == true and g.shown and g.clamped()
+	_hands.release(mid, {})
+	_remove(las)
+	ldef.gunmod_location = was_loc
+	_snap.player_gun.erase("fits")
+	_captured()
+	_check.call(stays and main_fits,
+			"vr gun: let go at the vise's jaws the gun stays there: the main hand free, no fire, no live aim; that hand fits mods")
+	mc.global_position = g.part_pose("Grip").origin
+	_rig.press(mc, "grip_click")
+	_frame()
+	var back: bool = not g.clamped() and _rig._gun_hand(mi)
+	_rest_hands()
+	_frame()
+	_rig.release(mc, "grip_click")
+	_frame()
+	back = back and not g.clamped() and g.shown
+	_rig.press(mc, "grip_click")
+	mc.global_position = j + Vector3(0.0, 0.05, 0.0)
+	_frame()
+	_rig.release(mc, "grip_click")
+	_frame()
+	var again := g.clamped()
+	_rig.camera.position = Vector3(0, 1.6, 4.0)
+	_frame()
+	var off: bool = not g.clamped() and _rig._gun_hand(mi) and _rig.notes[mi].text == VrGun.UNCLAMPED
+	_rig.camera.position = Vector3(0, 1.6, 0)
+	_rest_hands()
+	_frame()
+	_check.call(back and again and off and g.shown,
+			"vr gun: the main grip on the gun's grip takes it out of the vise; walking off puts it back in the hand")
 
 
 ## Junk in player_gun: no gun, or a pistol with junk ignored; a long fault list is capped.
