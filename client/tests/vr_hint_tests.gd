@@ -33,7 +33,7 @@ func _test_texts() -> void:
 	for id: String in Hints.VR_START:
 		ok = ok and Hints.known(id)
 	_check.call(ok and Hints.vr_id("hostile") == "vr_hostile" and Hints.vr_id("tired") == "vr_tired"
-			and Hints.vr_id("prompt") == "vr_prompt" and Hints.vr_id("eat") == "vr_eat" and Hints.vr_id("bleed") == ""
+			and Hints.vr_id("prompt") == "vr_prompt" and Hints.vr_id("eat") == "vr_eat" and Hints.vr_id("bleed") == "vr_bleed"
 			and Hints.text_of("nope") == "" and Hints.text_of("") == "" and not Hints.known("vr_nope")
 			and Hints.text_of("prompt") == Hints.fill(Hints.TEXTS["prompt"]),
 			"vr hint: short VR texts with their own ids; the flat ones with a VR version map to it")

@@ -63,6 +63,7 @@ var _recipe_results := {}
 var _char_query := 0
 var _char_asked := 0
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
+const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
 const MAX_COOK_BATCH := 20         # L9: the bridge's cook `batch` range is 1..this
 const MAX_RECIPE := 128            # L9: a recipe id's bytes
@@ -660,13 +661,18 @@ func hold_item(uid: float, type: float, hand: String) -> bool:
 ## contents. `tag` 1..MAX_ITEM_TAG (0: none) comes back in its `item_result` event (done once CDDA's activity has
 ## started; refused with CDDA's text, or "" when its message said why). False when refused here (nothing sent): no
 ## game, a bad handle or tag, or a bridge without the op (it refuses an unknown op), so callers can fall back to
-## CDDA's eat menu.
-func consume_item(uid: float, type: float, tag := 0) -> bool:
+## CDDA's eat menu. `part` ("" none): a main body part id for first aid (lead-vr; the bridge checks it is one of the
+## character's), sent only when set; one that isn't a short plain id is refused here.
+func consume_item(uid: float, type: float, tag := 0, part := "") -> bool:
 	if _sim == null or not handle_ok(uid, type) or tag < 0 or tag > MAX_ITEM_TAG:
+		return false
+	if part != "" and (part.length() > MAX_PART_LEN or not part.is_valid_ascii_identifier()):
 		return false
 	var a := {"op": "consume", "item": int(uid), "type": int(type)}
 	if tag > 0:
 		a["tag"] = tag
+	if part != "":
+		a["part"] = part
 	return bool(_sim.queue_item_action(a))
 
 

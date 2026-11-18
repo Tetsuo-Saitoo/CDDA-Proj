@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — In VR you can now bandage or disinfect yourself by hand: hold a bandage to a hurt or bleeding part (your other forearm, head, chest or a leg); the part glows green when the item can help it, and after a moment the game applies it there, taking its usual time. The game says why when it won't (nothing to treat, a broken limb). Needs the bridge update that's on its way. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — VR fixes from QA's review: leaving the game no longer leaves eating stuck, and a keyboard hint queued before the headset started no longer shows in the headset. Client tests pass.
 - 2026-11-18 — In VR you eat and drink by bringing food or a drink to your mouth and holding it there for half a second; a bottle drinks what is inside it. The game decides as usual: it may ask (rotten, too full) and says why when it won't. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — VR now has its own one-time hints, low in your view, saying which button does what (walk and turn, take, your pack, your wrist, the menu, answering the game, danger, tiredness, the gun, unloading, fitting and pulling off mods, the vise). They share the flat hints' on/off switch and "Show hints again". The VR menu also has Wait and Sleep rows. Client tests pass; not yet tried in a headset.
