@@ -145,8 +145,55 @@ func _test_teleport(root: Node) -> void:
 	p.teleport_here()
 	_check.call(p.teleport_button.disabled and sent.size() == 1 and p.status.text.begins_with("Teleport: needs"),
 			"teleport panel: greyed out while cheats aren't allowed")
+	# "Teleport: pick a square": greyed out like the crosshair entry; pressed, it asks main to start picking
+	var picks := [0]
+	p.pick_teleport = func() -> bool:
+		picks[0] += 1
+		return true
+	p.pick_square()
+	var grey: bool = p.pick_button.disabled and picks[0] == 0
+	ls.set_cheats_allowed(true)
+	p.refresh()
+	p.pick_square()
+	var asked: bool = not p.pick_button.disabled and picks[0] == 1 and p.pick_button.tooltip_text.contains("J")
+	p.pick_teleport = func() -> bool: return false
+	p.pick_square()
+	_check.call(grey and asked and p.status.text.begins_with("Teleport: needs"),
+			"teleport panel: \"pick a square\" greyed out without cheats; pressed, main starts picking; refused, it says so")
 	p.free()
 	ls.free()
+	# the pick: the next left click picks, Esc or a right click cancels; anything else waits; not picking: nothing
+	var tp := TeleportPick.new()
+	var left := InputEventMouseButton.new()
+	left.button_index = MOUSE_BUTTON_LEFT
+	left.pressed = true
+	var right := left.duplicate() as InputEventMouseButton
+	right.button_index = MOUSE_BUTTON_RIGHT
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	var w := InputEventKey.new()
+	w.physical_keycode = KEY_W
+	w.pressed = true
+	var idle := tp.pick_event(left)
+	tp.picking = true
+	var waits := tp.pick_event(w) == TeleportPick.NONE and tp.pick_event(InputEventMouseMotion.new()) == TeleportPick.NONE \
+			and tp.picking
+	var picked := tp.pick_event(left) == TeleportPick.PICK and not tp.picking and tp.pick_event(left) == TeleportPick.NONE
+	tp.picking = true
+	var by_right := tp.pick_event(right) == TeleportPick.CANCEL and not tp.picking
+	tp.picking = true
+	var by_esc := tp.pick_event(esc) == TeleportPick.CANCEL and not tp.picking
+	_check.call(idle == TeleportPick.NONE and waits and picked and by_right and by_esc,
+			"teleport pick: a left click picks once; Esc or a right click cancels; other keys and motion wait")
+	# the look's marker: the square TeleportAim gives for the look (a creature looked at: the square before it),
+	# named in the look panel with J's key; none without a marker
+	var at_zombie := {"hit": true, "square": Vector3i(5, 0, 0), "point": Vector3(5.02, 1.0, 0.5), "what": "zombie"}
+	tp.marked = TeleportAim.square(at_zombie, Vector3.RIGHT, to_ms)
+	var line := tp.look_line("J")
+	tp.marked = null
+	_check.call(line == "J: teleport here (the marker)" and tp.look_line("J") == "",
+			"teleport marker: a look at a zombie marks the square before it; the look panel names J (%s)" % line)
 
 
 ## The weather cheat: the types list read as hostile text; LiveSession sends it only with cheats allowed and a good

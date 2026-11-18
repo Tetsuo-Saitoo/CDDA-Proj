@@ -17,6 +17,7 @@ const FILE_VERSION := 2
 ## saved there before doesn't now do two things (version 2: left click went from look_at to click).
 const MOVED := {&"look_at": ["mouse:1"]}
 const MENU_KEY := KEY_F1      # opens the key menu; fixed so it can't be lost
+const MENU_PAD := JOY_BUTTON_START   # a pad's Esc (BackOut): backs out, then opens the key menu; can't be bound
 
 ## Every action: [name, group, label, default bindings]. A binding is the text form `event_text` reads:
 ## "W", "Shift+E", "Kp 8", "mouse:1" (left) / "mouse:2" (right), "pad:0", "axis:1-" / "axis:1+".
@@ -42,7 +43,7 @@ const ACTIONS := [
 	# CDDA's move modes; not Shift (Shift+ keys are CDDA actions, Shift alone the outside view's fast camera)
 	[&"cdda_run", "Move", "run on / off (live; uses stamina)", ["CapsLock", "pad:7"]],
 	[&"cdda_crouch", "Move", "crouch on / off (live)", ["B", "pad:8"]],
-	[&"cheat_teleport", "Move", "cheat: teleport to the square under the crosshair (live, cheats allowed)", ["J"]],
+	[&"cheat_teleport", "Move", "cheat: teleport to the square under the crosshair, past creatures; with a look open (look at): to its marker (live, cheats allowed)", ["J"]],
 	[&"look", "View", "hold: mouse look", ["mouse:2"]],
 	[&"look_up", "View", "look up", ["axis:3-"]],
 	[&"look_down", "View", "look down", ["axis:3+"]],
@@ -62,7 +63,7 @@ const ACTIONS := [
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike with the left hand (the off hand, unless left-handed in Options)", ["1"]],
 	[&"hand_main", "Act", "strike with the right hand (the main hand, unless left-handed in Options)", ["2"]],
-	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold; an object's choices show as a wheel: point, let go to pick", ["E", "pad:0"]],
+	[&"use_held", "Act", "take the item you look at / use what you hold on what you face / examine it; hold it to pour a liquid you hold; an object's choices show as a wheel: point, let go to pick; with a gun wielded and a gunmod in the off hand: fit it", ["E", "pad:0"]],
 	[&"click", "Act", "take the item you point at, like E; hold on a door or an item and drag; click stairs to take them; aiming: pick a target, again to fire", ["mouse:1"]],
 	[&"carry_farther", "Act", "carrying an item: hold it farther away", ["mouse:4"]],
 	[&"carry_closer", "Act", "carrying an item: hold it closer", ["mouse:5"]],

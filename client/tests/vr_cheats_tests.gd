@@ -51,6 +51,19 @@ class NoPause extends RefCounted:
 		return true
 
 
+## Has "Break all grabs" (LiveSession.cheat_break_grabs: an op id, 0 when refused).
+class Grabs extends Backend:
+	var id := 3
+	var breaks := 0
+
+	func can_break_grabs() -> bool:
+		return not state.is_empty()
+
+	func cheat_break_grabs() -> int:
+		breaks += 1
+		return id
+
+
 ## Can list but not set: no page.
 class Partial extends RefCounted:
 	func cheats() -> Dictionary:
@@ -78,26 +91,26 @@ func _off() -> Dictionary:
 
 
 func _test_rows() -> void:
-	var known: Array = Array(VrCheats.ORDER) + [VrCheats.AUTO_PAUSE, VrCheats.TEST_KIT]
+	var known: Array = Array(VrCheats.ORDER) + [VrCheats.BREAK_GRABS, VrCheats.AUTO_PAUSE, VrCheats.TEST_KIT]
 	var none := VrCheats.rows({}, true)
 	_check.call(_keys(none) == known and none.all(func(r: Dictionary) -> bool: return r["enabled"] == false and r["on"] == false)
 			and none[0]["label"] == "No damage (can't die)" and none[-1]["kind"] == VrCheats.ACTION
 			and none[-2]["kind"] == VrCheats.TOGGLE and none[-2]["label"] == "Auto-pause on hostiles (real time)"
 			and none[-1]["label"] == "Give test kit",
-			"vr cheats: no game, the flat page's rows in its order (auto-pause, then the kit), all greyed")
+			"vr cheats: no game, the flat page's rows in its order (break grabs, auto-pause, then the kit), all greyed")
 	var long := "long_" + "x".repeat(55)
 	var d := {"night_vision": "yes", "zz_new": true, "invincible": true, "aaa_cheat": false, long: false,
 			5: true, "Bad Name": true, "x".repeat(100): true, "drop_table;": true}
 	var r := VrCheats.rows(d, true)
-	_check.call(_keys(r) == Array(VrCheats.ORDER) + ["aaa_cheat", long, "zz_new", VrCheats.AUTO_PAUSE, VrCheats.TEST_KIT]
-			and r[0]["on"] == true and r[6]["on"] == false and r[7]["label"] == "aaa cheat" and r[9]["on"] == true
-			and (r[8]["label"] as String).length() == VrCheats.LABEL_MAX and r[10]["on"] == true
+	_check.call(_keys(r) == Array(VrCheats.ORDER) + ["aaa_cheat", long, "zz_new", VrCheats.BREAK_GRABS, VrCheats.AUTO_PAUSE,
+			VrCheats.TEST_KIT] and r[0]["on"] == true and r[6]["on"] == false and r[8]["label"] == "aaa cheat"
+			and r[10]["on"] == true and (r[9]["label"] as String).length() == VrCheats.LABEL_MAX and r[-2]["on"] == true
 			and r.all(func(x: Dictionary) -> bool: return x["enabled"] == true),
 			"vr cheats: known names in order, then the sim's others by name (bounded labels); bad names and values skipped")
 	var many := {}
 	for i in 12:
 		many["extra_%02d" % i] = true
-	_check.call(VrCheats.rows(many, false).size() == VrCheats.ORDER.size() + VrCheats.MAX_EXTRA + 2,
+	_check.call(VrCheats.rows(many, false).size() == VrCheats.ORDER.size() + VrCheats.MAX_EXTRA + 3,
 			"vr cheats: at most MAX_EXTRA unknown cheats")
 	var b := Backend.new()
 	_check.call(VrCheats.available(b) and not VrCheats.available(null) and not VrCheats.available(Partial.new())
@@ -151,6 +164,34 @@ func _test_use() -> void:
 	_check.call(u["ok"] == false and u["text"] == "No test kit: the game said no", "vr cheats: a refused kit says so")
 	u = VrCheats.use(b, "not_a_row")
 	_check.call(u["ok"] == false and (u["text"] as String).begins_with("Not changed"), "vr cheats: an unknown row")
+	_test_unstoppable(b)
+
+
+## The Unstoppable toggle (a known cheat now) and the one-go "Break all grabs" row.
+func _test_unstoppable(old: Backend) -> void:
+	var g := Grabs.new()
+	_check.call(VrCheats.ORDER.has("unstoppable") and VrCheats.LABELS["unstoppable"].contains("walk past")
+			and VrCheats.LABELS[VrCheats.BREAK_GRABS] == "Break all grabs", "vr cheats: Unstoppable and Break all grabs named")
+	var u := VrCheats.use(g, VrCheats.BREAK_GRABS)
+	_check.call(u["ok"] == false and u["text"] == "Not done: no running game" and g.breaks == 0,
+			"vr cheats: break grabs without a game sends nothing")
+	g.state = _off()
+	var rows := VrCheats.read(g)
+	var at := _keys(rows).find(VrCheats.BREAK_GRABS)
+	old.accept = true
+	old.state = _off()
+	_check.call(at >= 0 and rows[at]["enabled"] == true and rows[at]["kind"] == VrCheats.ACTION
+			and not _keys(VrCheats.read(old)).has(VrCheats.BREAK_GRABS), "vr cheats: the row shows only with a backend that has it")
+	u = VrCheats.use(g, VrCheats.BREAK_GRABS)
+	_check.call(u["ok"] == true and u["text"] == "Grabs: let go next turn" and g.breaks == 1, "vr cheats: break grabs sent once")
+	g.id = 0
+	u = VrCheats.use(g, VrCheats.BREAK_GRABS)
+	_check.call(u["ok"] == false and u["text"] == "Not done: the game said no", "vr cheats: a refused break says so")
+	u = VrCheats.use(old, VrCheats.BREAK_GRABS)
+	_check.call(u["ok"] == false and u["text"] == "Not done: no such cheat now", "vr cheats: no break grabs on an older backend")
+	u = VrCheats.use(g, "unstoppable")
+	_check.call(u["ok"] == true and g.calls.back() == ["set_cheat", "unstoppable", true] and u["text"] == "Unstoppable: on next turn",
+			"vr cheats: Unstoppable toggles like the others")
 
 
 ## The menu row whose text contains `s`, -1 for none.

@@ -44,6 +44,9 @@ const MARQUEE_MIN_PX := 4.0      # a press on empty space that moves less is a c
 const BATCH_STEP_MS := 30000     # an item still busy after this is given up (ItemActions times out at 5 s)
 const CANT := "You can't move that there now."
 const CANT_TAKE := "You can't take that now."
+const TAKE_OFF := "Take off"
+const CANT_FIT := "You can't fit that now."
+const CANT_TAKE_OFF := "You can't take that off now."
 
 var hands: Hands
 var actions: ItemActions
@@ -87,6 +90,7 @@ var _row_slots := {}     # uid -> InspectSlot
 var _col_slots := {}     # column id -> InspectSlot
 var _group_slots := {}   # "column id|key" -> InspectSlot
 var _ticks := {}         # uid -> the row's [ ] box
+var _mod_buttons := {}   # uid -> a gun mod row's "Take off" button (F1)
 var _col_scroll := {}    # column id -> its rows' ScrollContainer (a box drag only reaches rows in sight)
 var _shown := {}         # uid -> selected as its row shows it now (only changed rows are restyled)
 var _row_col := {}       # uid -> column id
@@ -311,6 +315,7 @@ func rebuild() -> void:
 	_col_slots.clear()
 	_group_slots.clear()
 	_ticks.clear()
+	_mod_buttons.clear()
 	_col_scroll.clear()
 	_shown.clear()
 	_row_col.clear()
@@ -372,6 +377,12 @@ func row_input(r: Dictionary, event: InputEvent) -> void:
 	if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 		_row_press = true   # (only the left button: a wheel turn here never reaches the view to clear it)
 	var uid: int = r.get("uid", -1)
+	if r.has("mod_of"):   # F1: a gun mod's row: its right-click menu is "Take off" (no selecting)
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			var ms: InspectSlot = _row_slots.get(uid)
+			_popup_menu([_mod_buttons[uid]] if _mod_buttons.has(uid) else [],
+					ms.get_screen_transform() * mb.position if ms != null and ms.is_inside_tree() else mb.global_position)
+		return
 	if not _row_col.has(uid):
 		return
 	if mb.button_index == MOUSE_BUTTON_RIGHT:
@@ -537,7 +548,15 @@ func menu_buttons() -> Array[Button]:
 
 ## Opens the right-click menu at `screen_at` (screen position): the bar's actions for the selection.
 func show_menu(screen_at: Vector2) -> void:
-	_menu_buttons = menu_buttons()
+	_popup_menu(menu_buttons(), screen_at)
+
+
+## The right-click menu with `buttons`' texts at `screen_at`; picking one presses it (menu_pick).
+func _popup_menu(buttons: Array, screen_at: Vector2) -> void:
+	_menu_buttons.clear()
+	for b: Variant in buttons:
+		if b is Button:
+			_menu_buttons.append(b)
 	_menu.clear()
 	for i in _menu_buttons.size():
 		_menu.add_item(_menu_buttons[i].text, i)
@@ -617,7 +636,7 @@ func can_drop(data: Variant, target: Dictionary) -> bool:
 	if many.is_empty():
 		return plan(data, target)["do"] != "none"
 	for d: Dictionary in many:
-		if plan(d, target)["do"] != "none":
+		if plan(d, target, false)["do"] != "none":
 			return true
 	return false
 
@@ -716,11 +735,13 @@ func _pinned(target: Dictionary) -> Dictionary:
 	return {"kind": "group", "column": col["id"], "key": sq}
 
 
-## Moves one item (`data` as drag_data gives it).
-func _drop_one(data: Variant, target: Dictionary) -> String:
-	var p := plan(data, target)
+## Moves one item (`data` as drag_data gives it); `one` false: an item of a batch (no fitting: one mod at a time).
+func _drop_one(data: Variant, target: Dictionary, one := true) -> String:
+	var p := plan(data, target, one)
 	var it: ItemRef = p.get("item")
 	match p["do"]:
+		"fit":
+			return fit(it, p["gun"])
 		"move":
 			_say("")
 			var op := hands.move(HAND, it, p["drop"])
@@ -749,7 +770,9 @@ func _drop_one(data: Variant, target: Dictionary) -> String:
 ## "hold" (hand: a carried one into CDDA's main or off hand, Hands.hold; worn ones have no rows) | "none",
 ## item: ItemRef}. Onto the Hands column itself: the free hand (_free_hand); already in that hand: none. The
 ## off-hand item onto its own pocket is a put: CDDA takes it out of the hand (it lies in that pocket all along).
-func plan(data: Variant, target: Dictionary) -> Dictionary:
+## F1: a carried gunmod onto the wielded gun's row (or one of its mods' rows): {do: "fit", item, gun} (`one` only:
+## not in a drag of several; never a put into the gun's pockets).
+func plan(data: Variant, target: Dictionary, one := true) -> Dictionary:
 	var none := {"do": "none"}
 	var it := _dragged(data)
 	var col := InventoryModel.find_column(cols, str(target.get("column", "")))
@@ -759,6 +782,9 @@ func plan(data: Variant, target: Dictionary) -> Dictionary:
 	var key: Variant = target.get("key")
 	if kind == "row":   # onto a container row: into it; anything else goes on to the column around it
 		var r: Variant = target.get("row")
+		var gun := _gun_of_row(r)
+		if gun != null and it.carried and GunModFit.is_gunmod(it, hands.world.tables):
+			return {"do": "fit", "item": it, "gun": gun} if one and gun.uid != it.uid else none
 		var c: Variant = r.get("item") if r is Dictionary else null
 		if c is ItemRef and r.get("is_container", false) and not r.get("pending", false) and (c as ItemRef).uid != it.uid:
 			return {"do": "move", "item": it, "drop": {"kind": "container", "container": c}}
@@ -810,6 +836,57 @@ func _dragged(data: Variant) -> ItemRef:
 	return it
 
 
+## F1: the wielded gun a row stands for (its own row, or one of its mods' rows); null for any other row.
+func _gun_of_row(r: Variant) -> ItemRef:
+	if not r is Dictionary or hands == null:
+		return null
+	var it: Variant = (r as Dictionary).get("item")
+	if r.has("mod_of"):
+		it = (_rows_by_uid.get(r["mod_of"], {}) as Dictionary).get("item")
+	if not it is ItemRef or not GunModFit.is_wielded_gun(it, hands.world.snapshot) or r.get("pending", false):
+		return null
+	return it
+
+
+## F1: fits carried gunmod `it` onto the wielded gun `gun` (a drop on the gun's row): ItemActions.mod_add, CDDA's
+## install (its questions as prompts, its odds and time). A "no" CDDA already gave (wielded_gun `fits`) is said here
+## instead. "mod_add" when sent.
+func fit(it: ItemRef, gun: ItemRef) -> String:
+	var tables: IdTables = hands.world.tables if hands != null else null
+	var snap: Snapshot = hands.world.snapshot if hands != null else null
+	if it == null or gun == null or actions == null or tables == null:
+		return ""
+	var why := GunModFit.refusal(snap, it.uid, InventoryModel.clean(gun.display_name(tables)))
+	if why != "":
+		_say(why)
+		return ""
+	if not actions.mod_add(it, gun):
+		_say(CANT_FIT)
+		return ""
+	_say(GunModFit.fitting_line(snap, it.uid, InventoryModel.clean(it.display_name(tables))))
+	refresh()
+	return "mod_add"
+
+
+## F1: takes the mod of row `uid` off the wielded gun (its "Take off" button or menu): ItemActions.mod_remove;
+## CDDA's removal and time, the mod into the pack, else onto the ground. "mod_remove" when sent.
+func take_off(uid: int) -> String:
+	var r: Dictionary = _rows_by_uid.get(uid, {})
+	var m: Variant = r.get("mod")
+	var gun: Variant = (_rows_by_uid.get(r.get("mod_of", -1), {}) as Dictionary).get("item")
+	if not m is Dictionary or not gun is ItemRef or actions == null:
+		return ""
+	if int((m as Dictionary).get("flags", 0)) & GunModFit.IRREMOVABLE:
+		_say("The %s can't be taken off." % r["name"])
+		return ""
+	if not actions.mod_remove(uid, int(m["type"]), gun):
+		_say(CANT_TAKE_OFF)
+		return ""
+	_say("Taking off the %s." % r["name"])
+	refresh()
+	return "mod_remove"
+
+
 ## "main" unless the main hand holds something and the off hand doesn't (CDDA refuses a full hand itself).
 func _free_hand() -> String:
 	var main := false
@@ -838,8 +915,14 @@ func _on_refused(hand: String, target_: Dictionary, reason: String) -> void:
 		refresh()
 
 
-## ItemActions refused an action the view sent without Hands (a batch's unload): the reason, counted.
+## ItemActions refused an action the view sent without Hands (a batch's unload): the reason, counted. A gun mod's
+## fit or take-off (F1): its reason on the status line.
 func _on_action_refused(item: ItemRef, op: String, reason: String) -> void:
+	if op in ["mod_add", "mod_remove"]:
+		if visible:
+			_say(InventoryModel.clean(reason, MAX_STATUS))
+			refresh()
+		return
 	if op != "unload" or _batch_op != "unload" or item == null or item.uid != _batch_now:
 		return
 	var why := InventoryModel.clean(reason, MAX_STATUS)
@@ -878,10 +961,38 @@ func _fresh_cols() -> void:
 	_rows_by_uid.clear()
 	if hands != null:
 		cols = InventoryModel.columns(hands.picker, hands.world.tables, actions)
+		_add_mod_rows()
 	for col in cols:
 		for g: Dictionary in col["groups"]:
 			for r: Dictionary in g["rows"]:
 				_rows_by_uid[r["uid"]] = r
+
+
+## F1: the wielded gun's installed mods as rows under it (after what is inside it) in the hands column
+## (InventoryModel.mod_rows; a uid already listed is left out).
+func _add_mod_rows() -> void:
+	var col := InventoryModel.find_column(cols, "hands")
+	var listed := {}
+	for g: Dictionary in col.get("groups", []):
+		for r: Dictionary in g["rows"]:
+			listed[r["uid"]] = true
+	for g: Dictionary in col.get("groups", []):
+		var rows: Array = g["rows"]
+		for i in rows.size():
+			var mods := InventoryModel.mod_rows(hands.world.snapshot, (rows[i] as Dictionary).get("item"),
+					hands.world.tables, actions)
+			if mods.is_empty():
+				continue
+			var at := i + 1
+			while at < rows.size() and int(rows[at]["depth"]) > int(rows[i]["depth"]):
+				at += 1
+			for m: Dictionary in mods:
+				if not listed.has(m["uid"]):
+					listed[m["uid"]] = true
+					rows.insert(at, m)
+					at += 1
+					col["rows"] = int(col["rows"]) + 1
+			return   # one wielded gun
 
 
 ## The items of a drag of several (drag_data's `inspect_many`) as {inspect_uid, type} each; [] for one item, or
@@ -951,7 +1062,7 @@ func _run_batch() -> void:
 		_batch_now = d["inspect_uid"]
 		_batch_since = Time.get_ticks_msec()
 		_batch_failed = false
-		var op := _unload_one(d) if _batch_op == "unload" else _drop_one(d, _batch_target)
+		var op := _unload_one(d) if _batch_op == "unload" else _drop_one(d, _batch_target, false)
 		if op == "" and not _batch_failed:
 			_batch_failed = true
 			_batch_bad += 1
@@ -1168,7 +1279,22 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		var a := _label(amount, (tile["liquid"] as Color).lerp(Color.WHITE, 0.45))
 		a.name = "Amount"
 		line.add_child(a)
-	line.add_child(_label(InventoryModel.weight_text(r["weight_g"]), DIM))
+	var mod: Variant = r.get("mod")
+	if mod is Dictionary:   # F1: a mod on the wielded gun: "Take off" (none when CDDA can't take it off)
+		if not int((mod as Dictionary).get("flags", 0)) & GunModFit.IRREMOVABLE:
+			var b := Button.new()
+			b.name = "TakeOff"
+			b.text = TAKE_OFF
+			b.focus_mode = Control.FOCUS_NONE
+			b.custom_minimum_size = Vector2(0, ROW_H)
+			b.disabled = bool(r["pending"])
+			b.tooltip_text = "Take the %s off the gun: it takes CDDA's time and goes in your pack (else on the ground)." \
+					% r["name"]
+			b.pressed.connect(take_off.bind(uid))
+			line.add_child(b)
+			_mod_buttons[uid] = b
+	else:
+		line.add_child(_label(InventoryModel.weight_text(r["weight_g"]), DIM))
 	var note: String = r["note"]
 	if note != "":
 		var n := _label(note, DIM)
@@ -1176,6 +1302,8 @@ func _row_ui(col_id: String, r: Dictionary) -> InspectSlot:
 		v.add_child(n)
 	slot.tooltip_text = "%s\n%s, %s%s" % [InventoryModel.row_name(r), InventoryModel.weight_text(r["weight_g"]),
 			InventoryModel.volume_text(r["volume_ml"]), ("\n" + note) if note != "" else ""]
+	if mod is Dictionary:
+		slot.tooltip_text = "%s (on the gun you hold)\n%s" % [InventoryModel.row_name(r), note]
 	if not tile.is_empty():
 		slot.tooltip_text += "\n" + ItemTile.words(tile)
 	if r["pending"]:

@@ -21,6 +21,7 @@ const WEATHER_GAME := "Weather as the game decides"
 var backend: Object
 var toggles := {}   # cheat name -> CheckButton
 var kit_button: Button
+var grabs_button: Button   # "Break all grabs", one go (CheatModel.BREAK_GRABS)
 var auto_pause: CheckButton
 var status: Label
 ## K7 test range controls, shown only in a range game (backend.in_range()): zones, monsters frozen, heal, time,
@@ -46,6 +47,10 @@ var ahead_square := Callable()
 ## () -> int: teleports to the square at the screen's centre (main.gd's _teleport), the op id or 0. Main sets it.
 var teleport := Callable()
 var teleport_button: Button
+## () -> bool: closes the menu and lets the next left click pick the square to teleport to (main.gd's
+## start_teleport_pick); false when it can't. Main sets it.
+var pick_teleport := Callable()
+var pick_button: Button
 ## The weather cheat: CDDA's weather types (LiveSession.weather_types), the wind, and the button that sends both.
 var weather_pick: OptionButton
 var wind_pick: OptionButton
@@ -77,7 +82,7 @@ func _init() -> void:
 	var row := HBoxContainer.new()
 	for r: Dictionary in CheatModel.rows({}, false):
 		var key: String = r["key"]
-		if r["kind"] == CheatModel.ACTION:
+		if key == CheatModel.TEST_KIT:
 			kit_button = Button.new()
 			kit_button.text = r["label"]
 			kit_button.tooltip_text = "Backpack, guns and ammo, tools, light, food and water; what doesn't fit drops at your feet."
@@ -85,6 +90,11 @@ func _init() -> void:
 			kit_button.pressed.connect(give_kit)
 			row.add_child(kit_button)
 			continue
+		if key == CheatModel.BREAK_GRABS:
+			grabs_button = _button(r["label"], break_grabs)
+			grabs_button.name = "BreakGrabs"
+			grabs_button.tooltip_text = "Everything holding you (or your mount) lets go, once. Unstoppable does it at every action."
+			continue   # placed after the kit
 		var b := CheckButton.new()
 		b.text = r["label"]
 		b.focus_mode = Control.FOCUS_NONE   # keys stay with the menu
@@ -95,9 +105,15 @@ func _init() -> void:
 		else:
 			grid.add_child(b)
 			toggles[key] = b
+	if toggles.has("unstoppable"):
+		(toggles["unstoppable"] as CheckButton).tooltip_text = unstoppable_note()
+	row.add_child(grabs_button)
 	teleport_button = _button("Teleport to the crosshair", teleport_here)
 	teleport_button.name = "Teleport"
 	row.add_child(teleport_button)
+	pick_button = _button("Teleport: pick a square", pick_square)
+	pick_button.name = "TeleportPick"
+	row.add_child(pick_button)
 	add_child(row)
 	_build_weather()
 	_build_range()
@@ -112,8 +128,8 @@ func refresh() -> void:
 	for r: Dictionary in CheatModel.read(backend):
 		var key: String = r["key"]
 		live = live or r["enabled"]
-		var b: BaseButton = kit_button if key == CheatModel.TEST_KIT else (auto_pause if key == CheatModel.AUTO_PAUSE
-				else toggles[key])
+		var b: BaseButton = kit_button if key == CheatModel.TEST_KIT else (grabs_button if key == CheatModel.BREAK_GRABS
+				else (auto_pause if key == CheatModel.AUTO_PAUSE else toggles[key]))
 		b.disabled = not r["enabled"]
 		if b is CheckButton:
 			b.set_pressed_no_signal(r["on"])
@@ -122,6 +138,10 @@ func refresh() -> void:
 	teleport_button.tooltip_text = ("Moves you to the square at the screen's centre, through walls and between floors. "
 			+ "Key: %s (the square under the crosshair).%s") % [InputActions.key_of(&"cheat_teleport"),
 			" Needs cheats allowed and a bridge that has it." if teleport_button.disabled else ""]
+	pick_button.disabled = teleport_button.disabled
+	pick_button.tooltip_text = ("Closes this menu; then click the square to go to (through creatures). Esc or a right "
+			+ "click cancels. Or look at a square (%s) and press %s: it goes to the look's marker.") % [
+			InputActions.key_of(&"look_at"), InputActions.key_of(&"cheat_teleport")]
 	refresh_range()
 	if not live:
 		_say("Cheats need a running live game (start with --live).", true)
@@ -140,10 +160,29 @@ func give_kit() -> void:
 		_say("No test kit: no running game, or cheats aren't allowed.", true)
 
 
+## Unstoppable's F1 text: walking into an enemy pushes past it, so attacks take the hand strike keys.
+static func unstoppable_note() -> String:
+	return ("Grabs break as soon as you act, and walking into an enemy swaps places with it instead of attacking. "
+			+ "Attack with %s / %s (the hand strikes) or aim and fire.") % [InputActions.key_of(&"hand_off"),
+			InputActions.key_of(&"hand_main")]
+
+
+## The one-go break: the op id kept like the range buttons', so range_done's outcome (done, or the game's refusal)
+## reaches the status line.
+func break_grabs() -> void:
+	var id: Variant = backend.call("cheat_break_grabs") if _has("cheat_break_grabs") else 0
+	if id is int and id > 0:
+		_sent("Break all grabs", id)
+	else:
+		_say("Not done: no running game, cheats aren't allowed, or the bridge hasn't got it.", true)
+
+
 func _on_toggled(on: bool, key: String) -> void:
 	if not CheatModel.apply(backend, key, on):
 		_say("Not changed: no running game, or cheats aren't allowed.", true)
 		refresh()
+	elif key == "unstoppable" and on:
+		_say("Unstoppable on: applies at the next turn. " + unstoppable_note(), false)
 	elif key != CheatModel.AUTO_PAUSE:
 		_say("%s %s: applies at the next turn." % [CheatModel.LABELS[key], "on" if on else "off"], false)
 
@@ -157,6 +196,11 @@ func teleport_here() -> void:
 		_say("Teleport: not sent. Point the crosshair at a square in the loaded area.", true)
 		return
 	_sent("Teleport", id)
+
+
+func pick_square() -> void:
+	if pick_button.disabled or not pick_teleport.is_valid() or pick_teleport.call() != true:
+		_say("Teleport: needs a running game with cheats allowed (not in VR).", true)
 
 
 func _build_weather() -> void:

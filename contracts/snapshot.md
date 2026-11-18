@@ -104,13 +104,17 @@ struct vehicle_view {
     string name;                  // color tags and control characters removed, up to 60 columns (240 bytes)
     std::vector<vehicle_part_view> parts;   // cap 4096
 };
-struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled */
+struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled, bit3 gap filler */
                            int8 dx, dy, dz; };
     // JSON row: [mount_x, mount_y, vpart, hp_frac, state, dx, dy, dz] (2026-11-17; older bridges send the first 5).
     // (dx, dy, dz): the square the part is on, from the vehicle's `pos`; each -127..127. Place parts by it, not
     // by turning the mount by face_deg: CDDA turns mounts in steps along a ray around a pivot that isn't sent, so
     // the two differ at most angles. dz is 0 except on ramps, where a vehicle can have parts a level up or down.
-    // Only real parts are listed, in CDDA's order.
+    // The vehicle's own parts come first, in CDDA's order. Then its gap fillers (state bit3): while a vehicle
+    // stands at an angle, CDDA puts a copy of an edge part (a board, a door) on the square the diagonal step would
+    // leave open, and the game blocks that square like the part. A filler row has the copied part's mount, vpart,
+    // hp_frac and other state bits, and its own (dx, dy, dz), which is no square of the vehicle's own parts. The
+    // tiles' vehicle flag is set on fillers' squares too. None when the vehicle stands straight.
 
 struct player_view {
     uint64 uid; ui_point pos; float facing_deg; int32 moves; uint32 move_mode;
@@ -165,7 +169,26 @@ struct gun_view { uint32 type /* itype */; int16 dirt /* CDDA's fouling 0..10000
                   int32 rounds /* loaded rounds; JSON: left out for a gun that takes no ammo */;
                   std::vector<string> faults /* fault ids it has (jams: gun_mechanical_simple ones); cap 16, ids up to 64 bytes */;
                   bool suppressed /* a gunmod, built-in too, lowers its report (loudness_modifier < 0 or loudness_multiplier < 1,
-                                     as item::gun_noise counts it); JSON: "suppressed":true after faults, left out when false */; };
+                                     as item::gun_noise counts it); JSON: "suppressed":true after faults, left out when false */;
+                  // Gun mods by hand (2026-11-17), always present on a bridge that has them:
+                  std::vector<gun_mod_view> mods;    // what the gun has, CDDA's order, cap 16
+                  std::vector<gun_slot_view> slots;  // its slots as they are now, cap 16
+                  std::vector<gun_fit_view> fits;    // every carried gun mod that isn't in a gun, cap 32
+                };
+struct gun_mod_view  { uint64 uid; uint32 type; std::string location; uint8 flags; };
+    // JSON row: [uid, type, location, flags]. uid: the mod's item handle, as the `mod_remove` item action takes it
+    // (installed mods are not in the carried `items`). location: the id-table `gunmod_location` ("" if not plain).
+    // flags: 1 = can't be taken off (CDDA's IRREMOVABLE; a gun's integral mods have it too).
+struct gun_slot_view { std::string location; uint8 slots; uint8 free; };
+    // JSON row: [location, slots, free]. The gun type's own slots plus those its installed mods add; slots
+    // 1..16, free 0..slots; only kinds with a plain location id.
+struct gun_fit_view  { uint64 uid; bool ok; uint8 chance; uint8 risk; std::string reason; };
+    // JSON row: [uid, ok (0/1), chance, risk, reason]. uid: a carried gun mod as `items` lists it. ok: it would
+    // go on now, as CDDA's install menu decides: the gun takes it, the character has the skills, and the chance
+    // is above 0. chance, risk: CDDA's odds without tools in percent (100 and 0 for most mods); they follow the
+    // character's focus, so they move over time. reason: CDDA's words when it doesn't fit, colour tags removed,
+    // up to 80 bytes ("doesn't have a slot for this mod", "requires at least ...", "is too difficult for you to
+    // modify"); "" when ok.
 struct worn_view { uint32 type /* itype */; uint8 layer /* highest layer_level */; uint8 damage /* damage_level 0..5 */;
                    uint8 degradation /* 0..255 of max */; std::vector<uint32> covers /* body_part indices */; };
 struct carried_view { uint64 uid; uint32 type; uint64 parent; int16 pocket; uint8 flags; };   // parent = container's uid (0 on the body); pocket = index into the parent's container pockets (as queue_item_action takes it), -1 on the body; flags: 1 worn, 2 wielded, 4 held in the off hand

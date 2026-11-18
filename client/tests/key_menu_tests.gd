@@ -46,6 +46,13 @@ func run(root: Node, check: Callable) -> void:
 	var shown := (menu._buttons[action][KeyMenu.PAD_SLOT + 1] as Button).text
 	_check.call(menu._capture.is_empty() and texts.size() == 2 and texts[1] == "pad:%d" % JOY_BUTTON_X and shown == "Pad X",
 			"key menu pad: the next pad button binds in the second pad column (%s, %s)" % [texts, shown])
+	menu.start_capture(action, KeyMenu.PAD_SLOT)
+	menu.take(_button(JOY_BUTTON_START))   # Start is the pad's Esc in the game (BackOut): never bound
+	var kept: Array = InputActions.pad_slots(action).map(func(e: InputEvent) -> String: return InputActions.event_text(e))
+	var waiting := not menu._capture.is_empty() and menu._status.text.contains("Start")
+	menu.take(BackOut.esc())
+	_check.call(waiting and kept == texts and menu._capture.is_empty() and menu.visible,
+			"key menu pad: Start can't be bound (it backs out and opens this menu); Esc then cancels (%s)" % [kept])
 	menu.start_capture(&"cdda_wield", 1)
 	_check.call(menu.cursor == Vector2i(_row(&"cdda_wield"), 1), "key menu pad: a clicked slot becomes the pick")
 	var esc := InputEventKey.new()

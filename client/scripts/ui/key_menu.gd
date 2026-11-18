@@ -83,7 +83,8 @@ const PICKED := Color(1.0, 0.8, 0.35)
 ## ui_* actions that work the Cheats page's controls (the VR stick) -> their step.
 const CHEAT_ACTIONS := {&"ui_up": -1, &"ui_down": 1, &"ui_left": -1, &"ui_right": 1, &"ui_accept": 0}
 const KEYS_TITLE := ("Keys: click a slot, then press a key or mouse button (pad column: a pad button or stick).  "
-		+ "Esc cancels  Backspace clears  F1 / Esc closes.  Pad: D-pad picks, A sets, B closes")
+		+ "Esc cancels  Backspace clears  F1 / Esc closes.  Pad: D-pad picks, A sets, B / Start closes.  "
+		+ "In the game Esc / Start backs out of one thing per press, then opens this menu")
 
 
 func _init() -> void:
@@ -422,7 +423,7 @@ func show_cheats(on: bool) -> void:
 	refresh()
 	_scroll.visible = not on
 	_title.text = ("Cheats (testing).  F1 / Esc closes.  Pad: D-pad picks, left / right change, A presses, X keys, "
-			+ "B closes") if on else KEYS_TITLE
+			+ "B / Start closes") if on else KEYS_TITLE
 	if cheat_page != null:
 		cheat_page.visible = on
 		cheat_scroll.visible = on
@@ -696,9 +697,12 @@ func take(event: InputEvent) -> bool:
 		return false
 	var pad: bool = _capture[1] >= SLOTS
 	if InputActions.is_pad(event):   # pad presses only go in the pad column
+		var pb := event as InputEventJoypadButton
+		if pad and pb != null and pb.pressed and pb.button_index == InputActions.MENU_PAD:
+			_status.text = "Start backs out and opens this menu, like Esc; it can't be bound."
+			return true
 		if pad:
 			return _bind(InputActions.pad_binding_from(event))
-		var pb := event as InputEventJoypadButton
 		if pb != null and pb.pressed and pb.button_index in [JOY_BUTTON_B, JOY_BUTTON_BACK, JOY_BUTTON_START]:
 			_capture = []   # a key slot picked with the pad: B / Back / Start back out without a keyboard
 			refresh()

@@ -102,6 +102,9 @@ const SAVE_ON_QUIT_MS := 20000
 var snapshot_path := ""
 var status := ""
 var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
+var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and click pick
+var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
+var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
 var _log := PackedStringArray()
 var _step_ms := -STEP_REPEAT_MS
@@ -211,6 +214,9 @@ func _ready() -> void:
 	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
+	item_actions.refused.connect(func(_it: ItemRef, op: String, why: String) -> void:   # F1: CDDA's no to a fit / take-off
+		if vr == null and op in ["mod_add", "mod_remove"] and not why.is_empty():
+			grab.flash(why, true))
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
@@ -705,6 +711,7 @@ func _start_live() -> void:
 			status = "teleport: done" if err.is_empty() else "teleport: " + err)
 	cheat_panel.teleport = func() -> int:   # the F1 entry: the square at the screen's centre
 		return _teleport(get_viewport().get_visible_rect().size / 2.0)
+	cheat_panel.pick_teleport = start_teleport_pick   # the F1 entry: the next click picks the square
 	live.id_tables_ready.connect(func(t: IdTables) -> void: cheat_panel.tables = t)
 	cheat_panel.player_square = func() -> Variant:
 		return world.snapshot.player_pos if world.snapshot != null else null
@@ -1060,6 +1067,10 @@ func _on_live_events(events: Array) -> void:
 func _context_line() -> String:
 	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
 		return ""
+	var p := GunModFit.held_pair(hud_data.held.get("main"), hud_data.held.get("off"), world.snapshot, world.tables)
+	if not p.is_empty():   # F1: what E does with the gun and a gunmod in hand
+		return "%s: fit the %s" % [InputActions.key_of(&"use_held"),
+				InventoryModel.clean((p["mod"] as ItemRef).display_name(world.tables))]
 	var s: Vector2i = OCT_STEPS[_octant(Vector2(0, 1))]
 	return ContextPrompt.text(world.snapshot, world.tables, world.snapshot.player_pos + Vector3i(s.x, s.y, 0),
 			hud_settings.context_menu)
@@ -1175,6 +1186,13 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 		where += ", %d level%s %s" % [absi(d.z), "" if absi(d.z) == 1 else "s", "up" if d.z > 0 else "down"]
 	var lines := PackedStringArray(["look: %s, %s" % [r["what"], where]])
 	lines.append_array(look_ray.describe(sq))
+	if live != null and live.can_teleport():   # the cheat: J goes to the look's square while it is open
+		tele_pick.marked = TeleportAim.square(r, r.get("dir", Vector3.ZERO), world.coords.world_to_ms)
+		if tele_pick.marked is Vector3i:
+			lines.append(tele_pick.look_line(InputActions.key_of(&"cheat_teleport")))
+			_look_marker = _marker_mesh(world.coords.ms_center_to_world(tele_pick.marked))
+			_look_marker.position.y = world.ground_y(_look_marker.position, (tele_pick.marked as Vector3i).z) + 0.03
+			add_child(_look_marker)
 	look_panel.text = "\n".join(lines)
 	_look_end = r["point"]
 	_look_line = _line_mesh(from, _look_end)
@@ -1183,8 +1201,8 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 
 
 ## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
-## ray's direction. {hit: false} without a snapshot or camera.
-func _cast_screen(pos: Vector2) -> Dictionary:
+## ray's direction. {hit: false} without a snapshot or camera. `creatures` false: the ray passes through them.
+func _cast_screen(pos: Vector2, creatures := true) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if world.snapshot == null or cam == null:
 		return {"hit": false}
@@ -1196,21 +1214,30 @@ func _cast_screen(pos: Vector2) -> Dictionary:
 	var dir := cam.project_ray_normal(pos)
 	var o := cam.project_ray_origin(pos)
 	var s := ViewCamera.ray_start(str(v.get("mode", "")), o, dir, v.get("eye"))
-	var r := look_ray.cast(s, dir, LookRay.MAX_M, true, not (v.get("mode", "") == "top" and s != o))
+	var r := look_ray.cast(s, dir, LookRay.MAX_M, creatures, not (v.get("mode", "") == "top" and s != o))
 	r["dir"] = dir
 	return r
 
 
-## Cheat: teleport to the square under the crosshair (or the mouse, `pos`), through walls and between floors
-## (TeleportAim picks the square, the bridge moves you). The op id (range_done says how it went), 0 when not sent.
+## Cheat: teleport to the square under the crosshair (or the mouse, `pos`), through walls and between floors, past
+## creatures (TeleportAim picks the square, the bridge moves you). The op id (range_done says how it went), 0 when
+## not sent.
 func _teleport(pos: Vector2) -> int:
 	if live == null or not live.can_teleport():
 		status = "teleport: needs a running game with cheats allowed (F1 > HUD > Debug: cheats page)"
 		return 0
-	var r := _cast_screen(pos)
+	var r := _cast_screen(pos, false)   # zombies all around must not stop the aim
 	var sq: Variant = TeleportAim.square(r, r.get("dir", Vector3.ZERO), world.coords.world_to_ms)
 	if not sq is Vector3i:
 		status = "teleport: point at a square in the loaded area"
+		return 0
+	return _teleport_to(sq)
+
+
+## Cheat: teleport to square `sq` (the bridge picks the nearest free square if it is taken).
+func _teleport_to(sq: Vector3i) -> int:
+	if live == null or not live.can_teleport():
+		status = "teleport: needs a running game with cheats allowed (F1 > HUD > Debug: cheats page)"
 		return 0
 	var id := live.cheat_teleport(sq)
 	status = "teleport: asked for" if id > 0 else "teleport: not sent (too many waiting)"
@@ -1291,6 +1318,28 @@ func _clear_look() -> void:
 	if _look_line != null:
 		_look_line.queue_free()
 		_look_line = null
+	tele_pick.marked = null
+	if _look_marker != null:
+		_look_marker.queue_free()
+		_look_marker = null
+
+
+## The teleport marker: a flat ring on the floor of a square, drawn over everything (zombies around it too).
+static func _marker_mesh(at: Vector3) -> MeshInstance3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mat.albedo_color = Color(0.35, 0.85, 1.0)
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.3
+	ring.outer_radius = 0.38
+	ring.material = mat
+	var mi := MeshInstance3D.new()
+	mi.name = "TeleportMarker"
+	mi.mesh = ring
+	mi.position = at
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
 
 
 ## A line from a to b with a dot at b, drawn over everything.
@@ -1340,6 +1389,7 @@ func _update_aim() -> void:
 	viewmodel.set_dirt(int(world.snapshot.player_gun.get("dirt", -1)) if world.snapshot != null else -1)
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
 	viewmodel.suppressed = world.snapshot != null and world.snapshot.player_gun.get("suppressed", false) == true
+	viewmodel.set_mods(GunMods.mods_of(world.snapshot.player_gun if world.snapshot != null else null))
 
 
 func _in_main_loop() -> bool:
@@ -1354,6 +1404,25 @@ func _held_consumable() -> ItemRef:
 		if it is ItemRef and ItemActions.consumable(it, world.snapshot, world.tables):
 			return it
 	return null
+
+
+## F1 (gun modification on the flat screen): E with the gun wielded and a gunmod in the off hand fits it
+## (ItemActions.mod_add: CDDA's install, its questions as prompts, its odds and time); a "no" CDDA already gave
+## (wielded_gun `fits`) shows by the crosshair instead. False when the hands don't hold that pair (E goes on as usual).
+func _fit_held_mod() -> bool:
+	var p := GunModFit.held_pair(hud_data.held.get("main"), hud_data.held.get("off"), world.snapshot, world.tables)
+	if p.is_empty():
+		return false
+	var mod: ItemRef = p["mod"]
+	var gun: ItemRef = p["gun"]
+	var why := GunModFit.refusal(world.snapshot, mod.uid, InventoryModel.clean(gun.display_name(world.tables)))
+	if why != "":
+		grab.flash(why, true)
+	elif item_actions.mod_add(mod, gun):
+		grab.flash(GunModFit.fitting_line(world.snapshot, mod.uid, InventoryModel.clean(mod.display_name(world.tables))))
+	else:
+		grab.flash("You can't fit that now.", true)
+	return true
 
 
 ## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
@@ -1623,6 +1692,59 @@ func _setup_hud() -> void:
 	layer.add_child(key_menu)
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
 	layer.add_child(text_dock)
+	_setup_back_out()
+
+
+## What Esc / pad Start backs out of, one per press (BackOut.ORDER); the parts are read when the key comes.
+func _setup_back_out() -> void:
+	back_out.add("keyboard", func() -> bool: return text_dock != null and text_dock.is_open(),
+			func() -> bool:
+				text_dock.close()
+				return true)
+	back_out.add("prompt", func() -> bool: return request_ui != null and request_ui.is_showing() and not request_ui.is_held(),
+			func() -> bool: return request_ui.handle_input(BackOut.esc()))
+	back_out.add("teleport pick", func() -> bool: return tele_pick.picking,
+			func() -> bool:
+				tele_pick.picking = false
+				status = "teleport: cancelled"
+				return true)
+	back_out.add("character", func() -> bool: return character != null and character.visible,
+			func() -> bool: return character.handle_key(BackOut.esc()))
+	back_out.add("inventory", func() -> bool: return inspect != null and inspect.visible,
+			func() -> bool: return inspect.handle_key(BackOut.esc()))
+	back_out.add("tray", func() -> bool: return grab != null and grab.tray_open(),
+			func() -> bool:
+				grab.close_tray()
+				return true)
+	back_out.add("carry", func() -> bool: return vr == null and grab != null and grab.carrying(),
+			func() -> bool: return grab.handle_event(BackOut.esc(), get_viewport().get_camera_3d(), _pointer()))
+	back_out.add("wheel", func() -> bool: return request_ui != null and request_ui.wheel_waiting(),
+			func() -> bool:
+				request_ui.cancel_wheel()
+				return true)
+	back_out.add("ascii", func() -> bool: return classic != null and classic.visible,
+			func() -> bool:
+				classic.toggle()
+				return true)
+	back_out.add("look", _look_open,
+			func() -> bool:
+				_clear_look()
+				return true)
+
+
+## A look is showing (its panel text, the line to what was looked at, or the teleport marker).
+func _look_open() -> bool:
+	return (look_panel != null and not look_panel.text.is_empty()) or _look_line != null or _look_marker != null
+
+
+## Esc / pad Start that nothing else took: backs out of one thing (back_out), or with nothing open opens the game
+## menu (in a game or the viewer; the title menu keeps its own Esc). True when used.
+func back_event(event: InputEvent) -> bool:
+	if not BackOut.is_back(event) or main_menu != null or key_menu.visible:
+		return false
+	if back_out.step().is_empty():
+		_open_key_menu()
+	return true
 
 
 func _open_key_menu() -> void:
@@ -1783,7 +1905,7 @@ func _help() -> String:
 		out += "%s move  %s/%s up/down  %s fast  wheel speed  %s level  %s roofs  %s reload  %s player  %s first person" % [
 				walk, k.call(&"fly_up"), k.call(&"fly_down"), k.call(&"move_fast"), cut, k.call(&"roofs_toggle"),
 				k.call(&"reload"), k.call(&"frame_player"), k.call(&"view_toggle")]
-	return out + "  F1 keys, HUD"
+	return out + "  Esc back / menu  F1 keys, HUD"
 
 
 ## Live game: the CDDA action keys and the hands, from the current bindings.
@@ -1813,7 +1935,31 @@ static func _keys(actions: Array) -> String:
 
 func _input(event: InputEvent) -> void:
 	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
-	request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
+	if not BackOut.is_back(event):   # (Esc / Start while E's wheel is on its way: back_out's "wheel" step)
+		request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
+	if key_menu.visible or inspect.visible or character.visible:
+		tele_pick.picking = false   # a menu came up meanwhile (main's _input sees its clicks before its buttons do)
+	var pick := tele_pick.pick_event(event)   # the cheat's "pick a square": this click is the square
+	if pick == TeleportPick.PICK:
+		_teleport((event as InputEventMouseButton).position)
+		get_viewport().set_input_as_handled()
+	elif pick == TeleportPick.CANCEL:
+		status = "teleport: cancelled"
+		get_viewport().set_input_as_handled()
+	elif back_event(event):   # Esc / Start nothing above took: one thing backed out, or the game menu
+		get_viewport().set_input_as_handled()
+
+
+## The F1 cheats page's "Teleport: pick a square": the menu closes, the mouse is free, and the next left click on a
+## square teleports there (Esc or a right click: cancel). False when teleporting isn't allowed (flat screen only).
+func start_teleport_pick() -> bool:
+	if vr != null or live == null or not live.can_teleport():
+		return false
+	key_menu.close()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	tele_pick.picking = true
+	status = "teleport: click a square (Esc or right click: cancel)"
+	return true
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1834,6 +1980,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and live != null and _in_main_loop() and InputActions.pressed(event, &"use_held") \
+			and _fit_held_mod():
+		return   # F1: the gun wielded and a gunmod in the off hand: E fits it
 	if vr == null and (live == null or _in_main_loop()) and pour.handle(event, Time.get_ticks_msec()):
 		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
@@ -1878,13 +2027,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_save_game()
 		return
 	if live != null and InputActions.pressed(event, &"cheat_teleport"):
-		_teleport(get_viewport().get_mouse_position())
+		if tele_pick.marked is Vector3i:   # a look is open: its marker
+			_teleport_to(tele_pick.marked)
+		else:
+			_teleport(get_viewport().get_mouse_position())
 		return
 	if live != null and _live_action(event):
 		return
-	if key != null and key.pressed and not key.echo and key.physical_keycode == KEY_ESCAPE:
-		_clear_look()
-	elif InputActions.pressed(event, &"cutaway_up"):
+	if InputActions.pressed(event, &"cutaway_up"):   # (Esc: back_event, in _input)
 		world.step_view_z(1)
 	elif InputActions.pressed(event, &"cutaway_down"):
 		world.step_view_z(-1)

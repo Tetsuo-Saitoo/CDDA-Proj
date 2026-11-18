@@ -34,6 +34,8 @@ const KEYS := [
 	[&"cdda_grab", ""],
 ]
 ## Laid at the feet for the lists: the first id of each the game knows (something to wear, read and eat).
+const GUN := "glock_19"              # the test kit's pistol
+const GUN_MOD := "rail_laser_sight"  # goes on its rail with no tools (lead-bridge's sim scene)
 const AT_FEET := [["tshirt", "jeans"], ["novel_mystery", "mag_guns", "textbook_firearms", "news_regional"],
 		["apple", "can_beans"]]
 
@@ -125,6 +127,8 @@ func _run() -> void:
 		await _character_live()
 		await _compass_live()
 		await _number_live()
+		await _gun_mods_live()
+		await _esc_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -240,6 +244,197 @@ func _compass_live() -> void:
 	_check(absf(wrapf(c.heading_deg - h0, -180.0, 180.0) - 90.0) < 1.0 and absf(at2 - (at - 1.0)) < 0.05,
 			"compass: a quarter turn right turns the heading 90 and moves the zombie to the strip's left end (%.2f)" % at2)
 	fp.set_look(yaw0, fp.pitch)
+
+
+## Gun mods by hand in the running game, through ItemActions and the bridge's mod_add / mod_remove: the kit's
+## pistol goes into the main hand, a GUN_MOD spawned at the feet is taken and the snapshot judges it
+## (wielded_gun.fits). When it fits it is fitted (wielded_gun.mods lists it) and taken off again (back among the
+## carried items); when it doesn't (the range's character has no gun skills), mod_add is refused in CDDA's words and
+## the mod stays carried. Skipped, said so, on a client or a bridge without them.
+func _gun_mods_live() -> void:
+	var acts: ItemActions = _main.item_actions
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	if not acts.has_method("mod_add") or not _live.has_method("mod_add_item"):
+		print("  (no gun mod actions in this client: not checked)")
+		return
+	var gun_t := _cp.tables.index_of("itype", GUN)
+	var mod_t := _cp.tables.index_of("itype", GUN_MOD)
+	var gun := _carried(gun_t)
+	if gun_t < 0 or mod_t < 0 or gun == null:
+		_check(false, "gun mods: the kit's %s is carried and %s is an item type (%d, %d)" % [GUN, GUN_MOD, gun_t, mod_t])
+		return
+	if not gun.is_wielded():
+		acts.hold(gun, "main")
+	var in_hand := func() -> bool:
+		var g := _carried(gun_t)
+		return g != null and g.is_wielded() and acts.pending(g.uid) == ""
+	_check(await _until(in_hand, OP_TIMEOUT_MS, true), "gun mods: the %s is in the main hand" % GUN)
+	if not in_hand.call():
+		return
+	if not _main.world.snapshot.player_gun.has("fits"):
+		print("  (this bridge sends no wielded_gun.fits: gun mods not checked)")
+		return
+	_cp.item_id.text = GUN_MOD
+	_cp.item_count.value = 1
+	var spawned := await _op(_cp.spawn_item, "Spawn " + GUN_MOD)
+	var lies := func() -> bool: return _lying(mod_t) != null
+	_check(spawned == "" and await _until(lies, OP_TIMEOUT_MS, true), "gun mods: a %s lies at the feet (%s)" % [GUN_MOD, spawned])
+	if _lying(mod_t) == null:
+		return
+	acts.take(_lying(mod_t), "pack")
+	var taken := func() -> bool:
+		var m := _carried(mod_t)
+		return m != null and acts.pending(m.uid) == "" and not _fit_of(m.uid).is_empty()
+	var has := await _until(taken, OP_TIMEOUT_MS, true)
+	var mod := _carried(mod_t)
+	var fit := _fit_of(mod.uid) if mod != null else {}
+	_check(has and fit.get("ok") is bool, "gun mods: taken, and the snapshot judges it against the %s (%s)" % [GUN, fit])
+	if not has or not fit.get("ok") is bool:
+		return
+	if fit["ok"] != true:   # the range's character lacks the skills: CDDA's refusal, through the client
+		var said := []
+		var on_refused := func(item: ItemRef, op: String, reason: String) -> void:
+			if item != null and item.uid == mod.uid:
+				said.append([op, reason])
+		acts.refused.connect(on_refused)
+		var asked := acts.mod_add(mod, _carried(gun_t))
+		var answered := func() -> bool: return not said.is_empty()
+		var refused: bool = asked and await _until(answered, OP_TIMEOUT_MS, true)
+		acts.refused.disconnect(on_refused)
+		var why: String = str(said[0][1]) if refused else ""
+		_check(refused and said[0][0] == "mod_add" and why.contains(str(fit.get("reason", "?")))
+				and _carried(mod_t) != null and ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == false,
+				"gun mods: one that doesn't fit is refused in CDDA's words and stays carried (\"%s\")" % why)
+		await _fit_key_live(mod_t, str(fit.get("reason", "")))
+		print("  (the %s doesn't fit here, so fitting and taking off weren't tried)" % GUN_MOD)
+		return
+	if int(fit.get("chance", 0)) < 100:   # CDDA would ask for tools: a menu this check doesn't answer
+		print("  (the %s goes on with %d%% only: fitting not tried)" % [GUN_MOD, fit.get("chance", 0)])
+		return
+	var turn0: int = _main.world.snapshot.turn
+	var sent := acts.mod_add(mod, _carried(gun_t))
+	var on := func() -> bool:
+		return ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == true and acts.pending(mod.uid) == ""
+	var fitted := sent and await _until(on, OP_TIMEOUT_MS, true)
+	_check(fitted, "gun mods: mod_add fits it: the gun's mods list it (%d turns; %s)" % [_main.world.snapshot.turn - turn0,
+			_main.world.snapshot.player_gun.get("mods")])
+	if not fitted:
+		return
+	turn0 = _main.world.snapshot.turn
+	sent = acts.mod_remove(mod.uid, mod.type, _carried(gun_t))
+	var off := func() -> bool:
+		var m := _carried(mod_t)
+		return ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == false and acts.pending(mod.uid) == "" \
+				and m != null and m.uid == mod.uid
+	_check(sent and await _until(off, OP_TIMEOUT_MS, true),
+			"gun mods: mod_remove takes it off: carried again with its handle (%d turns)" % [_main.world.snapshot.turn - turn0])
+
+
+## The flat screen's key for it (lead-ui's F1; skipped on a client without main._fit_held_mod): with the gun in the
+## main hand and the gunmod of itype `mod_t` in the off hand, the crosshair line offers to fit it, and E on one the
+## snapshot says doesn't fit shows CDDA's `reason` by the crosshair and sends nothing.
+func _fit_key_live(mod_t: int, reason: String) -> void:
+	if not _main.has_method("_fit_held_mod"):
+		print("  (no key for fitting a gun mod in this client: not checked)")
+		return
+	var acts: ItemActions = _main.item_actions
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var mod := _carried(mod_t)
+	if mod == null or not acts.hold(mod, "off"):
+		_check(false, "gun mods: the gunmod goes into the off hand (%s)" % ["sent" if mod != null else "not carried"])
+		return
+	var in_off := func() -> bool:
+		var h: Variant = _main.hud_data.held.get("off")
+		return h is ItemRef and (h as ItemRef).type == mod_t and acts.pending((h as ItemRef).uid) == "" and in_loop.call()
+	var held := await _until(in_off, OP_TIMEOUT_MS, true)
+	var line: String = _main._context_line()
+	_check(held and line.contains("fit the"), "gun mods: gun and gunmod in hand, the crosshair line offers to fit it (\"%s\")" % line)
+	if not held:
+		return
+	_main.grab._flash = ""
+	root.push_input(_key_of(&"use_held"))
+	await create_timer(0.3).timeout
+	var said: String = _main.grab._flash
+	var uid: int = (_main.hud_data.held.get("off") as ItemRef).uid
+	_check(not reason.is_empty() and said.contains(reason) and acts.pending(uid) == "" and _carried(mod_t) != null,
+			"gun mods: E on one that doesn't fit says why by the crosshair and sends nothing (\"%s\")" % said)
+	root.push_input(_key_of(&"stow_off"))   # the hands as they were
+	await _until(func() -> bool: return _main.hud_data.held.get("off") == null and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## The first carried item of itype `t`, null for none.
+func _carried(t: int) -> ItemRef:
+	for r in _main.hands.picker.carried():
+		if r.type == t:
+			return r
+	return null
+
+
+## An item of itype `t` lying in reach, as the Tab view's "nearby" column lists it; null for none.
+func _lying(t: int) -> ItemRef:
+	for col: Dictionary in InventoryModel.columns(_main.hands.picker, _main.world.tables, _main.item_actions):
+		if col["kind"] != "nearby":
+			continue
+		for g: Dictionary in col["groups"]:
+			for row: Dictionary in g["rows"]:
+				if (row["item"] as ItemRef).type == t:
+					return row["item"]
+	return null
+
+
+## The snapshot's verdict on carried gunmod `uid` against the wielded gun (wielded_gun.fits), {} when not listed.
+func _fit_of(uid: int) -> Dictionary:
+	var fits: Variant = _main.world.snapshot.player_gun.get("fits")
+	if fits is Array:
+		for f: Variant in fits:
+			if f is Dictionary and (f as Dictionary).get("uid") == uid:
+				return f
+	return {}
+
+
+## Esc in the running game (main.back_out, lead-ui's BackOut): with a look showing and the Tab view over it, each
+## press backs out of the topmost thing only; the F1 menu opens once nothing is left and Esc closes it again; the
+## game is in its main loop after it all. Skipped on a client without back_out.
+func _esc_live() -> void:
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var bo: Variant = _main.get("back_out")
+	if bo == null:
+		print("  (no contextual Esc in this client: its steps not checked)")
+		return
+	if _main.key_menu.visible:
+		_main.key_menu.close()
+	var look := _key_of(&"look_at")
+	if look != null:
+		root.push_input(look)
+	root.push_input(_key_of(&"inspect"))
+	var up: PackedStringArray = bo.open_now()
+	_check(up.has("inventory"), "Esc: the Tab view is up%s (open: %s)" % [" over a look" if up.has("look") else "", up])
+	var went := []          # what was open before each press
+	var in_order := true    # each press took the topmost thing (or a part of it), nothing under it
+	var menu_early := false
+	for i in 8:
+		var before: PackedStringArray = bo.open_now()
+		if before.is_empty():
+			break
+		went.append(before)
+		root.push_input(_esc_key())
+		await create_timer(0.1).timeout
+		var after: PackedStringArray = bo.open_now()
+		in_order = in_order and (after == before or after == before.slice(1))
+		menu_early = menu_early or _main.key_menu.visible
+	_check((bo.open_now() as PackedStringArray).is_empty() and in_order and not menu_early,
+			"Esc: one thing backed out per press, topmost first, no menu meanwhile (%s)" % [went])
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	var menu_up: bool = _main.key_menu.visible
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	_check(menu_up and not _main.key_menu.visible, "Esc with nothing open shows the F1 menu; Esc again closes it")
+	_check(await _until(in_loop, ASK_TIMEOUT_MS, true) and _live.state == "running",
+			"Esc: the game is still running, in its main loop (%s)" % _live.state)
 
 
 ## G4: P shows the character screen with the live game's body and needs; Esc closes it.

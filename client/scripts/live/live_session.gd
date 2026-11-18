@@ -33,7 +33,7 @@ signal range_done(op_id: int, error: String)
 
 ## Testing cheats the bridge knows (contracts/bridge_api.md, set_cheat); any other name is refused here.
 const CHEATS: PackedStringArray = ["invincible", "no_needs", "no_weight_limit", "unlimited_ammo", "stamina",
-		"no_temperature", "night_vision"]
+		"no_temperature", "night_vision", "unstoppable"]
 
 ## Levels sent around the player's z (the whole bubble is 21 levels, ~6 MB of JSON).
 const Z_BELOW := 1
@@ -391,6 +391,19 @@ func cheat_teleport(pos: Vector3i) -> int:
 ## The teleport cheat can be asked for now (the F1 entry is greyed out otherwise).
 func can_teleport() -> bool:
 	return cheats_allowed and _can("cheat_teleport")
+
+
+## Cheat: every grab on the player (and their mount) lets go, with the unstoppable cheat on or off (any game, cheats
+## allowed; CddaSim.cheat_break_grabs). Same op ids and range_done as the range ops; 0 when refused here.
+func cheat_break_grabs() -> int:
+	if not can_break_grabs():
+		return 0
+	return _range_op("cheat_break_grabs", [])
+
+
+## "Break all grabs" can be asked for now (greyed out otherwise).
+func can_break_grabs() -> bool:
+	return cheats_allowed and _can("cheat_break_grabs")
 
 
 ## CDDA's weather types for the weather cheat (CddaSim.get_weather_types, lead-bridge), cleaned: [{id, name}] in

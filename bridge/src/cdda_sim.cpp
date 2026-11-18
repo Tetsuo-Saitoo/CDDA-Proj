@@ -235,6 +235,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_range_info" ), &CddaSim::get_range_info );
     ClassDB::bind_method( D_METHOD( "cheat_teleport", "pos" ), &CddaSim::cheat_teleport );
     ClassDB::bind_method( D_METHOD( "cheat_set_weather", "id", "wind" ), &CddaSim::cheat_set_weather );
+    ClassDB::bind_method( D_METHOD( "cheat_break_grabs" ), &CddaSim::cheat_break_grabs );
     ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
@@ -554,6 +555,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::light;
     } else if( op == "extinguish" ) {
         a.op = fp3d::item_op::extinguish;
+    } else if( op == "mod_add" ) {
+        a.op = fp3d::item_op::mod_add;
+    } else if( op == "mod_remove" ) {
+        a.op = fp3d::item_op::mod_remove;
     } else {
         return false;
     }
@@ -662,7 +667,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         !ref( "container", "container_type", a.container ) ) {
         return false;
     }
-    if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
+    if( ( a.op == fp3d::item_op::reload || a.op == fp3d::item_op::mod_add ||
+          a.op == fp3d::item_op::mod_remove ) && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
     if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
@@ -1029,6 +1035,13 @@ int64_t CddaSim::cheat_set_weather( const String &id, double wind )
     op.weather = s;
     op.wind = wind < 0.0 ? -1 : std::min( fp3d::max_cheat_wind, static_cast<int>( std::lround( std::min( wind,
                                           max_cheat_wind_mps ) / mps_per_mph ) ) );
+    return queue_range( op );
+}
+
+int64_t CddaSim::cheat_break_grabs()
+{
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::break_grabs;
     return queue_range( op );
 }
 

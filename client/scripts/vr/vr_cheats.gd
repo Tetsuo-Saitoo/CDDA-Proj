@@ -16,14 +16,17 @@ const LABELS := {
 	"stamina": "Unlimited stamina",
 	"no_temperature": "No heat or cold",
 	"night_vision": "Night vision (also reveals the map)",
+	"unstoppable": "Unstoppable: grabs break, walk past enemies",
 	AUTO_PAUSE: "Auto-pause on hostiles (real time)",
 	TEST_KIT: "Give test kit",
+	BREAK_GRABS: "Break all grabs",
 }
 ## The bridge's cheats in the flat page's order (LiveSession.CHEATS).
 const ORDER: PackedStringArray = ["invincible", "no_needs", "no_weight_limit", "unlimited_ammo", "stamina",
-		"no_temperature", "night_vision"]
+		"no_temperature", "night_vision", "unstoppable"]
 const AUTO_PAUSE := "auto_pause"
 const TEST_KIT := "test_kit"
+const BREAK_GRABS := "break_grabs"   # one go: every grab on the player lets go (backend.cheat_break_grabs)
 const TOGGLE := "toggle"
 const ACTION := "action"
 const WARN := Color(1.0, 0.75, 0.3)   # amber: the cheat warning and markers
@@ -73,8 +76,8 @@ static func clean(d: Variant) -> Dictionary:
 
 
 ## [{key, label, on, kind: "toggle" | "action", enabled}]: the known cheats in ORDER, then up to MAX_EXTRA
-## others the sim named (by name), then the auto-pause toggle, then the test-kit action. `cheats` is
-## backend.cheats(): {} (no running game) greys every row out. Only real bools count as on.
+## others the sim named (by name), then the break-grabs action, the auto-pause toggle and the test-kit action.
+## `cheats` is backend.cheats(): {} (no running game) greys every row out. Only real bools count as on.
 static func rows(cheats: Dictionary, auto_pause: bool) -> Array[Dictionary]:
 	var c := clean(cheats)
 	var live := not c.is_empty()
@@ -85,12 +88,14 @@ static func rows(cheats: Dictionary, auto_pause: bool) -> Array[Dictionary]:
 	extra.sort()
 	for n: String in extra.slice(0, MAX_EXTRA):
 		out.append(_row(n, c[n] == true, TOGGLE, live))
+	out.append(_row(BREAK_GRABS, false, ACTION, live))
 	out.append(_row(AUTO_PAUSE, live and auto_pause, TOGGLE, live))
 	out.append(_row(TEST_KIT, false, ACTION, live))
 	return out
 
 
-## The rows as the sim has them now (no usable backend: every row greyed out; no auto-pause: that row greyed).
+## The rows as the sim has them now (no usable backend: every row greyed out; no auto-pause: that row greyed; a
+## backend without cheat_break_grabs: no break-grabs row; cheats not allowed: that row greyed).
 static func read(backend: Variant) -> Array[Dictionary]:
 	if not available(backend):
 		return rows({}, false)
@@ -99,8 +104,13 @@ static func read(backend: Variant) -> Array[Dictionary]:
 	var can_pause := b.has_method("auto_pause") and b.has_method("set_auto_pause")
 	var ap: Variant = b.call("auto_pause") if can_pause and not c.is_empty() else false
 	var out := rows(c, ap is bool and ap)
-	if not can_pause:
-		out[out.size() - 2]["enabled"] = false
+	for i in range(out.size() - 1, -1, -1):
+		if out[i]["key"] == BREAK_GRABS and not b.has_method("cheat_break_grabs"):
+			out.remove_at(i)
+	var cb: Variant = b.call("can_break_grabs") if b.has_method("can_break_grabs") else false
+	for r: Dictionary in out:
+		if (r["key"] == AUTO_PAUSE and not can_pause) or (r["key"] == BREAK_GRABS and not (cb is bool and cb)):
+			r["enabled"] = false
 	return out
 
 
@@ -114,6 +124,10 @@ static func apply(backend: Variant, key: String, on := true) -> bool:
 	if key == TEST_KIT:
 		if b.has_method("give_test_kit"):
 			r = b.call("give_test_kit")
+	elif key == BREAK_GRABS:
+		if b.has_method("cheat_break_grabs"):
+			var id: Variant = b.call("cheat_break_grabs")
+			r = id is int and id > 0
 	elif key == AUTO_PAUSE:
 		if b.has_method("set_auto_pause"):
 			r = b.call("set_auto_pause", on)
@@ -131,7 +145,7 @@ static func use(backend: Variant, key: String) -> Dictionary:
 		if r["key"] == key:
 			row = r
 			break
-	var what := "No test kit" if key == TEST_KIT else "Not changed"
+	var what := "No test kit" if key == TEST_KIT else ("Not done" if key == BREAK_GRABS else "Not changed")
 	if row.is_empty():
 		return {"ok": false, "text": what + ": no such cheat now"}
 	if not row["enabled"]:
@@ -141,6 +155,8 @@ static func use(backend: Variant, key: String) -> Dictionary:
 		return {"ok": false, "text": what + ": the game said no"}
 	if key == TEST_KIT:
 		return {"ok": true, "text": "Test kit: next turn"}
+	if key == BREAK_GRABS:
+		return {"ok": true, "text": "Grabs: let go next turn"}
 	if key == AUTO_PAUSE:
 		return {"ok": true, "text": "Auto-pause on hostiles: " + ("on" if on else "off")}
 	return {"ok": true, "text": "%s: %s next turn" % [short_name(key), "on" if on else "off"]}

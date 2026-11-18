@@ -178,6 +178,11 @@ func want_wheel(wait_ms: int, hold: bool, down := Callable()) -> void:
 	wheel_down = down
 
 
+## A wheel was asked for (want_wheel) and its time to come hasn't run out (Esc / Start cancels it: BackOut).
+func wheel_waiting() -> bool:
+	return wheel_until >= 0 and Time.get_ticks_msec() <= wheel_until
+
+
 ## The wheel asked for (want_wheel) is only for the request E itself causes: any other key, mouse or pad button
 ## pressed before that request comes (main: every event) cancels it, so a menu that key caused shows as usual and a
 ## quick tap of E never answers it unseen. Not cancelling: E (`use_held`) itself, releases, modifiers alone, the
