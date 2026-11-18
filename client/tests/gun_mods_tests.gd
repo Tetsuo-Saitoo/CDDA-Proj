@@ -18,6 +18,116 @@ func run(check: Callable, data: Variant) -> void:
 	_test_dress()
 	_test_snapshot(data)
 	_test_tables()
+	_test_actions()
+
+
+## A stand-in backend with the two gunmod ops (ItemActions calls them by name).
+class ModBackend extends RefCounted:
+	var calls: Array = []
+	var ok := true
+
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append(["mod_add", uid, type, gun, gun_type, tag])
+		return ok
+
+	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append(["mod_remove", uid, type, gun, gun_type, tag])
+		return ok
+
+	func queued_actions() -> int:
+		return 0
+
+
+## A stand-in for CddaSim's queue_item_action.
+class QueueSim extends RefCounted:
+	var sent: Array = []
+
+	func queue_item_action(d: Dictionary) -> bool:
+		sent.append(d)
+		return true
+
+
+## A snapshot with these carried rows and the wielded gun's `mods` (not sent when null).
+func _gun_snap(seq: int, carried: Array, mods: Variant) -> Snapshot:
+	var s := Snapshot.new()
+	s.seq = seq
+	var c := PackedInt64Array()
+	for x: Array in carried:
+		c.append_array(PackedInt64Array(x))
+	s.carried = c
+	s.player_gun = {"type": 2, "faults": []}
+	if mods is Array:
+		s.player_gun["mods"] = mods
+	return s
+
+
+## S2: ItemActions.mod_add / mod_remove send the bridge's ops with a tag and are judged by their item_result, or done
+## early when the snapshot shows the mod on / off the gun; bad calls aren't sent. LiveSession sends the ops' dicts.
+func _test_actions() -> void:
+	const SQ := Vector3i(3, 4, 0)
+	const W := Snapshot.CARRIED_WIELDED
+	var a := ItemActions.new()
+	var b := ModBackend.new()
+	a.backend = b
+	var seen: Array = []
+	a.finished.connect(func(it: ItemRef, op: String) -> void: seen.append(["finished", it.uid, op]))
+	a.refused.connect(func(it: ItemRef, op: String, why: String) -> void: seen.append(["refused", it.uid, op, why]))
+	var rows := [[10, 2, 0, -1, W], [11, 3, 0, -1, 0]]   # the wielded gun 10, a carried mod 11
+	a.on_snapshot(_gun_snap(1, rows, []))
+	var gun := ItemRef.on_player(10, 2, 0, -1, W, SQ)
+	var mod := ItemRef.on_player(11, 3, 0, -1, 0, SQ)
+	var unwielded := ItemRef.on_player(10, 2, 0, -1, 0, SQ)
+	var bad: bool = not a.mod_add(mod, unwielded) and not a.mod_add(gun, gun) and not a.mod_add(ItemRef.on_square(11, 3, SQ), gun) \
+			and not a.mod_add(null, gun) and not a.mod_add(mod, null) and b.calls.is_empty()
+	var sent := a.mod_add(mod, gun)
+	var twice := not a.mod_add(mod, gun)   # in flight already
+	var call_ok: bool = b.calls.size() == 1 and (b.calls[0] as Array).slice(0, 5) == ["mod_add", 11.0, 3.0, 10.0, 2.0] \
+			and int(b.calls[0][5]) >= ItemActions.TAG_BASE
+	var tag: int = int(b.calls[0][5])
+	a.on_snapshot(_gun_snap(2, rows, []))   # not on the gun yet: its item_result decides
+	var waits: bool = a.pending(11) == "mod_add" and seen.is_empty()
+	a.on_events([{"kind": "item_result", "detail": tag, "amount": 0, "text": "Never mind."}])
+	var declined: bool = seen == [["refused", 11, "mod_add", "Never mind."]]
+	a.mod_add(mod, gun)
+	a.on_snapshot(_gun_snap(3, rows.slice(0, 1), [{"uid": 11, "type": 3, "location": "rail", "flags": 0}]))
+	var fitted: bool = seen.size() == 2 and seen[1] == ["finished", 11, "mod_add"]
+	_check.call(bad and sent and twice and call_ok and waits and declined and fitted,
+			"gun mods: mod_add sends the mod and the wielded gun with a tag; 'Never mind.' refuses; on the gun: done (%s %s)"
+			% [b.calls, seen])
+	var r_bad: bool = not a.mod_remove(0, 3, gun) and not a.mod_remove(10, 2, gun) and not a.mod_remove(11, 3, unwielded)
+	var off := a.mod_remove(11, 3, gun)
+	var r_call: bool = (b.calls[-1] as Array).slice(0, 5) == ["mod_remove", 11.0, 3.0, 10.0, 2.0]
+	a.on_events([{"kind": "item_result", "detail": int(b.calls[-1][5]), "amount": 1, "text": ""}])
+	var removed: bool = seen.size() == 3 and seen[2] == ["finished", 11, "mod_remove"]
+	a.mod_remove(11, 3, gun)
+	a.on_snapshot(_gun_snap(4, rows, []))   # off the gun, in the pack: done before its item_result
+	var gone: bool = seen.size() == 4 and seen[3] == ["finished", 11, "mod_remove"]
+	a.mod_remove(11, 3, gun)
+	a.on_snapshot(_gun_snap(5, rows, null))   # an older bridge's snapshot (no mods): no early verdict
+	var older: bool = a.pending(11) == "mod_remove" and seen.size() == 4
+	a.on_snapshot(_gun_snap(6, [[10, 2, 0, -1, 0], [11, 3, 0, -1, 0]], []))   # the gun put away: no early verdict
+	var swapped: bool = a.pending(11) == "mod_remove" and seen.size() == 4
+	older = older and swapped
+	_check.call(r_bad and off and r_call and removed and gone and older,
+			"gun mods: mod_remove sends an installed mod's handle with the gun; done by item_result or once off the gun (%s)"
+			% [seen])
+	a.free()
+	var ls := LiveSession.new()
+	var no_sim := not ls.mod_add_item(11.0, 3.0, 10.0, 2.0)
+	var sim := QueueSim.new()
+	ls._sim = sim
+	var ok1 := ls.mod_add_item(11.0, 3.0, 10.0, 2.0, ItemActions.TAG_BASE)
+	var ok2 := ls.mod_remove_item(11.0, 3.0, 10.0, 2.0)
+	var junk: bool = not ls.mod_add_item(0.0, 3.0, 10.0, 2.0) and not ls.mod_add_item(11.5, 3.0, 10.0, 2.0) \
+			and not ls.mod_add_item(11.0, 3.0, NAN, 2.0) and not ls.mod_add_item(11.0, 3.0, 10.0, 0.0) \
+			and not ls.mod_add_item(10.0, 2.0, 10.0, 2.0) and not ls.mod_remove_item(11.0, 3.0, 10.0, 2.0, -1) \
+			and not ls.mod_remove_item(11.0, 3.0, 10.0, 2.0, LiveSession.MAX_ITEM_TAG + 1) \
+			and not ls.mod_remove_item(11.0, INF, 10.0, 2.0)
+	_check.call(no_sim and ok1 and ok2 and junk and sim.sent == [
+			{"op": "mod_add", "item": 11, "type": 3, "container": 10, "container_type": 2, "tag": ItemActions.TAG_BASE},
+			{"op": "mod_remove", "item": 11, "type": 3, "container": 10, "container_type": 2}],
+			"live session: mod_add_item / mod_remove_item send the bridge's ops; bad handles and tags aren't sent (%s)" % [sim.sent])
+	ls.free()
 
 
 ## wielded_gun.mods / fits / slots: parsed when sent, junk entries left out without failing the snapshot, capped;
@@ -73,20 +183,22 @@ func _test_snapshot(data: Variant) -> void:
 func _test_tables() -> void:
 	var base := {"generation": 3, "ter": [{"id": "t_null"}], "furn": [{"id": "f_null"}], "trap": [], "field": [],
 			"itype": [{"id": ""}, {"id": "gun_x", "mod_locations": [["sights", 1], ["stock mount", 1], ["rail", 2]]},
-				{"id": "scope_x", "gunmod_location": "sights"}, {"id": "rock_x", "gunmod_location": null}]}
+				{"id": "scope_x", "gunmod_location": "sights"}, {"id": "rock_x", "gunmod_location": null},
+				{"id": "stone_x", "gunmod_location": "", "mod_locations": []}]}
 	var t := IdTables.from_data(base)
 	var gun: IdTables.Def = t.def_named("itype", "gun_x") if t.is_valid() else null
 	var scope: IdTables.Def = t.def_named("itype", "scope_x") if t.is_valid() else null
 	var rock: IdTables.Def = t.def_named("itype", "rock_x") if t.is_valid() else null
 	_check.call(t.is_valid() and gun != null and gun.mod_locations == [{"location": "sights", "slots": 1},
 			{"location": "stock mount", "slots": 1}, {"location": "rail", "slots": 2}] and gun.gunmod_location == ""
-			and scope.gunmod_location == "sights" and scope.mod_locations.is_empty() and rock.gunmod_location == "",
+			and scope.gunmod_location == "sights" and scope.mod_locations.is_empty() and rock.gunmod_location == ""
+			and t.def_named("itype", "stone_x").gunmod_location == "",
 			"gun mods: id tables read a gun's mod locations and a gunmod's location (%s)" % t.error)
 	var seventeen := []
 	for i in IdTables.MAX_MOD_LOCATIONS + 1:
 		seventeen.append(["loc %d" % i, 1])
 	var bad_rows: Array = [
-		{"gunmod_location": "<b>sights</b>"}, {"gunmod_location": ""}, {"gunmod_location": 5},
+		{"gunmod_location": "<b>sights</b>"}, {"gunmod_location": "sights!"}, {"gunmod_location": 5},
 		{"gunmod_location": "x".repeat(IdTables.MAX_MOD_LOCATION + 1)}, {"gunmod_location": ["sights"]},
 		{"mod_locations": "sights"}, {"mod_locations": [["sights"]]}, {"mod_locations": [["sights", 1, 2]]},
 		{"mod_locations": [["sights", -1]]}, {"mod_locations": [["sights", IdTables.MAX_MOD_SLOTS + 1]]},

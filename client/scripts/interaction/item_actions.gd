@@ -1,6 +1,6 @@
 class_name ItemActions
 extends Node
-## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold, consume) shared by the flat-screen hands and the VR hands,
+## Blocks E6 / L2 / L8: the one-item actions (take, put, drop, unload, reload, clear a jam, throw, pour, hold, consume, fit or take off a gunmod) shared by the flat-screen hands and the VR hands,
 ## with no UI. Each goes out through a backend (LiveSession live, MockItems in mock mode) and is followed until a
 ## snapshot shows the item moved (finished) or still where it was (refused, with CDDA's message). The sim decides
 ## everything (contracts/bridge_api.md "Single items"): this only reads what later snapshots and message events
@@ -37,7 +37,7 @@ const NOT_DONE := "Not done."
 ## Ops sent with a `tag` and judged by the bridge's `item_result` for it (contracts/events.md): done, or refused
 ## with its text (or the last message since, or NOT_DONE when the player said no to CDDA's question). The
 ## snapshot can still finish one early (the item gone), never refuse it; a sip of a bottle doesn't show there.
-const TAGGED_OPS := ["consume"]
+const TAGGED_OPS := ["consume", "mod_add", "mod_remove"]
 const MAX_TAG := 2147483647
 ## Tags from here up: ItemPlacer counts its own from 1 on the same event stream.
 const TAG_BASE := 1 << 30
@@ -52,7 +52,7 @@ const CONSUME_CATEGORIES := ["food", "drugs"]
 enum Where { STILL, MOVED, UNKNOWN }
 
 ## Anything with take_item / put_item / drop_item / unload_item / reload_item / clear_item / throw_item / pour_item /
-## pour_into / hold_item / consume_item (-> bool; a missing one refuses that op here) and queued_actions()
+## pour_into / hold_item / consume_item / mod_add_item / mod_remove_item (-> bool; a missing one refuses that op here) and queued_actions()
 ## (-> int): a LiveSession or a MockItems.
 var backend: Object
 ## Returns the time in msec; Time.get_ticks_msec() when not set (tests set it).
@@ -213,6 +213,43 @@ func consume(item: ItemRef) -> bool:
 	return _send("consume", item, null, Vector2(-1, -1), "consume_item", [float(item.uid), float(item.type)])
 
 
+## Gun modification by hand: fits the carried gunmod `mod` onto the wielded gun `gun` (bridge op "mod_add": CDDA's
+## gunmod_add with that very mod, its questions real requests, its time). Backend method mod_add_item(uid, type, gun,
+## gun_type, tag); judged by its item_result (TAGGED_OPS), or done early once the snapshot lists the mod on the gun.
+func mod_add(mod: ItemRef, gun: ItemRef) -> bool:
+	if not _ok_ref(mod) or not mod.carried or not _ok_ref(gun) or not gun.carried or not gun.is_wielded() \
+			or mod.uid == gun.uid:
+		return false
+	return _send("mod_add", mod, gun.duplicate_ref(), Vector2(-1, -1), "mod_add_item",
+			[float(mod.uid), float(mod.type), float(gun.uid), float(gun.type)])
+
+
+## Takes the gunmod `mod_uid` (itype `mod_type`, one the snapshot's wielded_gun `mods` lists) off the wielded gun `gun`
+## (bridge op "mod_remove": CDDA's removal, its question a real request; the mod goes to the pack, else the ground).
+## Backend method mod_remove_item(uid, type, gun, gun_type, tag); judged by its item_result, or done early once the
+## snapshot no longer lists it on the gun.
+func mod_remove(mod_uid: int, mod_type: int, gun: ItemRef) -> bool:
+	if not _ok_ref(gun) or not gun.carried or not gun.is_wielded():
+		return false
+	var mod := ItemRef.on_player(mod_uid, mod_type, gun.uid, -1, 0, gun.square)
+	if not _ok_ref(mod) or mod.uid == gun.uid:
+		return false
+	return _send("mod_remove", mod, gun.duplicate_ref(), Vector2(-1, -1), "mod_remove_item",
+			[float(mod_uid), float(mod_type), float(gun.uid), float(gun.type)])
+
+
+## Whether the snapshot's wielded gun lists gunmod `uid` as installed; null when the snapshot sends no `mods` (an
+## older bridge).
+static func gun_has_mod(snap: Snapshot, uid: int) -> Variant:
+	var mods: Variant = snap.player_gun.get("mods") if snap != null else null
+	if not mods is Array:
+		return null
+	for m: Variant in mods:
+		if m is Dictionary and (m as Dictionary).get("uid") == uid:
+			return true
+	return false
+
+
 ## True when carried `item` is something to eat, drink or take (CONSUME_CATEGORIES), or holds one: its contents
 ## are the carried rows under it in `snap` (depth first). A gun, a fuel can or an empty bottle is not.
 static func consumable(item: ItemRef, snap: Snapshot, tables: IdTables) -> bool:
@@ -237,8 +274,8 @@ static func _eats(t: int, tables: IdTables) -> bool:
 	return d != null and d.category in CONSUME_CATEGORIES
 
 
-## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour", "consume"), ""
-## when none.
+## The op in flight for `uid` ("take", "put", "drop", "unload", "reload", "clear", "throw", "pour", "consume",
+## "mod_add", "mod_remove"), "" when none.
 func pending(uid: int) -> String:
 	return (_pending[uid] as Dictionary)["op"] if _pending.has(uid) else ""
 
@@ -524,6 +561,12 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			if row < 0:
 				return Where.UNKNOWN if full else Where.MOVED
 			return Where.MOVED if contents_sig(snap, item) != e["before"] else Where.STILL
+		"mod_add", "mod_remove":   # on the gun now / not any more (wielded_gun.mods); its item_result decides else
+			var on: Variant = gun_has_mod(snap, item.uid)
+			var gun: ItemRef = e["target"] if e["target"] is ItemRef else null
+			if on == null or gun_faults(snap, gun) == null:   # no mods sent, or that gun isn't the wielded one now
+				return Where.UNKNOWN
+			return Where.MOVED if (on == true) == (e["op"] == "mod_add") else Where.STILL
 		"clear":   # the faults changed while it is still the wielded gun: cleared
 			var now: Variant = gun_faults(snap, item)
 			if not now is Array:

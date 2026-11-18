@@ -75,6 +75,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_rack()
 	_test_long_gun()
 	_test_mods()
+	_test_mod_install()
 	_test_hostile()
 	_test_no_gun()
 	_aim.crosshair.free()
@@ -703,6 +704,98 @@ func _test_mods() -> void:
 			"vr gun: installed mods show at their slots (suppressor past the muzzle, scope on top); one off, one box less; none, none (%s)" % [where])
 	_snap.player_gun = {"type": _it["glock_19"], "dirt": 0, "faults": [], "rounds": 0}
 	_captured()
+	_frame()
+
+
+## A stand-in for LiveSession's mod_add_item (the mock backend has none): records the calls.
+class ModStub extends RefCounted:
+	var calls: Array = []
+
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append([uid, type, gun, gun_type, tag])
+		return true
+
+	func queued_actions() -> int:
+		return 0
+
+
+## Gun modification, S2: a gunmod in the off hand near its slot lights a ghost there (green: CDDA says it fits) with
+## the odds by the hand; let go at the slot: mod_add goes out with a tag, the hand lets go, the ghost stays white;
+## "Never mind." puts it back in the hand with that line; done: the ghost goes. A mod that doesn't fit: a red ghost,
+## CDDA's reason, nothing sent when let go. A bridge without `fits`: no ghost.
+func _test_mod_install() -> void:
+	var g := _rig.gun
+	var sdef: IdTables.Def = _world.tables.def_at("itype", _it["suppressor"])
+	var was := sdef.gunmod_location
+	sdef.gunmod_location = "muzzle"   # the mock id tables predate the field
+	var sup := _mock.give(_it["suppressor"], 0, Snapshot.CARRIED_OFFHAND)
+	var gun_t: int = _it["glock_19"]
+	_snap.player_gun = {"type": gun_t, "dirt": 0, "faults": [], "rounds": 15, "mods": [],
+			"fits": [{"uid": sup, "ok": true, "chance": 61, "risk": 8, "reason": ""}], "slots": []}
+	_captured()
+	_rest_hands()
+	_frame()
+	_hands.set_hand_pose("vr_l", _rig.left.global_transform, true)
+	var adopted := _hands.adopt("vr_l", VrGun._carried_ref(_snap, sup))
+	_frame()
+	var far: bool = adopted and g.fit.is_empty() and (g.ghost == null or not g.ghost.visible)
+	var slot_w: Vector3 = g.model.global_transform * (GunMods.slot("pistol", "muzzle")["at"] as Vector3)
+	_rig.left.global_position = slot_w + Vector3(0, 0.12, 0)
+	_frame()
+	var lit: bool = not g.fit.is_empty() and g.fit["ok"] == true and g.fit["near"] == false and g.ghost != null \
+			and g.ghost.visible and (g.ghost.material_override as StandardMaterial3D).albedo_color == VrGun.GHOST_OK \
+			and g.ghost.get_parent() == g.model and _rig.notes[0] != null and _rig.notes[0].visible \
+			and _rig.notes[0].text == "Let go to fit it: 61% (8% risk of damage)"
+	_check.call(far and lit, "vr gun: a suppressor in the off hand near the muzzle: a green ghost there, the odds by the hand")
+	var stub := ModStub.new()
+	_actions.backend = stub
+	_rig.left.global_position = slot_w + Vector3(0, 0.02, 0)
+	_frame()
+	var near: bool = g.fit.get("near") == true
+	_rig.release(_rig.left, "grip_click")
+	_frame()
+	var sent: bool = stub.calls.size() == 1 and int(stub.calls[0][0]) == sup and int(stub.calls[0][2]) == _gun \
+			and int(stub.calls[0][3]) == gun_t and _hands.holding("vr_l").is_empty() and _actions.pending(sup) == "mod_add" \
+			and g.ghost.visible and (g.ghost.material_override as StandardMaterial3D).albedo_color == VrGun.GHOST_BUSY
+	var tag: int = int(stub.calls[0][4]) if not stub.calls.is_empty() else 0
+	_actions.on_events([{"kind": "item_result", "detail": tag, "amount": 0, "text": "Never mind."}])
+	_frame()
+	var back: ItemRef = _hands.holding("vr_l").get("item")
+	var declined: bool = back != null and back.uid == sup and _rig.notes[0].text == "Never mind." \
+			and _actions.pending(sup) == "" and (g.ghost.material_override as StandardMaterial3D).albedo_color == VrGun.GHOST_OK
+	_rig.release(_rig.left, "grip_click")   # still at the slot: again
+	_frame()
+	var tag2: int = int(stub.calls[-1][4]) if not stub.calls.is_empty() else 0
+	_actions.on_events([{"kind": "item_result", "detail": tag2, "amount": 1, "text": ""}])
+	_frame()
+	var done: bool = stub.calls.size() == 2 and _actions.pending(sup) == "" and g.fit.is_empty() and not g.ghost.visible \
+			and _hands.holding("vr_l").is_empty()
+	_check.call(near and sent and declined and done,
+			"vr gun: let go at the slot: mod_add with a tag, the hand empty, the ghost white; 'Never mind.': back in the hand; done: the ghost goes (%s)"
+			% [stub.calls])
+	_snap.player_gun["fits"] = [{"uid": sup, "ok": false, "chance": 0, "risk": 0, "reason": "doesn't have a slot for this mod."}]
+	_captured()
+	_hands.set_hand_pose("vr_l", _rig.left.global_transform, true)
+	_hands.adopt("vr_l", VrGun._carried_ref(_snap, sup))
+	_frame()
+	var it: ItemRef = _hands.holding("vr_l").get("item")
+	var red: bool = not g.fit.is_empty() and g.fit["ok"] == false and g.ghost.visible \
+			and (g.ghost.material_override as StandardMaterial3D).albedo_color == VrGun.GHOST_NO \
+			and _rig.notes[0].text.begins_with("Your ") and _rig.notes[0].text.ends_with(" doesn't have a slot for this mod.")
+	var kept: bool = it != null and not g.let_go_mod(_rig.left, it) and stub.calls.size() == 2
+	_snap.player_gun.erase("fits")   # an older bridge: no ghost at all
+	_captured()
+	_frame()
+	var older: bool = g.fit.is_empty() and not g.ghost.visible
+	_check.call(red and kept and older,
+			"vr gun: a mod that doesn't fit: a red ghost, CDDA's reason, nothing sent when let go; no `fits`: no ghost")
+	_hands.release("vr_l", {})
+	_actions.backend = _mock
+	_remove(sup)
+	sdef.gunmod_location = was
+	_snap.player_gun = {"type": gun_t, "dirt": 0, "faults": [], "rounds": 0}
+	_captured()
+	_rest_hands()
 	_frame()
 
 

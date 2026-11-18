@@ -929,6 +929,8 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 	var it: ItemRef = held.get("item")
 	if held.get("kind") != "item" or it == null or world.snapshot == null:
 		return hands.release(id, {})
+	if gun.let_go_mod(c, it):
+		return "mod_add"   # a gunmod let go at its slot on the gun in hand: CDDA fits it (VrGun)
 	var drop := pack.drop_for(c.global_position, it)
 	if drop.is_empty():
 		drop = slots.drop_for(c.global_position, it)
