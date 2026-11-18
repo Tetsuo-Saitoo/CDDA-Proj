@@ -180,7 +180,8 @@ struct gun_mod_view  { uint64 uid; uint32 type; std::string location; uint8 flag
     // (installed mods are not in the carried `items`). location: the id-table `gunmod_location` ("" if not plain).
     // flags: 1 = can't be taken off (CDDA's IRREMOVABLE; a gun's integral mods have it too).
 struct gun_slot_view { std::string location; uint8 slots; uint8 free; };
-    // JSON row: [location, slots, free]. The gun type's own slots plus those its installed mods add.
+    // JSON row: [location, slots, free]. The gun type's own slots plus those its installed mods add; slots
+    // 1..16, free 0..slots; only kinds with a plain location id.
 struct gun_fit_view  { uint64 uid; bool ok; uint8 chance; uint8 risk; std::string reason; };
     // JSON row: [uid, ok (0/1), chance, risk, reason]. uid: a carried gun mod as `items` lists it. ok: it would
     // go on now, as CDDA's install menu decides: the gun takes it, the character has the skills, and the chance
