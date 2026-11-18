@@ -554,6 +554,10 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         a.op = fp3d::item_op::light;
     } else if( op == "extinguish" ) {
         a.op = fp3d::item_op::extinguish;
+    } else if( op == "mod_add" ) {
+        a.op = fp3d::item_op::mod_add;
+    } else if( op == "mod_remove" ) {
+        a.op = fp3d::item_op::mod_remove;
     } else {
         return false;
     }
@@ -662,7 +666,8 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         !ref( "container", "container_type", a.container ) ) {
         return false;
     }
-    if( a.op == fp3d::item_op::reload && !ref( "container", "container_type", a.container ) ) {
+    if( ( a.op == fp3d::item_op::reload || a.op == fp3d::item_op::mod_add ||
+          a.op == fp3d::item_op::mod_remove ) && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
     if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Bridge: gun mods by hand, the game side (for lead-vr's feature): the snapshot says which mods the gun in hand has, which slots are free and which carried mods fit and why not, and two new actions fit a mod on the gun or take it off by CDDA's rules, questions and time. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the snapshot also lists the extra squares a car blocks when it stands at an angle (the game fills the diagonal gaps between its boards and doors), so the client can show and block them like the game does. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the snapshot now says which square each vehicle part is on (and its level, for ramps), so the client can draw cars where the game has them (lead-world's side comes next). Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Vehicles are drawn (C5 slice 1, lead-world): every part of a car on its square as a simple shape per kind, turned to its facing and tinted by damage; car walls, windows and closed doors block walking (free walk, VR, teleport) and catch dropped items; look-at names the vehicle and the part. Client tests
