@@ -93,6 +93,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_placer()
 	_test_shelf_rest()
 	_test_live_ops()
+	_test_vehicles()
 	_bodies.clear()
 	var drawn := 0   # the pile's rocks drawn static again (one of the six was taken into the pack in _test_sync_cost)
 	for k in 6:
@@ -214,6 +215,37 @@ func _test_collision() -> void:
 	_world.door_open.erase(DOOR)
 	_col.update()
 	_check.call(_col.box_at(DOOR, BOX).size == Vector3(1, 3, 1) and _col.shape_count() == _full, "item physics: closed again")
+
+
+## C5: a car's parts give a box as high as items rest on them (VehicleView.rest_at); on a square with furniture too,
+## one box at the higher of the two.
+func _test_vehicles() -> void:
+	var snap := _world.snapshot
+	var v := func(id: String) -> int: return _tables.index_of("vpart", id)
+	var frame: int = v.call("frame")
+	var wall := P + Vector3i(-2, 0, 0)
+	var deck := P + Vector3i(-2, 1, 0)
+	var wheel := P + Vector3i(-2, 2, 0)
+	var parts := [[0, 0, frame, 255, 0, 0, 0, 0], [0, 0, v.call("board"), 255, 0, 0, 0, 0],
+			[0, 1, frame, 255, 0, 0, 1, 0], [0, 2, v.call("wheel"), 255, 0, 0, 2, 0],
+			[5, 5, v.call("seat"), 255, 0, CHAIR.x - wall.x, CHAIR.y - wall.y, 0]]
+	var before := snap.vehicles
+	snap.vehicles = Snapshot.vehicles_from([{"uid": 9, "name": "Box", "pos": [wall.x, wall.y, 0], "face_deg": 0.0,
+			"parts": parts}], snap.z_min, snap.z_max)
+	snap.vehicles_moved()
+	_col.rebuild(P)
+	var top := func(p: Vector3i) -> float: return _col.box_at(p, BOX).size.y
+	var chair_h := _col.furniture_height(snap.submaps[SM].furn[_tile(CHAIR)], snap)
+	_check.call(is_equal_approx(top.call(wall), VehicleView.TOP) and is_equal_approx(top.call(deck), VehicleView.DECK)
+			and is_equal_approx(top.call(wheel), 0.8) and _col.box_at(wall, SLAB).has_volume(),
+			"item physics: a car's wall is a box its height, its deck and wheels boxes as high as items rest on them")
+	_check.call(chair_h > 0.0 and is_equal_approx(top.call(CHAIR), maxf(chair_h, VehicleView.DECK + 0.45)),
+			"item physics: furniture and a car part on one square make one box at the higher (%.2f)" % top.call(CHAIR))
+	snap.vehicles = before
+	snap.vehicles_moved()
+	_col.rebuild(P)
+	_check.call(top.call(wall) == 0.0 and top.call(deck) == 0.0 and is_equal_approx(top.call(CHAIR), chair_h),
+			"item physics: no car, no car boxes")
 
 
 func _test_rebuild() -> void:

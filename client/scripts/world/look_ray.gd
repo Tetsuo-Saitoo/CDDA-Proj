@@ -6,7 +6,8 @@ extends RefCounted
 ## character never saw (the view has no fog of war yet); the details say so. Out to the edge of the loaded area
 ## (~60 squares). Stairs and ramps are met on their slope (TerrainMesher.surface_heights), so pointing at a step
 ## picks that stair's square. Creatures the player perceives are hit as their placeholder figures
-## (CreatureView). CDDA's own look text isn't in here: the bridge has no "describe".
+## (CreatureView), vehicle parts as VehicleView draws them (VehicleView.part_at: `what` names the vehicle and the
+## part, `vehicle` is its uid). CDDA's own look text isn't in here: the bridge has no "describe".
 
 const K := TerrainCatalog.Kind
 const SOLID := [K.WALL, K.WINDOW, K.FENCE, K.TREE, K.BOX]
@@ -59,6 +60,11 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true, skip
 		var cr := world.snapshot.creature_at(p)
 		if creatures and cr != null and pt.y - floor_y < CreatureView.height_of(cr.kind, CreatureView.def_of(world, cr)):
 			return _hit(p, pt, creature_name(cr))
+		var vp := VehicleView.part_at(world.snapshot, world.tables, p, pt.y - floor_y)
+		if not vp.is_empty():
+			var r := _hit(p, pt, VehicleView.part_name(world.snapshot, world.tables, vp[0], vp[1]))
+			r["vehicle"] = (vp[0] as Snapshot.Vehicle).uid
+			return r
 		var style := world.catalog.style_for(c["ter"])
 		if style.kind in SOLID:
 			return _hit(p, pt, "object" if style.kind == K.BOX else K.keys()[style.kind].to_lower())
@@ -85,6 +91,15 @@ func describe(p: Vector3i) -> PackedStringArray:
 	var cr := snap.creature_at(p)
 	if cr != null:
 		out.append("creature: %s, health %d%%" % [creature_name(cr), roundi(cr.hp_frac * 100.0 / 255.0)])
+	var at := snap.vehicle_at(p)
+	if not at.is_empty():
+		var names := PackedStringArray()
+		for i: int in at[1]:
+			if names.size() < MAX_ITEM_LINES:
+				names.append(VehicleView.part_label(snap, world.tables, at[0], i))
+		var veh: Snapshot.Vehicle = at[0]
+		out.append("vehicle: %s (%d parts here: %s)" % [veh.name if not veh.name.is_empty() else "unnamed",
+				(at[1] as PackedInt32Array).size(), ", ".join(names)])
 	out.append("terrain: " + _name("ter", c["ter"], snap.ter_names))
 	if c["furn"] != 0:
 		out.append("furniture: " + _name("furn", c["furn"], snap.furn_names))

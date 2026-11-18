@@ -10,7 +10,10 @@ extends Node3D
 ## - impassable furniture (move_cost < 0): the same full box;
 ## - other furniture: a box over the square, coverage / 100 x FURN_FULL_M high (none under FURN_MIN_M: flowers);
 ##   FLAT_SURF furniture (tables, counters) is as high as the top surface PropMesher lays items on (PropShapes.info),
-##   so items rest on its top.
+##   so items rest on its top;
+## - a vehicle's parts (C5): a box over the square up to where an item rests on them (VehicleView.rest_at: the top of
+##   a wall, closed door or window part, else the deck, a seat, cargo...), one box with the furniture's at the
+##   higher of the two. The boxes move with the snapshots (an item lying on a moving car doesn't ride along).
 ## Stairs and ramps get a flat floor slab for now; their sloped surfaces (TerrainMesher.surface_heights) come later.
 ## Rebuilt only when the centre square, the snapshot (instance or seq), the id tables or a client-side door change,
 ## and then only the shapes whose box changed are touched: StaticBody3D nodes, pooled and reused, at most
@@ -141,10 +144,16 @@ func specs(p: Vector3i) -> Array:
 	var out := []
 	if (sm.flags[i] & Snapshot.FLAG_NO_FLOOR) == 0:
 		out.append([SLAB, AABB(Vector3(0.0, -SLAB_M, 0.0), Vector3(t, SLAB_M, t))])
-	var h := furniture_height(sm.furn[i], snap)
+	var h := maxf(furniture_height(sm.furn[i], snap), vehicle_height(p, snap))
 	if h > 0.0:
 		out.append([BOX, AABB(Vector3.ZERO, Vector3(t, h, t))])
 	return out
+
+
+## Height of the box a vehicle's parts on square p get (VehicleView.rest_at), 0..LEVEL_M; 0: none.
+func vehicle_height(p: Vector3i, snap: Snapshot) -> float:
+	var h := VehicleView.rest_at(snap, world.tables, p)
+	return clampf(h, 0.0, CddaCoords.LEVEL_M) if is_finite(h) and h > 0.0 else 0.0
 
 
 ## Height of the box furniture `f` gets (0: none); see the class comment.

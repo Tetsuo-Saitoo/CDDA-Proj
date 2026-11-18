@@ -5,9 +5,8 @@ extends RefCounted
 ##
 ## The input is hostile like a snapshot: every field the client reads is type-, range- and size-checked,
 ## and tables with any bad field are rejected whole ([member error] set, every table empty). A missing
-## field takes its default; a present one must be valid (`mtype` may be missing: no monster names). `vpart`
-## and `tables` aren't read yet,
-## so they aren't trusted either: whoever starts using them adds their checks here.
+## field takes its default; a present one must be valid (`mtype` and `vpart` may be missing: no monster names, vehicle
+## parts drawn plain). Of `tables` only the lists read below are used; whoever reads more adds their checks here.
 
 const MAX_FILE_BYTES := 16 << 20          # the 0.I tables are ~2.7 MB
 const MAX_ROWS := 65536                   # ter/furn/trap/field (CDDA has ~1.1k terrain)
@@ -21,7 +20,7 @@ const MAX_FLAG_LEN := 64
 const MAX_GROUPS := 64
 ## Connect groups past this many get no bit (CDDA has ~36); they then join nothing.
 const MAX_GROUP_BITS := 62
-const TABLES := ["ter", "furn", "trap", "field", "itype", "mtype"]
+const TABLES := ["ter", "furn", "trap", "field", "itype", "mtype", "vpart"]
 const MAX_POCKETS := 32               # per itype, the contract's cap
 const POCKET_RIGID := 1               # itype pocket flags (contracts/id_tables.md)
 const POCKET_WATERTIGHT := 2
@@ -46,7 +45,7 @@ class Def:
 	var move_cost := 0       # ter: 0 impassable; furn: a modifier, -1 impassable
 	var coverage := 0
 	var transparent := false
-	var flags := {}          # flag name -> true
+	var flags := {}          # flag name -> true (ter, furn, vpart)
 	var groups := 0          # connect_groups as bits (see IdTables.group_bit)
 	var connects_to := 0
 	var rotates_to := 0
@@ -57,6 +56,7 @@ class Def:
 	## when it has none, isn't sent (an older bridge) or isn't letters, digits and _.
 	var examine := ""
 	var category := ""       # itype
+	var location := ""       # vpart: CDDA's mount location ("structure", "center", "on_roof", "under", ...); "" none
 	var phase := ""          # itype: one of PHASES; "" when not sent (an older bridge), not set or unknown
 	var gun_ammo := ""       # itype, guns: the first ammo type (9mm, 223, shot, arrow, ...)
 	var weakpoints := {}     # mtype: CDDA weak point ids (head, eye, arm, leg, ...) -> true
@@ -86,6 +86,7 @@ var itype: Array[Def] = []
 var body_parts := PackedStringArray()   # body_part index -> id (tables.body_part), empty if missing
 var move_modes := PackedStringArray()   # move_mode index -> id (tables.move_mode: walk, run, ...), empty if missing
 var mtype: Array[Def] = []
+var vpart: Array[Def] = []   # vehicle part types (index 0 is none)
 var group_bits := {}     # connect group name -> bit index
 ## Some itype row has `pockets`: the bridge sends them, so a type without any holds nothing.
 var has_pockets := false
@@ -165,6 +166,7 @@ func _table(table: String) -> Array[Def]:
 		"field": return field
 		"itype": return itype
 		"mtype": return mtype
+		"vpart": return vpart
 	return []
 
 
@@ -193,8 +195,8 @@ func _read(data: Variant) -> void:
 	var d: Dictionary = data
 	generation = _int(d.get("generation"), 0, 0xFFFFFFFF, "generation")
 	for t: String in TABLES:
-		if t == "mtype" and d.get(t) == null:
-			continue   # older tables: monsters go unnamed
+		if (t == "mtype" or t == "vpart") and d.get(t) == null:
+			continue   # older tables: monsters go unnamed, vehicle parts plain
 		_read_table(t, d.get(t))
 		if not is_valid():
 			return
@@ -285,6 +287,10 @@ func _read_table(table: String, v: Variant) -> void:
 			if r.has("pockets"):
 				def.pockets = _pockets(r["pockets"], what + ".pockets")
 				has_pockets = true
+		elif table == "vpart":
+			var loc := _str(r.get("location"), MAX_FLAG_LEN, what + ".location")
+			def.location = loc if _is_word(loc) else ""
+			def.flags = _flags(r.get("flags"), what + ".flags")
 		elif table == "mtype":
 			def.size = _int(r.get("size"), 0, 5, what + ".size")
 			def.species = _flags(r.get("species"), what + ".species")
