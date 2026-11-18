@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — VR fixes from QA's review: leaving the game no longer leaves eating stuck, and a keyboard hint queued before the headset started no longer shows in the headset. Client tests pass.
 - 2026-11-18 — In VR you eat and drink by bringing food or a drink to your mouth and holding it there for half a second; a bottle drinks what is inside it. The game decides as usual: it may ask (rotten, too full) and says why when it won't. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — VR now has its own one-time hints, low in your view, saying which button does what (walk and turn, take, your pack, your wrist, the menu, answering the game, danger, tiredness, the gun, unloading, fitting and pulling off mods, the vise). They share the flat hints' on/off switch and "Show hints again". The VR menu also has Wait and Sleep rows. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR, "Time passes..." (or "Sleeping...", "Waiting...") now shows low in your view while the game runs on by itself, and the VR menu has a Character row. Client tests pass; not yet tried in a headset.
