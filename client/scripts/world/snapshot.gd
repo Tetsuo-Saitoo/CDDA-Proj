@@ -4,8 +4,9 @@ extends RefCounted
 ##
 ## The input is hostile. Every field the client uses is type-, range- and size-checked here, and a
 ## snapshot with any bad field is rejected whole: [member error] is set and [member submaps] is empty.
-## Fields the client doesn't use yet (vehicles) are ignored, not trusted; whoever
-## starts using them adds their checks here. A submap without `trap`, `items` or `lights` has none.
+## Fields the client doesn't use yet are ignored, not trusted; whoever starts using them adds their checks here.
+## `vehicles` are cleaned like the HUD lists (vehicles_from: a bad vehicle or part is left out, never failing the
+## snapshot). A submap without `trap`, `items` or `lights` has none.
 ## `env.ambient_light` and per-submap `lights` ([[tile, luminance, kind], ...], block C6) are optional
 ## until the bridge sends them. So are per-submap `more` (how many items a cut-short pile list left out),
 ## `inside` and `inside_more` (what is in the containers lying next to the player, block L8).
@@ -100,6 +101,19 @@ const FLAG_ROOF := 1        # not outside
 const FLAG_NO_FLOOR := 2    # open air or a hole
 const FLAG_SIGN := 4
 const FLAG_VEHICLE := 8
+const MAX_VEHICLES := 256                 # vehicles: the contract's caps
+const MAX_VEHICLE_PARTS := 4096           # ... parts per vehicle
+const MAX_ALL_VEHICLE_PARTS := 65536      # parts kept in all (a town has ~1000); later vehicles are left out
+const MAX_VEHICLE_NAME := 60              # columns
+const MAX_MOUNT := 128                    # a part's mount, per axis; its square's offset from pos at most twice that
+const MAX_VEHICLE_DZ := 4                 # levels a part's square may be off the vehicle's (CDDA moves parts on ramps)
+const MAX_SPEED := 1000.0                 # m/s; anything else reads as 0
+const MAX_ANGLE := 1e6                    # degrees; a facing past this (or not finite) leaves the vehicle out
+const VPART_STRIDE := 8                   # Vehicle.parts: mount x, mount y, vpart, hp_frac, state, dx, dy, dz
+const VPART_OPEN := 1                     # part state bits
+const VPART_BROKEN := 2
+const VPART_ENABLED := 4
+const VPART_FILLER := 8                   # one of the parts CDDA adds to fill a turned vehicle's diagonal gaps
 
 
 class Submap:
@@ -182,6 +196,8 @@ var activity_verb := ""
 var asleep := false
 var creatures: Array[Creature] = []        # the ones the player perceives, the player first
 var _creature_at := {}                     # Vector3i -> Creature, built on first use
+var vehicles: Array[Vehicle] = []          # in the bubble (vehicles_from), the bridge's order
+var _vehicle_at := {}                      # Vector3i -> [Vehicle, PackedInt32Array part indices], built on first use
 var sun_alt_deg := 45.0
 var sun_az_deg := 180.0
 var ambient_light := -1  # env.ambient_light: CDDA's natural light at the player's z, 0..255; -1 when not sent
@@ -254,6 +270,28 @@ class Creature:
 		return attitude == HOSTILE or (attitude == UNKNOWN and kind == MONSTER)
 
 
+## A vehicle in the bubble (contracts/snapshot.md vehicle_view), as vehicles_from cleans it.
+class Vehicle:
+	var uid := 0
+	var name := ""                 # plain_text, at most MAX_VEHICLE_NAME columns; "" when none was sent
+	var pos := Vector3i.ZERO       # absolute square of the vehicle's position: its parts' squares are offsets from it
+	var face_deg := 0.0            # CDDA's facing, 0..360: 0 east, 90 south
+	var turn_deg := 0.0            # the facing it is turning to, 0..360
+	var velocity := 0.0            # m/s, negative in reverse
+	## Whether every part's square is CDDA's own (the bridge sent dx, dy, dz); otherwise the parts without are at their
+	## mounts turned by face_deg (turn_mount), which can be a square off where CDDA turns about a pivot.
+	var exact := true
+	var parts := PackedInt32Array()   # VPART_STRIDE ints per part, the bridge's order (several share a square)
+
+	func part_count() -> int:
+		return parts.size() / Snapshot.VPART_STRIDE
+
+	## The absolute square of part i.
+	func square(i: int) -> Vector3i:
+		var k := i * Snapshot.VPART_STRIDE
+		return pos + Vector3i(parts[k + 5], parts[k + 6], parts[k + 7])
+
+
 func is_valid() -> bool:
 	return error.is_empty()
 
@@ -287,6 +325,7 @@ static func from_data(data: Variant) -> Snapshot:
 		snap.furn_names.clear()
 		snap.trap_names.clear()
 		snap.creatures.clear()
+		snap.vehicles.clear()
 	return snap
 
 
@@ -318,6 +357,8 @@ func _read(data: Variant) -> void:
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
 	_read_creatures(d.get("creatures"))
+	if is_valid():
+		vehicles = vehicles_from(d.get("vehicles"), z_min, z_max)
 	if is_valid() and (_item_states_sent != null or _item_amounts_sent != null):
 		var known := _known_uids()
 		if _item_states_sent != null:
@@ -624,6 +665,116 @@ func _read_creatures(v: Variant) -> void:
 ## Call after changing creature positions (tests, demos): creature_at() rebuilds its index.
 func creatures_moved() -> void:
 	_creature_at.clear()
+
+
+## `vehicles`, cleaned: anything malformed is left out (vehicles never fail a snapshot). The first MAX_VEHICLES,
+## each with a uid not seen before, a position (z in z_lo..z_hi), a finite facing and at least one good part, and at
+## most MAX_ALL_VEHICLE_PARTS parts in all. Parts are [mount_x, mount_y, vpart, hp_frac, state], plus [dx, dy, dz]
+## (the part's square minus pos, CDDA's own) from a bridge that sends them: the first MAX_VEHICLE_PARTS of a vehicle,
+## mounts within MAX_MOUNT, vpart 1..MAX_ID, hp_frac 0..255, state 0..15 (VPART_* bits), dx and dy within twice
+## MAX_MOUNT, dz within MAX_VEHICLE_DZ and the part's level in z_lo..z_hi.
+static func vehicles_from(v: Variant, z_lo: int, z_hi: int) -> Array[Vehicle]:
+	var out: Array[Vehicle] = []
+	if not v is Array:
+		return out
+	var seen := {}
+	var left := MAX_ALL_VEHICLE_PARTS
+	var lim := MAX_ABS_SM * CddaCoords.SEEX
+	for e: Variant in (v as Array).slice(0, MAX_VEHICLES):
+		if not e is Dictionary or left <= 0:
+			continue
+		var d: Dictionary = e
+		var uid: Variant = _whole(d.get("uid"), 1, MAX_UID - 1)
+		var face: Variant = _angle(d.get("face_deg"))
+		var p: Variant = d.get("pos")
+		if uid == null or seen.has(uid) or face == null or not p is Array or (p as Array).size() != 3:
+			continue
+		var x: Variant = _whole(p[0], -lim, lim)
+		var y: Variant = _whole(p[1], -lim, lim)
+		var z: Variant = _whole(p[2], z_lo, z_hi)
+		if x == null or y == null or z == null:
+			continue
+		var veh := Vehicle.new()
+		veh.uid = uid
+		veh.pos = Vector3i(x, y, z)
+		veh.face_deg = face
+		var turn: Variant = _angle(d.get("turn_deg"))
+		veh.turn_deg = turn if turn != null else face
+		var sp: Variant = d.get("velocity")
+		veh.velocity = float(sp) if (sp is float or sp is int) and absf(float(sp)) <= MAX_SPEED else 0.0
+		veh.name = plain_text(d.get("name"), MAX_VEHICLE_NAME)
+		veh.parts = _vehicle_parts(d.get("parts"), veh, mini(left, MAX_VEHICLE_PARTS), z_lo, z_hi)
+		if veh.parts.is_empty():
+			continue
+		left -= veh.part_count()
+		seen[uid] = true
+		out.append(veh)
+	return out
+
+
+## An angle in degrees from the bridge as 0..360, or null when it isn't a number within MAX_ANGLE.
+static func _angle(v: Variant) -> Variant:
+	if not (v is float or v is int) or not (absf(float(v)) <= MAX_ANGLE):   # also false for NaN
+		return null
+	return fposmod(float(v), 360.0)
+
+
+## A vehicle's part rows (vehicles_from), the first `cap` of them looked at; parts without dx, dy, dz get their
+## mounts turned by the vehicle's facing on its level (and the vehicle isn't `exact`).
+static func _vehicle_parts(v: Variant, veh: Vehicle, cap: int, z_lo: int, z_hi: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if not v is Array:
+		return out
+	var lo := [-MAX_MOUNT, -MAX_MOUNT, 1, 0, 0, -2 * MAX_MOUNT, -2 * MAX_MOUNT, maxi(-MAX_VEHICLE_DZ, z_lo - veh.pos.z)]
+	var hi := [MAX_MOUNT, MAX_MOUNT, MAX_ID, 255, 15, 2 * MAX_MOUNT, 2 * MAX_MOUNT, mini(MAX_VEHICLE_DZ, z_hi - veh.pos.z)]
+	for e: Variant in (v as Array).slice(0, cap):
+		if not e is Array or not ((e as Array).size() == 5 or (e as Array).size() == VPART_STRIDE):
+			continue
+		var row := PackedInt32Array()
+		for k in (e as Array).size():
+			var x: Variant = _whole(e[k], lo[k], hi[k])
+			if x == null:
+				break
+			row.append(x)
+		if row.size() != (e as Array).size():
+			continue
+		if row.size() == 5:
+			var q := turn_mount(Vector2i(row[0], row[1]), veh.face_deg)
+			row.append_array(PackedInt32Array([q.x, q.y, 0]))
+			veh.exact = false
+		out.append_array(row)
+	return out
+
+
+## A part's mount turned to facing `face_deg`: its square's offset from the vehicle's pos (mount x points ahead, y
+## to the right). CDDA's own at right angles for a vehicle turned about mount 0,0; otherwise CDDA's square can be one
+## off (it turns about a pivot and steps diagonals its own way), which is why the bridge sends dx, dy, dz.
+static func turn_mount(m: Vector2i, face_deg: float) -> Vector2i:
+	var a := deg_to_rad(face_deg)
+	return Vector2i(roundi(m.x * cos(a) - m.y * sin(a)), roundi(m.x * sin(a) + m.y * cos(a)))
+
+
+## The vehicle with parts on square p and which (indices into its parts, the bridge's order): [Vehicle,
+## PackedInt32Array], or [] where there is none. Where two vehicles share a square the first listed wins.
+func vehicle_at(p: Vector3i) -> Array:
+	if _vehicle_at.is_empty():
+		for veh in vehicles:
+			for i in veh.part_count():
+				var sq := veh.square(i)
+				var e: Array = _vehicle_at.get(sq, [])
+				if e.is_empty():
+					_vehicle_at[sq] = [veh, PackedInt32Array([i])]
+				elif e[0] == veh:
+					var idx: PackedInt32Array = e[1]
+					idx.append(i)
+					e[1] = idx
+		_vehicle_at[Vector3i.MAX] = []   # built, even when there are no vehicles
+	return _vehicle_at.get(p, [])
+
+
+## Call after changing vehicles (tests, demos): vehicle_at() rebuilds its index.
+func vehicles_moved() -> void:
+	_vehicle_at.clear()
 
 
 ## What heats square p for CDDA's crafting (block L9): {source (HEAT_*), tool (itype index, 0 a fire only),

@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-17 — Vehicles are drawn (C5 slice 1, lead-world): every part of a car on its square as a simple shape per kind, turned to its facing and tinted by damage; car walls, windows and closed doors block walking (free walk, VR, teleport) and catch dropped items; look-at names the vehicle and the part. Client tests
 - 2026-11-17 — Tester AppImage test-2026-11-17b (private test repo, pre-release, not a release) from main b1cbd50 + fork 45f2334, after the QA lead's OK for the range since test-2026-11-17 and the VR cooking card line fix (4aafa1e) found in that review; QA smoke and personal-strings check pass on the file.
 - 2026-11-17 — Client test runs check their own paths more strictly (QA lead): a path with ".." opens nothing wherever it starts, and a run folder that is a link, or lies under one, is never emptied through it. Tests in run_tests; all suites pass.
 - 2026-11-17 — Fix: while a pot's card shows why the game refused a cook, pointing at a recipe line now starts that recipe, not the next one, and pointing at the reason starts nothing. Client tests pass.
