@@ -1472,7 +1472,7 @@ func _test_hints_vr() -> void:
 	var path: String = preload("res://tests/test_dir.gd").path("hints_vr.cfg")
 	_check.call(Hints.text_of("") == "" and Hints.text_of("nope") == "" and Hints.text_of("vr_x") == ""
 			and Hints.text_of("vr_gun") == Hints.VR_TEXTS["vr_gun"] and Hints.vr_id("hostile") == "vr_hostile"
-			and Hints.vr_id("eat") == "" and Hints.vr_id("") == "" and Hints.vr_id("vr_gun") == "",
+			and Hints.vr_id("bleed") == "" and Hints.vr_id("") == "" and Hints.vr_id("vr_gun") == "",
 			"hints vr: text_of is \"\" for none or unknown; vr_id maps a flat id to its VR one, \"\" without")
 	var a := Hints.new()
 	a.path = path
