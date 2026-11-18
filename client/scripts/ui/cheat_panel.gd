@@ -46,6 +46,10 @@ var ahead_square := Callable()
 ## () -> int: teleports to the square at the screen's centre (main.gd's _teleport), the op id or 0. Main sets it.
 var teleport := Callable()
 var teleport_button: Button
+## () -> bool: closes the menu and lets the next left click pick the square to teleport to (main.gd's
+## start_teleport_pick); false when it can't. Main sets it.
+var pick_teleport := Callable()
+var pick_button: Button
 ## The weather cheat: CDDA's weather types (LiveSession.weather_types), the wind, and the button that sends both.
 var weather_pick: OptionButton
 var wind_pick: OptionButton
@@ -98,6 +102,9 @@ func _init() -> void:
 	teleport_button = _button("Teleport to the crosshair", teleport_here)
 	teleport_button.name = "Teleport"
 	row.add_child(teleport_button)
+	pick_button = _button("Teleport: pick a square", pick_square)
+	pick_button.name = "TeleportPick"
+	row.add_child(pick_button)
 	add_child(row)
 	_build_weather()
 	_build_range()
@@ -122,6 +129,10 @@ func refresh() -> void:
 	teleport_button.tooltip_text = ("Moves you to the square at the screen's centre, through walls and between floors. "
 			+ "Key: %s (the square under the crosshair).%s") % [InputActions.key_of(&"cheat_teleport"),
 			" Needs cheats allowed and a bridge that has it." if teleport_button.disabled else ""]
+	pick_button.disabled = teleport_button.disabled
+	pick_button.tooltip_text = ("Closes this menu; then click the square to go to (through creatures). Esc or a right "
+			+ "click cancels. Or look at a square (%s) and press %s: it goes to the look's marker.") % [
+			InputActions.key_of(&"look_at"), InputActions.key_of(&"cheat_teleport")]
 	refresh_range()
 	if not live:
 		_say("Cheats need a running live game (start with --live).", true)
@@ -157,6 +168,11 @@ func teleport_here() -> void:
 		_say("Teleport: not sent. Point the crosshair at a square in the loaded area.", true)
 		return
 	_sent("Teleport", id)
+
+
+func pick_square() -> void:
+	if pick_button.disabled or not pick_teleport.is_valid() or pick_teleport.call() != true:
+		_say("Teleport: needs a running game with cheats allowed (not in VR).", true)
 
 
 func _build_weather() -> void:

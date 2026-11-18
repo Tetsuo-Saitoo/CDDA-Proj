@@ -251,6 +251,24 @@ func _test_look_ray(world: WorldView) -> void:
 		var h := lr.cast(world.coords.ms_center_to_world(f) + Vector3(0, 1.5, 0), Vector3(w.x - f.x, 0, w.y - f.y))
 		_check.call(h["hit"] and h["what"] == "wall" and h["square"] == w, "look: a level look meets the wall in front (%s)" % h)
 	_check.call(not lr.cast(above, Vector3.UP * 0.0)["hit"], "look: no direction, no hit")
+	if pair.is_empty():
+		return
+	# the teleport cheat (J, the F1 pick) aims with creatures off: a zombie on the square doesn't stop the ray, it
+	# lands on the floor under / beyond it; the look (creatures on) still names the zombie
+	var f: Vector3i = pair[1]
+	var z := Snapshot.Creature.new()
+	z.pos = f
+	var snap := world.snapshot
+	snap.creatures.append(z)
+	snap._creature_at = {}
+	var top := world.coords.ms_center_to_world(f) + Vector3(0, 1.6, 0)
+	var seen := lr.cast(top, Vector3.DOWN, LookRay.MAX_M, true, false)   # a top-view pick: the start square counts
+	var past := lr.cast(top, Vector3.DOWN, LookRay.MAX_M, false, false)
+	snap.creatures.erase(z)
+	snap._creature_at = {}
+	_check.call(seen["hit"] and seen["what"] != "floor" and past["hit"] and past["what"] == "floor" and past["square"] == f
+			and TeleportAim.square(past, Vector3.DOWN, world.coords.world_to_ms) == f,
+			"teleport aim: through a creature to the floor it stands on (look: %s, teleport: %s)" % [seen["what"], past["what"]])
 
 
 func _test_cdda_keys() -> void:
