@@ -9,8 +9,10 @@ extends SceneTree
 ##    is CDDA's dice (the range's hub is lit, and "It's too bright to sleep." wakes a sleeper at any hour): printed
 ##    with what CDDA said, not checked.
 ## 4. stop() ends the game.
-## While the game runs on by itself the client must still hear from it: a snapshot with a new turn at least every
-## SILENT_MS of real time, or the screen stands still (clock, light, needs) and looks hung.
+## While the game runs on by itself the client must still hear from it, or the screen stands still (clock, light,
+## needs) and looks hung: the bridge has a newer snapshot at least every SILENT_MS of real time (its seq), and one
+## with a new turn is shown at least every SHOWN_MS (reading a snapshot of some 900 KB takes a busy machine a while,
+## so the screen gets more time than the bridge).
 ## It prints how long a turn takes then, and what a night's sleep comes to at that rate.
 ## Uses this run's own CDDA folder. Needs the DLL (build target fp3d-cdda) and the game data. ~3 min. From the
 ## repo root:
@@ -23,7 +25,8 @@ const BOOT_TIMEOUT_MS := 300000
 const ASK_TIMEOUT_MS := 30000
 const WAIT_TIMEOUT_MS := 300000
 const SLEEP_LIMIT_MS := 300000
-const SILENT_MS := 2000             # the longest the client may go without a snapshot with a new turn
+const SILENT_MS := 2000             # the longest the bridge may go without a newer snapshot
+const SHOWN_MS := 5000              # the longest the screen may go without showing one with a new turn
 const STALL_MS := 60000             # no new turn for this long: a watch gives up
 const NIGHT_TURNS := 8 * 3600
 const SAID_MAX := 12
@@ -97,11 +100,13 @@ func _wait(id: int, label: String, turns: int) -> bool:
 	_reply(menu, {"entry": entry})
 	_hold = false
 	var w: Dictionary = await _watch(turn0, turns - 10, WAIT_TIMEOUT_MS)
-	print("  wait %s: %d turns in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s"
-			% [label, w["turns"], w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0])
+	print("  wait %s: %d turns in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s; the bridge had %d, longest gap %.1f s"
+			% [label, w["turns"], w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0, w["sent"], w["quiet"] / 1000.0])
 	_check(w["done"], "%s pass by themselves (%d of %d turns in %.0f s)" % [label, w["turns"], turns, w["ms"] / 1000.0])
-	_check(w["silent"] <= SILENT_MS, "the client hears from the game while it waits %s (longest silence %.1f s, limit %.1f)"
-			% [label, w["silent"] / 1000.0, SILENT_MS / 1000.0])
+	_check(w["quiet"] <= SILENT_MS, "the game has a newer snapshot while it waits %s (longest gap %.1f s, limit %.1f)"
+			% [label, w["quiet"] / 1000.0, SILENT_MS / 1000.0])
+	_check(w["silent"] <= SHOWN_MS, "the screen follows while it waits %s (longest silence %.1f s, limit %.1f)"
+			% [label, w["silent"] / 1000.0, SHOWN_MS / 1000.0])
 	if w["ms"] > 3000 and _main.get("busy_note") != null:   # a stretch long enough for the note (BusyNote, lead-ui)
 		_check(w["noted"] != "", "the screen says that time passes while it waits %s (\"%s\")" % [label, w["noted"]])
 	return w["done"]
@@ -133,21 +138,24 @@ func _sleep() -> void:
 		var req := _live.request
 		print("  sleep: the game now asks: %s %s timed %s \"%s\" %s" % [req.get("kind", "nothing"), req.get("context", ""),
 				req.get("timed", false), str(req.get("text", req.get("title", ""))).left(80), _labels(req)])
-	print("  sleep: %d turns (%.1f h of game time) in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s"
-			% [passed, passed / 3600.0, w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0])
+	print("  sleep: %d turns (%.1f h of game time) in %.1f s (%.2f ms a turn), %d snapshot(s) with a new turn, longest silence %.1f s; the bridge had %d, longest gap %.1f s"
+			% [passed, passed / 3600.0, w["ms"] / 1000.0, w["rate"], w["seen"], w["silent"] / 1000.0, w["sent"], w["quiet"] / 1000.0])
 	print("  at that rate a night (%d turns) takes %.0f s of real time" % [NIGHT_TURNS, NIGHT_TURNS * w["rate"] / 1000.0])
 	_check(w["done"] or (w["ended"] and passed > 0), "the character lies down to sleep and time passes by itself (%.0f min in %.1f s, %s)"
 			% [passed / 60.0, w["ms"] / 1000.0, "and it goes on" if w["done"] else ("then up again" if w["ended"] else "then nothing")])
-	_check(w["silent"] <= SILENT_MS, "the client hears from the game while the character sleeps (longest silence %.1f s, limit %.1f)"
-			% [w["silent"] / 1000.0, SILENT_MS / 1000.0])
+	_check(w["quiet"] <= SILENT_MS, "the game has a newer snapshot while the character sleeps (longest gap %.1f s, limit %.1f)"
+			% [w["quiet"] / 1000.0, SILENT_MS / 1000.0])
+	_check(w["silent"] <= SHOWN_MS, "the screen follows while the character sleeps (longest silence %.1f s, limit %.1f)"
+			% [w["silent"] / 1000.0, SHOWN_MS / 1000.0])
 	if w["ms"] > 3000 and _main.get("busy_note") != null:
 		_check(w["noted"] != "", "the screen says that time passes while the character sleeps (\"%s\")" % w["noted"])
 
 
 ## Watches the game run on by itself from turn `turn0` until `turns` have passed (or `timeout_ms`, or `until`
 ## says so), calling `each` on every look. {done (the turns passed), ended (`until` said so first), turns, ms, rate
-## (ms a turn), seen (snapshots with a new turn), silent (the longest time without one, ms), noted (what main's
-## busy note said meanwhile, "Time passes" or CDDA's word, without its dots; "" when it never showed)}.
+## (ms a turn), seen (shown snapshots with a new turn), silent (the longest time without one, ms), sent (newer
+## snapshots the bridge had, by its seq), quiet (the longest time without one, ms), noted (what main's busy note
+## said meanwhile, "Time passes" or CDDA's word, without its dots; "" when it never showed)}.
 func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until := Callable()) -> Dictionary:
 	var noted := ""
 	var ended := false
@@ -156,6 +164,10 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until :
 	var t0 := Time.get_ticks_msec()
 	var last_ms := t0
 	var silent := 0
+	var sent := 0
+	var last_seq := _bridge_seq()
+	var last_seq_ms := t0
+	var quiet := 0
 	var done := false
 	while Time.get_ticks_msec() - t0 < timeout_ms and _live.state == "running":
 		if each.is_valid():
@@ -166,6 +178,12 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until :
 		var note: Variant = _main.get("busy_note")
 		if note is Label and (note as Label).visible and not (note as Label).text.rstrip(".").is_empty():
 			noted = (note as Label).text.rstrip(".")
+		var seq := _bridge_seq()
+		if seq != last_seq:
+			sent += 1
+			quiet = maxi(quiet, now - last_seq_ms)
+			last_seq = seq
+			last_seq_ms = now
 		var t: int = _main.world.snapshot.turn
 		if t != last_turn:
 			seen += 1
@@ -184,9 +202,17 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until :
 	var ms := Time.get_ticks_msec() - t0
 	if not done and not ended:
 		silent = maxi(silent, Time.get_ticks_msec() - last_ms)
+		quiet = maxi(quiet, Time.get_ticks_msec() - last_seq_ms)
 	var passed := last_turn - turn0
 	return {"done": done, "ended": ended, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen,
-			"silent": silent, "noted": noted}
+			"silent": silent, "sent": sent, "quiet": quiet, "noted": noted}
+
+
+## The seq of the bridge's newest snapshot (CddaSim.get_snapshot_seq), whether the client has read it yet or not;
+## -1 without a bridge.
+func _bridge_seq() -> int:
+	var s: Object = _live.sim() if _live != null else null
+	return int(s.call("get_snapshot_seq")) if s != null and s.has_method("get_snapshot_seq") else -1
 
 
 ## Waits until the game is back at rest (the snapshot's turn unchanged for a while, nothing queued); the turn.
