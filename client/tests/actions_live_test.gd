@@ -36,6 +36,7 @@ const KEYS := [
 ## Laid at the feet for the lists: the first id of each the game knows (something to wear, read and eat).
 const GUN := "glock_19"              # the test kit's pistol
 const GUN_MOD := "rail_laser_sight"  # goes on its rail with no tools (lead-bridge's sim scene)
+const VISE := "bench_vise"           # CDDA's bench vise (Vise.ITEM)
 const AT_FEET := [["tshirt", "jeans"], ["novel_mystery", "mag_guns", "textbook_firearms", "news_regional"],
 		["apple", "can_beans"]]
 
@@ -128,6 +129,7 @@ func _run() -> void:
 		await _compass_live()
 		await _number_live()
 		await _gun_mods_live()
+		await _vise_live()
 		await _esc_live()
 	print("  what each key did:")
 	for line in _seen:
@@ -362,6 +364,71 @@ func _fit_key_live(mod_t: int, reason: String) -> void:
 			"gun mods: E on one that doesn't fit says why by the crosshair and sends nothing (\"%s\")" % said)
 	root.push_input(_key_of(&"stow_off"))   # the hands as they were
 	await _until(func() -> bool: return _main.hud_data.held.get("off") == null and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## A bench vise on the flat screen in the running game (lead-ui's ViseBench, main.vise_bench; skipped on a client
+## without it): with the gun wielded and a bench_vise spawned at the feet, the pointer on the vise offers to clamp
+## the gun, E does it (the panel lists the carried gunmods CDDA judged), Esc takes the gun back, E clamps and E on
+## the vise again releases, and stepping away (the teleport cheat) releases it with a line. The pointer is put on the
+## vise by setting the hover the frame would find (aiming the camera isn't this check's subject).
+func _vise_live() -> void:
+	var bench: Variant = _main.get("vise_bench")
+	if bench == null:
+		print("  (no bench vise panel in this client: not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var gun_t := _cp.tables.index_of("itype", GUN)
+	var vise_t := _cp.tables.index_of("itype", VISE)
+	var gun := _carried(gun_t)
+	if gun == null or not gun.is_wielded() or vise_t <= 0:
+		print("  (no wielded %s, or no %s in the game data: the vise not checked)" % [GUN, VISE])
+		return
+	_cp.item_id.text = VISE
+	_cp.item_count.value = 1
+	var spawned := await _op(_cp.spawn_item, "Spawn " + VISE)
+	var lies := func() -> bool:
+		var v := _lying(vise_t)
+		return v != null and v.uid in Vise.near(_main.world.snapshot, _main.world.tables) and in_loop.call()
+	_check(spawned == "" and await _until(lies, OP_TIMEOUT_MS, true), "vise: a %s lies in reach (%s)" % [VISE, spawned])
+	if not lies.call():
+		return
+	var hover := {"kind": "item", "item": _lying(vise_t)}
+	_main.grab.item_hover = hover
+	var line: String = _main._context_line()
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var shown: bool = bench.clamped() and bench.visible
+	var fits: Array = bench.entries(_main.world.snapshot, _main.world.tables, _main.item_actions, _carried(gun_t)).get("fits", []) \
+			if shown else []
+	_check(line.contains("clamp the gun") and shown and not fits.is_empty(),
+			"vise: the pointer on it offers \"%s\"; E clamps the gun and the panel lists %d carried gunmod(s) (drawn in the jaws: %s)"
+			% [line, fits.size(), bench.model != null])
+	if not shown:
+		return
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	_check(not bench.clamped() and not _main.key_menu.visible, "vise: Esc takes the gun back, no menu")
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var again: bool = bench.clamped()
+	_main.grab.item_hover = hover
+	var line2: String = _main._context_line()
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	_check(again and line2.contains("take the gun back") and not bench.clamped(),
+			"vise: E clamps again, the line then offers \"%s\", and E on the vise takes the gun back" % line2)
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var here: Vector3i = _main.world.snapshot.player_pos
+	_main.grab._flash = ""
+	var away: int = _live.cheat_teleport(here + Vector3i(4, 0, 0)) if bench.clamped() else 0
+	var gone := func() -> bool: return not bench.clamped()
+	var left: bool = away > 0 and await _until(gone, OP_TIMEOUT_MS, true)
+	_check(left and str(_main.grab._flash).contains("vise"),
+			"vise: stepping away takes the gun back with a line (\"%s\")" % _main.grab._flash)
+	_live.cheat_teleport(here)
+	await _until(func() -> bool: return _main.world.snapshot.player_pos == here and in_loop.call(), OP_TIMEOUT_MS, true)
 
 
 ## The first carried item of itype `t`, null for none.
