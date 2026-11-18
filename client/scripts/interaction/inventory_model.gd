@@ -21,6 +21,8 @@ extends RefCounted
 ##   itype, a stack counting as one), weight_g, volume_ml, pending
 ##   (an action is in flight), depth (0 = right in the group; 1 = inside a carried container listed above it ...),
 ##   is_container, note ("" or why its contents aren't listed)}.
+## Every row of columns() has an `item`. The flat Tab view adds the wielded gun's installed mods under its row
+## itself (mod_rows: rows without an `item`).
 
 const MAX_ROWS := 200            # rows per column; the rest only count in `cut` (and the totals)
 const MAX_NAME := 60             # characters of an item name
@@ -257,6 +259,24 @@ static func _add_tree(col: Dictionary, g: Dictionary, r: ItemRef, depth: int, ki
 	_add_row(col, g, row, not counted)
 	for c: ItemRef in kids.get(r.uid, []):
 		_add_tree(col, g, c, depth + 1, kids, tables, actions, seen, am, counted or row["exact"])
+
+
+## F1: the installed mods of `gun` when it is the wielded gun (wielded_gun `mods`), as rows for under its row: {uid,
+## mod_of (the gun's uid), mod ({uid, type, location, flags}), name, count 1, exact false, weight_g 0, volume_ml 0
+## (the gun's own numbers hold them), pending, depth 1, is_container false, note (the location; "can't be taken
+## off")}. No `item`: they can't be selected or dragged; the view offers "Take off" on them. [] for another item.
+static func mod_rows(snap: Snapshot, gun: Variant, tables: IdTables, actions: ItemActions) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for m: Dictionary in GunModFit.mods_on(snap, gun):
+		var d: IdTables.Def = tables.def_at("itype", m["type"]) if tables != null else null
+		var note := clean(str(m["location"]), MAX_NAME)
+		if int(m["flags"]) & GunModFit.IRREMOVABLE:
+			note += ", can't be taken off"
+		out.append({"uid": m["uid"], "mod_of": (gun as ItemRef).uid, "mod": m,
+				"name": clean(d.name if d != null and not d.name.is_empty() else "mod"), "count": 1, "exact": false,
+				"weight_g": 0, "volume_ml": 0, "pending": actions != null and actions.pending(m["uid"]) != "",
+				"depth": 1, "is_container": false, "note": note})
+	return out
 
 
 static func _add_row(col: Dictionary, g: Dictionary, row: Dictionary, count: bool) -> void:

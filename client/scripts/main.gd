@@ -214,6 +214,9 @@ func _ready() -> void:
 	aim.view = eyes_view    # and aiming: picks from in front of the player, bullets from the eyes
 	item_actions = ItemActions.new()
 	add_child(item_actions)
+	item_actions.refused.connect(func(_it: ItemRef, op: String, why: String) -> void:   # F1: CDDA's no to a fit / take-off
+		if vr == null and op in ["mod_add", "mod_remove"] and not why.is_empty():
+			grab.flash(why, true))
 	hands = Hands.new(world, item_actions)
 	add_child(hands)
 	grab.hands = hands
@@ -1063,6 +1066,10 @@ func _on_live_events(events: Array) -> void:
 func _context_line() -> String:
 	if live == null or vr != null or world.snapshot == null or not _in_main_loop():
 		return ""
+	var p := GunModFit.held_pair(hud_data.held.get("main"), hud_data.held.get("off"), world.snapshot, world.tables)
+	if not p.is_empty():   # F1: what E does with the gun and a gunmod in hand
+		return "%s: fit the %s" % [InputActions.key_of(&"use_held"),
+				InventoryModel.clean((p["mod"] as ItemRef).display_name(world.tables))]
 	var s: Vector2i = OCT_STEPS[_octant(Vector2(0, 1))]
 	return ContextPrompt.text(world.snapshot, world.tables, world.snapshot.player_pos + Vector3i(s.x, s.y, 0),
 			hud_settings.context_menu)
@@ -1396,6 +1403,25 @@ func _held_consumable() -> ItemRef:
 		if it is ItemRef and ItemActions.consumable(it, world.snapshot, world.tables):
 			return it
 	return null
+
+
+## F1 (gun modification on the flat screen): E with the gun wielded and a gunmod in the off hand fits it
+## (ItemActions.mod_add: CDDA's install, its questions as prompts, its odds and time); a "no" CDDA already gave
+## (wielded_gun `fits`) shows by the crosshair instead. False when the hands don't hold that pair (E goes on as usual).
+func _fit_held_mod() -> bool:
+	var p := GunModFit.held_pair(hud_data.held.get("main"), hud_data.held.get("off"), world.snapshot, world.tables)
+	if p.is_empty():
+		return false
+	var mod: ItemRef = p["mod"]
+	var gun: ItemRef = p["gun"]
+	var why := GunModFit.refusal(world.snapshot, mod.uid, InventoryModel.clean(gun.display_name(world.tables)))
+	if why != "":
+		grab.flash(why, true)
+	elif item_actions.mod_add(mod, gun):
+		grab.flash(GunModFit.fitting_line(world.snapshot, mod.uid, InventoryModel.clean(mod.display_name(world.tables))))
+	else:
+		grab.flash("You can't fit that now.", true)
+	return true
 
 
 ## The carried container with liquid in a hand (main hand first; the bridge's held state); null if none.
@@ -1953,6 +1979,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
+	if vr == null and live != null and _in_main_loop() and InputActions.pressed(event, &"use_held") \
+			and _fit_held_mod():
+		return   # F1: the gun wielded and a gunmod in the off hand: E fits it
 	if vr == null and (live == null or _in_main_loop()) and pour.handle(event, Time.get_ticks_msec()):
 		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):

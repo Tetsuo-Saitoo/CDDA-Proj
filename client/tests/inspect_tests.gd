@@ -15,6 +15,23 @@ const PACK := 504                      # worn backpack (no pockets in the mock t
 const STONE := 505                     # in the backpack
 
 
+## A backend with the two gunmod ops (F1): records the calls, answers nothing.
+class ModBackend:
+	extends RefCounted
+	var calls: Array = []
+
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append(["mod_add", uid, type, gun, gun_type, tag])
+		return true
+
+	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
+		calls.append(["mod_remove", uid, type, gun, gun_type, tag])
+		return true
+
+	func queued_actions() -> int:
+		return 0
+
+
 ## An item backend that takes every call and never answers: actions stay in flight.
 class Silent:
 	extends RefCounted
@@ -62,6 +79,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_toggle()
 	_test_carry()
 	_test_hotbar()
+	_test_gun_mods(data)
 	_view.free()
 	_hands.free()
 	_actions.free()
@@ -1021,3 +1039,95 @@ func _test_carry() -> void:
 	_view.character = null
 	_check.call(not box.visible and cd.changed.get_connections().is_empty(),
 			"inspect: no character data, no bars, nothing left connected")
+
+## F1, gun modification on the flat screen: the gun wielded and a gunmod in the off hand make E's pair (GunModFit);
+## CDDA's `fits` gives the odds or the reason; the Tab view lists the gun's mods under it (a "Take off" button and
+## right-click entry, none on an irremovable one), a drop of the mod on the gun's row (or a mod's) fits it, never in a
+## drag of several or of a non-mod; take-off sends the mod's handle; a refusal shows on the status line. The mock
+## tables have no gunmods: the rock's entry plays one for this test.
+func _test_gun_mods(data: Variant) -> void:
+	const GUN := 600
+	const MOD := 601
+	const ON := 602
+	const FIXED := 603
+	var hammer: int = _it["hammer"]
+	var rock: int = _it["rock"]
+	var rock_def := _tables.def_at("itype", rock)
+	var saved := rock_def.gunmod_location
+	rock_def.gunmod_location = "rail"
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	(d["player"] as Dictionary)["items"] = [[GUN, hammer, 0, -1, Snapshot.CARRIED_WIELDED],
+			[MOD, rock, 0, -1, Snapshot.CARRIED_OFFHAND]]
+	(d["player"] as Dictionary)["wielded_gun"] = {"type": hammer, "faults": [],
+			"mods": [[ON, rock, "rail", 0], [FIXED, rock, "sights", 1]], "fits": [[MOD, 1, 61, 8, ""]]}
+	var s := Snapshot.from_data(d)
+	_world.apply_snapshot(s)
+	_actions.on_snapshot(s)
+	var b := ModBackend.new()
+	_actions.backend = b
+	var gun := ItemRef.on_player(GUN, hammer, 0, -1, Snapshot.CARRIED_WIELDED, P)
+	var mod := ItemRef.on_player(MOD, rock, 0, -1, Snapshot.CARRIED_OFFHAND, P)
+	var pair := GunModFit.held_pair(gun, mod, s, _tables)
+	var not_pairs := [GunModFit.held_pair(mod, gun, s, _tables), GunModFit.held_pair(gun, gun, s, _tables),
+			GunModFit.held_pair(gun, null, s, _tables), GunModFit.held_pair(null, mod, s, _tables)]
+	_check.call(s.is_valid() and pair.get("gun") == gun and pair.get("mod") == mod and not_pairs.all(
+			func(p: Dictionary) -> bool: return p.is_empty()),
+			"gun mods F1: E's pair is the wielded gun and a gunmod in the off hand, nothing else (%s)" % s.error)
+	var fits0: Variant = s.player_gun.get("fits")
+	var odds := GunModFit.fitting_line(s, MOD, "rock")
+	var no_why := GunModFit.refusal(s, MOD, "hammer")
+	s.player_gun["fits"] = [{"uid": MOD, "ok": false, "chance": 0, "risk": 0, "reason": "is too difficult for you to modify."}]
+	var why := GunModFit.refusal(s, MOD, "hammer")
+	s.player_gun["fits"] = []
+	_check.call(odds == "Fitting the rock: 61% (8% risk of damage)." and no_why == "" and why
+			== "Your hammer is too difficult for you to modify." and GunModFit.refusal(s, MOD, "hammer") == ""
+			and GunModFit.fitting_line(s, MOD, "rock") == "Fitting the rock.",
+			"gun mods F1: CDDA's fits give the odds or its reason; not listed: CDDA decides (%s / %s)" % [odds, why])
+	s.player_gun["fits"] = fits0
+	_view.visible = true
+	_view.rebuild()
+	var hands_col := InventoryModel.find_column(_view.cols, "hands")
+	var main_uids := _uids(_group(hands_col, "main"))
+	var on_row: Dictionary = _view._rows_by_uid.get(ON, {})
+	var fixed_row: Dictionary = _view._rows_by_uid.get(FIXED, {})
+	_check.call(main_uids == [GUN, ON, FIXED] and _uids(_group(hands_col, "off")) == [MOD] and on_row.get("mod_of") == GUN
+			and not on_row.has("item") and str(fixed_row.get("note", "")).contains("can't be taken off")
+			and _view._mod_buttons.has(ON) and not _view._mod_buttons.has(FIXED) and _view.tick_box(ON) == null
+			and InventoryModel.find_row(_cols(), ON).is_empty(),
+			"gun mods F1: the Tab view lists the gun's mods under it, Take off on each but an irremovable one (%s)" % [main_uids])
+	var gun_target := {"kind": "row", "column": "hands", "row": _view._rows_by_uid[GUN]}
+	var mod_target := {"kind": "row", "column": "hands", "row": on_row}
+	var drag := {"inspect_uid": MOD, "type": rock}
+	_check.call(_view.plan(drag, gun_target)["do"] == "fit" and _view.plan(drag, mod_target)["do"] == "fit"
+			and _view.plan(drag, gun_target, false)["do"] == "none"
+			and _view.plan({"inspect_uid": GUN, "type": hammer}, gun_target)["do"] == "none"
+			and _view.drag_data(on_row) == null,
+			"gun mods F1: a gunmod dropped on the gun (or a mod on it) fits; not in a drag of several, nor the gun itself")
+	var right := InputEventMouseButton.new()
+	right.button_index = MOUSE_BUTTON_RIGHT
+	right.pressed = true
+	_view.row_input(on_row, right)
+	var menu := _view._menu_buttons.duplicate()
+	_view.row_input(fixed_row, right)
+	var fixed_menu := _view._menu_buttons.duplicate()
+	_check.call(menu.size() == 1 and menu[0] == _view._mod_buttons[ON] and fixed_menu.is_empty() and _view.selection.is_empty(),
+			"gun mods F1: right-click on a mod's row offers Take off (none on an irremovable one), selects nothing")
+	var dropped := _view.drop(drag, gun_target)
+	var add_call: bool = b.calls.size() == 1 and (b.calls[0] as Array).slice(0, 5) == ["mod_add", float(MOD), float(rock),
+			float(GUN), float(hammer)]
+	var fit_status := _view.status
+	_view.row_input(on_row, right)
+	_view.menu_pick(0)   # the menu's Take off
+	var off_call: bool = b.calls.size() == 2 and (b.calls[1] as Array).slice(0, 5) == ["mod_remove", float(ON), float(rock),
+			float(GUN), float(hammer)]
+	var fixed := _view.take_off(FIXED)
+	_check.call(dropped == "mod_add" and add_call and fit_status == "Fitting the rock: 61% (8% risk of damage)." and off_call
+			and fixed == "" and _view.status == "The rock can't be taken off." and b.calls.size() == 2,
+			"gun mods F1: the drop sends mod_add, Take off sends mod_remove; an irremovable one isn't sent (%s)" % [b.calls])
+	_actions.on_events([{"kind": "item_result", "detail": int(b.calls[0][5]), "amount": 0,
+			"text": "Your hammer is not a gun."}])
+	_check.call(_view.status == "Your hammer is not a gun.",
+			"gun mods F1: CDDA's refusal of a fit shows on the Tab view's status line (%s)" % _view.status)
+	_view.visible = false
+	_actions.backend = _mock
+	rock_def.gunmod_location = saved
