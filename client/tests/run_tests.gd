@@ -67,6 +67,7 @@ func _initialize() -> void:
 	preload("res://tests/vr_busy_tests.gd").new().run(root, _check)
 	preload("res://tests/vr_hint_tests.gd").new().run(root, _check)
 	preload("res://tests/vr_mouth_tests.gd").new().run(root, _check)
+	preload("res://tests/vr_aid_tests.gd").new().run(root, _check)
 	preload("res://tests/vr_hud_tests.gd").new().run(root, _check, tables)
 	preload("res://tests/vr_cheats_tests.gd").new().run(root, _check)
 	preload("res://tests/vr_range_tests.gd").new().run(root, _check, tables)
@@ -524,6 +525,17 @@ func _test_id_tables(t: IdTables) -> void:
 	_check(pt.is_valid() and pt.def_named("itype", "i_water").phase == "liquid" and pt.def_named("itype", "i_gas").phase == "gas"
 			and pt.def_named("itype", "i_odd").phase == "" and pt.def_named("itype", "i_x").phase == "",
 			"itype phase: CDDA's four kept; unknown or missing: \"\"")
+	var healing: Dictionary = base.duplicate(true)
+	healing["itype"].append_array([{"id": "i_bandage", "heal": 5}, {"id": "i_newer", "heal": 64 | 2}])
+	var ht := IdTables.from_data(healing)
+	var bad_heal: Array = []
+	for v: Variant in ["5", -1, 1.5, 70000, NAN, [1]]:
+		var hd: Dictionary = base.duplicate(true)
+		hd["itype"].append({"id": "i_bad", "heal": v})
+		bad_heal.append(IdTables.from_data(hd).is_valid())
+	_check(ht.is_valid() and ht.def_named("itype", "i_bandage").heal == 5 and ht.def_named("itype", "i_newer").heal == 2
+			and ht.def_named("itype", "i_x").heal == 0 and bad_heal == [false, false, false, false, false, false],
+			"itype heal: first aid bits kept, unknown bits dropped, missing 0, junk fails the tables (%s)" % [bad_heal])
 	var examined: Dictionary = base.duplicate(true)
 	examined["furn"].append_array([{"id": "f_fire", "examine": "fireplace"}, {"id": "f_odd", "examine": "rm -rf /"},
 			{"id": "f_none", "examine": ""}])

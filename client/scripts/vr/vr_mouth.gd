@@ -3,7 +3,7 @@ extends RefCounted
 ## Eat or drink in VR (VrRig `mouth`): bring what a hand holds to the mouth and keep it there HOLD_S; CDDA's own
 ## consume goes out (ItemActions.consume, the bridge's "consume" op: its rules, its questions on the panel, its
 ## time; a bottle drinks what is inside it). Only a carried item ItemActions.consumable calls food, drink or pills (or
-## a container holding some), with nothing in flight for it and no menu or panel open. A light tick when the hand
+## a container holding some; not first aid: VrAid takes that to a body part), with nothing in flight for it and no menu or panel open. A light tick when the hand
 ## reaches the mouth, a buzz when sent; CDDA's no (with its reason) by that hand. The hand leaves the mouth (LEAVE_M)
 ## before it can again. The time it takes shows as VrBusy's "Eating..." (CDDA's activity).
 
@@ -52,7 +52,8 @@ func edible(i: int, item: ItemRef) -> bool:
 		return false
 	if actions.pending(item.uid) != "" or _sent.size() >= MAX_SENT or rig.ui_open() or rig.pack.hand == i:
 		return false
-	return ItemActions.consumable(item, rig.world.snapshot, rig.world.tables)
+	return ItemActions.consumable(item, rig.world.snapshot, rig.world.tables) \
+			and VrAid.heals(item, rig.world.tables) == 0
 
 
 ## Hand i at `at` holding `item` (null: none) for `delta` seconds: NONE, NEAR (at the mouth, waiting HOLD_S) or SENT

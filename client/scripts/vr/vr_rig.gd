@@ -208,6 +208,7 @@ var mood: VrMood           # the player's mood as a soft edge, under the hurt ed
 var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
 var hint: VrHint           # G6: the one-time hint shown now, low in front (main.gd gives the flat Hints)
 var mouth: VrMouth         # eat or drink what a hand brings to the mouth (main.gd gives it ItemActions)
+var aid: VrAid             # first aid a hand brings to a body part (main.gd gives it ItemActions)
 var cook: VrCook           # L9: cards over pots on the heat near the head (built in _build)
 var fire: VrFire           # L9: lighting and putting out fires by hand (built in _build; backend = cook's)
 var slots: VrSlots         # L8 slice 5: worn holsters and pouches as places on the body (built in _build)
@@ -370,6 +371,8 @@ func _build() -> void:
 	add_child(hint)
 	mouth = VrMouth.new()
 	mouth.rig = self
+	aid = VrAid.new()
+	aid.rig = self
 	_fade_node = _make_fade()
 	camera.add_child(_fade_node)
 	_arc_mesh = ImmediateMesh.new()
@@ -562,6 +565,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 		var id: String = HAND_IDS[i]
 		var held := hands.holding(id)
 		mouth.update(i, held_item(i), c.global_position, delta)   # food or a drink held at the mouth: eaten
+		aid.update(i, held_item(i), c.global_position, delta)   # a bandage held to a hurt part: applied
 		if held.is_empty():
 			_fly_t[i] = -1.0
 			_from_pack[i] = -1

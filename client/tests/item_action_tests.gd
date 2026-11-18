@@ -64,8 +64,8 @@ class FakeBackend:
 
 	var tags: Array = []   # consume_item's tags, in order
 
-	func consume_item(uid: float, type: float, tag := 0) -> bool:
-		calls.append(["consume", uid, type])
+	func consume_item(uid: float, type: float, tag := 0, part := "") -> bool:
+		calls.append(["consume", uid, type] if part == "" else ["consume", uid, type, part])
 		tags.append(tag)
 		return ok
 
@@ -227,6 +227,51 @@ func _test_consume() -> void:
 	ls.free()
 
 
+## A backend whose consume_item takes no part (as MockItems): consume without one still reaches it.
+class OldBackend extends RefCounted:
+	var calls: Array = []
+
+	func consume_item(uid: float, type: float, tag := 0) -> bool:
+		calls.append([uid, type, tag])
+		return true
+
+	func queued_actions() -> int:
+		return 0
+
+
+## consume with a body part (first aid, lead-vr): only one of PARTS goes out, as the backend's 4th argument; none:
+## the old 3-argument call; LiveSession adds "part" only when set and refuses one that isn't a short plain id.
+func _test_consume_part() -> void:
+	var a := ItemActions.new()
+	var b := FakeBackend.new()
+	a.backend = b
+	a.on_snapshot(_snap(5, [], [[41, 1, 0, -1, 0], [42, 1, 0, -1, 0]]))
+	var it := ItemRef.on_player(41, 1, 0, -1, 0, SQ)
+	var bad := not a.consume(it, "hand_l") and not a.consume(it, "arm_l".repeat(8)) and not a.consume(it, "Arm_L") \
+			and not a.consume(it, "arm_l\n") and b.calls.is_empty()
+	var good := a.consume(it, "arm_l") and b.calls == [["consume", 41.0, 1.0, "arm_l"]] \
+			and b.tags == [ItemActions.TAG_BASE]
+	a.free()
+	var old := ItemActions.new()
+	var ob := OldBackend.new()
+	old.backend = ob
+	old.on_snapshot(_snap(5, [], [[42, 1, 0, -1, 0]]))
+	var three := old.consume(ItemRef.on_player(42, 1, 0, -1, 0, SQ)) and ob.calls == [[42.0, 1.0, ItemActions.TAG_BASE]]
+	old.free()
+	var ls := LiveSession.new()
+	var sim := QueueSim.new()
+	ls._sim = sim
+	var sent := ls.consume_item(41.0, 1.0, 7, "arm_l") and ls.consume_item(41.0, 1.0, 7)
+	var refused := not ls.consume_item(41.0, 1.0, 7, "arm l") and not ls.consume_item(41.0, 1.0, 7, "a".repeat(33)) \
+			and not ls.consume_item(41.0, 1.0, 7, "1arm") and sim.sent.size() == 2
+	ls.free()
+	_check.call(bad and good and three and sent and refused
+			and sim.sent == [{"op": "consume", "item": 41, "type": 1, "tag": 7, "part": "arm_l"},
+			{"op": "consume", "item": 41, "type": 1, "tag": 7}],
+			"item actions: consume's body part: only a main part, as the 4th argument; none is the old call; LiveSession sends it only when set (%s)"
+			% [sim.sent])
+
+
 ## A stand-in for CddaSim's queue_item_action: records what it is given, queues while `accept`.
 class QueueSim extends RefCounted:
 	var sent: Array = []
@@ -250,6 +295,7 @@ func run(_root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_pour_hold()
 	_test_hold()
 	_test_consume()
+	_test_consume_part()
 	print("mock items")
 	_test_mock(data, tables)
 	_test_mock_caps(data, tables)

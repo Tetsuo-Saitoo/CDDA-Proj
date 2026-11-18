@@ -610,6 +610,7 @@ func _start_vr() -> void:
 	aim.hits.player_hurt.connect(vr.hurt.hurt)   # and a short buzz in both hands
 	vr.gun.actions = item_actions   # magazine out / in by hand (unload / reload)
 	vr.mouth.actions = item_actions   # food or a drink brought to the mouth: CDDA's consume
+	vr.aid.actions = item_actions   # first aid brought to a body part: CDDA's consume on that part
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	vr.wheel.request_ui = request_ui   # radial menus by hand: CDDA's menu as a wheel around the hand
 	vr.wheel.queue_action = vr.gun.queue_action
