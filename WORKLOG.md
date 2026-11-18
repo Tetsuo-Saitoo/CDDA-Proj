@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — rest_live_test (QA lead) tells the bridge from the screen: the bridge must have a newer snapshot every 2 s while time passes, the screen gets 5 s to show one. A busy machine made the old single 2 s limit fail once though the bridge was on time.
 - 2026-11-17 — The gun in your hands on the flat screen now shows the mods installed on it (simple boxes at their places, as in VR), and with a scope or sight fitted, aiming brings the gun up so you look over the sight. It shows up once the game sends the gun's mods (coming with the gun-mod work). Client tests pass.
 - 2026-11-17 — Bridge: gun mods by hand, the game side (for lead-vr's feature): the snapshot says which mods the gun in hand has, which slots are free and which carried mods fit and why not, and two new actions fit a mod on the gun or take it off by CDDA's rules, questions and time. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-17 — Bridge: the snapshot also lists the extra squares a car blocks when it stands at an angle (the game fills the diagonal gaps between its boards and doors), so the client can show and block them like the game does. Fork tests pass on Windows and Linux, client tests pass.
