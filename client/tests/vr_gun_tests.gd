@@ -51,7 +51,8 @@ class Later:
 func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_check = check
 	print("vr gun")
-	for id: String in ["rock", "hammer", "2x4", "bag_canvas", "glock_19", "glockmag", "9mm", "remington_870"]:
+	for id: String in ["rock", "hammer", "2x4", "bag_canvas", "glock_19", "glockmag", "9mm", "remington_870",
+			"suppressor", "rifle_scope", "laser_sight"]:
 		_it[id] = tables.index_of("itype", id)
 	_check.call(VrGun.loadable(ItemRef.on_player(5, _it["glockmag"], 0, -1, 0, P), tables)
 			and VrGun.loadable(ItemRef.on_player(5, _it["9mm"], 0, -1, 0, P), tables)
@@ -73,6 +74,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_mag_pending()
 	_test_rack()
 	_test_long_gun()
+	_test_mods()
 	_test_hostile()
 	_test_no_gun()
 	_aim.crosshair.free()
@@ -662,6 +664,43 @@ func _test_long_gun() -> void:
 	_frame()
 	_check.call(four and empty and not g.count.visible and g.rounds == -1,
 			"vr gun: the round count over the grip says the loaded rounds, red at 0, none for a gun with no ammo")
+	_snap.player_gun = {"type": _it["glock_19"], "dirt": 0, "faults": [], "rounds": 0}
+	_captured()
+	_frame()
+
+
+## Gun modification, S1: the mods CDDA lists as installed show as boxes at their slots on the model in hand; a change
+## in the list makes them again without rebuilding the gun; junk entries are left out; no mods, no boxes.
+func _test_mods() -> void:
+	var g := _rig.gun
+	_snap.player_gun = {"type": _it["remington_870"], "dirt": 0, "faults": [], "rounds": 2, "mods": [
+		{"uid": 501, "type": _it["suppressor"], "location": "muzzle", "flags": 0},
+		{"uid": 502, "type": _it["rifle_scope"], "location": "sights", "flags": 0},
+		{"uid": 503, "type": _it["laser_sight"], "location": "rail", "flags": 0},
+		{"uid": "x", "type": 5, "location": "rail"}, {"uid": 504, "type": 5, "location": "<b>rail</b>"}, 7]}
+	_captured()
+	_frame()
+	var m := g.model
+	var h := _part(GunMods.HOLDER)
+	var boxes: Array = h.get_children() if h != null else []
+	var where := []
+	for b: Node in boxes:
+		where.append([b.get_meta("uid"), b.get_meta("location"), (b as Node3D).position])
+	var muz: Vector3 = GunMods.slot("long", "muzzle")["at"]
+	var ok: bool = g.shape == "long" and boxes.size() == 3 and g.mods.size() == 3 and where[0][0] == 501 \
+			and where[0][2].is_equal_approx(muz) and where[1][1] == "sights" and where[2][1] == "rail" \
+			and muz.z < _part("Muzzle").position.z and (where[1][2] as Vector3).y > 0.03
+	_snap.player_gun["mods"] = (_snap.player_gun["mods"] as Array).slice(1, 3)   # the suppressor came off
+	_captured()
+	_frame()
+	h = _part(GunMods.HOLDER)
+	var after: Array = h.get_children() if h != null else []
+	var one_less: bool = g.model == m and after.size() == 2 and after[0].get_meta("uid") == 502
+	_snap.player_gun.erase("mods")
+	_captured()
+	_frame()
+	_check.call(ok and one_less and _part(GunMods.HOLDER) == null and g.mods.is_empty() and g.model == m,
+			"vr gun: installed mods show at their slots (suppressor past the muzzle, scope on top); one off, one box less; none, none (%s)" % [where])
 	_snap.player_gun = {"type": _it["glock_19"], "dirt": 0, "faults": [], "rounds": 0}
 	_captured()
 	_frame()
