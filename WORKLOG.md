@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — In VR a bench vise lying next to you holds your gun: let go of the gun at the vise and it stays there, both hands free to fit or pull off mods; grip it to take it back, or walk away and it's back in your hand. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — In VR you can take a mod off your gun by hand: grip it with your other hand and pull; let go early and it clicks back. The game decides (a fixed mod says it can't come off) and the mod lands in your hand. Client tests pass; not yet tried in a headset.
 - 2026-11-17 — In VR you can fit a mod to your gun by hand: hold a mod in your other hand near the gun, the place it goes lights up green (or red, with the game's reason, when it doesn't fit) and shows the odds; let go there and the game fits it. Client tests pass; not yet tried in a headset.
 - 2026-11-17 — Gun modification by hand: the client now reads the game's list of mods on the held gun, which carried mods fit and why not, and the gun's free mod slots (with the bridge's part still to come). Client tests pass.

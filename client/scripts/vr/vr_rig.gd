@@ -649,7 +649,7 @@ func slot_take(i: int, pt: Dictionary, tt: Dictionary) -> ItemRef:
 
 ## Hand i is the main hand and a gun shows in it (VrGun).
 func _gun_hand(i: int) -> bool:
-	return gun.shown and _ctrl(i) == main_ctrl()
+	return gun.shown and not gun.clamped() and _ctrl(i) == main_ctrl()   # in a bench vise: the hand is free
 
 
 ## Controller c's grip button is held.
@@ -920,6 +920,8 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 		return ""
 	var held := hands.holding(id)
 	if held.is_empty():
+		if gun.let_go_gun(c):
+			return "vise"   # the gun let go at a bench vise's jaws: it stays there (VrGun)
 		if _gun_hand(0 if c == left else 1) and world.snapshot != null:   # the gun's grip let go at a slot: in it goes
 			var g := cdda_holds(c)
 			var gd := slots.drop_for(c.global_position, g) if g != null else {}
@@ -1283,7 +1285,8 @@ func _sync_held() -> void:
 		var node: VrHeld = left_held if i == 0 else right_held
 		var h: Variant = _held.get("main" if _ctrl(i) == main_ctrl() else "off")
 		node.visible = h is Dictionary and not (h as Dictionary).is_empty() \
-				and (hands == null or hands.proxy(HAND_IDS[i]) == null) and not _gun_hand(i)
+				and (hands == null or hands.proxy(HAND_IDS[i]) == null) and not _gun_hand(i) \
+				and not (gun.clamped() and _ctrl(i) == main_ctrl())   # the wielded gun is in a vise
 
 
 ## The same, now (VrGun when its gun shows or goes).
