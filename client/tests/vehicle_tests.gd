@@ -299,15 +299,17 @@ func _test_shift(root: Node, view: VehicleView, snap: Snapshot, world: WorldView
 	gore.apply(snap, world)
 	view.apply(snap, world)
 	var before: Vector3 = view.hull(VehicleView.Look.SOLID)[0][0]
+	var o0: Vector3 = (view.drawn(UID) as Transform3D).origin
 	var d := world.coords.set_bubble_origin(snap.bubble_origin + Vector3i(1, 0, 0))
 	for v: Node in [view, fields, gore]:
 		v.call("shift", d)
-	var moved := (view.get_child(0) as Node3D).position == d
+	var moved := (view.drawn(UID) as Transform3D).origin.is_equal_approx(o0 + d)
 	for v: Node in [view, fields, gore]:
 		v.call("apply", snap, world)
 	var after: Vector3 = view.hull(VehicleView.Look.SOLID)[0][0]
-	var home := fields.get_child_count() + gore.get_child_count() > 0
-	for v: Node in [view, fields, gore]:
+	var home := fields.get_child_count() + gore.get_child_count() > 0 \
+			and (view.drawn(UID) as Transform3D).origin.is_equal_approx(o0 + d)
+	for v: Node in [fields, gore]:
 		for c: Node in v.get_children():
 			home = home and (c as Node3D).position == Vector3.ZERO
 	var back := world.coords.set_bubble_origin(snap.bubble_origin)
@@ -318,6 +320,54 @@ func _test_shift(root: Node, view: VehicleView, snap: Snapshot, world: WorldView
 			"vehicles: after a map shift the vehicle, field and gore views are placed once, not twice (%s -> %s)" % [before, after])
 	fields.queue_free()
 	gore.queue_free()
+
+
+## Slice 3: a vehicle that moved glides from where it is drawn to its new pose over about the time it took (its mesh
+## kept), and the eyes of a player on it ride along (ride_transform); a far jump shows at once. A car on sloping
+## ground leans with it (tilt_of); flat ground gives no tilt.
+func _test_glide(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
+	var car := snap.vehicles[0]
+	var b0 := view.built
+	var start: Transform3D = view.drawn(UID)
+	var e0 := world.coords.ms_center_to_world(car.square(0))
+	car.pos += Vector3i(3, 0, 0)
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	var c: VehicleView.Car = view._cars[UID]
+	var at0: Transform3D = view.drawn(UID)
+	view.glide(c.dur * 0.5)
+	var mid: Transform3D = view.drawn(UID)
+	var player := snap.player_pos
+	snap.player_pos = car.square(0)
+	var e1 := world.coords.ms_center_to_world(car.square(0))
+	var seated := (view.ride_transform(snap) * e1).is_equal_approx(e0.lerp(e1, 0.5))
+	view.glide(c.dur)
+	var arrived := view.ride_transform(snap) == Transform3D() and (view.drawn(UID) as Transform3D).is_equal_approx(c.to)
+	snap.player_pos = player
+	_check.call(view.built == b0 and at0.is_equal_approx(start) and mid.origin.is_equal_approx(start.origin.lerp(c.to.origin, 0.5))
+			and seated and arrived and c.dur >= VehicleView.GLIDE_MIN and c.dur <= VehicleView.GLIDE_MAX,
+			"vehicles: a car that moved glides there over %.2f s, its mesh kept, and the eyes ride with it" % c.dur)
+	car.pos += Vector3i(97, 0, 0)
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	var far := (view.drawn(UID) as Transform3D).is_equal_approx(c.to)
+	car.pos -= Vector3i(100, 0, 0)
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	view.glide(10.0)
+	_check.call(far and (view.drawn(UID) as Transform3D).is_equal_approx(start),
+			"vehicles: a far jump (a teleport, the map loaded again) is shown at once")
+	var ramp := VehicleView.tilt_of([Vector3(0, 0, 0), Vector3(1, 0.5, 0), Vector3(2, 1.0, 0), Vector3(0, 0, 1),
+			Vector3(1, 0.5, 1), Vector3(2, 1.0, 1)])
+	var ahead := ramp.basis * Vector3.RIGHT
+	var steep := VehicleView.tilt_of([Vector3(0, 0, 0), Vector3(1, 3.0, 0)])
+	var side := VehicleView.tilt_of([Vector3(0, 0, 0), Vector3(0, 0.25, 1), Vector3(1, 0, 0), Vector3(1, 0.25, 1)])
+	var flat := VehicleView.pose_of(car, world)
+	_check.call(is_equal_approx(ahead.y / ahead.x, 0.5) and absf(ahead.z) < 1e-5 and absf(ramp.origin.y) < 1e-5
+			and is_equal_approx((steep.basis * Vector3.RIGHT).angle_to(Vector3.RIGHT), atan(VehicleView.MAX_SLOPE))
+			and is_equal_approx((side.basis * Vector3.BACK).y / (side.basis * Vector3.BACK).z, 0.25)
+			and (flat.basis * Vector3.UP).is_equal_approx(Vector3.UP),
+			"vehicles: on a ramp a car leans with the ground under it (along and across, at most 45 degrees); flat ground, no lean")
 
 
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
@@ -359,9 +409,16 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var south: Vector3 = wheel_axis.call()
 	_check.call(absf(east.z) > 0.99 and absf(south.x) > 0.99,
 			"vehicles: parts turn with the facing (wheel axles across the car: %s facing east, %s facing south)" % [east, south])
-	_check.call(cached and view.built == b0 + 1, "vehicles: a vehicle is drawn afresh only when it changes (%d, %d)" % [b0, view.built])
+	var turned_kept := view.built == b0
+	car.face_deg = 45.0
+	view.apply(snap, world)
+	_check.call(cached and turned_kept and view.built == b0 + 1,
+			"vehicles: a vehicle's mesh is kept while it moves or turns by right angles, built again when its stretch changes (%d, %d)" % [b0, view.built])
 	car.face_deg = 0.0
+	view.apply(snap, world)
+	view.glide(10.0)
 	_test_shift(root, view, snap, world)
+	_test_glide(view, snap, world)
 	# tint: the half-broken board is darker than intact, the broken halfboard charred, glass only where unbroken
 	var def := func(id: String) -> IdTables.Def: return tables.def_named("vpart", id)
 	var intact := VehicleView.color_of(VehicleView.Kind.BOARD, def.call("board"), 255, 0)

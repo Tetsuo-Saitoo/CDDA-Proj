@@ -31,6 +31,9 @@ var pitch := 0.0
 var sensitivity := 0.003
 var invert_y := false
 var target := Vector3.ZERO   # follow: where the eyes are headed
+## () -> Transform3D: while the player is on a vehicle still gliding to where the snapshot puts it, the eyes ride
+## with it (VehicleView.ride_transform, set by main.gd); identity otherwise.
+var ride := Callable()
 var _has_target := false
 
 
@@ -101,9 +104,17 @@ func follow_square(sq: Vector3i) -> void:
 	follow = true
 	z = sq.z
 	target = _eye(world.coords.ms_center_to_world(sq))
-	if not _has_target or position.distance_to(target) > SNAP_DIST:
+	var r := _ride()
+	if r != Transform3D():
+		position = r * target   # seated in the vehicle where it is drawn, not where the snapshot jumped
+	elif not _has_target or position.distance_to(target) > SNAP_DIST:
 		position = target
 	_has_target = true
+
+
+func _ride() -> Transform3D:
+	var r: Variant = ride.call() if ride.is_valid() else null
+	return r if r is Transform3D and (r as Transform3D).is_finite() else Transform3D()
 
 
 ## The Godot origin moved (map shift): keep standing on the same square.
@@ -132,7 +143,8 @@ func step(delta: float, inp: Dictionary) -> void:
 	if lk != Vector2.ZERO:
 		set_look(yaw - lk.x * STICK_LOOK * delta, pitch - lk.y * STICK_LOOK * delta)
 	if follow:
-		position = position.lerp(target, 1.0 - exp(-FOLLOW_RATE * delta))
+		var r := _ride()
+		position = r * target if r != Transform3D() else position.lerp(target, 1.0 - exp(-FOLLOW_RATE * delta))
 		return
 	var mv: Vector2 = inp.get("move", Vector2.ZERO)
 	if mv == Vector2.ZERO or world.snapshot == null:
