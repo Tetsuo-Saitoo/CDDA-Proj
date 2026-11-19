@@ -215,6 +215,7 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 			% [car.part_count() if car != null else 0, car.face_deg if car != null else "?", tried])
 	if seen:
 		_vehicles_ok("a car spawned facing 45 degrees")
+		print("    its cells farthest from their squares: %s" % [_cells_off(car)])
 	var on_me := await _cheat(_spawn_vehicle("car", _main.world.snapshot.player_pos, 0))
 	var unknown := await _cheat(_spawn_vehicle("car_nope", start + Vector3i(0, 30, 0), 0))
 	_check(on_me.contains("in the way") and unknown == "No such vehicle.",
@@ -223,6 +224,28 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 	_check(_spawn_vehicle("car", start + Vector3i(0, 30, 0), 360) == 0
 			and _spawn_vehicle("a".repeat(65), start + Vector3i(0, 30, 0), 0) == 0,
 			"vehicle spawn: a facing of 360 or an overlong id isn't sent")
+
+
+## For a report: the four cells of `veh` whose place in its drawn grid (VehicleView.frame_of) is farthest from the
+## square CDDA has the part on: [[mount, the square's offset from the vehicle's position, metres apart], ...].
+func _cells_off(veh: Snapshot.Vehicle) -> Array:
+	var vv: VehicleView = _main.vehicles_view
+	if not vv.has_method("frame_of"):
+		return []
+	var f: Transform3D = vv.call("frame_of", veh, _main.world.coords)
+	var rows := []
+	var seen := {}
+	for i in veh.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		var m := Vector2i(veh.parts[k], veh.parts[k + 1])
+		if (veh.parts[k + 4] & Snapshot.VPART_FILLER) != 0 or seen.has(m):
+			continue
+		seen[m] = true
+		var cell: Vector3 = f * Vector3(m.x, 0.0, m.y)
+		var sq: Vector3 = _main.world.coords.ms_center_to_world(veh.square(i))
+		rows.append([m, Vector2i(veh.parts[k + 5], veh.parts[k + 6]), snappedf(Vector2(cell.x - sq.x, cell.z - sq.z).length(), 0.01)])
+	rows.sort_custom(func(a: Array, b: Array) -> bool: return a[2] > b[2])
+	return rows.slice(0, 4)
 
 
 ## Asks the game for vehicle `id` on `pos` facing `facing` degrees: the op id, 0 when not sent (LiveSession's own
