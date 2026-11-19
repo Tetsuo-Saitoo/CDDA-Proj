@@ -304,10 +304,11 @@ func _deltas_done() -> void:
 
 
 ## The vehicles of the shown snapshot are drawn where their parts' squares are, after the move `what` (VehicleView
-## with bodies, C5 slice 2; skipped, said once, on a client without them): every layer of the view that draws
-## something sits at the origin again, and the bodies' vertices and the small parts' places lie within 2 m of a
-## square of a vehicle (a cell stretched at an angle, a cut corner, a wheel pushed out). A view that kept a map
-## shift would be a submap (12 m) off.
+## with bodies, C5 slice 2; skipped, said once, on a client without them): the bodies' vertices and the small parts'
+## places lie within 2 m of a square of a vehicle (a cell stretched at an angle, a cut corner, a wheel pushed out),
+## and what is on screen is there too: with a node per vehicle (slice 3: VehicleView.drawn) each node, its glide
+## finished, is at the pose the snapshot gives it (pose_of); before that, every layer that draws something sits at
+## the origin again. A view that kept a map shift would be a submap (12 m) off.
 func _vehicles_ok(what: String) -> void:
 	var vv: VehicleView = _main.vehicles_view
 	if vv == null or not vv.has_method("hull"):
@@ -324,12 +325,22 @@ func _vehicles_ok(what: String) -> void:
 	if cells.is_empty():
 		print("  (%s: no vehicle in the snapshot)" % what)
 		return
-	var moved := []
-	for c: Node in vv.get_children():
-		var draws: bool = c is MeshInstance3D or (c is MultiMeshInstance3D
-				and (c as MultiMeshInstance3D).multimesh != null and (c as MultiMeshInstance3D).multimesh.instance_count > 0)
-		if draws and not (c as Node3D).position.is_zero_approx():
-			moved.append([c.name, (c as Node3D).position])
+	var moved := []   # what is on screen somewhere else than the snapshot puts it
+	if vv.has_method("drawn"):
+		vv.call("glide", 10.0)   # a glide still going ends
+		for veh: Snapshot.Vehicle in snap.vehicles:
+			var at: Variant = vv.call("drawn", veh.uid)
+			var pose: Variant = vv.call("pose_of", veh, _main.world)
+			if at is Transform3D and not (pose is Transform3D and (at as Transform3D).is_equal_approx(pose)):
+				moved.append([veh.uid, (at as Transform3D).origin, (pose as Transform3D).origin if pose is Transform3D else pose])
+		if not (vv as Node3D).transform.is_equal_approx(Transform3D()):
+			moved.append(["the view", (vv as Node3D).position])
+	else:
+		for c: Node in vv.get_children():
+			var draws: bool = c is MeshInstance3D or (c is MultiMeshInstance3D
+					and (c as MultiMeshInstance3D).multimesh != null and (c as MultiMeshInstance3D).multimesh.instance_count > 0)
+			if draws and not (c as Node3D).position.is_zero_approx():
+				moved.append([c.name, (c as Node3D).position])
 	var pts := PackedVector3Array()
 	for look: int in VehicleView.Look.values():
 		var verts: PackedVector3Array = vv.call("hull", look)[0]
@@ -347,7 +358,7 @@ func _vehicles_ok(what: String) -> void:
 			off.append(p)
 	_veh_seen.append(pts.size())
 	_check(moved.is_empty() and off.is_empty() and not pts.is_empty(), ("vehicles, %s: the %d in the snapshot are drawn "
-			+ "on their squares (%d points compared; off: %s; layers not at the origin: %s)")
+			+ "on their squares (%d points compared; off: %s; on screen elsewhere: %s)")
 			% [what, snap.vehicles.size(), pts.size(), off, moved])
 
 
