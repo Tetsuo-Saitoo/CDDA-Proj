@@ -178,6 +178,59 @@ func _stairs_live() -> void:
 	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"teleported back to the arrival square (%s)" % _main.world.snapshot.player_pos)
 	await _deltas_ok("back at the arrival square")
+	await _spawn_vehicle_live(start)
+
+
+## The range's vehicle spawn through the client (the bridge's range_spawn_vehicle; skipped, said so, on a bridge
+## without it): a car facing 45 degrees on the first of a few squares round the arrival square `start` where the
+## game takes it. The snapshot then lists one vehicle more, facing 45, and it is drawn on its squares (_vehicles_ok:
+## a vehicle off the axes). On the player's own square, or with an id that is no prototype, the game refuses in its
+## words; a facing of 360 or an overlong id isn't sent.
+func _spawn_vehicle_live(start: Vector3i) -> void:
+	if not _live.sim().has_method("range_spawn_vehicle"):
+		print("  (no vehicle spawn in this bridge: not checked)")
+		return
+	var before := {}
+	for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+		before[veh.uid] = true
+	var tried := []
+	var placed := false
+	for d: Vector3i in [Vector3i(14, 14, 0), Vector3i(14, -14, 0), Vector3i(-14, -14, 0), Vector3i(-18, 18, 0),
+			Vector3i(22, 0, 0), Vector3i(0, 22, 0), Vector3i(0, -22, 0), Vector3i(-22, 0, 0), Vector3i(30, 30, 0)]:
+		var why := await _cheat(_spawn_vehicle("car", start + d, 45))
+		tried.append([d, why])
+		if why == "":
+			placed = true
+			break
+	var fresh := func() -> Snapshot.Vehicle:
+		for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+			if not before.has(veh.uid):
+				return veh
+		return null
+	var listed := func() -> bool: return fresh.call() != null and not _main.world.busy()
+	var seen := placed and await _until(listed, SHOW_TIMEOUT_MS)
+	var car: Snapshot.Vehicle = fresh.call()
+	_check(seen and car != null and is_equal_approx(car.face_deg, 45.0) and car.part_count() > 20,
+			"vehicle spawn: a car facing 45 degrees is placed and the snapshot lists it (%s parts, facing %s; tried %s)"
+			% [car.part_count() if car != null else 0, car.face_deg if car != null else "?", tried])
+	if seen:
+		_vehicles_ok("a car spawned facing 45 degrees")
+	var on_me := await _cheat(_spawn_vehicle("car", _main.world.snapshot.player_pos, 0))
+	var unknown := await _cheat(_spawn_vehicle("car_nope", start + Vector3i(0, 30, 0), 0))
+	_check(on_me.contains("in the way") and unknown == "No such vehicle.",
+			"vehicle spawn: refused in the game's words on the player's square (\"%s\") and for an id that is no prototype (\"%s\")"
+			% [on_me, unknown])
+	_check(_spawn_vehicle("car", start + Vector3i(0, 30, 0), 360) == 0
+			and _spawn_vehicle("a".repeat(65), start + Vector3i(0, 30, 0), 0) == 0,
+			"vehicle spawn: a facing of 360 or an overlong id isn't sent")
+
+
+## Asks the game for vehicle `id` on `pos` facing `facing` degrees: the op id, 0 when not sent (LiveSession's own
+## call once it has one, else its range op with the bridge's method).
+func _spawn_vehicle(id: String, pos: Vector3i, facing: int) -> int:
+	if _live.has_method("range_spawn_vehicle"):
+		return int(_live.call("range_spawn_vehicle", id, pos, facing))
+	return _live._range_op("range_spawn_vehicle", [id, pos, facing])
 
 
 ## A walk across a submap border: the teleport cheat a submap's width (12 squares) to one side of `start`, which
