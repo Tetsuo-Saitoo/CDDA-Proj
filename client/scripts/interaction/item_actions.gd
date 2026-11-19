@@ -222,12 +222,19 @@ func consume(item: ItemRef, part := "") -> bool:
 ## Gun modification by hand: fits the carried gunmod `mod` onto the wielded gun `gun` (bridge op "mod_add": CDDA's
 ## gunmod_add with that very mod, its questions real requests, its time). Backend method mod_add_item(uid, type, gun,
 ## gun_type, tag); judged by its item_result (TAGGED_OPS), or done early once the snapshot lists the mod on the gun.
-func mod_add(mod: ItemRef, gun: ItemRef) -> bool:
+## `vise` / `vise_type` (V3): the bench vise the gun is clamped in (its snapshot handle; Vise.odds: better odds), sent
+## after the tag as mod_add_item(..., tag, vise, vise_type); 0, 0: none (the old call).
+func mod_add(mod: ItemRef, gun: ItemRef, vise := 0, vise_type := 0) -> bool:
 	if not _ok_ref(mod) or not mod.carried or not _ok_ref(gun) or not gun.carried or not gun.is_wielded() \
 			or mod.uid == gun.uid:
 		return false
+	var named := vise != 0 or vise_type != 0
+	if named and (vise <= 0 or vise >= Snapshot.MAX_UID or vise_type <= 0 or vise_type > Snapshot.MAX_ID
+			or vise == mod.uid or vise == gun.uid):
+		return false
 	return _send("mod_add", mod, gun.duplicate_ref(), Vector2(-1, -1), "mod_add_item",
-			[float(mod.uid), float(mod.type), float(gun.uid), float(gun.type)])
+			[float(mod.uid), float(mod.type), float(gun.uid), float(gun.type)],
+			[float(vise), float(vise_type)] if named else [])
 
 
 ## Takes the gunmod `mod_uid` (itype `mod_type`, one the snapshot's wielded_gun `mods` lists) off the wielded gun `gun`
