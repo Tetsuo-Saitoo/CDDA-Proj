@@ -179,6 +179,7 @@ func _stairs_live() -> void:
 			"teleported back to the arrival square (%s)" % _main.world.snapshot.player_pos)
 	await _deltas_ok("back at the arrival square")
 	await _spawn_vehicle_live(start)
+	await _drive_live(start)
 
 
 ## The range's vehicle spawn through the client (the bridge's range_spawn_vehicle; skipped, said so, on a bridge
@@ -224,6 +225,230 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 	_check(_spawn_vehicle("car", start + Vector3i(0, 30, 0), 360) == 0
 			and _spawn_vehicle("a".repeat(65), start + Vector3i(0, 30, 0), 0) == 0,
 			"vehicle spawn: a facing of 360 or an overlong id isn't sent")
+
+
+## Driving through the client (the bridge's control_vehicle and vehicle spawn, VehicleView with a node per vehicle;
+## skipped, said so, without any of them). A car facing east is spawned on a stretch of open hub floor, the player
+## walks in through the door next to its controls and takes them (control_vehicle), sets a speed (UP) and lets
+## turns pass. Each turn the car rolled, with the view's own gliding switched off: the node is still where it was
+## drawn, a part of the glide brings it nearer the snapshot's pose, the camera's ride transform isn't the identity
+## meanwhile, and the whole glide ends on the pose with the ride the identity again. The player stays on the car.
+## Then the car is stopped, the controls let go, and the player walks out and goes back to `start`.
+func _drive_live(start: Vector3i) -> void:
+	var vv: VehicleView = _main.vehicles_view
+	var asking := func() -> bool: return _live.request.get("timed", false)   # the main loop's request lists its actions
+	await _until(asking, SHOW_TIMEOUT_MS)
+	if not _live.sim().has_method("range_spawn_vehicle") or not vv.has_method("drawn") \
+			or not "control_vehicle" in (_live.request.get("actions", []) as Array):
+		print("  (no vehicle spawn or no control_vehicle in this bridge, or no node per vehicle in this client: driving not checked)")
+		return
+	# a lane of open floor: the car's own squares and 26 more ahead of it (east), 7 wide
+	var before := {}
+	for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+		before[veh.uid] = true
+	var feet := _floor_at(start)
+	var at := Vector3i.ZERO
+	var placed := false
+	for dy in range(-40, 41, 4):
+		for dx in range(-40, 21, 4):
+			var c := start + Vector3i(dx, dy, 0)
+			if placed or maxi(absi(dx), absi(dy)) < 8 or not _lane_open(c, feet):
+				continue
+			if await _cheat(_spawn_vehicle("car", c, 0)) == "":
+				placed = true
+				at = c
+	var car_of := func() -> Snapshot.Vehicle:
+		for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+			if not before.has(veh.uid):
+				return veh
+		return null
+	var listed := func() -> bool: return car_of.call() != null and not _main.world.busy()
+	var seen := placed and await _until(listed, SHOW_TIMEOUT_MS)
+	_check(seen, "driving: a car facing east stands on open floor at %s" % at)
+	if not seen:
+		return
+	var car: Snapshot.Vehicle = car_of.call()
+	var uid := car.uid
+	# the controls' square, the closed door beside it, and the floor outside that door
+	var seat := Vector3i.MAX
+	var doors := {}
+	for i in car.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		var kind := VehicleView.kind_of(VehicleView.def_of(_main.world.tables, _main.world.snapshot, car.parts[k + 2]),
+				car.parts[k + 4])
+		if kind == VehicleView.Kind.CONTROLS:
+			seat = car.square(i)
+		elif kind == VehicleView.Kind.DOOR or kind == VehicleView.Kind.GLASS_DOOR:
+			doors[car.square(i)] = true
+	var door := Vector3i.MAX
+	var out := Vector3i.MAX
+	for d: Vector3i in [Vector3i(0, -1, 0), Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(1, 0, 0)]:
+		if seat != Vector3i.MAX and door == Vector3i.MAX and doors.has(seat + d) and _floor_at(seat + d * 2) == feet \
+				and _main.world.snapshot.vehicle_at(seat + d * 2).is_empty():
+			door = seat + d
+			out = seat + d * 2
+	var by_door := func() -> bool: return _main.world.snapshot.player_pos == out and not _main.world.busy()
+	var there: bool = door != Vector3i.MAX and await _cheat(_live.cheat_teleport(out)) == "" \
+			and await _until(by_door, SHOW_TIMEOUT_MS)
+	_check(there, "driving: the player stands outside the door next to the car's controls (controls %s, door %s, player %s)"
+			% [seat, door, _main.world.snapshot.player_pos])
+	if not there:
+		return
+	var step_in := _step_name(door - out)
+	var seated := func() -> bool: return _main.world.snapshot.player_pos == seat and not _main.world.busy()
+	for n in 6:   # the door opens, then two steps
+		if seated.call():
+			break
+		await _turn(step_in)
+	_check(seated.call(), "driving: walking in through the door (%s) puts the player on the controls' square (%s)"
+			% [step_in, _main.world.snapshot.player_pos])
+	if not seated.call():
+		return
+	_live.queue_action("control_vehicle")
+	var driving := func() -> bool: return _player_field("driving") == true
+	var took := await _until_slow(driving, OP_TIMEOUT_MS)
+	_check(took and _player_field("vehicle") == uid, "driving: control_vehicle takes the controls: the snapshot says driving, on that vehicle (%s)"
+			% [_player_field("vehicle")])
+	if not took:
+		return
+	vv.set_process(false)   # its glide by hand from here on
+	for n in 4:
+		_live.queue_action("UP")
+	var rolled := 0
+	var glided := 0
+	var bad := []
+	for n in 6:
+		var pos0 := (car_of.call() as Snapshot.Vehicle).pos
+		await _turn("pause")
+		var now: Snapshot.Vehicle = car_of.call()
+		if now == null:
+			bad.append("turn %d: the car is gone" % n)
+			break
+		var pose: Transform3D = vv.call("pose_of", now, _main.world)
+		var a0: Variant = vv.call("drawn", uid)
+		if now.pos == pos0 or not a0 is Transform3D:
+			vv.call("glide", 10.0)
+			continue
+		rolled += 1
+		var d0 := (a0 as Transform3D).origin.distance_to(pose.origin)
+		var ride0: Transform3D = vv.call("ride_transform", _main.world.snapshot)
+		vv.call("glide", 0.04)
+		var d1 := (vv.call("drawn", uid) as Transform3D).origin.distance_to(pose.origin)
+		vv.call("glide", 10.0)
+		var end: Transform3D = vv.call("drawn", uid)
+		var ride1: Transform3D = vv.call("ride_transform", _main.world.snapshot)
+		if d0 > 0.5 and d1 < d0 and d1 > 0.0 and not ride0.is_equal_approx(Transform3D()) \
+				and end.is_equal_approx(pose) and ride1.is_equal_approx(Transform3D()):
+			glided += 1
+		else:
+			bad.append("turn %d: %.2f m off, then %.2f; ride %s, at the end %s; on the pose %s" % [n, d0, d1,
+					not ride0.is_equal_approx(Transform3D()), not ride1.is_equal_approx(Transform3D()), end.is_equal_approx(pose)])
+	var last: Snapshot.Vehicle = car_of.call()
+	var went := _main.world.snapshot.player_pos.x - seat.x
+	var aboard: bool = last != null and not _main.world.snapshot.vehicle_at(_main.world.snapshot.player_pos).is_empty() \
+			and (_main.world.snapshot.vehicle_at(_main.world.snapshot.player_pos)[0] as Snapshot.Vehicle).uid == uid
+	_check(rolled >= 3 and glided == rolled and went >= 6 and aboard and bad.is_empty(),
+			"driving: UP x4 and six turns roll the car %d squares east with the player on it; each of the %d turns it rolled, the node glides from where it was drawn onto the new pose and the eyes ride along (%s)"
+			% [went, rolled, bad])
+	# stop (back to no speed), let go, walk out
+	for n in 4:
+		_live.queue_action("DOWN")
+	for n in 12:
+		var v: Snapshot.Vehicle = car_of.call()
+		if v == null or is_zero_approx(v.velocity):
+			break
+		await _turn("pause")
+	vv.call("glide", 10.0)
+	vv.set_process(true)
+	_live.queue_action("control_vehicle")
+	var menu := func() -> bool: return _live.request.get("kind", "") == "menu"
+	var let_go := -1
+	if await _until(menu, SHOW_TIMEOUT_MS):
+		for e: Variant in _live.request.get("entries", []):
+			if e is Dictionary and e.get("enabled", false) and CddaText.plain(str(e.get("label", ""))).contains("Let go"):
+				let_go = int(e.get("id", -1))
+		_answered = int(_live.request["id"])
+		_live.answer({"id": _answered, "entry": let_go} if let_go >= 0 else {"id": _answered, "cancel": true})
+	var free := func() -> bool: return _player_field("driving") == null
+	var stopped := let_go >= 0 and await _until_slow(free, OP_TIMEOUT_MS)
+	var stands: Snapshot.Vehicle = car_of.call()
+	_check(stopped and stands != null and is_zero_approx(stands.velocity),
+			"driving: DOWN stops the car and \"Let go of controls\" from CDDA's menu ends the driving (velocity %s)"
+			% [stands.velocity if stands != null else "?"])
+	var step_out := _step_name(out - door)
+	var here := _main.world.snapshot.player_pos
+	for n in 6:   # onto the door's square, then out
+		if _main.world.snapshot.vehicle_at(_main.world.snapshot.player_pos).is_empty():
+			break
+		await _turn(step_out)
+	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
+	_check(_main.world.snapshot.player_pos != here and await _cheat(_live.cheat_teleport(start)) == ""
+			and await _until(back, SHOW_TIMEOUT_MS), "driving: the player walks out of the car (%s) and is back at the arrival square (%s)"
+			% [step_out, _main.world.snapshot.player_pos])
+
+
+## Queues CDDA action `act` and waits for the turn it takes to show (or 5 s when it takes none).
+func _turn(act: String) -> void:
+	var turn := _main.world.snapshot.turn
+	var pos := _main.world.snapshot.player_pos
+	_live.queue_action(act)
+	var passed := func() -> bool:
+		var s: Snapshot = _main.world.snapshot
+		return (s.turn > turn or s.player_pos != pos) and s.seq == _live.sim().get_snapshot_seq() and not _main.world.busy()
+	await _until(passed, 5000)
+
+
+## The step action that moves by `d` (one square along an axis).
+func _step_name(d: Vector3i) -> String:
+	return {Vector3i(0, -1, 0): "UP", Vector3i(1, 0, 0): "RIGHT", Vector3i(0, 1, 0): "DOWN", Vector3i(-1, 0, 0): "LEFT"}.get(d, "pause")
+
+
+## The terrain index of square `sq` when it is plain floor in the shown snapshot (known, a floor, no furniture, no
+## vehicle), else -1.
+func _floor_at(sq: Vector3i) -> int:
+	var sm: Snapshot.Submap = _main.world.snapshot.submaps.get(CddaCoords.ms_to_sm(sq))
+	if sm == null:
+		return -1
+	var l := CddaCoords.ms_to_local(sq)
+	var i := l.y * CddaCoords.SEEX + l.x
+	if (sm.flags[i] & (Snapshot.FLAG_NO_FLOOR | Snapshot.FLAG_VEHICLE)) != 0 or sm.furn[i] != 0:
+		return -1
+	return sm.ter[i]
+
+
+## Whether a car put on `c` facing east has open floor of terrain `feet` under it and for 26 squares ahead, 7 wide,
+## with no creature on it.
+func _lane_open(c: Vector3i, feet: int) -> bool:
+	if feet < 0:
+		return false
+	for dy in range(-3, 4):
+		for dx in range(-5, 27):
+			var sq := c + Vector3i(dx, dy, 0)
+			if _floor_at(sq) != feet or _main.world.snapshot.creature_at(sq) != null or sq == _main.world.snapshot.player_pos:
+				return false
+	return true
+
+
+## `player.<key>` of the bridge's newest snapshot as JSON gives it (fields the client's parser doesn't read yet);
+## null when it isn't there.
+func _player_field(key: String) -> Variant:
+	var d: Variant = JSON.parse_string(_live.sim().get_snapshot_json(0, 0))
+	var p: Variant = (d as Dictionary).get("player") if d is Dictionary else null
+	var v: Variant = (p as Dictionary).get(key) if p is Dictionary else null
+	return int(v) if v is float and key == "vehicle" else v
+
+
+## _until for a condition that is slow to work out: asked every 0.25 s.
+func _until_slow(cond: Callable, timeout_ms: int) -> bool:
+	var deadline := Time.get_ticks_msec() + timeout_ms
+	while Time.get_ticks_msec() < deadline:
+		if cond.call():
+			return true
+		if _live.state == "ended" or _live.state == "failed":
+			return false
+		_answer_prompt()
+		await create_timer(0.25).timeout
+	return false
 
 
 ## For a report: the four cells of `veh` whose place in its drawn grid (VehicleView.frame_of) is farthest from the
