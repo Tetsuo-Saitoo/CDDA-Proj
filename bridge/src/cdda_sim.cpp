@@ -684,6 +684,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
           a.op == fp3d::item_op::mod_remove ) && !ref( "container", "container_type", a.container ) ) {
         return false;
     }
+    // mod_add, optional: the vise the gun is clamped in (both keys or neither); no other op has it. The sim checks
+    // that it is one and lies within reach.
+    if( ( d.has( "vise" ) || d.has( "vise_type" ) ) &&
+        ( a.op != fp3d::item_op::mod_add || !ref( "vise", "vise_type", a.vise ) ) ) {
+        return false;
+    }
     if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
         if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
             return false;

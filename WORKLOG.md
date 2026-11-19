@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Gun mods: a gun clamped in a bench vise now fits mods more easily, as the user chose: 20 points more on the game's install odds and half the risk of damaging the gun, same time, and a vise is never needed. In VR the odds by your hand say "in the vise". Fork and client tests pass; not tried live or in a headset; the flat-screen vise gets it next (lead-ui).
 - 2026-11-18 — Delta snapshots measured on a starved machine (28 busy processes): during a long wait the screen now falls at most 0.7-0.8 s behind the game instead of 1.1-1.6 s, during sleep 1.1-1.3 s instead of 2.6-2.8 s (before this work: up to 2.9 s in a wait). Walking was not measured.
 - 2026-11-18 — First aid on a named body part checked in a running game (QA lead): in actions_live_test a bandage aimed at the unhurt left arm is refused in CDDA's words with no menu, and with no part named CDDA's own menu still comes.
 - 2026-11-18 — Delta snapshots checked across map shifts and levels in a running game (QA lead): range_ui_live_test crosses a submap border, takes the stairs up and down and jumps to another zone, and after each move what the game shows equals a plain snapshot; the bridge sends a full one after a shift or a change of level and deltas again a turn later.
