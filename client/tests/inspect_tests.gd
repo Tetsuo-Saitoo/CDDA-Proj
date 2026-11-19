@@ -20,8 +20,9 @@ class ModBackend:
 	extends RefCounted
 	var calls: Array = []
 
-	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
-		calls.append(["mod_add", uid, type, gun, gun_type, tag])
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0, vise := 0.0,
+			vise_type := 0.0) -> bool:
+		calls.append(["mod_add", uid, type, gun, gun_type, tag] + ([vise, vise_type] if vise != 0.0 else []))
 		return true
 
 	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:

@@ -140,10 +140,12 @@ func _test_clamp(s: Snapshot, b: RefCounted) -> void:
 	_check.call(on_b != null and not on_b.disabled and _bench.button_of(FIXED) == null and mod_b != null
 			and not mod_b.disabled and _bench.button_of(STRAY) == null,
 			"vise bench: Take off on each removable mod, Fit on the judged gunmod")
+	var odds_row: String = (mod_b.get_parent().get_child(0) as Label).text
 	mod_b.pressed.emit()
 	var calls: Array = b.get("calls")
 	var add_call: bool = calls.size() == 1 and (calls[0] as Array).slice(0, 5) == ["mod_add", float(MOD),
 			float(_it["suppressor"]), float(GUN), float(_it["glock_19"])]
+	var vise_named: bool = calls.size() == 1 and (calls[0] as Array).slice(6) == [float(v), float(_it["bench_vise"])]
 	var fit_status := _bench.status
 	var name := ViseBench._name(_tables, _it["suppressor"])
 	var busy := _bench.button_of(MOD) != null and _bench.button_of(MOD).disabled
@@ -151,9 +153,13 @@ func _test_clamp(s: Snapshot, b: RefCounted) -> void:
 	var off_call: bool = calls.size() == 2 and (calls[1] as Array).slice(0, 5) == ["mod_remove", float(ON),
 			float(_it["laser_sight"]), float(GUN), float(_it["glock_19"])]
 	var fixed := _bench.take_off(FIXED)
-	_check.call(add_call and fit_status == GunModFit.fitting_line(s, MOD, name) and fit_status.contains("61%") and busy
+	_check.call(add_call and fit_status == GunModFit.FITTING_ODDS % [name, 81, 4] and busy
 			and off_call and fixed == "" and _bench.status.ends_with("can't be taken off.") and calls.size() == 2,
 			"vise bench: Fit sends mod_add, Take off mod_remove; an irremovable one isn't sent (%s / %s)" % [calls, fit_status])
+	_check.call(vise_named and odds_row.contains("81% (4% risk of damage) with the vise")
+			and ViseBench.fitting_line("x", 85, 6, true) == GunModFit.FITTING % "x"
+			and ViseBench.fitting_line("x", 61, 8, false) == GunModFit.FITTING_ODDS % ["x", 61, 8],
+			"vise bench V3: a fit names the vise; the panel and its line show the vise's odds, none once sure (%s)" % odds_row)
 	_actions.on_events([{"kind": "item_result", "detail": int(calls[0][5]), "amount": 0,
 			"text": "Your Glock is not a gun."}])
 	var refused := _bench.status
