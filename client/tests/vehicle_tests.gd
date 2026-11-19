@@ -430,6 +430,14 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call(half.get_luminance() < intact.get_luminance() and broken.get_luminance() < half.get_luminance()
 			and not glass.has(VehicleView.Look.GLASS) and glass.has(VehicleView.Look.SOLID) and worn_tyre == VehicleView.TYRE,
 			"vehicles: damaged parts darken, broken ones char, broken glass is gone, worn tyres stay black")
+	var b1 := view.built
+	view.max_verts = 0
+	view.apply(snap, world)
+	var none := view.get_child_count() == 0 and view.count() == 0 and view.built == b1
+	view.max_verts = VehicleView.MAX_VERTS
+	view.apply(snap, world)
+	_check.call(none and view.get_child_count() == 1 and view.built == b1 + 1,
+			"vehicles: past the vertex budget for all vehicles the rest aren't built; drawn again when there's room")
 	view.view_z_max = CAR.z - 1
 	view.apply(snap, world)
 	_check.call(view.count() == 0 and view.hull(VehicleView.Look.SOLID)[0].is_empty() and view.get_child_count() == 0,
