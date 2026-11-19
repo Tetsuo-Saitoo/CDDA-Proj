@@ -2,10 +2,14 @@ class_name Vise
 extends RefCounted
 ## Gun modification, vise (V1 VR in VrGun; V2 the flat screen): a bench vise (CDDA's `bench_vise`, tool quality VISE 3)
 ## lying on the player's square or one of the 8 around it holds the wielded gun so both hands are free to fit mods.
-## Only the client shows the gun in it: CDDA still wields it, and nothing about it goes to CDDA. Snapshot data only
-## (the submaps' checked handles), capped.
+## Only the client shows the gun in it: CDDA still wields it. Fitting a mod there names the vise in mod_add (V3, an
+## FP3D rule in the fork, the user's choice 2026-11-18): CDDA's odds get ROLL_BONUS more and half the damage risk
+## (`odds`); the time stays CDDA's and nothing needs a vise. Snapshot data only (the submaps' checked handles), capped.
 
 const ITEM := "bench_vise"
+## The fork's fp3d::vise_roll_bonus (cdda/src/fp3d/item_hands.h vise_odds): keep the two the same. The rule is written
+## once, in contracts/bridge_api.md (Gun mods by hand, mod_add's `vise`).
+const ROLL_BONUS := 20
 const MAX_NEAR := 8        # vises looked at, at most
 const JAWS_UP := 0.05      # its jaws: this far (m) above the middle of the drawn item
 
@@ -35,6 +39,17 @@ static func near(s: Snapshot, tables: IdTables) -> Array[int]:
 				if out.size() >= MAX_NEAR:
 					return out
 	return out
+
+
+## CDDA's odds without tools for a mod (player_gun `fits` chance and risk, 0..100) with the gun in a vise, as the fork
+## gives them (vise_odds): Vector2i(chance + ROLL_BONUS at most 100, risk / 2).
+static func odds(chance: int, risk: int) -> Vector2i:
+	return Vector2i(clampi(chance + ROLL_BONUS, 0, 100), clampi(risk, 0, 100) / 2)
+
+
+## The id tables' itype index of the bench vise (what mod_add names with its uid); 0 when they have none.
+static func type_of(tables: IdTables) -> int:
+	return maxi(tables.index_of("itype", ITEM), 0) if tables != null else 0
 
 
 ## Where vise `uid` holds a gun (world): JAWS_UP above the middle of the item as drawn (ItemPicker.slot: its pile's

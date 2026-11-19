@@ -178,6 +178,16 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   repair kit, gunsmith repair kit); answering no or cancelling gives an `item_result` "Never mind.". Then CDDA's
   activity and time (the mod's install time). `item_result` done means the activity started; how it ended (a
   difficult mod can fail and damage the gun) comes with CDDA's message and the next snapshots' `mods`.
+  `vise` + `vise_type` (2026-11-18, optional, `mod_add` only; FP3D rule on top of CDDA, the user's choice): the
+  vise the client shows the gun clamped in, an item with tool quality VISE 3 (CDDA's bench vise) lying on the
+  character's square or one next to it, the character's or nobody's. Then CDDA's odds without tools get 20 points
+  more (at most 100) and half the damage risk, before its menu (the repair kits apply on top: firearm kit x2 and
+  half again, gunsmith kit x3 and no risk); at 100 no menu comes and the activity starts at once. The time stays
+  CDDA's. Refused before anything is asked: "The X can't hold a gun." (a clamp is too small), "That vise isn't
+  within reach.", "The X isn't yours." and "You can't reach that while you're riding.". A mod CDDA calls too
+  difficult (odds 0, the `fits` reason) stays refused; nothing needs a vise. `fits` gives the odds without one: a
+  client shows min(chance + 20, 100) and risk / 2 for a gun in a vise. `vise` on another op, or one key without
+  the other → `false`.
   `mod_remove`: `item` + `type` a mod from `mods`. Refused for one that can't be taken off (`mods` flag 1) and
   when CDDA can't unload the mod. When the character couldn't put it back, CDDA's "Are you sure?  You may be
   lacking the skills needed to reattach this modification." comes as a request; no gives "Never mind.". Takes

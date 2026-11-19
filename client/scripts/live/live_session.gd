@@ -688,22 +688,29 @@ func consume_item(uid: float, type: float, tag := 0, part := "") -> bool:
 
 ## Gun modification by hand: fit the carried gunmod `uid` onto the wielded gun `gun` (bridge op "mod_add"), or take the
 ## installed gunmod `uid` off it ("mod_remove"); `tag` 1..MAX_ITEM_TAG answers with an item_result (0: none). An older
-## bridge refuses the op (false).
-func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
-	return _mod_item("mod_add", uid, type, gun, gun_type, tag)
+## bridge refuses the op (false). mod_add's `vise` / `vise_type`: the bench vise the gun is clamped in (a handle; 0, 0
+## none: the keys left out), checked here and by the sim (within reach, VISE 3).
+func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0, vise := 0.0,
+		vise_type := 0.0) -> bool:
+	if vise == 0.0 and vise_type == 0.0:
+		return _mod_item("mod_add", uid, type, gun, gun_type, tag)
+	if not handle_ok(vise, vise_type) or vise == uid or vise == gun:
+		return false
+	return _mod_item("mod_add", uid, type, gun, gun_type, tag, {"vise": int(vise), "vise_type": int(vise_type)})
 
 
 func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
 	return _mod_item("mod_remove", uid, type, gun, gun_type, tag)
 
 
-func _mod_item(op: String, uid: float, type: float, gun: float, gun_type: float, tag: int) -> bool:
+func _mod_item(op: String, uid: float, type: float, gun: float, gun_type: float, tag: int, extra := {}) -> bool:
 	if _sim == null or not handle_ok(uid, type) or not handle_ok(gun, gun_type) or uid == gun or tag < 0 \
 			or tag > MAX_ITEM_TAG:
 		return false
 	var a := {"op": op, "item": int(uid), "type": int(type), "container": int(gun), "container_type": int(gun_type)}
 	if tag > 0:
 		a["tag"] = tag
+	a.merge(extra)
 	return bool(_sim.queue_item_action(a))
 
 

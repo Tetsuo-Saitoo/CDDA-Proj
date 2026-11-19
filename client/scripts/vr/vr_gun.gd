@@ -42,7 +42,8 @@ extends Node3D
 ##   gun there (`vise`; CDDA still wields it, only shown so): the main hand is free (VrRig._gun_hand false) and fits or
 ##   pulls off mods and racks like the off hand (the magazine stays the off hand's); the trigger doesn't fire, no live
 ##   aim. The main grip on the gun's Grip takes it back; the head more than VISE_LEAVE_M away, or the vise taken or
-##   gone: back in the hand (UNCLAMPED).
+##   gone: back in the hand (UNCLAMPED). V3: a mod fitted there names the vise in mod_add, and the odds by the hand
+##   are the vise's (Vise.odds: CDDA's roll + 20, half the risk; the fork does the same).
 ## The sim decides every outcome. Snapshot data is checked and capped here; per frame only a pose and a few distances.
 
 const SHAPES: Array[String] = ["pistol", "long", "launcher"]   # WeaponViewmodel shapes with the named parts
@@ -95,6 +96,8 @@ const VISE_M := 0.15          # the main grip let go this near a bench vise's ja
 const VISE_LEAVE_M := 2.0     # the head farther than this from the gun in a vise: back in the hand
 const TAKE_M := 0.1           # the main grip this near the Grip of the gun in a vise takes it back
 const UNCLAMPED := "You take your gun out of the vise."
+const ODDS := "%s: %d%% (%d%% risk of damage)"
+const IN_VISE := "%s: %d%% in the vise (%d%% risk of damage)"
 const NO_FIT := "That doesn't fit this gun."
 
 var rig: VrRig
@@ -158,7 +161,7 @@ var ghost: MeshInstance3D     # where it goes: a see-through box at its slot (gr
 var _hint := ""               # the line last said by the off hand for `fit`
 var _pull := {}               # an installed mod the off grip holds: {uid, type, hand, start (model space), box, rest}
 var _take_mod := {}           # a mod CDDA took off: {uid, hand}: into that hand once carried, if its grip is still down
-var vise := {}                # the bench vise the gun is held in: {uid, pose (the gun's, world)}; {}: in the hand
+var vise := {}                # the bench vise the gun is held in: {uid, type, pose (the gun's, world)}; {}: in the hand
 var _vises: Array[int] = []   # the bench vises in reach (Vise.near), per snapshot
 var _hinted := {}             # VR hint ids asked for this run (VrRig.hint_due; Hints shows each once, ever)
 var _hint_left := 0.0
@@ -368,7 +371,7 @@ func let_go_gun(c: XRController3D) -> bool:
 	if best < 0:
 		return false
 	_update_hold()
-	vise = {"uid": best, "pose": _hold}
+	vise = {"uid": best, "type": Vise.type_of(rig.world.tables if rig.world != null else null), "pose": _hold}
 	_kick = 0.0
 	fire_wait = 0.0
 	rig.feel(c)
@@ -412,7 +415,8 @@ func let_go_mod(c: XRController3D, it: ItemRef) -> bool:
 	var o := {"op": "mod_add", "uid": it.uid, "item": it, "fit": f, "hand": _index(c)}
 	_op = o
 	_hint = ""
-	if actions.mod_add(it, gun):
+	var sent := actions.mod_add(it, gun, int(vise["uid"]), int(vise["type"])) if clamped() else actions.mod_add(it, gun)
+	if sent:
 		return true   # (a backend that answers inside the call has had _on_finished / _on_refused run already)
 	if is_same(_op, o):
 		_op = {}
@@ -560,11 +564,16 @@ func _mod_near(c: XRController3D) -> Dictionary:
 	var ok: bool = f.is_empty() or f["ok"] == true   # not listed: CDDA decides when it is let go
 	var text := FITS
 	var chance: int = f.get("chance", 100)
+	var risk: int = f.get("risk", 0)
+	if ok and clamped():
+		var o := Vise.odds(chance, risk)
+		chance = o.x
+		risk = o.y
 	if not ok:
 		var why: String = f.get("reason", "")
 		text = "Your %s %s" % [_gun_name(), why] if not why.is_empty() else NO_FIT
 	elif chance < 100:
-		text = "%s: %d%% (%d%% risk of damage)" % [FITS, chance, int(f.get("risk", 0))]
+		text = (IN_VISE if clamped() else ODDS) % [FITS, chance, risk]
 	return {"uid": it.uid, "item": it, "location": loc, "at": at, "size": s["size"], "ok": ok, "text": text,
 			"near": dist <= FIT_M}
 
