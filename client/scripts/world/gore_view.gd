@@ -73,6 +73,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			mi = _layer(KINDS[id][0], KINDS[id][1])
 			add_child(mi)
 			_layers[id] = mi
+		mi.position = Vector3.ZERO   # placed with today's origin: a shift moved the old ones only
 		var xs: Array = by_kind[id]
 		mi.multimesh.instance_count = xs.size()
 		for i in xs.size():
