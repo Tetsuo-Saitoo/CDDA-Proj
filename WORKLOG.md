@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
+- 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
 - 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
 - 2026-11-18 — Vehicles checked after map shifts in a running game (QA lead): range_ui_live_test compares where the hub's car is drawn with its squares after crossing a submap border; without the fix in the vehicle view it shows the car 12 m off.

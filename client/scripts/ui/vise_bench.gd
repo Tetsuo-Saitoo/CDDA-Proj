@@ -6,7 +6,8 @@ extends PanelContainer
 ## odds, or its reason). Only the client shows the gun in the vise: CDDA still wields it and nothing about the vise
 ## goes to CDDA. Esc (BackOut "vise"), "Take the gun back", E on the vise again, walking off (the vise out of reach:
 ## Vise.near) or the gun no longer wielded end it (released). Fitting and taking off go through ItemActions.mod_add /
-## mod_remove, the same as E and the Tab view (GunModFit).
+## mod_remove, the same as E and the Tab view (GunModFit). V3: a fit from here names the vise (mod_add's vise), so CDDA
+## rolls with Vise.odds (+20, half the risk); the panel shows those odds.
 
 signal released(why: String)
 
@@ -230,7 +231,8 @@ func refresh() -> void:
 		if not f["ok"]:
 			line += ": " + (str(f["reason"]) if str(f["reason"]) != "" else "doesn't fit")
 		elif int(f["chance"]) < 100:
-			line += ": %d%% (%d%% risk of damage)" % [f["chance"], f["risk"]]
+			var o := Vise.odds(f["chance"], f["risk"])   # V3: the vise's better odds (the fork applies them)
+			line += ": %d%% (%d%% risk of damage) with the vise" % [o.x, o.y] if o.x < 100 else ": sure, with the vise"
 		var b := _button("Fit", fit_mod.bind(f["uid"]), f["pending"] or not f["ok"])
 		_list.add_child(_row(line, Color.WHITE if f["ok"] else BAD, b))
 		_buttons[f["uid"]] = b
@@ -246,9 +248,10 @@ func fit_mod(uid: int) -> String:
 		var why := GunModFit.refusal(_snap(), uid, InventoryModel.clean(gun.display_name(_tables())))
 		if why != "":
 			return _said(why)
-		if not actions.mod_add(f["item"], gun):
+		var vt := Vise.type_of(_tables())   # V3: named, the vise gives better odds (the fork checks it)
+		if not actions.mod_add(f["item"], gun, vise_uid if vt > 0 else 0, vt if vt > 0 else 0):
 			return _said("You can't fit that now.")
-		_said(GunModFit.fitting_line(_snap(), uid, f["name"]), false)
+		_said(fitting_line(f["name"], f["chance"], f["risk"], vt > 0), false)
 		refresh()
 		return "mod_add"
 	return ""
@@ -269,6 +272,13 @@ func take_off(uid: int) -> String:
 		refresh()
 		return "mod_remove"
 	return ""
+
+
+## The line once fitting `mod_name` is asked for: CDDA's odds (`fits` chance and risk), the vise's (Vise.odds) when
+## `with_vise`; none at 100 %.
+static func fitting_line(mod_name: String, chance: int, risk: int, with_vise: bool) -> String:
+	var o := Vise.odds(chance, risk) if with_vise else Vector2i(clampi(chance, 0, 100), clampi(risk, 0, 100))
+	return GunModFit.FITTING_ODDS % [mod_name, o.x, o.y] if o.x < 100 else GunModFit.FITTING % mod_name
 
 
 ## ItemActions refused a fit or take-off: its reason on the panel.
