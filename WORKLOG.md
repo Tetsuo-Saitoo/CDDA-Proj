@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
 - 2026-11-18 — Delta snapshots measured on a starved machine (28 busy processes): during a long wait the screen now falls at most 0.7-0.8 s behind the game instead of 1.1-1.6 s, during sleep 1.1-1.3 s instead of 2.6-2.8 s (before this work: up to 2.9 s in a wait). Walking was not measured.
 - 2026-11-18 — First aid on a named body part checked in a running game (QA lead): in actions_live_test a bandage aimed at the unhurt left arm is refused in CDDA's words with no menu, and with no part named CDDA's own menu still comes.
