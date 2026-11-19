@@ -480,8 +480,22 @@ func _frame_outside(target: Vector3) -> void:
 	camera.look_from(target + Vector3(-20, 28, 30), target)
 
 
+## C5, VrRig.ride: the vehicle the player is on, [uid, where VehicleView draws it now, where the snapshot puts it
+## (its drawn pose without the glide still to go: ride_transform)]; [] when none or not drawn.
+func _vr_ride() -> Array:
+	var s := world.snapshot
+	var at := s.vehicle_at(s.player_pos) if s != null and vehicles_view != null else []
+	if at.is_empty():
+		return []
+	var uid := (at[0] as Snapshot.Vehicle).uid
+	var d: Variant = vehicles_view.drawn(uid)
+	if not d is Transform3D:
+		return []
+	return [uid, d, vehicles_view.ride_transform(s).affine_inverse() * (d as Transform3D)]
+
+
 ## First person and VR: the body stands under the eyes and turns with them, head hidden. Outside: on the
-## player's square, facing the way first person last looked.
+## player's square (on a gliding vehicle, where it is drawn: ride_transform), facing the way first person last looked.
 func _place_player_body() -> void:
 	if world.snapshot == null:
 		player_body.visible = false
@@ -495,6 +509,9 @@ func _place_player_body() -> void:
 		yaw = vr.camera.global_rotation.y
 	elif first_person:
 		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
+	elif vehicles_view != null:
+		var r := vehicles_view.ride_transform(world.snapshot)
+		at = r * at if r.is_finite() else at
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
@@ -597,6 +614,7 @@ func _start_vr() -> void:
 	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
+	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)

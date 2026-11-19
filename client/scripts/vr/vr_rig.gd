@@ -128,6 +128,10 @@ var right_hand: VrHand
 var _boxes: Array[MeshInstance3D] = []   # simple hands (setting hands = boxes)
 const BOX_WRIST := Vector3(0, 0, 0.13)   # the wrist behind a box hand, controller space
 var body: PlayerBody      # the player's body (main.gd): its arms reach for these hands (drive_body)
+## C5: () -> Array: the vehicle the player is on, [uid, where VehicleView draws it now, where the snapshot puts it]
+## (both Transform3D, world); [] when none (main.gd). Standing on it, the rig rides along (ride_along).
+var ride := Callable()
+var riding := VrRide.new()
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -455,6 +459,7 @@ func _process(delta: float) -> void:
 		inp["turn"] = wand_turn(inp["turn"], tc.get_is_active() and tc.is_button_pressed(&"primary_click"),
 				settings["turn"] == "smooth")
 	update_panel(delta)
+	ride_along()
 	step(delta, inp)
 	follow_ground(delta)
 	update_pointer()
@@ -1436,12 +1441,32 @@ func shift(d: Vector3) -> void:
 	if not d.is_finite():
 		return
 	position += d
+	riding.shift(d)
 	if pack != null and is_instance_valid(pack):
 		pack.position += d
 	if tray != null and is_instance_valid(tray):
 		tray.shift(d)
 	for i in _fly_from.size():
 		_fly_from[i].origin += d
+
+
+## Each frame (C5): while the head stands on the vehicle the player is on (`ride`: the head's spot on it as drawn, put
+## where the snapshot has it, is one of its squares on this level), the rig rides along as it glides (VrRide: turned
+## and moved with it, the height its own); stepping off, or no vehicle, stops it.
+func ride_along() -> void:
+	var r: Variant = ride.call() if ride.is_valid() and world != null and world.snapshot != null else null
+	var uid := 0
+	var drawn: Variant = null
+	if r is Array and (r as Array).size() == 3 and r[0] is int and r[1] is Transform3D and r[2] is Transform3D \
+			and (r[1] as Transform3D).is_finite() and (r[2] as Transform3D).is_finite():
+		var spot: Vector3 = (r[2] as Transform3D) * ((r[1] as Transform3D).affine_inverse() * camera.global_position)
+		var sq := world.coords.world_to_ms(spot)
+		sq.z = z
+		var on := world.snapshot.vehicle_at(sq)
+		if not on.is_empty() and (on[0] as Snapshot.Vehicle).uid == r[0]:
+			uid = r[0]
+			drawn = r[1]
+	global_transform = riding.carry(global_transform, camera.global_position, uid, drawn)
 
 
 ## Moves so the head stands over `pos` (x and z; the level stays), on the ground there (place_height).
