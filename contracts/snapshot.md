@@ -133,6 +133,8 @@ struct player_view {
     mood_view mood;                          // CDDA's morale screen (2026-11-12)
     optional<activity_view> activity;        // JSON "activity", only while an activity runs (2026-11-17)
     bool asleep;                             // JSON "asleep": true, only with CDDA's sleep effect (2026-11-17)
+    bool driving;                            // JSON "driving": true, only while the player holds a vehicle's controls (2026-11-19)
+    uint64 vehicle;                          // JSON "vehicle": uid of the vehicle the player is boarded on (`vehicles[].uid`); left out when none (2026-11-19)
 };
 struct mood_view {
     int16 level;                             // CDDA's morale level, the same number as `morale`

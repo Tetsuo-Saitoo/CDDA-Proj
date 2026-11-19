@@ -139,13 +139,30 @@ code calls its tile renderer directly).
   first). Refused (false) while the main loop waits for input with nothing queued or while paused; dropped if
   nothing took it by the main loop's next wait for input.
 
+### Driving (2026-11-19)
+
+`control_vehicle` is CDDA's own action. On a vehicle's controls (boarded) it takes them: with the engine off it
+starts the engine first (CDDA's activity, it can fail with CDDA's message), then the snapshot's `player.driving`
+is true. Its questions come as normal requests: "You can't drive because you have to wield a ...  Put it away?"
+(popup), the theft question for someone else's vehicle, the hotwire menu for a locked one, "Control vehicle
+where?" (direction) when the character doesn't stand on controls and more than one set is next to it. While
+`player.driving`, the eight step actions drive instead of walking, as in CDDA. `UP` and `DOWN` change the speed the
+vehicle is set to reach by 4 mph a step (below none: backwards) and take no time: the vehicle speeds up or slows
+down as turns pass, so send `pause` (or anything else that takes a turn) to let it. `LEFT` / `RIGHT` steer 15
+degrees and take time; the diagonals do both. A timed request still comes every turn. The speed it is set to
+reach is not in the snapshot. `control_vehicle` while driving opens CDDA's vehicle menu (a `menu` request): "Let go of
+controls" keeps the engine running, "Stop driving" turns it off too. `player.vehicle` is the uid of the vehicle
+the character is on, in `vehicles`; a moving vehicle's `velocity` is m/s (one square a turn per 1.788 m/s).
+The character's square is that vehicle's `pos` plus one part row's (dx, dy, dz), not a fixed offset from `pos`:
+CDDA moves a vehicle's `pos` to its turning point once it rolls.
+
 ### Action queue (block B5: `fp3d::queue_action`, `clear_actions`, `queued_actions`)
 
 The client doesn't have to catch each `timed` request: it can queue main-loop actions (names as in a timed
 request's `actions`) at any time, up to 32 (`queue_action` returns false when full). The sim takes one per timed
 request before waiting, under the lock that posts the request, so the client only ever sees a timed request when
 the queue is empty. Nothing is taken while paused. An action that isn't valid there is dropped with a `message`
-event ("Can't do that here: …"). The main loop has an action allow-list (a timed request's `actions` lists it): the eight steps, `LEVEL_UP`, `LEVEL_DOWN`, `pause`, `toggle_run`, `toggle_crouch`, `open`, `close`, `smash`, `examine`, `pickup`, `grab`, `butcher`, `look`, `peek`, `inventory`, `apply`, `wear`, `take_off`, `eat`, `read`, `wield`, `reload_weapon`, `unload`, `throw`, `fire`, `drop`, `wait`, `sleep`, `safemode`, `save`, `SUICIDE`, every `fp3d_...` action, and `debug` only while cheats are allowed. Any other CDDA action is dropped the same way. Bounded polling: a CDDA screen that only polls for input (it never waits for the client) is told `QUIT` after 256 polls with no request between; if it goes on polling it gets a blocking `key` request at 1024. Auto-pause clears the queue. Menus and other untimed requests are still answered
+event ("Can't do that here: …"). The main loop has an action allow-list (a timed request's `actions` lists it): the eight steps, `LEVEL_UP`, `LEVEL_DOWN`, `pause`, `toggle_run`, `toggle_crouch`, `open`, `close`, `smash`, `examine`, `pickup`, `grab`, `butcher`, `look`, `peek`, `control_vehicle` (2026-11-19, see Driving below), `inventory`, `apply`, `wear`, `take_off`, `eat`, `read`, `wield`, `reload_weapon`, `unload`, `throw`, `fire`, `drop`, `wait`, `sleep`, `safemode`, `save`, `SUICIDE`, every `fp3d_...` action, and `debug` only while cheats are allowed. Any other CDDA action is dropped the same way. Bounded polling: a CDDA screen that only polls for input (it never waits for the client) is told `QUIT` after 256 polls with no request between; if it goes on polling it gets a blocking `key` request at 1024. Auto-pause clears the queue. Menus and other untimed requests are still answered
 with `answer()`. `queue_action_at(action, square)` queues an action for one square next to the player: CDDA's
 adjacent-square prompt (open, close, examine, ...) takes that square and asks nothing, or does nothing with its
 "nothing ... nearby" message when it doesn't allow it there; it is dropped when the main loop next waits. Asking again after a bad answer keeps the request `timed` (fixed in B5: it used to lose the flag).
