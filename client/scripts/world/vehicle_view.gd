@@ -28,6 +28,7 @@ const CHAMFER := 0.3   # how much of a cell the cut at a body's outer corner tak
 const WHEEL_OUT := 0.3 # a wheel on the body's side sits this far out from its cell's centre
 const WHEEL_SIDES := 10
 const MAX_HULL_VERTS := 1 << 20   # per vehicle and look (solid, glass)
+const MAX_VERTS := 1 << 21        # all vehicles together: past it the rest aren't built (until there's room)
 const GLIDE_MIN := 0.1  # s: the shortest and longest glide from one pose to the next
 const GLIDE_MAX := 1.0
 const GLIDE_FAR := 60.0 # m: a longer jump (a teleport, the map loaded again) is shown at once
@@ -73,12 +74,14 @@ class Car:
 	var t := 1.0
 	var dur := GLIDE_MIN
 	var moved_ms := 0
+	var verts := 0           # vertices in its mesh
 
 
 var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
 var _world: WorldView = null   # the world last applied (refresh follows its cutaway)
 var _cars := {}        # vehicle uid -> Car, the shown snapshot's vehicles in its order
 var built := 0         # meshes built (not kept from the last snapshot), counted for tests
+var max_verts := MAX_VERTS   # lowered by tests
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
 
@@ -147,6 +150,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 	_world = world
 	var now := Time.get_ticks_msec()
 	var cars := {}
+	var total := 0   # vertices of the vehicles drawn so far
 	if snap != null:
 		for veh in snap.vehicles:
 			var car: Car = _cars.get(veh.uid)
@@ -156,13 +160,16 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 				car.moved_ms = now
 			var k := stretch_of(veh.face_deg)
 			var key := [veh.parts, veh.pos.z, view_z_max, world.tables, snap.ids_generation, k]
-			if car.key != key:
+			if car.key == key and total + car.verts > max_verts:
+				_drop(car)   # kept, but no room for it now: built again when there is
+			if car.key != key and total < max_verts:
 				var look := _vehicle(veh, snap, world, k)
 				car.key = key
 				car.local = look[0]
 				car.small = look[1]
 				_mesh(car)
 				built += 1
+			total += car.verts if car.key == key else 0
 			var pose_key := [veh.pos, veh.face_deg, veh.parts, world.coords.origin_ms]
 			if fresh or car.pose_key != pose_key:
 				car.pose_key = pose_key
@@ -172,6 +179,17 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		if not cars.has(uid) and (_cars[uid] as Car).node != null:
 			(_cars[uid] as Car).node.free()
 	_cars = cars
+
+
+## Frees what a vehicle draws and forgets what it was built from.
+func _drop(car: Car) -> void:
+	if car.node != null:
+		car.node.free()
+		car.node = null
+	car.key = []
+	car.local = {}
+	car.small = {}
+	car.verts = 0
 
 
 ## Sets a vehicle's new pose: at once when it is new or jumped far, else a glide from where it is drawn now over
@@ -376,6 +394,7 @@ func _mesh(car: Car) -> void:
 			else:
 				_box(tris, e[0], e[1])
 	var mesh := ArrayMesh.new()
+	car.verts = 0
 	for look: int in [Look.SOLID, Look.GLASS]:
 		var arrs: Array = car.local.get(look, [])
 		# copies: the small parts are added to the mesh only, never to car.local
@@ -396,6 +415,7 @@ func _mesh(car: Car) -> void:
 		data[Mesh.ARRAY_COLOR] = cl
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, data)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _material(look))
+		car.verts += v.size()
 	if mesh.get_surface_count() == 0:
 		if car.node != null:
 			car.node.free()
