@@ -449,12 +449,12 @@ static func kind_of(def: IdTables.Def, state: int) -> int:
 	return Kind.NONE
 
 
-## A part's colour: its CDDA colour (CddaPalette), tyres black, lights bright while on; then as damaged() shows it.
-## Glass is always GLASS.
+## A part's colour: its CDDA colour (CddaPalette), lights bright while on; then as damaged() shows it. Tyres stay
+## black (rubber doesn't rust). Glass is always GLASS.
 static func color_of(kind: int, def: IdTables.Def, hp: int, state: int) -> Color:
 	var c := CddaPalette.fg(def.color, DEFAULT_COLOR) if def != null else DEFAULT_COLOR
 	if kind == Kind.WHEEL:
-		c = TYRE
+		return TYRE
 	elif kind == Kind.LIGHT or kind == Kind.ROOF_LIGHT:
 		c = LIT if (state & Snapshot.VPART_ENABLED) != 0 else DEFAULT_COLOR
 	return damaged(c, hp, state)

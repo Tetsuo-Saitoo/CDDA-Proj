@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
 - 2026-11-18 — Vehicles checked after map shifts in a running game (QA lead): range_ui_live_test compares where the hub's car is drawn with its squares after crossing a submap border; without the fix in the vehicle view it shows the car 12 m off.
 - 2026-11-18 — Gun mods: a gun clamped in a bench vise now fits mods more easily, as the user chose: 20 points more on the game's install odds and half the risk of damaging the gun, same time, and a vise is never needed. In VR the odds by your hand say "in the vise". Fork and client tests pass; not tried live or in a headset; the flat-screen vise gets it next (lead-ui).

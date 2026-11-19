@@ -369,9 +369,10 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var broken := VehicleView.color_of(VehicleView.Kind.BOARD, def.call("board"), 255, Snapshot.VPART_BROKEN)
 	var glass := {}
 	VehicleView.place(glass, VehicleView.Kind.WINDOW, intact, Vector3.ZERO, Basis(), true)
+	var worn_tyre := VehicleView.color_of(VehicleView.Kind.WHEEL, def.call("wheel"), 0, 0)
 	_check.call(half.get_luminance() < intact.get_luminance() and broken.get_luminance() < half.get_luminance()
-			and not glass.has(VehicleView.Look.GLASS) and glass.has(VehicleView.Look.SOLID),
-			"vehicles: damaged parts darken, broken ones char, broken glass is gone")
+			and not glass.has(VehicleView.Look.GLASS) and glass.has(VehicleView.Look.SOLID) and worn_tyre == VehicleView.TYRE,
+			"vehicles: damaged parts darken, broken ones char, broken glass is gone, worn tyres stay black")
 	view.view_z_max = CAR.z - 1
 	view.apply(snap, world)
 	_check.call(view.count() == 0 and view.hull(VehicleView.Look.SOLID)[0].is_empty() and view.get_child_count() == 0,
