@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-18 — Angled cars sit on their squares (C5, lead-world): a car at an angle is now laid out the way CDDA lays it out, so its body covers the squares that block you (before, a wide car at 45 degrees was drawn up to a square and a half off). Client tests pass.
+- 2026-11-19 — Vehicle spawn and driving checked in a running game (QA lead): range_ui_live_test spawns a car at 45 degrees and drives another 20 squares through the client; the drawn car follows the game's squares and glides between turns. The first run showed angled cars drawn up to 1.6 m off their squares, since fixed by the world lead.
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
 - 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
 - 2026-11-19 — Bridge: a car can be driven through the bridge. The game's "take the controls" action now gets through, the move keys then speed up, slow down and steer as in the game, and the snapshot says when the player is driving and which vehicle they are on. The client side comes next (world lead). Fork tests pass on Windows and Linux, client tests pass.
