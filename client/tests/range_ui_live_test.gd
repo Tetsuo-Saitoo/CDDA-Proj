@@ -5,8 +5,8 @@ extends SceneTree
 ## feet and a monster ahead, go to a zone) comes back done from the game and shows in the client's world. Before
 ## those, stairs through the client: up and back down in the hub, each snapshot around the new level and no submap's
 ## revisions running backwards. After each move that changes the map (over a submap border, a level up or down,
-## another zone) the delta snapshots are compared with the plain snapshot (_deltas_ok). Uses this run's own CDDA
-## folder, never the player's saves.
+## another zone) the delta snapshots are compared with the plain snapshot (_deltas_ok), and on the hub's level the
+## vehicles must be drawn on their squares (_vehicles_ok). Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/range_ui_live_test.gd -- --live
@@ -31,6 +31,8 @@ var _answered := 0    # the last prompt this script answered
 var _held: Snapshot   # the snapshot this script holds for the delta call, beside LiveSession's own (_deltas_ok)
 var _deltas_off := false
 var _full_after := {"shift": 0, "level": 0}   # full answers _deltas_ok read after a map shift, on another level
+var _veh_off := false
+var _veh_seen := []   # per _vehicles_ok that had vehicles to compare: how many points it compared
 
 
 func _initialize() -> void:
@@ -131,6 +133,7 @@ func _run() -> void:
 			"the zone reads built and the status line names it (%s / %s)" % [_cp.zone_pick.get_item_text(1), _cp.status.text])
 	await _deltas_ok("in another zone")
 	_deltas_done()
+	_vehicles_done()
 	await _stop()
 	_finish()
 
@@ -142,6 +145,7 @@ func _run() -> void:
 func _stairs_live() -> void:
 	var start := _main.world.snapshot.player_pos
 	await _deltas_ok("on arrival")
+	_vehicles_ok("on arrival")
 	await _border_live(start)
 	var st := _stair_near(start)
 	var z0 := st.z
@@ -161,6 +165,7 @@ func _stairs_live() -> void:
 	var seen := {}   # submap -> Vector2i(revision, detail revision), the highest seen
 	_levels_ok("by the stairs", seen)
 	await _deltas_ok("by the stairs")
+	_vehicles_ok("by the stairs")
 	var is_up := await _take_stair(st, z0, 1)
 	_check(is_up, "use_stair up: the player is on level %d (%s, \"%s\")" % [z0 + 1, _main.world.snapshot.player_pos, _main.status])
 	_levels_ok("upstairs", seen)
@@ -193,10 +198,12 @@ func _border_live(start: Vector3i) -> void:
 	if not over:
 		return
 	await _deltas_ok("over a submap border")
+	_vehicles_ok("over a submap border")
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
 	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"teleported back over the border (%s)" % _main.world.snapshot.player_pos)
 	await _deltas_ok("back over the border")
+	_vehicles_ok("back over the border")
 
 
 ## Delta snapshots after the move `what`, where a move changes what the bridge can build on (contracts/snapshot.md
@@ -294,6 +301,62 @@ func _deltas_done() -> void:
 	_check(_full_after["shift"] >= 2 and _full_after["level"] >= 2 and _live.deltas_read > 0 and _live.delta_fallbacks == 0,
 			"deltas: full answers after %d map shifts and %d changes of level; the live game read %d deltas, %d didn't fit"
 			% [_full_after["shift"], _full_after["level"], _live.deltas_read, _live.delta_fallbacks])
+
+
+## The vehicles of the shown snapshot are drawn where their parts' squares are, after the move `what` (VehicleView
+## with bodies, C5 slice 2; skipped, said once, on a client without them): every layer of the view that draws
+## something sits at the origin again, and the bodies' vertices and the small parts' places lie within 2 m of a
+## square of a vehicle (a cell stretched at an angle, a cut corner, a wheel pushed out). A view that kept a map
+## shift would be a submap (12 m) off.
+func _vehicles_ok(what: String) -> void:
+	var vv: VehicleView = _main.vehicles_view
+	if vv == null or not vv.has_method("hull"):
+		if not _veh_off:
+			print("  (no vehicle bodies in this client: where vehicles are drawn isn't checked)")
+		_veh_off = true
+		return
+	var snap: Snapshot = _main.world.snapshot
+	var cells := {}   # Vector2i(world x, z, rounded to metres) of every vehicle part's square
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		for i in veh.part_count():
+			var w: Vector3 = _main.world.coords.ms_center_to_world(veh.square(i))
+			cells[Vector2i(roundi(w.x), roundi(w.z))] = true
+	if cells.is_empty():
+		print("  (%s: no vehicle in the snapshot)" % what)
+		return
+	var moved := []
+	for c: Node in vv.get_children():
+		var draws: bool = c is MeshInstance3D or (c is MultiMeshInstance3D
+				and (c as MultiMeshInstance3D).multimesh != null and (c as MultiMeshInstance3D).multimesh.instance_count > 0)
+		if draws and not (c as Node3D).position.is_zero_approx():
+			moved.append([c.name, (c as Node3D).position])
+	var pts := PackedVector3Array()
+	for look: int in VehicleView.Look.values():
+		var verts: PackedVector3Array = vv.call("hull", look)[0]
+		for i in range(0, verts.size(), 5):   # every fifth vertex is plenty
+			pts.append(verts[i])
+		for e: Array in vv.instances(look):
+			pts.append((e[0] as Transform3D).origin)
+	var off := []
+	for p: Vector3 in pts:
+		var near := false
+		for dz in range(-2, 3):
+			for dx in range(-2, 3):
+				near = near or cells.has(Vector2i(roundi(p.x) + dx, roundi(p.z) + dz))
+		if not near and off.size() < 3:
+			off.append(p)
+	_veh_seen.append(pts.size())
+	_check(moved.is_empty() and off.is_empty() and not pts.is_empty(), ("vehicles, %s: the %d in the snapshot are drawn "
+			+ "on their squares (%d points compared; off: %s; layers not at the origin: %s)")
+			% [what, snap.vehicles.size(), pts.size(), off, moved])
+
+
+## The vehicle checks as a whole: vehicles were compared after at least two moves that shifted the map.
+func _vehicles_done() -> void:
+	if _veh_off:
+		return
+	_check(_veh_seen.size() >= 3, "vehicles: drawn on their squares at the start and after map shifts (%d times, points: %s)"
+			% [_veh_seen.size(), _veh_seen])
 
 
 ## The stairs up nearest `from` on its level that the client knows of (within 16 squares); the hub's own (10 west,
