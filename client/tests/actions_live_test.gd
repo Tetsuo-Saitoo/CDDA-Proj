@@ -408,6 +408,7 @@ func _vise_live() -> void:
 			% [line, fits.size(), bench.model != null])
 	if not shown:
 		return
+	await _vise_fit_live(bench, gun_t, vise_t)
 	root.push_input(_esc_key())
 	await create_timer(0.1).timeout
 	_check(not bench.clamped() and not _main.key_menu.visible, "vise: Esc takes the gun back, no menu")
@@ -431,6 +432,49 @@ func _vise_live() -> void:
 			"vise: stepping away takes the gun back with a line (\"%s\")" % _main.grab._flash)
 	_live.cheat_teleport(here)
 	await _until(func() -> bool: return _main.world.snapshot.player_pos == here and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## A fit with the gun clamped in the vise `bench` holds (V3: mod_add names the vise; skipped, said so, where
+## ItemActions.mod_add takes none or no gunmod is carried). The range's character lacks the skills for every mod the
+## gun takes, so: Fit on the panel says CDDA's reason and sends nothing; the action itself with the vise named is
+## taken by the bridge and refused by CDDA in the same words; half a vise handle, or the mod as the vise, is refused
+## in the client. A mod that fits here isn't tried.
+func _vise_fit_live(bench: Variant, gun_t: int, vise_t: int) -> void:
+	var acts: ItemActions = _main.item_actions
+	var takes_vise := false
+	for m: Dictionary in acts.get_method_list():
+		if m["name"] == "mod_add":
+			takes_vise = (m["args"] as Array).size() >= 4
+	var mod := _carried(_cp.tables.index_of("itype", GUN_MOD))
+	var gun := _carried(gun_t)
+	if not takes_vise or mod == null or gun == null:
+		print("  (mod_add takes no vise in this client, or no %s is carried: a fit in the vise not checked)" % GUN_MOD)
+		return
+	var fit := _fit_of(mod.uid)
+	if fit.get("ok") != false:
+		print("  (the %s fits here: a fit in the vise not tried; %s)" % [GUN_MOD, fit])
+		return
+	var reason := str(fit.get("reason", "?"))
+	var before := acts.pending_count()
+	bench.fit_mod(mod.uid)   # the panel's Fit
+	_check(str(bench.status).contains(reason) and acts.pending_count() == before,
+			"vise: Fit on the panel says why the mod doesn't fit and sends nothing (\"%s\")" % bench.status)
+	var heard := []
+	var on_refused := func(item: ItemRef, op: String, why: String) -> void:
+		if item != null and item.uid == mod.uid:
+			heard.append([op, why])
+	acts.refused.connect(on_refused)
+	var sent: bool = acts.call("mod_add", mod, gun, int(bench.vise_uid), vise_t) == true
+	var answered := func() -> bool: return not heard.is_empty()
+	var got: bool = sent and await _until(answered, OP_TIMEOUT_MS, true)
+	acts.refused.disconnect(on_refused)
+	var half: bool = acts.call("mod_add", mod, gun, int(bench.vise_uid), 0) == false \
+			and acts.call("mod_add", mod, gun, mod.uid, vise_t) == false
+	_check(got and heard[0][0] == "mod_add" and str(heard[0][1]).contains(reason) and half and bench.clamped(),
+			"vise: mod_add naming the vise is taken by the bridge and judged by CDDA (\"%s\"; sent %s); half a handle or the mod as the vise isn't sent (%s)"
+			% [heard[0][1] if got else "", sent, half])
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
 
 
 ## First aid on a named body part through the client (the bridge's consume `part`, ItemActions.consume(item, part));
