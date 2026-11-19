@@ -401,18 +401,27 @@ func _vehicles_ok(what: String) -> void:
 			pts.append(verts[i])
 		for e: Array in vv.instances(look):
 			pts.append((e[0] as Transform3D).origin)
-	var off := []
+	var off := []     # the first few points with no square near
+	var off_n := 0
+	var worst := 0.0  # how far the farthest of them is from the nearest square's centre (m, the larger of x and z)
 	for p: Vector3 in pts:
 		var near := false
 		for dz in range(-2, 3):
 			for dx in range(-2, 3):
 				near = near or cells.has(Vector2i(roundi(p.x) + dx, roundi(p.z) + dz))
-		if not near and off.size() < 3:
+		if near:
+			continue
+		off_n += 1
+		if off.size() < 3:
 			off.append(p)
+		var best := INF
+		for c: Vector2i in cells:
+			best = minf(best, maxf(absf(p.x - c.x), absf(p.z - c.y)))
+		worst = maxf(worst, best)
 	_veh_seen.append(pts.size())
-	_check(moved.is_empty() and off.is_empty() and not pts.is_empty(), ("vehicles, %s: the %d in the snapshot are drawn "
-			+ "on their squares (%d points compared; off: %s; on screen elsewhere: %s)")
-			% [what, snap.vehicles.size(), pts.size(), off, moved])
+	_check(moved.is_empty() and off_n == 0 and not pts.is_empty(), ("vehicles, %s: the %d in the snapshot are drawn "
+			+ "on their squares (%d points compared; %d off, the farthest %.1f m from a square: %s; on screen elsewhere: %s)")
+			% [what, snap.vehicles.size(), pts.size(), off_n, worst, off, moved])
 
 
 ## The vehicle checks as a whole: vehicles were compared after at least two moves that shifted the map.
