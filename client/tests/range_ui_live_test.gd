@@ -269,7 +269,7 @@ func _drive_live(start: Vector3i) -> void:
 		return
 	var car: Snapshot.Vehicle = car_of.call()
 	var uid := car.uid
-	# the controls' square, the closed door beside it, and the floor outside that door
+	# the controls' square, the door beside it, and the floor outside that door
 	var seat := Vector3i.MAX
 	var doors := {}
 	for i in car.part_count():
@@ -278,8 +278,8 @@ func _drive_live(start: Vector3i) -> void:
 				car.parts[k + 4])
 		if kind == VehicleView.Kind.CONTROLS:
 			seat = car.square(i)
-		elif kind == VehicleView.Kind.DOOR or kind == VehicleView.Kind.GLASS_DOOR:
-			doors[car.square(i)] = true
+		elif kind in [VehicleView.Kind.DOOR, VehicleView.Kind.GLASS_DOOR, VehicleView.Kind.DOOR_OPEN]:
+			doors[car.square(i)] = true   # CDDA leaves some doors of a new car open
 	var door := Vector3i.MAX
 	var out := Vector3i.MAX
 	for d: Vector3i in [Vector3i(0, -1, 0), Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(1, 0, 0)]:
