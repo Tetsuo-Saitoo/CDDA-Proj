@@ -284,8 +284,55 @@ func _test_hull(view: VehicleView, car: Snapshot.Vehicle, world: WorldView) -> v
 		var sq := world.coords.ms_center_to_world(l45[0].square(i))
 		worst = maxf(worst, Vector2(at.x - sq.x, at.z - sq.z).length())
 	var a45 := f45.basis * Vector3.RIGHT
-	_check.call(worst < 0.8 and is_equal_approx(a45.length(), sqrt(2.0)) and absf(a45.x - a45.z) < 1e-4,
-			"vehicles: at 45 degrees the body is turned smoothly, stretched as CDDA steps, each cell within %.2f of its square" % worst)
+	_check.call(worst < 0.01 and is_equal_approx(a45.length(), sqrt(2.0)) and absf(a45.x - a45.z) < 1e-4,
+			"vehicles: at 45 degrees the body lies as CDDA lays it out, stretched and sheared, each cell on its square (%.2f off)" % worst)
+	# CDDA's own layout (vehicle::coord_translate about mount 0, 0) of a 4-wide car at each facing CDDA steers to: the
+	# body's cells within a square of their parts' squares (exact at right angles and 45; between, CDDA's line steps)
+	var worst_all := 0.0
+	var worst_axes := 0.0
+	for f in range(0, 360, 15):
+		var rows := []
+		for mx in range(-3, 3):
+			for my in range(-1, 3):
+				var sq := _cdda_square(Vector2i(mx, my), f)
+				rows.append([mx, my, 1, 255, 0, sq.x, sq.y, 0])
+		var v := Snapshot.vehicles_from([{"uid": 2, "pos": [100, 100, 0], "face_deg": float(f), "parts": rows}], 0, 0)[0]
+		var fr := VehicleView.frame_of(v, world.coords)
+		for i in v.part_count():
+			var k := i * Snapshot.VPART_STRIDE
+			var at := fr * Vector3(v.parts[k], 0.0, v.parts[k + 1])
+			var sq := world.coords.ms_center_to_world(v.square(i))
+			var off := Vector2(at.x - sq.x, at.z - sq.z).length()
+			worst_all = maxf(worst_all, off)
+			if f % 45 == 0:
+				worst_axes = maxf(worst_axes, off)
+	_check.call(worst_axes < 0.01 and worst_all < 1.0,
+			"vehicles: a 4-wide car at every 15 degrees lies on CDDA's squares (%.2f off at most; %.2f at right angles and 45)" % [worst_all, worst_axes])
+
+
+## CDDA's square for mount m of a vehicle facing `face_deg` turned about mount 0, 0 (vehicle::coord_translate with
+## tileray, written out again here from CDDA's code, so the client's layout is checked against it).
+static func _cdda_square(m: Vector2i, face_deg: int) -> Vector2i:
+	var a := deg_to_rad(float(face_deg))
+	var d := Vector2i(roundi(cos(a) * 100.0), roundi(sin(a) * 100.0))
+	var ad := d.abs()
+	var q := (face_deg / 90) % 4
+	var sx: int = [1, -1, -1, 1][q]
+	var sy: int = [1, 1, -1, -1][q]
+	var vertical := ad.x <= ad.y
+	var n := absi(m.x)
+	var minor := 0
+	var left := 0
+	if ad.x != 0 and ad.y != 0:
+		for i in n:
+			left += ad.x if vertical else ad.y
+			if left >= (ad.y if vertical else ad.x):
+				minor += 1
+				left -= ad.y if vertical else ad.x
+	var step := Vector2i(minor, n) if vertical else Vector2i(n, minor)
+	step = Vector2i(step.x * sx, step.y * sy) * (-1 if m.x < 0 else 1)
+	var ortho := Vector2i(m.y * -sy, 0) if vertical else Vector2i(0, m.y * sx)
+	return step + ortho
 
 
 ## After a map shift (the world's origin moves; main.gd sends shift) and the next snapshot, the vehicle, field and gore
@@ -342,15 +389,15 @@ func _test_glide(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	var e1 := world.coords.ms_center_to_world(car.square(0))
 	var seated := (view.ride_transform(snap) * e1).is_equal_approx(e0.lerp(e1, 0.5))
 	view.glide(c.dur)
-	var arrived := view.ride_transform(snap) == Transform3D() and (view.drawn(UID) as Transform3D).is_equal_approx(c.to)
+	var arrived := view.ride_transform(snap) == Transform3D() and (view.drawn(UID) as Transform3D).is_equal_approx(c.to_xf)
 	snap.player_pos = player
-	_check.call(view.built == b0 and at0.is_equal_approx(start) and mid.origin.is_equal_approx(start.origin.lerp(c.to.origin, 0.5))
+	_check.call(view.built == b0 and at0.is_equal_approx(start) and mid.origin.is_equal_approx(start.origin.lerp(c.to_xf.origin, 0.5))
 			and seated and arrived and c.dur >= VehicleView.GLIDE_MIN and c.dur <= VehicleView.GLIDE_MAX,
 			"vehicles: a car that moved glides there over %.2f s, its mesh kept, and the eyes ride with it" % c.dur)
 	car.pos += Vector3i(97, 0, 0)
 	snap.vehicles_moved()
 	view.apply(snap, world)
-	var far := (view.drawn(UID) as Transform3D).is_equal_approx(c.to)
+	var far := (view.drawn(UID) as Transform3D).is_equal_approx(c.to_xf)
 	car.pos -= Vector3i(100, 0, 0)
 	snap.vehicles_moved()
 	view.apply(snap, world)
@@ -409,11 +456,10 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var south: Vector3 = wheel_axis.call()
 	_check.call(absf(east.z) > 0.99 and absf(south.x) > 0.99,
 			"vehicles: parts turn with the facing (wheel axles across the car: %s facing east, %s facing south)" % [east, south])
-	var turned_kept := view.built == b0
 	car.face_deg = 45.0
 	view.apply(snap, world)
-	_check.call(cached and turned_kept and view.built == b0 + 1,
-			"vehicles: a vehicle's mesh is kept while it moves or turns by right angles, built again when its stretch changes (%d, %d)" % [b0, view.built])
+	_check.call(cached and view.built == b0,
+			"vehicles: a vehicle's mesh is kept while it moves or turns, at any angle (%d, %d)" % [b0, view.built])
 	car.face_deg = 0.0
 	view.apply(snap, world)
 	view.glide(10.0)
