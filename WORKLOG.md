@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Vehicle spawn and driving checked in a running game (QA lead): range_ui_live_test spawns a car at 45 degrees and drives another 20 squares through the client; the drawn car follows the game's squares and glides between turns. The first run showed angled cars drawn up to 1.6 m off their squares, since fixed by the world lead.
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
 - 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
