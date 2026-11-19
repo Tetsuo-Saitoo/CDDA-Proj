@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — Angled cars sit on their squares (C5, lead-world): a car at an angle is now laid out the way CDDA lays it out, so its body covers the squares that block you (before, a wide car at 45 degrees was drawn up to a square and a half off). Client tests pass.
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
 - 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
 - 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.

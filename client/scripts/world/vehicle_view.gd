@@ -5,12 +5,12 @@ extends Node3D
 ## boards, doors and windows are, opaque panels or glass panes above, the roof; outer corners cut so it reads rounded;
 ## one paint, each cell worn as its part; the small parts baked in: wheels on the outside, seats, engine, lights,
 ## open doors, ... each kind (Kind) from the vpart's flags and location). The mesh is built again only when the
-## vehicle's parts, the cutaway or its stretch change; driving and turning move the node only (slice 3): its pose
-## (pose_of: turned smoothly by the facing, fitted onto the parts' squares since CDDA turns about a pivot, tilted to
-## the ground under it on a ramp) glides from where it is drawn to the new one over about as long as the vehicle took
-## between snapshots, so a driven car moves smoothly; ride_transform lets the camera ride along. Off the axes the
-## mesh is stretched as CDDA's tile rays step (stretch_of). CDDA's gap fillers (Snapshot.VPART_FILLER) only block:
-## the stretched body covers their squares. What blocks walking (blocks), which part a ray meets at a height
+## vehicle's parts or the cutaway change; driving and turning move the node only (slice 3): its pose (pose_of:
+## the mount grid laid out as CDDA lays it, axes_of, fitted onto the parts' squares since CDDA turns about a pivot,
+## tilted to the ground under it on a ramp) glides from where it is drawn to the new one over about as long as the
+## vehicle took between snapshots, so a driven car moves smoothly; ride_transform lets the camera ride along. Off the
+## axes CDDA's grid is stretched and sheared, and so is the body. CDDA's gap fillers (Snapshot.VPART_FILLER) only
+## block: the body covers their squares. What blocks walking (blocks), which part a ray meets at a height
 ## (part_at) and what items rest on (rest_at) stay per square, exactly CDDA's (shapes: the heights of each kind),
 ## for walking, LookRay and the item physics. Real models and doors by hand are later slices.
 
@@ -61,16 +61,19 @@ const REST := {Kind.FRAME: DECK, Kind.HALF: SILL, Kind.WHEEL: 0.8, Kind.TANK: 0.
 		Kind.CARGO: DECK + 0.5, Kind.ENGINE: DECK + 0.6, Kind.OTHER: DECK + 0.5}
 
 
-## One vehicle as drawn: its node (null while nothing of it is drawn), its mesh's data in its own frame, and its
-## glide from `from` to `to` (t 0..1 over dur seconds).
+## One vehicle as drawn: its node (null while nothing of it is drawn), its mesh's data in its mount grid (a cell per
+## square), and its glide from pose `from` to `to` (t 0..1 over dur seconds). A pose is [turn (a rotation: facing and
+## lean), grid (how CDDA lays the mount grid out, in the turned frame: stretched, sheared), origin]; `to` composed is
+## `to_xf`.
 class Car:
 	var node: Node3D
 	var key: Array = []      # what the mesh was built from
 	var pose_key: Array = [] # what `to` was worked out from
-	var local := {}          # Look (SOLID, GLASS) -> [vertices, normals, colours], the vehicle's frame
-	var small := {}          # Look -> [[Transform3D, Color], ...]: the small parts, the vehicle's frame
-	var from := Transform3D()
-	var to := Transform3D()
+	var local := {}          # Look (SOLID, GLASS) -> [vertices, normals, colours], the mount grid
+	var small := {}          # Look -> [[Transform3D, Color], ...]: the small parts, the mount grid
+	var from: Array = [Basis(), Basis(), Vector3.ZERO]
+	var to: Array = [Basis(), Basis(), Vector3.ZERO]
+	var to_xf := Transform3D()
 	var t := 1.0
 	var dur := GLIDE_MIN
 	var moved_ms := 0
@@ -104,7 +107,7 @@ func instances(look: int) -> Array:
 	var out := []
 	for car: Car in _cars.values():
 		for e: Array in car.small.get(look, []):
-			out.append([car.to * (e[0] as Transform3D), e[1]])
+			out.append([car.to_xf * (e[0] as Transform3D), e[1]])
 	return out
 
 
@@ -118,11 +121,11 @@ func hull(look: int) -> Array:
 		var arrs: Array = car.local.get(look, [])
 		if arrs.is_empty():
 			continue
-		var b := car.to.basis
+		var nb := car.to_xf.basis.inverse().transposed()   # normals under a sheared grid
 		for p: Vector3 in arrs[0]:
-			v.append(car.to * p)
+			v.append(car.to_xf * p)
 		for n: Vector3 in arrs[1]:
-			nr.append((b * n).normalized())
+			nr.append((nb * n).normalized())
 		cl.append_array(arrs[2])
 	return [v, nr, cl]
 
@@ -143,7 +146,7 @@ func ride_transform(snap: Snapshot) -> Transform3D:
 	var car: Car = _cars.get((at[0] as Snapshot.Vehicle).uid) if not at.is_empty() else null
 	if car == null or car.node == null or car.t >= 1.0:
 		return Transform3D()
-	return car.node.transform * car.to.affine_inverse()
+	return car.node.transform * car.to_xf.affine_inverse()
 
 
 func apply(snap: Snapshot, world: WorldView) -> void:
@@ -158,12 +161,11 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			if fresh:
 				car = Car.new()
 				car.moved_ms = now
-			var k := stretch_of(veh.face_deg)
-			var key := [veh.parts, veh.pos.z, view_z_max, world.tables, snap.ids_generation, k]
-			if car.key == key and total + car.verts > max_verts:
+			var key := [veh.parts, veh.pos.z, view_z_max, world.tables, snap.ids_generation]
+			if car.key == key and total >= max_verts:
 				_drop(car)   # kept, but no room for it now: built again when there is
 			if car.key != key and total < max_verts:
-				var look := _vehicle(veh, snap, world, k)
+				var look := _vehicle(veh, snap, world)
 				car.key = key
 				car.local = look[0]
 				car.small = look[1]
@@ -173,7 +175,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			var pose_key := [veh.pos, veh.face_deg, veh.parts, world.coords.origin_ms]
 			if fresh or car.pose_key != pose_key:
 				car.pose_key = pose_key
-				_move(car, pose_of(veh, world), now, fresh)
+				_move(car, pose_parts(veh, world), now, fresh)
 			cars[veh.uid] = car
 	for uid: int in _cars:
 		if not cars.has(uid) and (_cars[uid] as Car).node != null:
@@ -194,18 +196,35 @@ func _drop(car: Car) -> void:
 
 ## Sets a vehicle's new pose: at once when it is new or jumped far, else a glide from where it is drawn now over
 ## about the time since it last moved (GLIDE_MIN..GLIDE_MAX).
-func _move(car: Car, pose: Transform3D, now: int, fresh: bool) -> void:
-	if fresh or car.to.origin.distance_to(pose.origin) > GLIDE_FAR:
+func _move(car: Car, pose: Array, now: int, fresh: bool) -> void:
+	var xf := compose(pose)
+	if fresh or car.to_xf.origin.distance_to(xf.origin) > GLIDE_FAR:
 		car.from = pose
 		car.t = 1.0
-	elif not car.to.is_equal_approx(pose):
-		car.from = car.node.transform if car.node != null else car.to
+	elif not car.to_xf.is_equal_approx(xf):
+		car.from = blend(car.from, car.to, car.t)
 		car.dur = clampf((now - car.moved_ms) / 1000.0, GLIDE_MIN, GLIDE_MAX)
 		car.t = 0.0
 		car.moved_ms = now
 	car.to = pose
+	car.to_xf = xf
 	if car.node != null:
-		car.node.transform = car.from.interpolate_with(car.to, car.t)
+		car.node.transform = compose(blend(car.from, car.to, car.t))
+
+
+## A pose [turn, grid, origin] as the transform it places the mount grid with.
+static func compose(pose: Array) -> Transform3D:
+	return Transform3D((pose[0] as Basis) * (pose[1] as Basis), pose[2])
+
+
+## Pose `a` moved `t` (0..1) of the way to `b`: turned (slerp), the grid and origin blended straight.
+static func blend(a: Array, b: Array, t: float) -> Array:
+	if t >= 1.0:
+		return b
+	var ga: Basis = a[1]
+	var gb: Basis = b[1]
+	return [(a[0] as Basis).slerp(b[0], t), Basis(ga.x.lerp(gb.x, t), ga.y.lerp(gb.y, t), ga.z.lerp(gb.z, t)),
+			(a[2] as Vector3).lerp(b[2], t)]
 
 
 ## Each frame: a cutaway change (WorldView.things_z_max) redraws at once; gliding vehicles move on.
@@ -220,7 +239,7 @@ func glide(delta: float) -> void:
 		if car.t < 1.0:
 			car.t = minf(1.0, car.t + delta / car.dur)
 			if car.node != null:
-				car.node.transform = car.from.interpolate_with(car.to, car.t)
+				car.node.transform = compose(blend(car.from, car.to, car.t))
 
 
 ## Follows the cutaway of the world last applied: redraws its snapshot when things_z_max() moved.
@@ -236,28 +255,36 @@ func refresh() -> void:
 ## The map's origin moved by d: everything drawn moves with it (the next snapshot's poses already include it).
 func shift(d: Vector3) -> void:
 	for car: Car in _cars.values():
-		car.from.origin += d
-		car.to.origin += d
+		car.from = [car.from[0], car.from[1], (car.from[2] as Vector3) + d]
+		car.to = [car.to[0], car.to[1], (car.to[2] as Vector3) + d]
+		car.to_xf.origin += d
 		if car.node != null:
 			car.node.position += d
 
 
-## How much a vehicle facing `face_deg` is stretched in its grid: 1 / max(|cos|, |sin|), as CDDA's tile rays step
-## (a vehicle at 45 degrees covers squares 1.4 m apart).
-static func stretch_of(face_deg: float) -> float:
-	var a := deg_to_rad(face_deg)
-	return 1.0 / maxf(absf(cos(a)), absf(sin(a)))
+## How CDDA lays a vehicle facing `face_deg` out on the map (vehicle::coord_translate, tileray): [ahead, right], the
+## squares (x east, y south) one step of mount x and of mount y moves. Mount x steps along the facing as a line is
+## drawn, one square along the main axis each step (so 1.4 apart at 45 degrees); mount y steps one square along the
+## other axis only, so off the axes the grid is sheared, not turned.
+static func axes_of(face_deg: float) -> Array:
+	var a := deg_to_rad(face_deg) if is_finite(face_deg) else 0.0
+	var d := Vector2i(roundi(cos(a) * 100.0), roundi(sin(a) * 100.0))   # as tileray::init
+	var q := posmod(floori(fposmod(rad_to_deg(a), 360.0) / 90.0), 4)
+	var sx: int = [1, -1, -1, 1][q]
+	var sy: int = [1, 1, -1, -1][q]
+	var ahead := Vector2(d) / float(maxi(absi(d.x), absi(d.y)))
+	var right := Vector2(-sy, 0) if absi(d.x) <= absi(d.y) else Vector2(0, sx)
+	return [ahead, right]
 
 
 ## How a vehicle's grid lies flat in the world: mount (x ahead, z to the right, a cell per square; y metres up from
-## the floor of its level) to world. Turned smoothly by face_deg; stretched by stretch_of; moved to fit its parts'
-## squares best (CDDA turns a vehicle about a pivot, not mount 0, 0). At right angles every cell lands on its
-## part's square.
+## the floor of its level) to world: CDDA's layout for face_deg (axes_of), moved to fit its parts' squares best
+## (CDDA turns a vehicle about a pivot, not mount 0, 0). Every cell lands on its part's square, or within a square
+## where CDDA's line steps (between the axes and 45 degrees).
 static func frame_of(veh: Snapshot.Vehicle, coords: CddaCoords) -> Transform3D:
-	var a := deg_to_rad(veh.face_deg)
-	var k := stretch_of(veh.face_deg)
-	var ahead := Vector2(cos(a), sin(a)) * k
-	var right := Vector2(-sin(a), cos(a)) * k
+	var ax := axes_of(veh.face_deg)
+	var ahead: Vector2 = ax[0]
+	var right: Vector2 = ax[1]
 	var sq := Vector2.ZERO
 	var mt := Vector2.ZERO
 	var n := 0
@@ -274,14 +301,22 @@ static func frame_of(veh: Snapshot.Vehicle, coords: CddaCoords) -> Transform3D:
 	return Transform3D(Basis(ex * ahead.x + ey * ahead.y, Vector3.UP, ex * right.x + ey * right.y), o + ex * off.x + ey * off.y)
 
 
-## Where a vehicle's node goes: frame_of without the stretch (the mesh has it), tilted to the ground under its cells
+## Where a vehicle's node goes: frame_of tilted to the ground under its cells
 ## (WorldView.ground_y on each part's own square and level: a plane fitted along and across the vehicle, at most
 ## MAX_SLOPE), so a car on a ramp leans with it; flat ground gives no tilt.
 static func pose_of(veh: Snapshot.Vehicle, world: WorldView) -> Transform3D:
+	return compose(pose_parts(veh, world))
+
+
+## pose_of as a pose [turn, grid, origin]: frame_of split into its turn (facing, then the lean) and the grid in the
+## turned frame.
+static func pose_parts(veh: Snapshot.Vehicle, world: WorldView) -> Array:
 	var f := frame_of(veh, world.coords)
-	var k := stretch_of(veh.face_deg)
-	var pose := Transform3D(f.basis * Basis.from_scale(Vector3(1.0 / k, 1.0, 1.0 / k)), f.origin)
-	var pts := []   # Vector3(ahead m, height m, right m) per cell with a part
+	var x := Vector3(f.basis.x.x, 0.0, f.basis.x.z).normalized()
+	var turn := Basis(x, Vector3.UP, x.cross(Vector3.UP).normalized())
+	var grid := turn.transposed() * f.basis
+	var origin := f.origin
+	var pts := []   # Vector3(ahead m, height m, right m) per cell with a part, in the turned frame
 	var seen := {}
 	var sloped := false
 	for i in veh.part_count():
@@ -292,13 +327,14 @@ static func pose_of(veh: Snapshot.Vehicle, world: WorldView) -> Transform3D:
 		seen[m] = true
 		var sq := veh.square(i)
 		var h := world.ground_y(world.coords.ms_center_to_world(sq), sq.z) - f.origin.y
-		pts.append(Vector3(m.x * k, h if is_finite(h) else 0.0, m.y * k))
+		var at := grid * Vector3(m.x, 0.0, m.y)
+		pts.append(Vector3(at.x, h if is_finite(h) else 0.0, at.z))
 		sloped = sloped or absf(h) > 0.01
 	if sloped:
 		var t := tilt_of(pts)
-		pose.basis = pose.basis * t.basis
-		pose.origin += t.origin
-	return pose
+		turn = turn * t.basis
+		origin += t.origin
+	return [turn.orthonormalized(), grid, origin]
 
 
 ## The lean of a vehicle on ground of heights `pts` (Vector3(ahead, height, right) per cell, metres, its own frame):
@@ -327,10 +363,10 @@ static func tilt_of(pts: Array) -> Transform3D:
 			Vector3.UP * (mean.y - b * mean.x - c * mean.z))
 
 
-## One vehicle's look in its own frame (x ahead, y up, z right; stretched by k): [{Look -> body [vertices, normals,
+## One vehicle's look in its mount grid (x ahead, y up, z right, a cell per square): [{Look -> body [vertices, normals,
 ## colours]}, {Look -> [[transform, colour], ...]} of the small parts]. Parts above the cutaway and gap fillers are
 ## left out.
-func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView, k: float) -> Array:
+func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
 	var cells := {}   # Vector3i(mount x, mount y, 0) -> {floor, low, high, glass, roof: [hp_frac, state], then Color}
 	var small := []   # [kind, colour, cell, broken]
 	var bases := {}   # CDDA colour of the body's parts -> votes
@@ -375,12 +411,12 @@ func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView, k: float)
 	var by_look := {}
 	for e: Array in small:
 		var c: Vector3i = e[2]
-		var at := Vector3(c.x * k, 0.0, c.y * k)
+		var at := Vector3(c.x, 0.0, c.y)
 		if e[0] == Kind.WHEEL:   # on the body's side, half out of it
 			var side := 1.0 if not cells.has(c + Vector3i(0, 1, 0)) else (-1.0 if not cells.has(c - Vector3i(0, 1, 0)) else 0.0)
 			at += Vector3(0.0, 0.0, side * WHEEL_OUT)
 		place(by_look, e[0], e[1], at, Basis(), e[3])
-	return [hull_of(cells, Transform3D(Basis.from_scale(Vector3(k, 1.0, k)), Vector3.ZERO)), by_look]
+	return [hull_of(cells, Transform3D()), by_look]
 
 
 ## (Re)makes a vehicle's node and mesh from its body and small parts (baked in: one surface per look); no node while
@@ -425,7 +461,7 @@ func _mesh(car: Car) -> void:
 		var mi := MeshInstance3D.new()
 		mi.name = "vehicle"
 		add_child(mi)
-		mi.transform = car.from.interpolate_with(car.to, car.t)
+		mi.transform = compose(blend(car.from, car.to, car.t))
 		car.node = mi
 	(car.node as MeshInstance3D).mesh = mesh
 
