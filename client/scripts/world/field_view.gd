@@ -98,6 +98,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			mi = _layer(look)
 			add_child(mi)
 			_layers[look] = mi
+		mi.position = Vector3.ZERO   # placed with today's origin: a shift moved the old ones only
 		var xs: Array = by_look[look]
 		var mm := mi.multimesh
 		mm.instance_count = xs.size()
