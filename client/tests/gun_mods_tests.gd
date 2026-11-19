@@ -26,8 +26,9 @@ class ModBackend extends RefCounted:
 	var calls: Array = []
 	var ok := true
 
-	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
-		calls.append(["mod_add", uid, type, gun, gun_type, tag])
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0, vise := 0.0,
+			vise_type := 0.0) -> bool:
+		calls.append(["mod_add", uid, type, gun, gun_type, tag] + ([vise, vise_type] if vise != 0.0 else []))
 		return ok
 
 	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
@@ -112,7 +113,33 @@ func _test_actions() -> void:
 			"gun mods: mod_remove sends an installed mod's handle with the gun; done by item_result or once off the gun (%s)"
 			% [seen])
 	a.free()
+	var a2 := ItemActions.new()
+	var b2 := ModBackend.new()
+	a2.backend = b2
+	a2.on_snapshot(_gun_snap(1, rows, []))
+	var v_bad: bool = not a2.mod_add(mod, gun, 11, 4) and not a2.mod_add(mod, gun, 10, 4) \
+			and not a2.mod_add(mod, gun, 21, 0) and not a2.mod_add(mod, gun, 0, 4) and not a2.mod_add(mod, gun, -21, 4) \
+			and b2.calls.is_empty()
+	var v_sent := a2.mod_add(mod, gun, 21, 4)
+	var v_call: bool = b2.calls.size() == 1 and (b2.calls[0] as Array).size() == 8 \
+			and (b2.calls[0] as Array).slice(6) == [21.0, 4.0]
+	_check.call(v_bad and v_sent and v_call,
+			"gun mods: mod_add names the vise after the tag, a whole handle that is neither the mod nor the gun (%s)"
+			% [b2.calls])
+	a2.free()
 	var ls := LiveSession.new()
+	var vise_sim := QueueSim.new()
+	ls._sim = vise_sim
+	var with_vise := ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 21.0, 5.0)
+	var bad_vise: bool = not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 21.0, 0.0) \
+			and not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 0.0, 5.0) and not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 11.0, 5.0) \
+			and not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 10.0, 5.0) and not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, 21.5, 5.0) \
+			and not ls.mod_add_item(11.0, 3.0, 10.0, 2.0, 0, NAN, 5.0)
+	_check.call(with_vise and bad_vise and vise_sim.sent == [
+			{"op": "mod_add", "item": 11, "type": 3, "container": 10, "container_type": 2, "vise": 21, "vise_type": 5}],
+			"live session: mod_add_item names the vise only when given, a whole handle, not the mod or the gun (%s)"
+			% [vise_sim.sent])
+	ls._sim = null
 	var no_sim := not ls.mod_add_item(11.0, 3.0, 10.0, 2.0)
 	var sim := QueueSim.new()
 	ls._sim = sim

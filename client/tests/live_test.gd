@@ -16,6 +16,7 @@ const TURN_TIMEOUT_MS := 60000
 const EXPECT_FILE := "live_test_expect.json"
 ## The run's own scratch folder (shared user:// otherwise collides between parallel runs); run 2 uses run 1's.
 const TestDir := preload("res://tests/test_dir.gd")
+const SnapSame := preload("res://tests/snapshot_same.gd")
 
 var _failed := 0
 var _sim: RefCounted
@@ -102,6 +103,9 @@ func _run() -> void:
 			{"op": "consume", "item": 0, "type": 3}, {"op": "consume", "item": 5},
 			{"op": "consume", "item": 5, "type": 3, "to": Vector3i(2, 2, 0)},
 			{"op": "consume", "item": 5, "type": 3, "pos": Vector3(1, 2, 0)},
+			{"op": "consume", "item": 5, "type": 3, "part": ""}, {"op": "consume", "item": 5, "type": 3, "part": 3},
+			{"op": "consume", "item": 5, "type": 3, "part": "arm l"},
+			{"op": "consume", "item": 5, "type": 3, "part": "a".repeat(33)}, take.merged({"part": "arm_l"}, true),
 			take.merged({"container": 7}, true), take.merged({"container_type": 3}, true),
 			take.merged({"container": 7, "container_type": 0}, true),
 			take.merged({"container": 0, "container_type": 3}, true)])
@@ -127,6 +131,23 @@ func _run() -> void:
 	_check(snap.is_valid(), "live snapshot passes the client's checks (%s)" % snap.error)
 	_check(snap.turn == turn0 and snap.seq == _sim.get_snapshot_seq(), "snapshot is the one before the request")
 	_check(snap.submaps.size() == 11 * 11 * 3, "three levels of submaps (%d)" % snap.submaps.size())
+	# The delta call (snapshot.md "Deltas"). Nothing held, or a seq the bridge never handed out: a full snapshot
+	# with a key row for every submap. Holding the one it just gave: a delta with only the player's surroundings.
+	var per_range: int = 11 * 11 * 3
+	var whole: Dictionary = _delta_json(0)
+	_check(not whole.has("base") and (whole.get("submap_keys", []) as Array).size() == per_range
+			and (whole.get("submaps", []) as Array).size() == per_range and int(whole.get("seq", 0)) == snap.seq,
+			"delta call, nothing held: a full snapshot with key rows")
+	var part: Dictionary = _delta_json(snap.seq)
+	var part_bodies: int = (part.get("submaps", []) as Array).size()
+	_check(int(part.get("base", 0)) == snap.seq and (part.get("submap_keys", []) as Array).size() == per_range
+			and part_bodies >= 1 and part_bodies <= 4,
+			"delta call, that snapshot held: only the player's surroundings (%d submaps)" % part_bodies)
+	var unknown_full: bool = true
+	for since: int in [-5, snap.seq + 1000, 1 << 62]:
+		var d: Dictionary = _delta_json(since)
+		unknown_full = unknown_full and not d.has("base") and (d.get("submaps", []) as Array).size() == per_range
+	_check(unknown_full, "delta call, a seq the bridge never gave: a full snapshot")
 	# The weather the client shows (WeatherState) comes from the env's weather fields: the bridge sends them
 	# (wind_at_player is -1 when it doesn't), and they give a weather that can be shown.
 	var ws := WeatherState.from_snapshot(snap)
@@ -197,6 +218,10 @@ func _run() -> void:
 		return
 
 	req = await _check_item_physics(req)
+	if req.is_empty():
+		_finish()
+		return
+	req = await _check_deltas(req)
 	if req.is_empty():
 		_finish()
 		return
@@ -644,6 +669,15 @@ static func _handle(snap: Snapshot, uid: int, type: int, p: Vector3i) -> Diction
 	return by_type
 
 
+## get_snapshot_delta_json for the three levels around the player, for a client holding snapshot `since`; {} when
+## the bridge lacks the call or gives no JSON object.
+func _delta_json(since: int) -> Dictionary:
+	if not _sim.has_method("get_snapshot_delta_json"):
+		return {}
+	var d: Variant = JSON.parse_string(_sim.get_snapshot_delta_json(1, 1, since))
+	return d if d is Dictionary else {}
+
+
 ## [yaw, side] the snapshot's `poses` give item `uid`, [] when none.
 func _pose(uid: int) -> Array:
 	var d: Variant = JSON.parse_string(_sim.get_snapshot_json(0, 0))
@@ -664,3 +698,54 @@ func _result(tag: int) -> Dictionary:
 		if int(r.get("detail", -1)) == tag:
 			return r
 	return {}
+
+
+## The bridge's delta call read by the client's parser (Snapshot.parse_text with the snapshot held): a full answer
+## first, then after each of a few waited turns a delta on the one held, which must come out the same as the plain
+## snapshot of that moment (SnapSame.diff). Then a delta the held snapshot doesn't fit must fail and leave the held
+## one alone. Skipped, said so, on a bridge without the call or a client without the parser. Returns the main loop's
+## request to go on with ({} when the game stopped).
+func _check_deltas(req: Dictionary) -> Dictionary:
+	if not _sim.has_method("get_snapshot_delta_json") or Snapshot.new().get("base_seq") == null:
+		print("  (no delta call in this bridge, or no delta parser in this client: deltas not checked)")
+		return req
+	var held := Snapshot.parse_text(_sim.get_snapshot_delta_json(1, 1, 0))
+	_check(held.is_valid() and held.base_seq == -1 and held.submaps.size() == 11 * 11 * 3
+			and held.submap_hash.size() == held.submaps.size(),
+			"deltas: nothing held, the parser takes the full answer with its key rows (%s)" % held.error)
+	if not held.is_valid():
+		return req
+	var first := held
+	var diffs := PackedStringArray()
+	var reused := []
+	var sizes := []
+	for i in 3:
+		if not _sim.queue_action("pause"):
+			diffs.append("turn %d: the wait wasn't queued" % i)
+			break
+		req = await _main_loop_request(int(req["turn"]), TURN_TIMEOUT_MS)
+		if req.is_empty():
+			_check(false, "deltas: a turn passes (%s)" % _sim.get_state())
+			return {}
+		var text: String = _sim.get_snapshot_delta_json(1, 1, held.seq)
+		var next := Snapshot.parse_text(text, held)
+		var plain := Snapshot.parse_text(_sim.get_snapshot_json(1, 1))
+		if not next.is_valid() or not plain.is_valid():
+			diffs.append("turn %d: %s%s" % [i, next.error, plain.error])
+			break
+		if next.base_seq != held.seq:
+			diffs.append("turn %d: built on %d, %d was held" % [i, next.base_seq, held.seq])
+		var d := SnapSame.diff(next, plain)
+		if not d.is_empty():
+			diffs.append("turn %d: %s" % [i, d])
+		reused.append(next.reused_submaps)
+		sizes.append(text.length() / 1024)
+		held = next
+	_check(diffs.is_empty() and reused.size() == 3, "deltas: three turns, each delta read on the one held is the plain snapshot "
+			+ "(%s submaps reused, %s KB) %s" % [reused, sizes, diffs])
+	# a delta on the newest read against an older snapshot: it must fail, and the older one stays whole
+	var before := first.submaps.size()
+	var wrong := Snapshot.parse_text(_sim.get_snapshot_delta_json(1, 1, held.seq), first)
+	_check((not wrong.is_valid() or first.seq == held.seq) and first.is_valid() and first.submaps.size() == before,
+			"deltas: a delta read against another snapshot than its base fails and leaves that one whole (%s)" % wrong.error)
+	return req

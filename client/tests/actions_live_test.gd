@@ -10,8 +10,8 @@ extends SceneTree
 ## with water, nothing counted twice). Then the screen HUD: body bars, needs, move line and message feed from the
 ## live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
-## puts it away. Then F3's classic view of the map around the player. Uses this run's own CDDA folder, never the
-## player's saves.
+## puts it away. Then F3's classic view of the map around the player. Near the end, first aid on a named body part
+## (_first_aid_live). Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -36,6 +36,8 @@ const KEYS := [
 ## Laid at the feet for the lists: the first id of each the game knows (something to wear, read and eat).
 const GUN := "glock_19"              # the test kit's pistol
 const GUN_MOD := "rail_laser_sight"  # goes on its rail with no tools (lead-bridge's sim scene)
+const VISE := "bench_vise"           # CDDA's bench vise (Vise.ITEM)
+const AID := "bandages"              # CDDA's bandages: an item with its heal use
 const AT_FEET := [["tshirt", "jeans"], ["novel_mystery", "mag_guns", "textbook_firearms", "news_regional"],
 		["apple", "can_beans"]]
 
@@ -128,6 +130,8 @@ func _run() -> void:
 		await _compass_live()
 		await _number_live()
 		await _gun_mods_live()
+		await _vise_live()
+		await _first_aid_live()
 		await _esc_live()
 	print("  what each key did:")
 	for line in _seen:
@@ -306,6 +310,7 @@ func _gun_mods_live() -> void:
 		_check(refused and said[0][0] == "mod_add" and why.contains(str(fit.get("reason", "?")))
 				and _carried(mod_t) != null and ItemActions.gun_has_mod(_main.world.snapshot, mod.uid) == false,
 				"gun mods: one that doesn't fit is refused in CDDA's words and stays carried (\"%s\")" % why)
+		await _fit_key_live(mod_t, str(fit.get("reason", "")))
 		print("  (the %s doesn't fit here, so fitting and taking off weren't tried)" % GUN_MOD)
 		return
 	if int(fit.get("chance", 0)) < 100:   # CDDA would ask for tools: a menu this check doesn't answer
@@ -328,6 +333,181 @@ func _gun_mods_live() -> void:
 				and m != null and m.uid == mod.uid
 	_check(sent and await _until(off, OP_TIMEOUT_MS, true),
 			"gun mods: mod_remove takes it off: carried again with its handle (%d turns)" % [_main.world.snapshot.turn - turn0])
+
+
+## The flat screen's key for it (lead-ui's F1; skipped on a client without main._fit_held_mod): with the gun in the
+## main hand and the gunmod of itype `mod_t` in the off hand, the crosshair line offers to fit it, and E on one the
+## snapshot says doesn't fit shows CDDA's `reason` by the crosshair and sends nothing.
+func _fit_key_live(mod_t: int, reason: String) -> void:
+	if not _main.has_method("_fit_held_mod"):
+		print("  (no key for fitting a gun mod in this client: not checked)")
+		return
+	var acts: ItemActions = _main.item_actions
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var mod := _carried(mod_t)
+	if mod == null or not acts.hold(mod, "off"):
+		_check(false, "gun mods: the gunmod goes into the off hand (%s)" % ["sent" if mod != null else "not carried"])
+		return
+	var in_off := func() -> bool:
+		var h: Variant = _main.hud_data.held.get("off")
+		return h is ItemRef and (h as ItemRef).type == mod_t and acts.pending((h as ItemRef).uid) == "" and in_loop.call()
+	var held := await _until(in_off, OP_TIMEOUT_MS, true)
+	var line: String = _main._context_line()
+	_check(held and line.contains("fit the"), "gun mods: gun and gunmod in hand, the crosshair line offers to fit it (\"%s\")" % line)
+	if not held:
+		return
+	_main.grab._flash = ""
+	root.push_input(_key_of(&"use_held"))
+	await create_timer(0.3).timeout
+	var said: String = _main.grab._flash
+	var uid: int = (_main.hud_data.held.get("off") as ItemRef).uid
+	_check(not reason.is_empty() and said.contains(reason) and acts.pending(uid) == "" and _carried(mod_t) != null,
+			"gun mods: E on one that doesn't fit says why by the crosshair and sends nothing (\"%s\")" % said)
+	root.push_input(_key_of(&"stow_off"))   # the hands as they were
+	await _until(func() -> bool: return _main.hud_data.held.get("off") == null and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## A bench vise on the flat screen in the running game (lead-ui's ViseBench, main.vise_bench; skipped on a client
+## without it): with the gun wielded and a bench_vise spawned at the feet, the pointer on the vise offers to clamp
+## the gun, E does it (the panel lists the carried gunmods CDDA judged), Esc takes the gun back, E clamps and E on
+## the vise again releases, and stepping away (the teleport cheat) releases it with a line. The pointer is put on the
+## vise by setting the hover the frame would find (aiming the camera isn't this check's subject).
+func _vise_live() -> void:
+	var bench: Variant = _main.get("vise_bench")
+	if bench == null:
+		print("  (no bench vise panel in this client: not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var gun_t := _cp.tables.index_of("itype", GUN)
+	var vise_t := _cp.tables.index_of("itype", VISE)
+	var gun := _carried(gun_t)
+	if gun == null or not gun.is_wielded() or vise_t <= 0:
+		print("  (no wielded %s, or no %s in the game data: the vise not checked)" % [GUN, VISE])
+		return
+	_cp.item_id.text = VISE
+	_cp.item_count.value = 1
+	var spawned := await _op(_cp.spawn_item, "Spawn " + VISE)
+	var lies := func() -> bool:
+		var v := _lying(vise_t)
+		return v != null and v.uid in Vise.near(_main.world.snapshot, _main.world.tables) and in_loop.call()
+	_check(spawned == "" and await _until(lies, OP_TIMEOUT_MS, true), "vise: a %s lies in reach (%s)" % [VISE, spawned])
+	if not lies.call():
+		return
+	var hover := {"kind": "item", "item": _lying(vise_t)}
+	_main.grab.item_hover = hover
+	var line: String = _main._context_line()
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var shown: bool = bench.clamped() and bench.visible
+	var fits: Array = bench.entries(_main.world.snapshot, _main.world.tables, _main.item_actions, _carried(gun_t)).get("fits", []) \
+			if shown else []
+	_check(line.contains("clamp the gun") and shown and not fits.is_empty(),
+			"vise: the pointer on it offers \"%s\"; E clamps the gun and the panel lists %d carried gunmod(s) (drawn in the jaws: %s)"
+			% [line, fits.size(), bench.model != null])
+	if not shown:
+		return
+	root.push_input(_esc_key())
+	await create_timer(0.1).timeout
+	_check(not bench.clamped() and not _main.key_menu.visible, "vise: Esc takes the gun back, no menu")
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var again: bool = bench.clamped()
+	_main.grab.item_hover = hover
+	var line2: String = _main._context_line()
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	_check(again and line2.contains("take the gun back") and not bench.clamped(),
+			"vise: E clamps again, the line then offers \"%s\", and E on the vise takes the gun back" % line2)
+	_main.grab.item_hover = hover
+	root.push_input(_key_of(&"use_held"))
+	var here: Vector3i = _main.world.snapshot.player_pos
+	_main.grab._flash = ""
+	var away: int = _live.cheat_teleport(here + Vector3i(4, 0, 0)) if bench.clamped() else 0
+	var gone := func() -> bool: return not bench.clamped()
+	var left: bool = away > 0 and await _until(gone, OP_TIMEOUT_MS, true)
+	_check(left and str(_main.grab._flash).contains("vise"),
+			"vise: stepping away takes the gun back with a line (\"%s\")" % _main.grab._flash)
+	_live.cheat_teleport(here)
+	await _until(func() -> bool: return _main.world.snapshot.player_pos == here and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## First aid on a named body part through the client (the bridge's consume `part`, ItemActions.consume(item, part));
+## skipped, said so, on a client without it or a bridge that sends no `heal` bits. A bandage is spawned and taken.
+## The range's character is unhurt, so with a part named CDDA refuses in its own words and asks nothing; with none
+## CDDA's own menu comes as a request, as before (cancelled here); a part that isn't one is refused in the client.
+func _first_aid_live() -> void:
+	var acts: ItemActions = _main.item_actions
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var parts: Variant = (ItemActions as Script).get_script_constant_map().get("PARTS")
+	var t := _cp.tables.index_of("itype", AID)
+	var def: IdTables.Def = _cp.tables.def_at("itype", t) if t >= 0 else null
+	var heal: Variant = def.get("heal") if def != null else null
+	if not parts is Array or not "arm_l" in parts or not heal is int or int(heal) == 0:
+		print("  (no first aid on a body part in this client, or no heal bits from this bridge: not checked; parts %s, heal %s)"
+				% [parts, heal])
+		return
+	_cp.item_id.text = AID
+	_cp.item_count.value = 1
+	var spawned := await _op(_cp.spawn_item, "Spawn " + AID)
+	var lies := func() -> bool: return _lying(t) != null
+	if spawned != "" or not await _until(lies, OP_TIMEOUT_MS, true):
+		_check(false, "first aid: %s lie at the feet (%s)" % [AID, spawned])
+		return
+	acts.take(_lying(t), "pack")
+	var taken := func() -> bool:
+		var b := _carried(t)
+		return b != null and acts.pending(b.uid) == "" and in_loop.call()
+	var has := await _until(taken, OP_TIMEOUT_MS, true)
+	var aid := _carried(t)
+	_check(has and aid != null, "first aid: %s taken; the id tables say what they treat (heal bits %d)" % [AID, heal])
+	if aid == null:
+		return
+	var said := []    # [what, op, reason]: how each consume of the bandage ended
+	var on_done := func(it: ItemRef, op: String) -> void:
+		if it != null and it.uid == aid.uid:
+			said.append(["finished", op, ""])
+	var on_refused := func(it: ItemRef, op: String, why: String) -> void:
+		if it != null and it.uid == aid.uid:
+			said.append(["refused", op, why])
+	acts.finished.connect(on_done)
+	acts.refused.connect(on_refused)
+	# a part named: no question from the game, its refusal in its own words
+	var asked := []   # ids of what the game asked meanwhile (not the main loop's request)
+	var ended := func() -> bool:
+		var r := _live.request
+		if not r.is_empty() and not r.get("timed", false) and not int(r.get("id", 0)) in asked:
+			asked.append(int(r.get("id", 0)))
+		return not said.is_empty() or not asked.is_empty()
+	var sent: bool = acts.call("consume", aid, "arm_l") == true
+	var got: bool = sent and await _until(ended, OP_TIMEOUT_MS, false) and not said.is_empty()
+	var why: String = said[0][2] if got else ""
+	_check(got and said[0][0] == "refused" and said[0][1] == "consume" and why.contains("expect any effect")
+			and asked.is_empty() and _carried(t) != null,
+			"first aid: a bandage on the unhurt left arm is refused in CDDA's words, and the game asks nothing (\"%s\"; sent %s, %d questions, %s)"
+			% [why, sent, asked.size(), said])
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	# no part named: CDDA's own body part menu, as before
+	said.clear()
+	var menu := func() -> bool: return not _live.request.is_empty() and not _live.request.get("timed", false)
+	var came: bool = acts.consume(aid) and await _until(menu, OP_TIMEOUT_MS, false)
+	var req := _live.request
+	var text := (str(req.get("title", "")) + " " + str(req.get("text", ""))).strip_edges().left(80).replace("\n", " ")
+	_check(came, "first aid: with no part named CDDA's own menu comes (%s \"%s\")" % [req.get("kind", "none"), text])
+	if came:
+		_answered = int(req.get("id", 0))
+		_live.answer({"id": _answered, "cancel": true})
+	var over := func() -> bool: return acts.pending(aid.uid) == "" and in_loop.call()
+	_check(await _until(over, OP_TIMEOUT_MS, true) and _carried(t) != null,
+			"first aid: the menu cancelled, the bandage is still carried (%s)" % [said])
+	# a part that isn't one: refused here, nothing sent
+	var before := acts.pending_count()
+	_check(acts.call("consume", aid, "tail") == false and acts.call("consume", aid, "arm l") == false
+			and acts.pending_count() == before, "first aid: a part that isn't one is refused in the client, nothing sent")
+	acts.finished.disconnect(on_done)
+	acts.refused.disconnect(on_refused)
 
 
 ## The first carried item of itype `t`, null for none.

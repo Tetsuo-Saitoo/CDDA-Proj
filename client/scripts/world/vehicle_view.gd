@@ -1,13 +1,16 @@
 class_name VehicleView
 extends Node3D
-## Block C5 (PLAN.md), slice 1: CDDA's vehicles (Snapshot.vehicles) drawn part by part on their squares. A plain
-## shape per kind of part (Kind, from the vpart's flags and location in the id tables), turned to the vehicle's
-## facing, in the part's CDDA colour; damaged parts go rusty and dark, broken ones charred, broken glass is gone.
-## CDDA's gap fillers (Snapshot.VPART_FILLER: the parts it adds on a turned vehicle's diagonals) draw and block as
-## the part they copy. One MultiMesh per look (solid, glass, wheels), rebuilt per snapshot (driving moves them) and
-## when the cutaway moves. What blocks walking (blocks), which part a ray meets at a height (part_at) and what items
-## rest on (rest_at) are here too, for walking, LookRay and the item physics. Real models, smooth turning and doors
-## by hand are later slices.
+## Block C5 (PLAN.md): CDDA's vehicles (Snapshot.vehicles). Slice 2, the look: each vehicle is drawn in its own
+## mount grid (frame_of: turned smoothly by its facing, stretched off the axes as CDDA's tile rays step, placed on its
+## parts' squares) as one body (hull: a floor under every cell, walls up to the sill where boards, doors and windows
+## are, opaque panels or glass above, the roof; outer corners cut so it reads rounded, no seams between squares) with
+## the other parts as shapes on their cells (wheels on the outside, seats, engine, lights, open doors, ...), each kind
+## (Kind) from the vpart's flags and location, in the part's CDDA colour; damaged parts go rusty and dark, broken ones
+## charred, broken walls and glass are gone. CDDA's gap fillers (Snapshot.VPART_FILLER) only block: the stretched
+## body covers their squares. Bodies are kept per vehicle until it moves, turns or changes; small parts are one
+## MultiMesh per look. What blocks walking (blocks), which part a ray meets at a height (part_at) and what items rest
+## on (rest_at) stay per square, exactly CDDA's (shapes: the heights of each kind), for walking, LookRay and the item
+## physics. Real models, smooth turning between snapshots and doors by hand are later slices.
 
 enum Kind { NONE, FRAME, BOARD, HALF, DOOR, GLASS_DOOR, DOOR_OPEN, WINDOW, ROOF, WHEEL, SEAT, ENGINE, TANK, CARGO,
 		LIGHT, ROOF_LIGHT, TURRET, CONTROLS, OTHER }
@@ -18,6 +21,16 @@ const TOP := 2.0       # top of the walls: taller than a real car, so the eyes (
 const ROOF_T := 0.1
 const SILL := 1.05     # glass starts here
 const MAX_PER_LOOK := 1 << 17
+const CLEAR := 0.25    # the body's underside above the ground
+const CHAMFER := 0.3   # how much of a cell the cut at a body's outer corner takes
+const WHEEL_OUT := 0.3 # a wheel on the body's side sits this far out from its cell's centre
+const MAX_HULL_VERTS := 1 << 20   # per look (solid, glass), all vehicles
+## Kinds drawn as the body (hull), not as shapes of their own.
+const HULL_KINDS := [Kind.FRAME, Kind.BOARD, Kind.HALF, Kind.DOOR, Kind.GLASS_DOOR, Kind.WINDOW, Kind.ROOF]
+## A cell's corners (x ahead, y right, cell units from its centre), counterclockwise; edge j runs from corner j to
+## j + 1 and borders the neighbouring cell at _EDGE_NEXT[j].
+const _CORNERS := [Vector2(-0.5, -0.5), Vector2(0.5, -0.5), Vector2(0.5, 0.5), Vector2(-0.5, 0.5)]
+const _EDGE_NEXT := [Vector3i(0, -1, 0), Vector3i(1, 0, 0), Vector3i(0, 1, 0), Vector3i(-1, 0, 0)]
 const DEFAULT_COLOR := Color(0.55, 0.56, 0.58)
 const TYRE := Color(0.1, 0.1, 0.11)
 const GLASS := Color(0.62, 0.8, 0.9, 0.3)
@@ -35,6 +48,10 @@ var _world: WorldView = null   # the world last applied (refresh follows its cut
 var _layers := {}      # Look -> MultiMeshInstance3D
 var _counts := {}      # Look -> instances drawn by the last apply
 var _drawn := {}       # Look -> [[Transform3D, Color], ...] drawn by the last apply (what the MultiMeshes hold)
+var _hulls := {}       # Look (SOLID, GLASS) -> MeshInstance3D of all bodies
+var _hull_arrays := {} # Look -> [vertices, normals, colours] the last apply drew (headless runs can't read a mesh)
+var _cache := {}       # vehicle uid -> [key, {Look -> [vertices, normals, colours]}, {Look -> [[transform, colour], ...]}]
+var built := 0         # vehicles drawn afresh (not from _cache), counted for tests
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
 
@@ -59,22 +76,47 @@ func instances(look: int) -> Array:
 	return _drawn.get(look, [])
 
 
+## What the last apply drew of the bodies of one look (SOLID, GLASS): [vertices, normals, colours], three per
+## triangle, world space.
+func hull(look: int) -> Array:
+	return _hull_arrays.get(look, [PackedVector3Array(), PackedVector3Array(), PackedColorArray()])
+
+
 func apply(snap: Snapshot, world: WorldView) -> void:
 	_world = world
 	var by_look := {}   # Look -> [[Transform3D, Color], ...]
+	var cache := {}
+	var fresh := false
 	if snap != null:
 		for veh in snap.vehicles:
-			var turn := Basis(Vector3.UP, -deg_to_rad(veh.face_deg))
-			for i in veh.part_count():
-				var k := i * Snapshot.VPART_STRIDE
-				if veh.pos.z + veh.parts[k + 7] > view_z_max:
-					continue
-				var def := def_of(world.tables, snap, veh.parts[k + 2])
-				var kind := kind_of(def, veh.parts[k + 4])
-				if kind == Kind.NONE:
-					continue
-				place(by_look, kind, color_of(kind, def, veh.parts[k + 3], veh.parts[k + 4]),
-						world.coords.ms_center_to_world(veh.square(i)), turn, (veh.parts[k + 4] & Snapshot.VPART_BROKEN) != 0)
+			var key := [veh.pos, veh.face_deg, veh.parts, view_z_max, world.coords.origin_ms, world.tables, snap.ids_generation]
+			var got: Array = _cache.get(veh.uid, [])
+			if got.is_empty() or got[0] != key:
+				got = [key] + _vehicle(veh, snap, world)
+				built += 1
+				fresh = true
+			cache[veh.uid] = got
+			for look: int in got[2]:
+				var list: Array = by_look.get(look, [])
+				list.append_array((got[2][look] as Array).slice(0, maxi(0, MAX_PER_LOOK - list.size())))
+				by_look[look] = list
+	if fresh or cache.keys() != _cache.keys() or _hull_arrays.is_empty() != cache.is_empty():
+		var hulls := {}
+		for look: int in [Look.SOLID, Look.GLASS]:
+			var v := PackedVector3Array()
+			var nr := PackedVector3Array()
+			var cl := PackedColorArray()
+			for got: Array in cache.values():
+				var add: Array = got[1].get(look, [])
+				if not add.is_empty() and v.size() + (add[0] as PackedVector3Array).size() <= MAX_HULL_VERTS:
+					v.append_array(add[0])
+					nr.append_array(add[1])
+					cl.append_array(add[2])
+			if not v.is_empty():
+				hulls[look] = [v, nr, cl]
+		_hull_arrays = hulls
+		_draw_hulls(hulls)
+	_cache = cache
 	_counts.clear()
 	_drawn = by_look
 	for look: int in _layers.keys():
@@ -87,6 +129,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			mi = _layer(look)
 			add_child(mi)
 			_layers[look] = mi
+		mi.position = Vector3.ZERO   # placed with today's origin: a shift moved the old ones only
 		var xs: Array = by_look[look]
 		var mm := mi.multimesh
 		mm.instance_count = xs.size()
@@ -114,6 +157,204 @@ func refresh() -> void:
 func shift(d: Vector3) -> void:
 	for mi: MultiMeshInstance3D in _layers.values():
 		mi.position += d
+	for mi: MeshInstance3D in _hulls.values():
+		mi.position += d
+
+
+## How a vehicle is drawn: its mount grid (x ahead, z to the right, a cell per square; y metres up from the floor of
+## its level) to world. Turned smoothly by face_deg; stretched by 1 / max(|cos|, |sin|) off the axes, as CDDA's tile
+## rays step (a vehicle at 45 degrees covers squares 1.4 m apart); moved to fit its parts' squares best (CDDA turns a
+## vehicle about a pivot, not mount 0, 0). At right angles every cell lands on its part's square.
+static func frame_of(veh: Snapshot.Vehicle, coords: CddaCoords) -> Transform3D:
+	var a := deg_to_rad(veh.face_deg)
+	var k := 1.0 / maxf(absf(cos(a)), absf(sin(a)))
+	var ahead := Vector2(cos(a), sin(a)) * k
+	var right := Vector2(-sin(a), cos(a)) * k
+	var sq := Vector2.ZERO
+	var mt := Vector2.ZERO
+	var n := 0
+	for i in veh.part_count():
+		var j := i * Snapshot.VPART_STRIDE
+		if (veh.parts[j + 4] & Snapshot.VPART_FILLER) == 0:
+			sq += Vector2(veh.parts[j + 5], veh.parts[j + 6])
+			mt += Vector2(veh.parts[j], veh.parts[j + 1])
+			n += 1
+	var off := sq / n - (ahead * (mt.x / n) + right * (mt.y / n)) if n > 0 else Vector2.ZERO
+	var o := coords.ms_center_to_world(veh.pos)
+	var ex := coords.ms_center_to_world(veh.pos + Vector3i(1, 0, 0)) - o
+	var ey := coords.ms_center_to_world(veh.pos + Vector3i(0, 1, 0)) - o
+	return Transform3D(Basis(ex * ahead.x + ey * ahead.y, Vector3.UP, ex * right.x + ey * right.y), o + ex * off.x + ey * off.y)
+
+
+## One vehicle's look: [{Look -> body [vertices, normals, colours]}, {Look -> [[transform, colour], ...]}]. Parts
+## above the cutaway and gap fillers are left out.
+func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
+	var xf := frame_of(veh, world.coords)
+	var turn := Basis(Vector3.UP, -deg_to_rad(veh.face_deg))
+	var cells := {}   # Vector3i(mount x, mount y, dz) -> {floor, low, high, glass, roof: [hp_frac, state], then Color}
+	var small := []   # [kind, colour, cell, broken]
+	var bases := {}   # CDDA colour of the body's parts -> votes
+	for i in veh.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		var state := veh.parts[k + 4]
+		if veh.pos.z + veh.parts[k + 7] > view_z_max or (state & Snapshot.VPART_FILLER) != 0:
+			continue
+		var def := def_of(world.tables, snap, veh.parts[k + 2])
+		var kind := kind_of(def, state)
+		if kind == Kind.NONE:
+			continue
+		var c := Vector3i(veh.parts[k], veh.parts[k + 1], veh.parts[k + 7])
+		var cell: Dictionary = cells.get(c, {})
+		cells[c] = cell
+		var wear := [veh.parts[k + 3], state]
+		if kind == Kind.FRAME or not cell.has("floor"):
+			cell["floor"] = wear if kind == Kind.FRAME else [255, 0]
+		if not (kind in HULL_KINDS):
+			small.append([kind, color_of(kind, def, veh.parts[k + 3], state), c, (state & Snapshot.VPART_BROKEN) != 0])
+			continue
+		var base := CddaPalette.fg(def.color, DEFAULT_COLOR) if def != null else DEFAULT_COLOR
+		bases[base] = bases.get(base, 0) + (1 if kind == Kind.FRAME else 10)   # the walls' paint before the frame's
+		if (state & Snapshot.VPART_BROKEN) == 0:   # a broken wall doesn't block: not drawn either
+			if kind != Kind.FRAME and kind != Kind.ROOF:
+				cell["low"] = wear
+			if kind == Kind.BOARD or kind == Kind.DOOR:
+				cell["high"] = wear
+			elif kind == Kind.WINDOW or kind == Kind.GLASS_DOOR:
+				cell["glass"] = wear
+			elif kind == Kind.ROOF:
+				cell["roof"] = wear
+	# one paint for the whole body (its parts' commonest colour), each cell worn as its own part is
+	var body := DEFAULT_COLOR
+	for b: Color in bases:
+		if bases[b] > bases.get(body, 0):
+			body = b
+	for c: Vector3i in cells:
+		for role: String in cells[c]:
+			var w: Array = cells[c][role]
+			cells[c][role] = GLASS if role == "glass" else damaged(body, w[0], w[1])
+	var by_look := {}
+	for e: Array in small:
+		var c: Vector3i = e[2]
+		var at := xf * Vector3(c.x, c.z * CddaCoords.LEVEL_M, c.y)
+		if e[0] == Kind.WHEEL:   # on the body's side, half out of it
+			var side := 1.0 if not cells.has(c + Vector3i(0, 1, 0)) else (-1.0 if not cells.has(c - Vector3i(0, 1, 0)) else 0.0)
+			at += turn * Vector3(0.0, 0.0, side * WHEEL_OUT)
+		place(by_look, e[0], e[1], at, turn, e[3])
+	return [hull_of(cells, xf), by_look]
+
+
+## A vehicle's body from its cells (Vector3i(mount x, mount y, dz) -> {floor, low, high, glass, roof: Color}): a
+## floor under all of them, walls from the deck to the sill, opaque panels or glass from there to the top, the roof
+## above; each a prism whose sides show only where it ends, outer corners cut. {Look -> [vertices, normals, colours]}.
+static func hull_of(cells: Dictionary, xf: Transform3D) -> Dictionary:
+	var layer := {}   # "floor"... -> {cell -> Color}
+	for key: String in ["floor", "low", "high", "glass", "roof"]:
+		layer[key] = {}
+	for c: Vector3i in cells:
+		for key: String in cells[c]:
+			layer[key][c] = cells[c][key]
+	var upper: Dictionary = layer["high"].merged(layer["glass"])
+	var out := {}
+	prism(out, Look.SOLID, layer["floor"], layer["floor"], layer["floor"], CLEAR, DECK, xf)
+	prism(out, Look.SOLID, layer["low"], layer["low"], layer["low"], DECK, SILL, xf)
+	prism(out, Look.SOLID, layer["high"], layer["high"], upper, SILL, TOP, xf)
+	prism(out, Look.GLASS, layer["glass"], upper, upper, SILL, TOP, xf, false)   # panes: no glass lid or floor
+	prism(out, Look.SOLID, layer["roof"], layer["roof"], layer["roof"], TOP, TOP + ROOF_T, xf)
+	return out
+
+
+## Adds the prism of `region` (cell -> colour) between heights y0 and y1 (m, plus its cell's dz levels) to out[look]:
+## a face up and down per cell (unless not `caps`), a side where the neighbouring cell isn't in `sides`, a corner cut
+## where neither cell beside it is in `cuts`. Faces are wound clockwise seen from outside (Godot's front faces).
+static func prism(out: Dictionary, look: int, region: Dictionary, sides: Dictionary, cuts: Dictionary, y0: float,
+		y1: float, xf: Transform3D, caps := true) -> void:
+	if region.is_empty():
+		return
+	var tris := []   # [a, b, c, normal, colour], world space
+	for c: Vector3i in region:
+		var col: Color = region[c]
+		var lo := y0 + c.z * CddaCoords.LEVEL_M
+		var hi := y1 + c.z * CddaCoords.LEVEL_M
+		var poly := _cell_poly(c, sides, cuts)
+		var pts := []   # the outline at lo, then at hi, world space
+		for y: float in [lo, hi]:
+			for e: Array in poly:
+				var p: Vector2 = e[0]
+				pts.append(xf * Vector3(c.x + p.x, y, c.y + p.y))
+		var m := poly.size()
+		for j in range(1, m - 1 if caps else 1):
+			tris.append(_tri(xf, pts[m], pts[m + j], pts[m + j + 1], Vector3.UP, col))
+			tris.append(_tri(xf, pts[0], pts[j], pts[j + 1], Vector3.DOWN, col))
+		for j in m:
+			if not poly[j][1]:
+				continue
+			var a: Vector2 = poly[j][0]
+			var b: Vector2 = poly[(j + 1) % m][0]
+			var n := Vector3(b.y - a.y, 0.0, a.x - b.x)   # outward: the outline runs counterclockwise
+			var k := (j + 1) % m
+			tris.append(_tri(xf, pts[j], pts[k], pts[m + k], n, col))
+			tris.append(_tri(xf, pts[j], pts[m + k], pts[m + j], n, col))
+	var v: PackedVector3Array = out[look][0] if out.has(look) else PackedVector3Array()
+	var nr: PackedVector3Array = out[look][1] if out.has(look) else PackedVector3Array()
+	var cl: PackedColorArray = out[look][2] if out.has(look) else PackedColorArray()
+	for t: Array in tris:
+		v.append_array(PackedVector3Array([t[0], t[1], t[2]]))
+		nr.append_array(PackedVector3Array([t[3], t[3], t[3]]))
+		cl.append_array(PackedColorArray([t[4], t[4], t[4]]))
+	out[look] = [v, nr, cl]
+
+
+## One cell's outline: [[corner, whether the edge from it to the next is a side], ...] counterclockwise; a corner
+## whose two neighbouring cells aren't in `cuts` is cut off.
+static func _cell_poly(c: Vector3i, sides: Dictionary, cuts: Dictionary) -> Array:
+	var side := []
+	var open := []
+	for j in 4:
+		side.append(not sides.has(c + _EDGE_NEXT[j]))
+		open.append(not cuts.has(c + _EDGE_NEXT[j]))
+	var poly := []
+	for j in 4:
+		var p: Vector2 = _CORNERS[j]
+		if open[(j + 3) % 4] and open[j]:
+			poly.append([p + (_CORNERS[(j + 3) % 4] - p) * CHAMFER, true])
+			poly.append([p + (_CORNERS[(j + 1) % 4] - p) * CHAMFER, side[j]])
+		else:
+			poly.append([p, side[j]])
+	return poly
+
+
+## A triangle facing `n` (mount frame) in colour col, wound clockwise seen from that side: [a, b, c, normal, colour].
+static func _tri(xf: Transform3D, a: Vector3, b: Vector3, c: Vector3, n: Vector3, col: Color) -> Array:
+	var nw := (xf.basis * n).normalized()
+	return [a, c, b, nw, col] if (b - a).cross(c - a).dot(nw) > 0.0 else [a, b, c, nw, col]
+
+
+func _draw_hulls(hulls: Dictionary) -> void:
+	for look: int in [Look.SOLID, Look.GLASS]:
+		var mi: MeshInstance3D = _hulls.get(look)
+		var arrs: Array = hulls.get(look, [])
+		if arrs.is_empty() or (arrs[0] as PackedVector3Array).is_empty():
+			if mi != null:
+				mi.free()
+				_hulls.erase(look)
+			continue
+		if mi == null:
+			mi = MeshInstance3D.new()
+			mi.name = "hull_" + Look.keys()[look].to_lower()
+			mi.material_override = _material(look)
+			if look == Look.GLASS:
+				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(mi)
+			_hulls[look] = mi
+		var data := []
+		data.resize(Mesh.ARRAY_MAX)
+		data[Mesh.ARRAY_VERTEX] = arrs[0]
+		data[Mesh.ARRAY_NORMAL] = arrs[1]
+		data[Mesh.ARRAY_COLOR] = arrs[2]
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, data)
+		mi.mesh = mesh
+		mi.position = Vector3.ZERO
 
 
 ## Adds the boxes of one part of kind `kind` on the square whose floor centre is `at` (world), turned by `turn`, to
@@ -208,12 +449,12 @@ static func kind_of(def: IdTables.Def, state: int) -> int:
 	return Kind.NONE
 
 
-## A part's colour: its CDDA colour (CddaPalette), tyres black, lights bright while on; then as damaged() shows it.
-## Glass is always GLASS.
+## A part's colour: its CDDA colour (CddaPalette), lights bright while on; then as damaged() shows it. Tyres stay
+## black (rubber doesn't rust). Glass is always GLASS.
 static func color_of(kind: int, def: IdTables.Def, hp: int, state: int) -> Color:
 	var c := CddaPalette.fg(def.color, DEFAULT_COLOR) if def != null else DEFAULT_COLOR
 	if kind == Kind.WHEEL:
-		c = TYRE
+		return TYRE
 	elif kind == Kind.LIGHT or kind == Kind.ROOF_LIGHT:
 		c = LIT if (state & Snapshot.VPART_ENABLED) != 0 else DEFAULT_COLOR
 	return damaged(c, hp, state)

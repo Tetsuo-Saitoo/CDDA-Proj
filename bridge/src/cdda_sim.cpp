@@ -207,6 +207,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_queued_actions" ), &CddaSim::get_queued_actions );
     ClassDB::bind_method( D_METHOD( "get_snapshot_seq" ), &CddaSim::get_snapshot_seq );
     ClassDB::bind_method( D_METHOD( "get_snapshot_json", "z_below", "z_above" ), &CddaSim::get_snapshot_json );
+    ClassDB::bind_method( D_METHOD( "get_snapshot_delta_json", "z_below", "z_above", "since" ),
+                          &CddaSim::get_snapshot_delta_json );
     ClassDB::bind_method( D_METHOD( "get_id_tables_json" ), &CddaSim::get_id_tables_json );
     ClassDB::bind_method( D_METHOD( "drain_events" ), &CddaSim::drain_events );
     ClassDB::bind_method( D_METHOD( "get_events_dropped" ), &CddaSim::get_events_dropped );
@@ -582,6 +584,17 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         }
         a.batch = static_cast<int>( batch );
     }
+    // consume: optionally the body part first aid goes on; no other op has it. The sim checks the id's letters
+    // again and that it is one of the avatar's own parts.
+    if( !field( d, "part", Variant::STRING, v ) || ( d.has( "part" ) && a.op != fp3d::item_op::consume ) ) {
+        return false;
+    }
+    if( d.has( "part" ) ) {
+        a.part = to_std( v );
+        if( a.part.empty() || a.part.size() > fp3d::max_item_part_bytes ) {
+            return false;
+        }
+    }
     const auto ref = [&d]( const char *uid_key, const char *type_key, fp3d::item_ref & r ) {
         Variant u;
         Variant t;
@@ -669,6 +682,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
     }
     if( ( a.op == fp3d::item_op::reload || a.op == fp3d::item_op::mod_add ||
           a.op == fp3d::item_op::mod_remove ) && !ref( "container", "container_type", a.container ) ) {
+        return false;
+    }
+    // mod_add, optional: the vise the gun is clamped in (both keys or neither); no other op has it. The sim checks
+    // that it is one and lies within reach.
+    if( ( d.has( "vise" ) || d.has( "vise_type" ) ) &&
+        ( a.op != fp3d::item_op::mod_add || !ref( "vise", "vise_type", a.vise ) ) ) {
         return false;
     }
     if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
@@ -775,6 +794,20 @@ String CddaSim::get_snapshot_json( int64_t z_below, int64_t z_above ) const
         uint64_t seq = 0;
         return to_godot( fp3d_session::snapshot_json( static_cast<int>( std::clamp<int64_t>( z_below, 0, 64 ) ),
                          static_cast<int>( std::clamp<int64_t>( z_above, 0, 64 ) ), seq ) );
+    } catch( const std::exception &e ) {
+        godot::UtilityFunctions::push_error( String( "CddaSim: snapshot JSON failed: " ) + e.what() );
+        return String();
+    }
+}
+
+String CddaSim::get_snapshot_delta_json( int64_t z_below, int64_t z_above, int64_t since ) const
+{
+    try {
+        uint64_t seq = 0;
+        // `since` comes from the client: anything below 1 means "nothing held"; the rest is only looked up.
+        return to_godot( fp3d_session::snapshot_delta_json( static_cast<int>( std::clamp<int64_t>( z_below, 0, 64 ) ),
+                         static_cast<int>( std::clamp<int64_t>( z_above, 0, 64 ) ),
+                         since > 0 ? static_cast<uint64_t>( since ) : 0, seq ) );
     } catch( const std::exception &e ) {
         godot::UtilityFunctions::push_error( String( "CddaSim: snapshot JSON failed: " ) + e.what() );
         return String();

@@ -6,6 +6,9 @@ extends PanelContainer
 ## for SHOW_S seconds, one after another. `{action}` in a text becomes that action's first key (InputActions.key_of),
 ## so a rebound key reads right. Seen ids and the on / off switch (the F1 menu's Hints box) are kept in
 ## user://hints.cfg, read as hostile: size cap, no Object(...), only known ids, a non-bool leaves hints on.
+## VR (lead-vr): its own ids and words (VR_TEXTS, "vr_" ids, one short line naming the button; no {action} keys), in
+## the same seen set, file and switch; VrHint draws the one shown (text_of) in the headset, and main triggers the
+## "vr_" ids instead of the flat ones while VR runs (VR_START on the first turn, vr_id() for due() and the others).
 
 const FILE := "user://hints.cfg"
 const MAX_FILE_BYTES := 8 << 10
@@ -27,6 +30,27 @@ const TEXTS := {
 	"tired": "You are getting tired: find somewhere safe, ideally a bed, and press {cdda_sleep} to sleep. "
 			+ "{cdda_wait} waits longer than one turn.",
 }
+## The VR hints (lead-vr): at most about 60 characters, which button does what, second person, present tense.
+const VR_TEXTS := {
+	"vr_start": "Push one stick to walk and the other to turn.",
+	"vr_take": "Hold the grip near an item to take it; let go to drop it.",
+	"vr_pack": "Reach over your shoulder and grip to open your pack.",
+	"vr_wrist": "Turn your off-hand wrist toward you to see your health.",
+	"vr_menu": "Press the left menu button for settings and inventory.",
+	"vr_prompt": "Point at an answer and pull the trigger; B or Y cancels.",
+	"vr_inspect": "Drag items with the trigger; B or Y closes this.",
+	"vr_hostile": "Danger near: swing at it, or aim a gun and pull the trigger.",
+	"vr_tired": "You are tired: press the left menu button and pick Sleep.",
+	"vr_gun": "Pull the trigger to fire where the gun points.",
+	"vr_mag": "Grip under the handle with your other hand to unload.",
+	"vr_mods": "Let go of the mod where it glows green to fit it.",
+	"vr_mod_off": "Grip a mod on your gun and pull to take it off.",
+	"vr_vise": "Let go of your gun at the vise to leave it there.",
+	"vr_eat": "Bring food or a drink to your mouth and hold it there.",
+	"vr_bleed": "Hold a bandage to the hurt part of your body for a moment.",
+}
+## The VR hints of the first turn, in order.
+const VR_START: Array[String] = ["vr_start", "vr_take", "vr_pack", "vr_wrist", "vr_menu"]
 ## CDDA's hunger effects that mean "eat something" (not full, not engorged).
 const HUNGRY_EFFECTS := ["hunger_hungry", "hunger_very_hungry", "hunger_near_starving", "hunger_starving",
 		"hunger_famished"]
@@ -73,6 +97,23 @@ static func fill(text: String) -> String:
 	return out
 
 
+## A hint id of either table.
+static func known(id: String) -> bool:
+	return TEXTS.has(id) or VR_TEXTS.has(id)
+
+
+## Hint `id`'s text as shown: a flat one with its keys filled in, a VR one as written; "" for an unknown id.
+static func text_of(id: String) -> String:
+	if TEXTS.has(id):
+		return fill(TEXTS[id])
+	return VR_TEXTS.get(id, "")
+
+
+## The VR hint for flat hint `id` ("hostile" -> "vr_hostile"), "" when VR has none (no way to do it in VR yet).
+static func vr_id(id: String) -> String:
+	return "vr_" + id if VR_TEXTS.has("vr_" + id) else ""
+
+
 ## The hints the game calls for now (main asks each snapshot in play): "hostile" for a hostile creature in sight,
 ## "eat" for hunger (HUNGRY_EFFECTS) or thirst (HudData's HURT or worse), "bleed" for a bleeding body part, "tired"
 ## for sleepiness at CDDA's Tired or worse (HURT).
@@ -96,7 +137,7 @@ static func due(snap: Snapshot, hud: HudData) -> Array[String]:
 
 ## Shows hint `id` once (queued behind the one showing). False when off, unknown or already seen.
 func trigger(id: String) -> bool:
-	if not enabled or not TEXTS.has(id) or seen.has(id) or queue.size() >= MAX_QUEUE:
+	if not enabled or not known(id) or seen.has(id) or queue.size() >= MAX_QUEUE:
 		return false
 	seen[id] = true
 	var err := save_file()
@@ -147,7 +188,7 @@ func _next() -> void:
 		visible = false
 		return
 	shown = queue.pop_front()
-	_label.text = fill(TEXTS[shown])
+	_label.text = text_of(shown)
 	_left = SHOW_S
 	visible = true
 
@@ -173,8 +214,9 @@ func load_file() -> String:
 	seen.clear()
 	var v: Variant = cfg.get_value("hints", "seen", [])
 	if v is Array or v is PackedStringArray:
-		for id: Variant in Array(v).slice(0, 64):
-			if id is String and TEXTS.has(id):
+		# At least 64: unknown ids (a newer build's) or repeats first must not push known ones past the cut.
+		for id: Variant in Array(v).slice(0, maxi(64, TEXTS.size() + VR_TEXTS.size())):
+			if id is String and known(id):
 				seen[id] = true
 	return ""
 
@@ -185,8 +227,9 @@ func save_file() -> Error:
 	var cfg := ConfigFile.new()
 	cfg.set_value("hints", "enabled", enabled)
 	var ids: Array[String] = []
-	for id: String in TEXTS:
-		if seen.has(id):
-			ids.append(id)
+	for t: Dictionary in [TEXTS, VR_TEXTS]:
+		for id: String in t:
+			if seen.has(id):
+				ids.append(id)
 	cfg.set_value("hints", "seen", ids)
 	return cfg.save(path)

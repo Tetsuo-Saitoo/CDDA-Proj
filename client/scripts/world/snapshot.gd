@@ -23,6 +23,8 @@ const WEATHER_SOUND_THUNDER := 4          # env.weather_sound: CDDA's category f
 const MAX_REVISION := 0xFFFFFFFF
 const MAX_ABS_SM := 1 << 26               # keeps absolute squares (x 12) well inside int32
 const MAX_TURN := 1 << 52                 # JSON numbers are doubles
+const KEY_STRIDE := 6                     # submap_keys rows: x, y, z, revision, detail_revision, hash
+const MAX_HASH := 0xFFFFFFFF              # the bridge's 32-bit hash of a submap body
 const MAX_NAMES := 65536
 const MAX_NAME_LEN := 128
 const MAX_ITEM_COUNT := 0xFFFF            # uint16 in the contract
@@ -139,6 +141,7 @@ class Submap:
 	var vis: PackedByteArray      # 0 never seen, 1 remembered, 2 seen, 3 in sight but dark
 	var light: PackedByteArray
 	var lights: PackedInt32Array  # LIGHT_STRIDE ints per light source: tile, luminance 0..255, kind (LIGHT_*)
+	var lights_sent := false      # the body had a `lights` list (has_lights, also when a delta reuses this submap)
 	var heat: PackedInt32Array    # HEAT_STRIDE ints per square that heats (seen tiles only), distinct tiles
 	var cookware: Array = []      # Cookware on those squares
 
@@ -222,6 +225,9 @@ var weather_sound := 0           # env.weather_sound: CDDA's sound category (WEA
 var temperature_c := NAN         # env.temperature_c: the air on the player's square, -100..100; NAN when not sent
 var has_lights := false  # some submap has a `lights` list: light sources come from the lists, not guessed
 var submaps := {}       # Vector3i (absolute submap) -> Submap
+var submap_hash := {}   # Vector3i -> the bridge's hash of its body (`submap_keys`); a delta built on this needs it
+var base_seq := -1      # a delta (`base`): the seq of the snapshot it was built on; -1 for a full answer
+var reused_submaps := 0 # a delta: submaps taken unchanged from that snapshot (shared with it, never changed)
 var _container_sm := {} # container uid -> the submap whose `inside` / `inside_more` lists it
 var ter_names := {}     # int -> String
 var furn_names := {}    # int -> String
@@ -310,21 +316,23 @@ static func load_file(path: String) -> Snapshot:
 	return parse_text(f.get_as_text())
 
 
-static func parse_text(text: String) -> Snapshot:
+static func parse_text(text: String, base: Snapshot = null) -> Snapshot:
 	if text.length() > MAX_FILE_BYTES:
 		return Snapshot.new()._fail("snapshot text is longer than %d" % MAX_FILE_BYTES)
 	var json := JSON.new()
 	if json.parse(text) != OK:
 		return Snapshot.new()._fail("JSON line %d: %s" % [json.get_error_line(), json.get_error_message()])
-	return from_data(json.data)
+	return from_data(json.data, base)
 
 
-## Builds from already-parsed JSON data (Dictionary/Array/String/float/bool/null).
-static func from_data(data: Variant) -> Snapshot:
+## Builds from already-parsed JSON data (Dictionary/Array/String/float/bool/null). `base`: the snapshot held, for a
+## delta (contracts/snapshot.md "Deltas"); a delta that doesn't fit it fails, and the caller asks for a full one.
+static func from_data(data: Variant, base: Snapshot = null) -> Snapshot:
 	var snap := Snapshot.new()
-	snap._read(data)
+	snap._read(data, base)
 	if not snap.is_valid():
 		snap.submaps.clear()
+		snap.submap_hash.clear()
 		snap._container_sm.clear()
 		snap.ter_names.clear()
 		snap.furn_names.clear()
@@ -340,7 +348,7 @@ func _fail(msg: String) -> Snapshot:
 	return self
 
 
-func _read(data: Variant) -> void:
+func _read(data: Variant, base: Snapshot = null) -> void:
 	if not data is Dictionary:
 		_fail("top level is not an object")
 		return
@@ -361,6 +369,7 @@ func _read(data: Variant) -> void:
 	_read_env(d.get("env"))
 	_read_ids(d.get("ids"))
 	_read_submaps(d.get("submaps"))
+	_read_keys(d, base)
 	_read_creatures(d.get("creatures"))
 	if is_valid():
 		vehicles = vehicles_from(d.get("vehicles"), z_min, z_max)
@@ -1031,6 +1040,7 @@ func _read_submaps(v: Variant) -> void:
 		sm.light = _bytes(s.get("light"), 255, what + ".light")
 		if s.has("lights"):
 			has_lights = true
+			sm.lights_sent = true
 			sm.lights = _lights(s["lights"], what + ".lights")
 		sm.heat = _heat(s.get("heat"), what + ".heat")
 		sm.cookware = _cookware(s.get("cookware"), sm.heat, what + ".cookware")
@@ -1041,6 +1051,79 @@ func _read_submaps(v: Variant) -> void:
 			_container_sm[c] = sm.pos
 		for c: int in sm.inside_more:
 			_container_sm[c] = sm.pos
+
+
+## `submap_keys` (contracts/snapshot.md "Deltas"): a row [x, y, z, revision, detail_revision, hash] per submap. A
+## full answer has a body for every row. A delta (`base`: the seq of the snapshot it was built on) has bodies only
+## for some; every other row must name a submap `base` holds with the same revisions and hash (same id tables), and
+## that Submap is taken over as it is. Only positions are compared: the bubble and the player may have moved. Any
+## row that doesn't add up fails the snapshot (the caller then asks for a full one); `base` is never changed.
+func _read_keys(d: Dictionary, base: Snapshot) -> void:
+	if not is_valid():
+		return
+	var delta := d.has("base")
+	if delta:
+		base_seq = _int(d["base"], 0, MAX_TURN, "base")
+		if is_valid() and (base == null or not base.is_valid() or base.seq != base_seq):
+			_fail("a delta on snapshot %d, but %s is held" % [base_seq, "none" if base == null else str(base.seq)])
+	if not is_valid():
+		return
+	if not d.has("submap_keys"):
+		if delta:
+			_fail("a delta without submap_keys")
+		return
+	if not d["submap_keys"] is Array:
+		_fail("submap_keys is not a list")
+		return
+	var rows: Array = d["submap_keys"]
+	if rows.size() > max_submaps():
+		_fail("%d submap_keys, cap is %d" % [rows.size(), max_submaps()])
+		return
+	for i in rows.size():
+		var what := "submap_keys[%d]" % i
+		if not rows[i] is Array or (rows[i] as Array).size() != KEY_STRIDE:
+			_fail(what + " is not [x, y, z, revision, detail_revision, hash]")
+			return
+		var r: Array = rows[i]
+		var p := Vector3i(_int(r[0], -MAX_ABS_SM, MAX_ABS_SM, what + ".x"), _int(r[1], -MAX_ABS_SM, MAX_ABS_SM, what + ".y"),
+				_int(r[2], z_min, z_max, what + ".z"))
+		var rev := _int(r[3], 0, MAX_REVISION, what + ".revision")
+		var detail := _int(r[4], 0, MAX_REVISION, what + ".detail_revision")
+		var h := _int(r[5], 0, MAX_HASH, what + ".hash")
+		if not is_valid():
+			return
+		var rel := p - bubble_origin
+		if rel.x < 0 or rel.x >= CddaCoords.MAPSIZE or rel.y < 0 or rel.y >= CddaCoords.MAPSIZE:
+			_fail("%s: %s is outside the bubble" % [what, p])
+			return
+		if submap_hash.has(p):
+			_fail("%s: %s appears twice" % [what, p])
+			return
+		var sm: Submap = submaps.get(p)
+		if sm != null:
+			if sm.revision != rev or sm.detail_revision != detail:
+				_fail("%s: the revisions of %s aren't its body's" % [what, p])
+				return
+		elif not delta:
+			_fail("%s: %s has no body" % [what, p])
+			return
+		else:
+			var old: Submap = base.submaps.get(p)
+			if old == null or old.revision != rev or old.detail_revision != detail or base.submap_hash.get(p, -1) != h \
+					or base.ids_generation != ids_generation:
+				_fail("%s: %s isn't in snapshot %d as the row says" % [what, p, base_seq])
+				return
+			submaps[p] = old
+			reused_submaps += 1
+			if old.lights_sent:
+				has_lights = true
+			for c: int in old.inside:
+				_container_sm[c] = p
+			for c: int in old.inside_more:
+				_container_sm[c] = p
+		submap_hash[p] = h
+	if submap_hash.size() != submaps.size():
+		_fail("%d submaps have no submap_keys row" % (submaps.size() - submap_hash.size()))
 
 
 ## Integer in [lo, hi]; JSON gives every number as a float, so integral floats are accepted.

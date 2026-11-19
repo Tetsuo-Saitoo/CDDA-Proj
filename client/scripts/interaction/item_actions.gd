@@ -48,6 +48,8 @@ const CONTENT_OPS := ["unload", "reload", "pour", "consume"]
 const QUIET_OK := ["unload", "reload", "throw", "pour", "clear", "consume"]
 ## Id-table itype categories of what CDDA eats, drinks or takes (comestibles; drinks are "food", pills "drugs").
 const CONSUME_CATEGORIES := ["food", "drugs"]
+## The main body parts first aid can be aimed at (consume's `part`: CDDA's ids, the bridge's list).
+const PARTS := ["head", "torso", "arm_l", "arm_r", "leg_l", "leg_r"]
 
 enum Where { STILL, MOVED, UNKNOWN }
 
@@ -206,22 +208,33 @@ func pour_into(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 
 ## Eats, drinks or takes a carried `item` (a container: what is inside it) with CDDA's consume rules, no menu.
 ## Backend method consume_item(uid, type, tag) (LiveSession has it; a bridge without the op refuses there, and so
-## here); judged by its item_result (TAGGED_OPS).
-func consume(item: ItemRef) -> bool:
-	if not _ok_ref(item) or not item.carried:
+## here); judged by its item_result (TAGGED_OPS). `part` (one of PARTS, "" none; anything else refused here): first
+## aid on that body part without CDDA's menu (CDDA refuses with why when nothing there needs it, or a broken or bionic
+## limb); food, drink and pills ignore it. It goes to the backend as a 4th argument only when set, so backends
+## without it (MockItems) still eat.
+func consume(item: ItemRef, part := "") -> bool:
+	if not _ok_ref(item) or not item.carried or (part != "" and not part in PARTS):
 		return false
-	return _send("consume", item, null, Vector2(-1, -1), "consume_item", [float(item.uid), float(item.type)])
+	return _send("consume", item, null, Vector2(-1, -1), "consume_item", [float(item.uid), float(item.type)],
+			[part] if part != "" else [])
 
 
 ## Gun modification by hand: fits the carried gunmod `mod` onto the wielded gun `gun` (bridge op "mod_add": CDDA's
 ## gunmod_add with that very mod, its questions real requests, its time). Backend method mod_add_item(uid, type, gun,
 ## gun_type, tag); judged by its item_result (TAGGED_OPS), or done early once the snapshot lists the mod on the gun.
-func mod_add(mod: ItemRef, gun: ItemRef) -> bool:
+## `vise` / `vise_type` (V3): the bench vise the gun is clamped in (its snapshot handle; Vise.odds: better odds), sent
+## after the tag as mod_add_item(..., tag, vise, vise_type); 0, 0: none (the old call).
+func mod_add(mod: ItemRef, gun: ItemRef, vise := 0, vise_type := 0) -> bool:
 	if not _ok_ref(mod) or not mod.carried or not _ok_ref(gun) or not gun.carried or not gun.is_wielded() \
 			or mod.uid == gun.uid:
 		return false
+	var named := vise != 0 or vise_type != 0
+	if named and (vise <= 0 or vise >= Snapshot.MAX_UID or vise_type <= 0 or vise_type > Snapshot.MAX_ID
+			or vise == mod.uid or vise == gun.uid):
+		return false
 	return _send("mod_add", mod, gun.duplicate_ref(), Vector2(-1, -1), "mod_add_item",
-			[float(mod.uid), float(mod.type), float(gun.uid), float(gun.type)])
+			[float(mod.uid), float(mod.type), float(gun.uid), float(gun.type)],
+			[float(vise), float(vise_type)] if named else [])
 
 
 ## Takes the gunmod `mod_uid` (itype `mod_type`, one the snapshot's wielded_gun `mods` lists) off the wielded gun `gun`
@@ -470,9 +483,12 @@ static func tile_of(p: Vector3i) -> int:
 	return l.y * CddaCoords.SEEX + l.x
 
 
-func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: String, args: Array) -> bool:
+## `tail`: arguments after the tag (consume's part); TAGGED_OPS only (an untagged op would put it in the tag's
+## place), so one given to another op is refused here.
+func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: String, args: Array,
+		tail: Array = []) -> bool:
 	if backend == null or not is_instance_valid(backend) or not backend.has_method(method) \
-			or _pending.size() >= MAX_PENDING:
+			or _pending.size() >= MAX_PENDING or (not tail.is_empty() and not op in TAGGED_OPS):
 		return false
 	var e := {"op": op, "item": item.duplicate_ref(), "target": target, "spot": spot, "sent_ms": _now(),
 			"seq": _seq, "messages": [], "info": "", "looks": 0}
@@ -485,6 +501,7 @@ func _send(op: String, item: ItemRef, target: Variant, spot: Vector2, method: St
 		_tag = TAG_BASE + (maxi(_tag - TAG_BASE, -1) + 1) % (MAX_TAG - TAG_BASE + 1)
 		e["tag"] = _tag
 		call_args = args + [_tag]
+	call_args = call_args + tail
 	# Recorded before the call: a backend that answers inside the call (MockItems) has it judged right there.
 	_pending[item.uid] = e
 	var ok: Variant = backend.callv(method, call_args)

@@ -4,7 +4,9 @@ extends SceneTree
 ## range controls show the zones, and each control (heal, freeze, set time, wait an hour, spawn an item at the
 ## feet and a monster ahead, go to a zone) comes back done from the game and shows in the client's world. Before
 ## those, stairs through the client: up and back down in the hub, each snapshot around the new level and no submap's
-## revisions running backwards. Uses this run's own CDDA folder, never the player's saves.
+## revisions running backwards. After each move that changes the map (over a submap border, a level up or down,
+## another zone) the delta snapshots are compared with the plain snapshot (_deltas_ok), and on the hub's level the
+## vehicles must be drawn on their squares (_vehicles_ok). Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/range_ui_live_test.gd -- --live
@@ -12,6 +14,7 @@ extends SceneTree
 
 const Main := preload("res://scripts/main.gd")
 const TestDir := preload("res://tests/test_dir.gd")
+const SnapSame := preload("res://tests/snapshot_same.gd")
 const BOOT_TIMEOUT_MS := 300000
 const OP_TIMEOUT_MS := 90000
 const SHOW_TIMEOUT_MS := 20000   # an op's effect reaching the client's world after the game says done
@@ -25,6 +28,11 @@ var _live: LiveSession
 var _cp: CheatPanel
 var _done := {}       # op id -> error ("" = done), from LiveSession.range_done
 var _answered := 0    # the last prompt this script answered
+var _held: Snapshot   # the snapshot this script holds for the delta call, beside LiveSession's own (_deltas_ok)
+var _deltas_off := false
+var _full_after := {"shift": 0, "level": 0}   # full answers _deltas_ok read after a map shift, on another level
+var _veh_off := false
+var _veh_seen := []   # per _vehicles_ok that had vehicles to compare: how many points it compared
 
 
 func _initialize() -> void:
@@ -123,6 +131,9 @@ func _run() -> void:
 	var built := func() -> bool: return _cp.zone_pick.get_item_text(1) == zone_name
 	_check(await _until(built, SHOW_TIMEOUT_MS) and _cp.status.text == "Go to %s: done." % zone_name,
 			"the zone reads built and the status line names it (%s / %s)" % [_cp.zone_pick.get_item_text(1), _cp.status.text])
+	await _deltas_ok("in another zone")
+	_deltas_done()
+	_vehicles_done()
 	await _stop()
 	_finish()
 
@@ -130,8 +141,12 @@ func _run() -> void:
 ## Stairs through the client, in the hub: the teleport cheat next to the stairs up, then main.use_stair up and back
 ## down. After each change of level the snapshot is around the new level (every level the client asks for, whole)
 ## and no submap's revisions run backwards, the level left out meanwhile included. Then back to the arrival square.
+## After each of these moves the delta snapshots are checked too (_deltas_ok).
 func _stairs_live() -> void:
 	var start := _main.world.snapshot.player_pos
+	await _deltas_ok("on arrival")
+	_vehicles_ok("on arrival")
+	await _border_live(start)
 	var st := _stair_near(start)
 	var z0 := st.z
 	var next := func() -> bool:
@@ -149,15 +164,199 @@ func _stairs_live() -> void:
 		return
 	var seen := {}   # submap -> Vector2i(revision, detail revision), the highest seen
 	_levels_ok("by the stairs", seen)
+	await _deltas_ok("by the stairs")
+	_vehicles_ok("by the stairs")
 	var is_up := await _take_stair(st, z0, 1)
 	_check(is_up, "use_stair up: the player is on level %d (%s, \"%s\")" % [z0 + 1, _main.world.snapshot.player_pos, _main.status])
 	_levels_ok("upstairs", seen)
+	await _deltas_ok("upstairs")
 	var is_down := is_up and await _take_stair(Vector3i(st.x, st.y, z0 + 1), z0 + 1, -1)
 	_check(is_down, "use_stair down again: the player is on level %d (%s, \"%s\")" % [z0, _main.world.snapshot.player_pos, _main.status])
 	_levels_ok("back down", seen)
+	await _deltas_ok("back down")
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
 	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"teleported back to the arrival square (%s)" % _main.world.snapshot.player_pos)
+	await _deltas_ok("back at the arrival square")
+
+
+## A walk across a submap border: the teleport cheat a submap's width (12 squares) to one side of `start`, which
+## makes the map shift by a submap, most of it still the same ground; then back. Deltas checked after each
+## (_deltas_ok: a full answer is due after the shift, and that it came is counted for _deltas_done).
+func _border_live(start: Vector3i) -> void:
+	var origin := _main.world.snapshot.bubble_origin
+	var shifted := func() -> bool:
+		var s: Snapshot = _main.world.snapshot
+		return s.bubble_origin != origin and s.player_pos.z == start.z and not _main.world.busy()
+	var over := false
+	for d: Vector3i in [Vector3i(12, 0, 0), Vector3i(0, -12, 0), Vector3i(-12, 0, 0), Vector3i(0, 12, 0)]:
+		if await _cheat(_live.cheat_teleport(start + d)) == "" and await _until(shifted, SHOW_TIMEOUT_MS):
+			over = true
+			break
+	_check(over, "the teleport cheat takes the player over a submap border and the map shifts (player %s -> %s, origin %s -> %s)"
+			% [start, _main.world.snapshot.player_pos, origin, _main.world.snapshot.bubble_origin])
+	if not over:
+		return
+	await _deltas_ok("over a submap border")
+	_vehicles_ok("over a submap border")
+	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
+	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
+			"teleported back over the border (%s)" % _main.world.snapshot.player_pos)
+	await _deltas_ok("back over the border")
+	_vehicles_ok("back over the border")
+
+
+## Delta snapshots after the move `what`, where a move changes what the bridge can build on (contracts/snapshot.md
+## "Deltas"). Once the world shows the newest snapshot, two readings of it must be the plain snapshot of that moment
+## (SnapSame.diff): the one the world shows, which LiveSession fetched on the snapshot it held, and the delta call's
+## answer read here on the snapshot this script holds (_held). After a map shift and on another level that answer
+## must be a full one. Then a turn is waited and both are compared again: the answer must now be a delta on the
+## snapshot just read. Skipped, said once, on a bridge without the call or a client without the parser.
+func _deltas_ok(what: String) -> void:
+	if _deltas_off:
+		return
+	if not _live.sim().has_method("get_snapshot_delta_json") or Snapshot.new().get("base_seq") == null:
+		_deltas_off = true
+		print("  (no delta call in this bridge, or no delta parser in this client: deltas not checked)")
+		return
+	var before := _held
+	var got := await _read_newest()
+	var next: Snapshot = got.get("next")
+	var moved := ""   # "shift" / "level": the bridge can't build on the one held
+	var place := "nothing held"
+	if before != null and next != null:
+		place = "the same map"
+		if next.player_pos.z != before.player_pos.z:
+			moved = "level"
+			place = "level %d -> %d" % [before.player_pos.z, next.player_pos.z]
+		elif next.bubble_origin != before.bubble_origin:
+			moved = "shift"
+			place = "the map shifted by %s submaps" % (next.bubble_origin - before.bubble_origin)
+	var full_ok: bool = next != null and (next.base_seq == -1 or (before != null and moved == ""))
+	_check(got["diff"] == "" and full_ok, ("deltas, %s (%s): the world's snapshot and the delta call's answer read on the "
+			+ "one held are the plain snapshot%s (%s) %s") % [what, place, ", the answer a full one" if moved != "" else "",
+			_answer_note(got), got["diff"]])
+	if next == null:
+		return
+	if moved != "" and next.base_seq == -1:
+		_full_after[moved] += 1
+	_held = next
+	var passed := func() -> bool: return _main.world.snapshot.turn > next.turn
+	var waited: bool = _live.queue_action("pause") and await _until(passed, OP_TIMEOUT_MS)
+	got = await _read_newest()
+	var later: Snapshot = got.get("next")
+	_check(waited and got["diff"] == "" and later != null and later.base_seq == next.seq, ("deltas, %s: a turn later both "
+			+ "are the plain snapshot again, the answer a delta on the one just read (%s) %s") % [what, _answer_note(got),
+			got["diff"]])
+	if later != null:
+		_held = later
+
+
+## The newest snapshot of one moment, read three ways: {next: the delta call's answer read on _held (absent when it
+## or the plain one wasn't read), kb: the answer's size, diff: "" when the world's snapshot and `next` are both the
+## plain snapshot, else what is off}. Read again when a newer snapshot came between the readings.
+func _read_newest() -> Dictionary:
+	var sim := _live.sim()
+	var settled := func() -> bool:
+		var s: Snapshot = _main.world.snapshot
+		return s != null and s.seq == sim.get_snapshot_seq() and not _main.world.busy()
+	for attempt in 5:
+		if not await _until(settled, SHOW_TIMEOUT_MS):
+			return {"diff": "the world doesn't show the newest snapshot (%d, the bridge has %d)"
+					% [_main.world.snapshot.seq, sim.get_snapshot_seq()]}
+		var shown: Snapshot = _main.world.snapshot
+		var text: String = sim.get_snapshot_delta_json(LiveSession.Z_BELOW, LiveSession.Z_ABOVE,
+				_held.seq if _held != null else 0)
+		var next := Snapshot.parse_text(text, _held)
+		var plain := Snapshot.parse_text(sim.get_snapshot_json(LiveSession.Z_BELOW, LiveSession.Z_ABOVE))
+		if not next.is_valid() or not plain.is_valid():
+			return {"diff": "not read: %s %s" % [next.error, plain.error]}
+		if next.seq != shown.seq or plain.seq != shown.seq:
+			continue
+		var d := SnapSame.diff(shown, plain)
+		if d != "":
+			d = "the world's: " + d
+		else:
+			d = SnapSame.diff(next, plain)
+			if d != "":
+				d = "the answer: " + d
+		return {"next": next, "kb": text.length() / 1024, "diff": d}
+	return {"diff": "newer snapshots kept coming"}
+
+
+## What _read_newest's answer was, for a check's line: full or a delta, the submaps taken from the one held, its size.
+func _answer_note(got: Dictionary) -> String:
+	var next: Snapshot = got.get("next")
+	if next == null:
+		return "no answer"
+	return "%s, %d of %d submaps reused, %d KB" % ["full" if next.base_seq == -1 else "a delta on %d" % next.base_seq,
+			next.reused_submaps, next.submaps.size(), got["kb"]]
+
+
+## The delta checks as a whole, once the walk is over: a full answer came after a map shift and on another level,
+## and LiveSession itself read deltas all along and never one that didn't fit the snapshot it held.
+func _deltas_done() -> void:
+	if _deltas_off:
+		return
+	_check(_full_after["shift"] >= 2 and _full_after["level"] >= 2 and _live.deltas_read > 0 and _live.delta_fallbacks == 0,
+			"deltas: full answers after %d map shifts and %d changes of level; the live game read %d deltas, %d didn't fit"
+			% [_full_after["shift"], _full_after["level"], _live.deltas_read, _live.delta_fallbacks])
+
+
+## The vehicles of the shown snapshot are drawn where their parts' squares are, after the move `what` (VehicleView
+## with bodies, C5 slice 2; skipped, said once, on a client without them): every layer of the view that draws
+## something sits at the origin again, and the bodies' vertices and the small parts' places lie within 2 m of a
+## square of a vehicle (a cell stretched at an angle, a cut corner, a wheel pushed out). A view that kept a map
+## shift would be a submap (12 m) off.
+func _vehicles_ok(what: String) -> void:
+	var vv: VehicleView = _main.vehicles_view
+	if vv == null or not vv.has_method("hull"):
+		if not _veh_off:
+			print("  (no vehicle bodies in this client: where vehicles are drawn isn't checked)")
+		_veh_off = true
+		return
+	var snap: Snapshot = _main.world.snapshot
+	var cells := {}   # Vector2i(world x, z, rounded to metres) of every vehicle part's square
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		for i in veh.part_count():
+			var w: Vector3 = _main.world.coords.ms_center_to_world(veh.square(i))
+			cells[Vector2i(roundi(w.x), roundi(w.z))] = true
+	if cells.is_empty():
+		print("  (%s: no vehicle in the snapshot)" % what)
+		return
+	var moved := []
+	for c: Node in vv.get_children():
+		var draws: bool = c is MeshInstance3D or (c is MultiMeshInstance3D
+				and (c as MultiMeshInstance3D).multimesh != null and (c as MultiMeshInstance3D).multimesh.instance_count > 0)
+		if draws and not (c as Node3D).position.is_zero_approx():
+			moved.append([c.name, (c as Node3D).position])
+	var pts := PackedVector3Array()
+	for look: int in VehicleView.Look.values():
+		var verts: PackedVector3Array = vv.call("hull", look)[0]
+		for i in range(0, verts.size(), 5):   # every fifth vertex is plenty
+			pts.append(verts[i])
+		for e: Array in vv.instances(look):
+			pts.append((e[0] as Transform3D).origin)
+	var off := []
+	for p: Vector3 in pts:
+		var near := false
+		for dz in range(-2, 3):
+			for dx in range(-2, 3):
+				near = near or cells.has(Vector2i(roundi(p.x) + dx, roundi(p.z) + dz))
+		if not near and off.size() < 3:
+			off.append(p)
+	_veh_seen.append(pts.size())
+	_check(moved.is_empty() and off.is_empty() and not pts.is_empty(), ("vehicles, %s: the %d in the snapshot are drawn "
+			+ "on their squares (%d points compared; off: %s; layers not at the origin: %s)")
+			% [what, snap.vehicles.size(), pts.size(), off, moved])
+
+
+## The vehicle checks as a whole: vehicles were compared after at least two moves that shifted the map.
+func _vehicles_done() -> void:
+	if _veh_off:
+		return
+	_check(_veh_seen.size() >= 3, "vehicles: drawn on their squares at the start and after map shifts (%d times, points: %s)"
+			% [_veh_seen.size(), _veh_seen])
 
 
 ## The stairs up nearest `from` on its level that the client knows of (within 16 squares); the hub's own (10 west,

@@ -33,6 +33,7 @@ var _gun := 0                  # uids: the glock, its magazine, its rounds
 var _mag := 0
 var _round := 0
 var _req := {}
+var _hints_due: Array[String] = []   # VrRig.hint_due ids
 
 
 ## LiveSession's item backend for an action that doesn't land at once (MockItems answers inside the call).
@@ -124,6 +125,7 @@ func _setup(root: Node, data: Variant, tables: IdTables) -> bool:
 	_hands.defer_steps = false
 	_rig = VrRig.new(_world, {"blink": false, "hands": "boxes"})
 	_rig.hands = _hands
+	_rig.hint_due.connect(func(id: String) -> void: _hints_due.append(id))
 	root.add_child(_rig)
 	_rig.camera.position = Vector3(0, 1.6, 0)
 	_rig.go_to_square(P)
@@ -714,8 +716,9 @@ func _test_mods() -> void:
 class ModStub extends RefCounted:
 	var calls: Array = []
 
-	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
-		calls.append([uid, type, gun, gun_type, tag])
+	func mod_add_item(uid: float, type: float, gun: float, gun_type: float, tag := 0, vise := 0.0,
+			vise_type := 0.0) -> bool:
+		calls.append([uid, type, gun, gun_type, tag] + ([vise, vise_type] if vise != 0.0 else []))
 		return true
 
 	func mod_remove_item(uid: float, type: float, gun: float, gun_type: float, tag := 0) -> bool:
@@ -924,6 +927,33 @@ func _test_vise() -> void:
 	mc.global_position = g.model.global_transform * (GunMods.slot(g.shape, "rail", 0)["at"] as Vector3)
 	_frame()
 	var main_fits: bool = g.fit.get("uid") == las and g.fit.get("near") == true and g.shown and g.clamped()
+	# V3: in the vise the odds by the hand are the vise's, and mod_add names the vise.
+	_snap.player_gun["fits"] = [{"uid": las, "ok": true, "chance": 85, "risk": 3, "reason": ""}]
+	_captured()
+	_frame()
+	var sure: bool = _rig.notes[mi].text == VrGun.FITS
+	_snap.player_gun["fits"] = [{"uid": las, "ok": true, "chance": 61, "risk": 9, "reason": ""}]
+	_captured()
+	_frame()
+	var odds_line: String = _rig.notes[mi].text
+	var stub := ModStub.new()
+	_actions.backend = stub
+	_rig.release(mc, "grip_click")
+	_frame()
+	var vt := Vise.type_of(_world.tables)
+	var named: bool = vt > 0 and stub.calls.size() == 1 and int(stub.calls[0][0]) == las \
+			and (stub.calls[0] as Array).size() == 7 and int(stub.calls[0][5]) == vises[0] and int(stub.calls[0][6]) == vt
+	var tag: int = int(stub.calls[0][4]) if not stub.calls.is_empty() else 0
+	_actions.on_events([{"kind": "item_result", "detail": tag, "amount": 0, "text": "Never mind."}])
+	_frame()
+	var back_in_hand: ItemRef = _hands.holding(mid).get("item")
+	_actions.backend = _mock
+	_check.call(sure and odds_line == "Let go to fit it: 81% in the vise (4% risk of damage)" and named
+			and back_in_hand != null and back_in_hand.uid == las and Vise.odds(61, 9) == Vector2i(81, 4)
+			and Vise.odds(95, 3) == Vector2i(100, 1) and Vise.odds(100, 0) == Vector2i(100, 0)
+			and Vise.odds(-5, 300) == Vector2i(15, 50) and Vise.type_of(null) == 0,
+			"vr gun: in the vise the odds by the hand are 20 more and half the risk; mod_add names the vise (%s, %s)"
+			% [odds_line, stub.calls])
 	_hands.release(mid, {})
 	_remove(las)
 	ldef.gunmod_location = was_loc
@@ -954,6 +984,10 @@ func _test_vise() -> void:
 	_frame()
 	_check.call(back and again and off and g.shown,
 			"vr gun: the main grip on the gun's grip takes it out of the vise; walking off puts it back in the hand")
+	var once := true
+	for id: String in ["vr_gun", "vr_mag", "vr_mods", "vr_mod_off", "vr_vise"]:
+		once = once and _hints_due.count(id) == 1 and Hints.known(id)
+	_check.call(once, "vr gun: the VR hints for the gun, mods and the vise are asked for once each (%s)" % [_hints_due])
 
 
 ## Junk in player_gun: no gun, or a pistol with junk ignored; a long fault list is capped.

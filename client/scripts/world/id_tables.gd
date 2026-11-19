@@ -7,6 +7,8 @@ extends RefCounted
 ## and tables with any bad field are rejected whole ([member error] set, every table empty). A missing
 ## field takes its default; a present one must be valid (`mtype` and `vpart` may be missing: no monster names, vehicle
 ## parts drawn plain). Of `tables` only the lists read below are used; whoever reads more adds their checks here.
+## An itype's `heal` is CDDA's heal use as HEAL_* bits (first aid; 0 for everything else); bits a newer bridge adds
+## (within 16) are dropped, not failed.
 
 const MAX_FILE_BYTES := 16 << 20          # the 0.I tables are ~2.7 MB
 const MAX_ROWS := 65536                   # ter/furn/trap/field (CDDA has ~1.1k terrain)
@@ -35,6 +37,14 @@ const POCKET_AMMO_ONLY := 64
 const POCKET_RESTRICTED := 128
 const POCKET_FORBIDDEN := 256         # the player can't use it
 const POCKET_FLAGS := 511
+## An itype's `heal` bits (contracts/id_tables.md): what CDDA's heal use does to a body part.
+const HEAL_BANDAGE := 1       # bandages a hurt part
+const HEAL_DISINFECT := 2     # disinfects it
+const HEAL_BLEED := 4         # stops bleeding
+const HEAL_BITE := 8          # treats a bite
+const HEAL_INFECTION := 16    # treats an infection
+const HEAL_HP := 32           # gives hit points back
+const HEAL_ALL := 63
 ## An itype's `phase` as CDDA has it for the type (not the item's state now: frozen water is "liquid").
 const PHASES := ["solid", "liquid", "gas", "plasma"]
 
@@ -71,6 +81,7 @@ class Def:
 	var size := 0           # mtype: CDDA's creature_size, 1 tiny .. 5 huge
 	var species := {}       # mtype: species name -> true (HUMAN, ZOMBIE, MAMMAL, ...)
 	var bodytype := ""      # mtype: CDDA's body type (human, dog, insect, ...), "" if the bridge doesn't say
+	var heal := 0           # itype: CDDA's heal use as HEAL_* bits (bandages, disinfectant, ...); 0 none or not sent
 	## itype: the type's own container pockets, the array index being the `pocket` for put/pour: each {name ("" when
 	## not sent), volume_ml, max_weight_g, max_item_ml (-1 = only the volume), flags (POCKET_* bits)}. Empty when
 	## the type holds nothing or the bridge doesn't send pockets. Filled while the tables load, never changed after
@@ -294,6 +305,7 @@ func _read_table(table: String, v: Variant) -> void:
 				def.mod_locations = _mod_locations(r["mod_locations"], what + ".mod_locations")
 			def.volume_ml = _int(r.get("volume_ml"), 0, 1 << 40, what + ".volume_ml")
 			def.weight_g = _int(r.get("weight_g"), 0, 1 << 40, what + ".weight_g")
+			def.heal = _int(r.get("heal"), 0, 65535, what + ".heal") & HEAL_ALL
 			if r.has("pockets"):
 				def.pockets = _pockets(r["pockets"], what + ".pockets")
 				has_pockets = true
