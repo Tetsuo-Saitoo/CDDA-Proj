@@ -290,8 +290,10 @@ func _drive_live(start: Vector3i) -> void:
 	var by_door := func() -> bool: return _main.world.snapshot.player_pos == out and not _main.world.busy()
 	var there: bool = door != Vector3i.MAX and await _cheat(_live.cheat_teleport(out)) == "" \
 			and await _until(by_door, SHOW_TIMEOUT_MS)
-	_check(there, "driving: the player stands outside the door next to the car's controls (controls %s, door %s, player %s)"
-			% [seat, door, _main.world.snapshot.player_pos])
+	_check(there, "driving: the player stands outside the door next to the car's controls (controls %s, door %s, player %s; doors from the controls: %s; floor %d, two squares out: %s)"
+			% [seat, door, _main.world.snapshot.player_pos, doors.keys().map(func(k: Vector3i) -> Vector3i: return k - seat),
+			feet, [Vector3i(0, -2, 0), Vector3i(0, 2, 0), Vector3i(-2, 0, 0), Vector3i(2, 0, 0)].map(
+			func(d: Vector3i) -> int: return _floor_at(seat + d))])
 	if not there:
 		return
 	var step_in := _step_name(door - out)
