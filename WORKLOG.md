@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-18 — In VR, standing in the car you're riding now carries you along smoothly as it drives and turns (never tilting your floor on a ramp); seen from outside, your body sits in the car as it glides too. Client tests pass; not tried in a headset.
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
 - 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
 - 2026-11-19 — Bridge: in the test range a vehicle can now be placed on request at any angle (for checking angled cars in a running game). A bad spot is refused: nothing is rammed, merged or pushed aside to make room. Fork tests pass on Windows and Linux, client tests pass.
