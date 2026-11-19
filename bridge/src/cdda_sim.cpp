@@ -228,6 +228,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "start_test_range", "data_dir", "user_dir" ), &CddaSim::start_test_range );
     ClassDB::bind_method( D_METHOD( "range_spawn_item", "itype", "count", "pos" ), &CddaSim::range_spawn_item );
     ClassDB::bind_method( D_METHOD( "range_spawn_monster", "id", "pos" ), &CddaSim::range_spawn_monster );
+    ClassDB::bind_method( D_METHOD( "range_spawn_vehicle", "id", "pos", "facing" ), &CddaSim::range_spawn_vehicle );
     ClassDB::bind_method( D_METHOD( "range_teleport", "zone" ), &CddaSim::range_teleport );
     ClassDB::bind_method( D_METHOD( "range_rebuild_zone", "zone" ), &CddaSim::range_rebuild_zone );
     ClassDB::bind_method( D_METHOD( "range_set_time", "minute" ), &CddaSim::range_set_time );
@@ -1029,6 +1030,22 @@ int64_t CddaSim::range_spawn_monster( const String &id, const Vector3i &pos )
     op.kind = fp3d::range_op_kind::spawn_monster;
     op.monster = to_std( id );
     op.square = range_square( pos );
+    return queue_range( op );
+}
+
+// The id's length and the facing's range are checked here; the sim checks both again, the id against the loaded
+// vehicle prototypes and the squares the vehicle would stand on.
+int64_t CddaSim::range_spawn_vehicle( const String &id, const Vector3i &pos, int64_t facing )
+{
+    if( id.is_empty() || id.length() > static_cast<int64_t>( fp3d::max_vehicle_proto_id ) || facing < 0 ||
+        facing > 359 ) {
+        return 0;
+    }
+    fp3d::range_op op;
+    op.kind = fp3d::range_op_kind::spawn_vehicle;
+    op.vehicle = to_std( id );
+    op.square = range_square( pos );
+    op.number = facing;
     return queue_range( op );
 }
 

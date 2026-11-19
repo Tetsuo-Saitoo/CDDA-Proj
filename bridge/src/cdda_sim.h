@@ -74,6 +74,7 @@ class CddaSim : public godot::RefCounted
         godot::String start_test_range( const godot::String &data_dir, const godot::String &user_dir );
         int64_t range_spawn_item( int64_t itype, int64_t count, const godot::Vector3i &pos );
         int64_t range_spawn_monster( const godot::String &id, const godot::Vector3i &pos );
+        int64_t range_spawn_vehicle( const godot::String &id, const godot::Vector3i &pos, int64_t facing );
         int64_t range_teleport( int64_t zone );
         int64_t range_rebuild_zone( int64_t zone );
         int64_t range_set_time( int64_t minute );

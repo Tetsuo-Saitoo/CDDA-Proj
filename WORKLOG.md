@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Bridge: in the test range a vehicle can now be placed on request at any angle (for checking angled cars in a running game). A bad spot is refused: nothing is rammed, merged or pushed aside to make room. Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
 - 2026-11-18 — Vehicles checked after map shifts in a running game (QA lead): range_ui_live_test compares where the hub's car is drawn with its squares after crossing a submap border; without the fix in the vehicle view it shows the car 12 m off.
