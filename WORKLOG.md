@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Tester AppImage test-2026-11-19 (private test repo, pre-release, not a release) from main 2da4a28 + fork 1479c60, after the QA lead's GO (smoke, Linux live suites incl. driving, personal-strings check pass on the file).
 - 2026-11-18 — Angled cars sit on their squares (C5, lead-world): a car at an angle is now laid out the way CDDA lays it out, so its body covers the squares that block you (before, a wide car at 45 degrees was drawn up to a square and a half off). Client tests pass.
 - 2026-11-19 — The live driving check now steers (QA lead): the car is turned 30 degrees off the axis and back while rolling, and a second car is spawned at 30 degrees; the drawn cars stay within 0.75 m of the game's squares.
 - 2026-11-19 — Vehicle spawn and driving checked in a running game (QA lead): range_ui_live_test spawns a car at 45 degrees and drives another 20 squares through the client; the drawn car follows the game's squares and glides between turns. The first run showed angled cars drawn up to 1.6 m off their squares, since fixed by the world lead.
