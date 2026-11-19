@@ -43,6 +43,9 @@ const SHOTS := [
 	{"name": "rain_top", "env": RAIN, "view": "top"},
 	{"name": "fog_top", "env": FOG, "view": "top"},
 	{"name": "clear_again", "env": CLEAR, "yaw": 45.0},
+	# The mock's coupe (C5): one rounded body with glass, wheels on its sides, seen from the south and from above.
+	{"name": "car_side", "env": CLEAR, "yaw": 0.0, "pitch": -12.0, "move": Vector3i(-13, 20, 0)},
+	{"name": "car_top", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0)},
 	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},

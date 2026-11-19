@@ -2,7 +2,9 @@ extends RefCounted
 ## Block C5 slice 1, vehicles: the snapshot's `vehicles` read as hostile input (Snapshot.vehicles_from: a malformed
 ## vehicle or part is left out, caps hold, the snapshot still loads), the part squares (the bridge's dx, dy, dz as
 ## they are, checked against CDDA's own for an L of four frames at 0, 90 and 45 degrees; without them the mounts
-## turned by the facing, CDDA's own at right angles), VehicleView's shapes (on their squares, turned, tinted), what
+## turned by the facing, CDDA's own at right angles), VehicleView's look (slice 2: one body per vehicle in its own
+## grid, closed and on its cells; the small parts on their squares, turned, tinted; kept until the vehicle changes;
+## after a map shift every view sits at the origin again), what
 ## blocks walking (CDDA's obstacle rule, gap fillers too) and LookRay naming the vehicle and part. Walking into cars:
 ## vr_tests.gd; items on them: item_physics_tests.gd. Run by run_tests.gd.
 
@@ -229,6 +231,95 @@ func _test_squares() -> void:
 			"vehicles: the bridge's own squares (dx, dy, dz) are used as they are")
 
 
+## The test car's body (face 0: its cells on its squares): inside its cells and heights; walls above the deck only
+## on the board, the closed door and the windshield (not on bare frame, the open door or the broken halfboard); glass
+## in the closed door and the windshield; the roof over the windshield. A body's prism is closed, faces wound
+## clockwise seen from outside, outer corners cut; at 45 degrees the frame puts each cell near CDDA's own square.
+func _test_hull(view: VehicleView, car: Snapshot.Vehicle, world: WorldView) -> void:
+	var inv := VehicleView.frame_of(car, world.coords).affine_inverse()
+	var solid := view.hull(VehicleView.Look.SOLID)
+	var glass := view.hull(VehicleView.Look.GLASS)
+	var vs: PackedVector3Array = solid[0]
+	var inside := vs.size() > 0 and vs.size() % 3 == 0 and (solid[1] as PackedVector3Array).size() == vs.size() \
+			and (solid[2] as PackedColorArray).size() == vs.size()
+	var walls := true
+	var roof := false
+	for p: Vector3 in vs:
+		var m := inv * p
+		inside = inside and m.x > -0.51 and m.x < 5.51 and m.z > -0.51 and m.z < 1.51 and m.y > VehicleView.CLEAR - 0.01 \
+				and m.y < VehicleView.TOP + VehicleView.ROOF_T + 0.01
+		if m.y > VehicleView.DECK + 0.01:
+			walls = walls and (m.x < 1.51 or m.x > 4.49) and m.z < 0.51
+		roof = roof or (m.y > VehicleView.TOP + 0.01 and m.x > 4.49)
+	var panes := (glass[0] as PackedVector3Array).size() > 0
+	for p: Vector3 in glass[0]:
+		var m := inv * p
+		panes = panes and m.y > VehicleView.SILL - 0.01 and m.y < VehicleView.TOP + 0.01 and m.z < 0.51 \
+				and ((m.x > 0.49 and m.x < 1.51) or m.x > 4.49)
+	_check.call(inside and walls and roof and panes,
+			"vehicles: one body on the car's cells: walls on the board, closed door and windshield, glass above the door and windshield, the roof (%d, %d vertices)" % [vs.size(), (glass[0] as PackedVector3Array).size()])
+	var out := {}
+	var region := {Vector3i(0, 0, 0): Color.RED, Vector3i(1, 0, 0): Color.RED, Vector3i(0, 1, 0): Color.RED}
+	var xf := Transform3D(Basis(Vector3.UP, 0.7) * Basis.from_scale(Vector3(1.4, 1.0, 1.4)), Vector3(3.0, 0.0, 2.0))
+	VehicleView.prism(out, VehicleView.Look.SOLID, region, region, region, 0.0, 1.0, xf)
+	var lv: PackedVector3Array = out[VehicleView.Look.SOLID][0]
+	var ln: PackedVector3Array = out[VehicleView.Look.SOLID][1]
+	var area := Vector3.ZERO
+	var clockwise := lv.size() > 0
+	var sides := 0
+	for t in range(0, lv.size(), 3):
+		var cr := (lv[t + 1] - lv[t]).cross(lv[t + 2] - lv[t])
+		area += cr
+		clockwise = clockwise and cr.dot(ln[t]) < 0.0
+		sides += 1 if absf(ln[t].y) < 0.01 else 0
+	_check.call(area.length() < 1e-3 and clockwise and sides == 26,
+			"vehicles: a body is closed, wound clockwise seen from outside, its 5 outer corners of an L cut (%s, %d side triangles)" % [area, sides])
+	var l45 := Snapshot.vehicles_from([{"uid": 1, "pos": [100, 100, 0], "face_deg": 45.0,
+			"parts": [[0, 0, 1, 255, 0, 0, 0, 0], [1, 0, 1, 255, 0, 1, 1, 0], [2, 0, 1, 255, 0, 2, 2, 0], [0, 1, 1, 255, 0, -1, 0, 0]]}], 0, 0)
+	var f45 := VehicleView.frame_of(l45[0], world.coords)
+	var worst := 0.0
+	for i in 4:
+		var k := i * Snapshot.VPART_STRIDE
+		var at := f45 * Vector3(l45[0].parts[k], 0.0, l45[0].parts[k + 1])
+		var sq := world.coords.ms_center_to_world(l45[0].square(i))
+		worst = maxf(worst, Vector2(at.x - sq.x, at.z - sq.z).length())
+	var a45 := f45.basis * Vector3.RIGHT
+	_check.call(worst < 0.8 and is_equal_approx(a45.length(), sqrt(2.0)) and absf(a45.x - a45.z) < 1e-4,
+			"vehicles: at 45 degrees the body is turned smoothly, stretched as CDDA steps, each cell within %.2f of its square" % worst)
+
+
+## After a map shift (the world's origin moves; main.gd sends shift) and the next snapshot, the vehicle, field and gore
+## views sit at the origin again: what they draw was placed with the new origin, so it lands once, not twice.
+func _test_shift(root: Node, view: VehicleView, snap: Snapshot, world: WorldView) -> void:
+	var fields := FieldView.new()
+	var gore := GoreView.new()
+	root.add_child(fields)
+	root.add_child(gore)
+	fields.apply(snap, world)
+	gore.apply(snap, world)
+	view.apply(snap, world)
+	var before: Vector3 = view.hull(VehicleView.Look.SOLID)[0][0]
+	var d := world.coords.set_bubble_origin(snap.bubble_origin + Vector3i(1, 0, 0))
+	for v: Node in [view, fields, gore]:
+		v.call("shift", d)
+	var moved := (view.get_child(0) as Node3D).position == d
+	for v: Node in [view, fields, gore]:
+		v.call("apply", snap, world)
+	var after: Vector3 = view.hull(VehicleView.Look.SOLID)[0][0]
+	var home := fields.get_child_count() + gore.get_child_count() > 0
+	for v: Node in [view, fields, gore]:
+		for c: Node in v.get_children():
+			home = home and (c as Node3D).position == Vector3.ZERO
+	var back := world.coords.set_bubble_origin(snap.bubble_origin)
+	for v: Node in [view, fields, gore]:
+		v.call("shift", back)
+		v.call("apply", snap, world)
+	_check.call(d != Vector3.ZERO and moved and home and after.is_equal_approx(before + d),
+			"vehicles: after a map shift the vehicle, field and gore views are placed once, not twice (%s -> %s)" % [before, after])
+	fields.queue_free()
+	gore.queue_free()
+
+
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var snap := Snapshot.from_data(_data(data, tables))
 	if not snap.is_valid() or snap.vehicles.size() != 1:
@@ -251,10 +342,14 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 		for e: Array in view.instances(look):
 			var sq := world.coords.world_to_ms((e[0] as Transform3D).origin)
 			on_squares = on_squares and squares.has(Vector3i(sq.x, sq.y, CAR.z))
-	_check.call(view.count(VehicleView.Look.SOLID) > 10 and view.count(VehicleView.Look.GLASS) == 2
+	_check.call(view.count(VehicleView.Look.SOLID) == 1 and view.count(VehicleView.Look.GLASS) == 0
 			and view.count(VehicleView.Look.WHEEL) == 1 and on_squares,
-			"vehicles: every part is drawn on its own square, glass in the windshield and the door (%d solid, %d glass, %d wheels)" % [view.count(VehicleView.Look.SOLID),
+			"vehicles: the small parts (an open door, a wheel) are drawn on their own squares (%d solid, %d glass, %d wheels)" % [view.count(VehicleView.Look.SOLID),
 			view.count(VehicleView.Look.GLASS), view.count(VehicleView.Look.WHEEL)])
+	_test_hull(view, car, world)
+	var b0 := view.built
+	view.apply(snap, world)
+	var cached := view.built == b0
 	var wheel_axis := func() -> Vector3:
 		var ws := view.instances(VehicleView.Look.WHEEL)
 		return ((ws[0][0] as Transform3D).basis * Vector3.UP).normalized() if not ws.is_empty() else Vector3.ZERO
@@ -264,7 +359,9 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var south: Vector3 = wheel_axis.call()
 	_check.call(absf(east.z) > 0.99 and absf(south.x) > 0.99,
 			"vehicles: parts turn with the facing (wheel axles across the car: %s facing east, %s facing south)" % [east, south])
+	_check.call(cached and view.built == b0 + 1, "vehicles: a vehicle is drawn afresh only when it changes (%d, %d)" % [b0, view.built])
 	car.face_deg = 0.0
+	_test_shift(root, view, snap, world)
 	# tint: the half-broken board is darker than intact, the broken halfboard charred, glass only where unbroken
 	var def := func(id: String) -> IdTables.Def: return tables.def_named("vpart", id)
 	var intact := VehicleView.color_of(VehicleView.Kind.BOARD, def.call("board"), 255, 0)
@@ -277,7 +374,8 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 			"vehicles: damaged parts darken, broken ones char, broken glass is gone")
 	view.view_z_max = CAR.z - 1
 	view.apply(snap, world)
-	_check.call(view.count() == 0, "vehicles: a car above the cutaway isn't drawn")
+	_check.call(view.count() == 0 and view.hull(VehicleView.Look.SOLID)[0].is_empty() and view.get_child_count() == 0,
+			"vehicles: a car above the cutaway isn't drawn")
 	# blocking, as CDDA's vehicle::obstacle_at_part
 	var sq := func(x: int) -> Vector3i: return CAR + Vector3i(x, 0, 0)
 	var blocks := func(x: int) -> bool: return VehicleView.blocks(snap, tables, sq.call(x))
