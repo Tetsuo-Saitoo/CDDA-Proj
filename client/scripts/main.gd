@@ -192,6 +192,7 @@ func _ready() -> void:
 	vehicles_view = VehicleView.new()
 	add_child(vehicles_view)
 	world.coords.origin_shifted.connect(vehicles_view.shift)
+	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)

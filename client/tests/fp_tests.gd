@@ -205,6 +205,21 @@ func _test_follow(world: WorldView) -> void:
 	var t := fp.target
 	fp.shift(d)
 	_check.call(fp.target.is_equal_approx(t + d) and fp.position.is_equal_approx(t + d), "fp: map shift moves with the origin")
+	# riding a gliding vehicle (VehicleView.ride_transform): the eyes are where the drawn vehicle carries them
+	var r := Transform3D(Basis(Vector3.UP, 0.3), Vector3(-2.0, 0.0, 1.0))
+	var riding := [true]   # lambdas copy locals: a shared array
+	fp.ride = func() -> Transform3D: return r if riding[0] else Transform3D()
+	fp.follow_square(p + Vector3i(3, 0, 0))
+	var seated := fp.position.is_equal_approx(r * fp.target)
+	fp.step(0.05, {})
+	seated = seated and fp.position.is_equal_approx(r * fp.target)
+	riding[0] = false
+	fp.step(0.05, {})
+	var off := fp.position.distance_to(fp.target)
+	fp.ride = func() -> Variant: return Transform3D(Basis(), Vector3(NAN, 0, 0))
+	fp.step(10.0, {})
+	_check.call(seated and off < (r * fp.target).distance_to(fp.target) and fp.position.is_finite(),
+			"fp: on a gliding vehicle the eyes ride with it, then glide on; a bad ride is ignored")
 	fp.free()
 
 
