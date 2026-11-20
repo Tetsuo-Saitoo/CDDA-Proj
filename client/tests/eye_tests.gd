@@ -33,15 +33,17 @@ func run(_root: Node, check: Callable) -> void:
 
 func _test_settings() -> void:
 	var s := HudSettings.new()
-	var defaults: bool = s.eye_on("tracker") and s.eye_on("zoom") and s.eye_on("away_pause") and s.eye_on("lean") \
-			and not s.eye_on("light_adapt") and not s.eye_on("unease") and not s.eye_on("nope") \
-			and HudSettings.EYE_FEATURES.size() == 10
+	var defaults: bool = not s.eye_on("tracker") and not s.eye_on("zoom") and s.eye_on("lean") \
+			and s.eye_switch("zoom") and s.eye_switch("away_pause") and not s.eye_switch("light_adapt") \
+			and not s.eye_switch("unease") and not s.eye_on("nope") and HudSettings.EYE_FEATURES.size() == 10
 	var unknown := s.set_eye("nope", true)
+	s.set_eye("tracker", true)
+	defaults = defaults and s.eye_on("zoom") and s.eye_on("away_pause") and not s.eye_on("unease")
 	s.set_eye("tracker", false)
 	var master_off: bool = not s.eye_on("zoom") and not s.eye_on("menus") and s.eye_on("lean") \
 			and s.eye_switch("zoom") and not s.eye_on("tracker")
 	_check.call(defaults and not unknown and master_off and not s.eyes.has("nope"),
-			"eyes: a switch per idea, atmosphere off; the master switch stops all but lean; unknown ids refused")
+			"eyes: a switch per idea, the tracker and atmosphere off (opt-in); the master switch stops all but lean; unknown ids refused")
 	var path: String = preload("res://tests/test_dir.gd").path("hud_eyes.cfg")
 	var m := KeyMenu.new()
 	m.add_hud_settings(s, path)

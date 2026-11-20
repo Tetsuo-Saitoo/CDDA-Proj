@@ -85,7 +85,7 @@ var ambience_volume := 1.0
 ## before whatever the switches say. id -> [label, default, tooltip], in the user's order; owners in TASKS.md. Saved
 ## as [eyes] <id>; anything but a real bool, or an unknown id, leaves the default.
 const EYE_FEATURES := {
-	"tracker": ["Use the eye tracker", true, "Lets the features on the right use where you look. Off: none do."],
+	"tracker": ["Use the eye tracker", false, "Lets the features on the right use where you look. Off: none do."],
 	"zoom": ["Zoom where you look", true, "Holding the zoom key narrows the view toward the spot you look at."],
 	"edge_turn": ["See past the edge", true, "Looking at a screen edge turns the view a little that way (flat screen)."],
 	"labels": ["Name what you look at", true, "A short label over what you look at for a moment."],
