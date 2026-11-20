@@ -66,9 +66,9 @@ func sent(ok: bool) -> void:
 ## A request from the game. null: not this lean's peek (show it as usual). {}: it is, held with no UI. {id, cancel}:
 ## it is, but the lean is over: send that.
 func on_request(req: Dictionary) -> Variant:
-	if not _pending:
+	if not _pending or req.is_empty():   # no request for a moment: the bridge between the step and the peek's request
 		return null
-	if req.is_empty() or req.get("timed", false):
+	if req.get("timed", false):
 		_pending = false   # refused: the main loop asks again
 		return null
 	var id: Variant = RequestWidget.id_value(req.get("id"))
@@ -81,7 +81,8 @@ func on_request(req: Dictionary) -> Variant:
 	return {"id": id, "cancel": true}
 
 
-## Every request change: one that isn't the held peek's means the game moved on by itself, so nothing is held.
+## Every request change: another request (not a moment with none) means the game moved on by itself, so nothing is
+## held.
 func request_seen(req: Dictionary) -> void:
-	if _req_id >= 0 and RequestWidget.id_value(req.get("id")) != _req_id:
+	if _req_id >= 0 and not req.is_empty() and RequestWidget.id_value(req.get("id")) != _req_id:
 		_req_id = -1

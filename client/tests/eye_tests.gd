@@ -171,13 +171,16 @@ func _test_lean() -> void:
 	var sq: Variant = l.peek_square(1300, true, p)
 	ok = ok and sq == Vector3i(9, 20, 0) and l.peek_square(1400, true, p) == null   # once
 	l.sent(true)
+	l.request_seen({})
+	ok = ok and l.on_request({}) == null   # no request for a moment (the bridge does that)
 	ok = ok and l.on_request({"id": 5, "kind": "query", "text": "?"}) == null
 	var held: Variant = l.on_request({"id": 7.0, "kind": "target", "mode": "peek"})
 	ok = ok and _same(held, {}) and l.peeking()
 	l.request_seen({"id": 7, "kind": "target", "mode": "peek"})
-	ok = ok and l.peeking() and _same(l.unlean(), {"id": 7, "cancel": true}) and not l.peeking() and not l.leaning()
+	l.request_seen({})
+	ok = ok and l.on_request({}) == null and l.peeking() and _same(l.unlean(), {"id": 7, "cancel": true}) and not l.peeking() and not l.leaning()
 	_check.call(ok and l.unlean().is_empty(),
-			"eyes: lean: held 250 ms, one peek toward that side; its request held with no UI, cancelled when it ends")
+			"eyes: lean: held 250 ms, one peek toward that side (a moment with no request between is fine); its request held with no UI, cancelled when it ends")
 	l.lean(Vector2i(1, 1), 0)
 	l.peek_square(300, true, p)
 	l.sent(true)
