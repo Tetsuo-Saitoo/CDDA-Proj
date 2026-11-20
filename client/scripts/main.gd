@@ -105,6 +105,12 @@ var snapshot_path := ""
 var status := ""
 var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and click pick
+## Eye tracking (user, 2026-11-19): where the player looks on the flat screen. No device yet: the base source tracks
+## nothing, so every gaze feature is off and the game is as before (a desktop tracker's source replaces it later).
+var gaze: GazeSource = GazeSource.new()
+var eye_pause := EyePause.new()   # eye tracking 7: real time pauses while you look away
+var eye_menus: EyeMenus           # eye tracking 6: menus by eye
+var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
@@ -485,8 +491,22 @@ func _frame_outside(target: Vector3) -> void:
 	camera.look_from(target + Vector3(-20, 28, 30), target)
 
 
+## C5, VrRig.ride: the vehicle the player is on, [uid, where VehicleView draws it now, where the snapshot puts it
+## (its drawn pose without the glide still to go: ride_transform)]; [] when none or not drawn.
+func _vr_ride() -> Array:
+	var s := world.snapshot
+	var at := s.vehicle_at(s.player_pos) if s != null and vehicles_view != null else []
+	if at.is_empty():
+		return []
+	var uid := (at[0] as Snapshot.Vehicle).uid
+	var d: Variant = vehicles_view.drawn(uid)
+	if not d is Transform3D:
+		return []
+	return [uid, d, vehicles_view.ride_transform(s).affine_inverse() * (d as Transform3D)]
+
+
 ## First person and VR: the body stands under the eyes and turns with them, head hidden. Outside: on the
-## player's square, facing the way first person last looked.
+## player's square (on a gliding vehicle, where it is drawn: ride_transform), facing the way first person last looked.
 func _place_player_body() -> void:
 	if world.snapshot == null:
 		player_body.visible = false
@@ -500,6 +520,9 @@ func _place_player_body() -> void:
 		yaw = vr.camera.global_rotation.y
 	elif first_person:
 		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
+	elif vehicles_view != null:
+		var r := vehicles_view.ride_transform(world.snapshot)
+		at = r * at if r.is_finite() else at
 	player_body.position = at
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
@@ -602,7 +625,9 @@ func _start_vr() -> void:
 	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
-	gaze_fx.gaze = Callable(vr, &"look")   # the eyes when tracked (VrRig.look); without it the effects stay off
+	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
+	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
+	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
@@ -1244,12 +1269,20 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 
 ## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
 ## ray's direction. {hit: false} without a snapshot or camera. `creatures` false: the ray passes through them.
+## In VR the gaze instead (VrRig.look: eyes or head), whatever `pos` says.
 func _cast_screen(pos: Vector2, creatures := true) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if world.snapshot == null or cam == null:
 		return {"hit": false}
 	if look_ray == null:
 		look_ray = LookRay.new(world)
+	if vr != null:   # VR: where the player looks (the eyes when tracked, else the head: VrRig.look)
+		var g := vr.look()
+		if g.is_empty():
+			return {"hit": false}
+		var hit := look_ray.cast(g["from"], g["dir"], LookRay.MAX_M, creatures)
+		hit["dir"] = g["dir"]
+		return hit
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
 	var v := eyes_view()
@@ -1432,6 +1465,23 @@ func _update_aim() -> void:
 	viewmodel.set_faults(world.snapshot.player_gun.get("faults", []) if world.snapshot != null else [])
 	viewmodel.suppressed = world.snapshot != null and world.snapshot.player_gun.get("suppressed", false) == true
 	viewmodel.set_mods(GunMods.mods_of(world.snapshot.player_gun if world.snapshot != null else null))
+
+
+## Eye tracking 7: a few times a second, EyePause decides from the gaze (looking at the screen or not) and the sim's
+## clock; only the pause or resume goes to the bridge. Nothing is asked of the bridge without a gaze that can tell.
+func _eye_away_pause(now_ms: int) -> void:
+	if live == null or live.state != "running" or (_eye_check_ms >= 0 and now_ms - _eye_check_ms < 250):
+		return
+	_eye_check_ms = now_ms
+	var look: Variant = gaze.on_screen() if vr == null else null
+	if not look is bool and not eye_pause.paused_by_eyes:
+		return
+	match eye_pause.step(hud_settings.eye_on("away_pause"), look, live.clock(), now_ms):
+		EyePause.PAUSE:
+			if live.set_paused(true):
+				status = "paused: you looked away"
+		EyePause.RESUME:
+			live.set_paused(false)
 
 
 func _in_main_loop() -> bool:
@@ -1768,9 +1818,26 @@ func _setup_hud() -> void:
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
 	layer.add_child(text_dock)
 	_setup_back_out()
+	_setup_eye_menus()
 
 
 ## What Esc / pad Start backs out of, one per press (BackOut.ORDER); the parts are read when the key comes.
+## Eye tracking 6: the pointer follows the eyes in a menu, `gaze_click` clicks there (EyeMenus). Added last, so it
+## sees that key before the menus do.
+func _setup_eye_menus() -> void:
+	eye_menus = EyeMenus.new()
+	eye_menus.gaze = gaze
+	eye_menus.allowed = func() -> bool: return vr == null and hud_settings.eye_on("menus") and _menu_open()
+	add_child(eye_menus)
+
+
+## A menu or prompt has the mouse: the F1 menu, the Tab view, the character screen, a prompt / list / wheel, the
+## tray, the vise panel, the main menu.
+func _menu_open() -> bool:
+	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
+			or vise_bench.visible or main_menu != null
+
+
 func _setup_back_out() -> void:
 	back_out.add("keyboard", func() -> bool: return text_dock != null and text_dock.is_open(),
 			func() -> bool:
@@ -1907,6 +1974,7 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
+	_eye_away_pause(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)
