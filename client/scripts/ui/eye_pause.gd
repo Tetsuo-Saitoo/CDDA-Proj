@@ -38,6 +38,13 @@ func step(on: bool, look: Variant, clock: Dictionary, now_ms: int) -> String:
 	return PAUSE
 
 
+## The player paused or resumed by hand: the pause is theirs now, so looking back never resumes it. The client has
+## no real-time pause control yet; whatever adds one calls this (the clock's reason can't tell their pause from ours).
+func forget() -> void:
+	paused_by_eyes = false
+	_reason = null
+
+
 ## Ends our pause: RESUME, unless the clock is paused for another reason now (that pause stays). Also when the clock
 ## doesn't show our pause yet: a resume of an unpaused clock does nothing, a pause left behind would.
 func _give_back(paused: bool, reason: String) -> String:

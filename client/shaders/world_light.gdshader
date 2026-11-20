@@ -25,11 +25,25 @@ uniform float flash = 0.0;   // lightning: nothing, the sky included, is darker 
 uniform float fog_begin = 0.0;
 uniform float fog_end = 1.0;
 uniform float fog_amount = 0.0;
+// Eye tracking (GazeEffects), all neutral at their defaults. gaze_boost: eyes adjusted to the dark, lit pixels up to
+// this much brighter (night-dark and unseen ones stay as dark). gaze_glare: looking into a light, everything outside a
+// small cone about gaze_glare_dir this much darker. gaze_blobs: soft peripheral shadows, direction (xyz, unit, world)
+// and strength (w), each round within its gaze_blob_cos (cos of its radius), at most SHADE_MAX darker in all.
+uniform float gaze_boost = 0.0;
+uniform float gaze_glare = 0.0;
+uniform vec3 gaze_glare_dir = vec3(0.0, 0.0, -1.0);
+uniform vec4 gaze_blobs[3];
+uniform float gaze_blob_cos[3];
 
 const int SIZE = 132;
 const float LEVEL_M = 3.0;
 const float PUSH_M = 0.5;
 const float EDGE = 0.3;   // half-width (tiles) of the blend at tile edges; inside it a tile has its own light
+const float LIT_FROM = 0.05;   // gaze_boost brightens a pixel's multiplier from here (night-dark is 0.03) ...
+const float LIT_TO = 0.25;     // ... fully from here
+const float GLARE_COS_IN = 0.995;    // the glare cone (about 6 degrees) keeps its light ...
+const float GLARE_COS_OUT = 0.906;   // ... the dimming is full from about 25 degrees out
+const float SHADE_MAX = 0.3;
 
 void vertex() {
 	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
@@ -72,6 +86,21 @@ void fragment() {
 		}
 		col = max(col, vec3(min_brightness));
 		col = mix(col, sky_color, fog_amount * smoothstep(fog_begin, fog_end, length(view.xyz)));
+	}
+	if (gaze_boost > 0.0 || gaze_glare > 0.0 || gaze_blobs[0].w + gaze_blobs[1].w + gaze_blobs[2].w > 0.0) {
+		// this pixel's direction from this eye (any depth on its line will do)
+		vec4 dv = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, 0.5, 1.0);
+		vec3 dir = normalize((INV_VIEW_MATRIX * vec4(dv.xyz / dv.w, 0.0)).xyz);
+		col *= 1.0 + gaze_boost * smoothstep(LIT_FROM, LIT_TO, max(col.r, max(col.g, col.b)));
+		col *= 1.0 - gaze_glare * (1.0 - smoothstep(GLARE_COS_OUT, GLARE_COS_IN, dot(dir, gaze_glare_dir)));
+		float shade = 0.0;
+		for (int b = 0; b < 3; b++) {
+			if (gaze_blobs[b].w > 0.0) {
+				float c = gaze_blob_cos[b];
+				shade += gaze_blobs[b].w * smoothstep(c, 1.0, dot(dir, gaze_blobs[b].xyz));   // soft, no edge
+			}
+		}
+		col *= 1.0 - SHADE_MAX * min(shade, 1.0);
 	}
 	ALBEDO = max(col, vec3(flash));
 }

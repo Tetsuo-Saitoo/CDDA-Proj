@@ -135,6 +135,7 @@ struct player_view {
     bool asleep;                             // JSON "asleep": true, only with CDDA's sleep effect (2026-11-17)
     bool driving;                            // JSON "driving": true, only while the player holds a vehicle's controls (2026-11-19)
     uint64 vehicle;                          // JSON "vehicle": uid of the vehicle the player is boarded on (`vehicles[].uid`); left out when none (2026-11-19)
+    bool peeking; ui_point peeking_from;     // JSON "peeking_from": [x, y, z], only while CDDA's peek is open: the square the body is on; `pos` is then the peeked square, which everything is seen from (2026-11-19, ui_requests.md "Peek")
 };
 struct mood_view {
     int16 level;                             // CDDA's morale level, the same number as `morale`
