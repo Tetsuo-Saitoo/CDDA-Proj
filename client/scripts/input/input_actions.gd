@@ -60,6 +60,7 @@ const ACTIONS := [
 	[&"reload", "View", "reload the snapshot (mock)", ["F9"]],
 	[&"classic_view", "View", "CDDA's classic view of the map (debug overlay)", ["F3"]],
 	[&"character", "View", "character screen: stats, body, needs, mood, skills, traits (again or Esc: close)", ["P"]],
+	[&"gaze_click", "View", "eye tracking: in a menu, click what you look at", ["Alt+E"]],
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike with the left hand (the off hand, unless left-handed in Options)", ["1"]],
 	[&"hand_main", "Act", "strike with the right hand (the main hand, unless left-handed in Options)", ["2"]],

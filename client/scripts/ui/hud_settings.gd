@@ -79,6 +79,53 @@ var volume := 1.0
 ## which sends to Master (so the volume above still covers it). Saved as [sound] ambience.
 const AMBIENCE_BUS := &"Ambience"
 var ambience_volume := 1.0
+## Eye tracking (user, 2026-11-19): one switch per idea, the flat screen and VR alike (the F1 menu's "Eye tracking"
+## row; the VR menu shows the same). "tracker" is the master switch: off, no feature uses the gaze. A switch only
+## allows a feature: each needs a tracked gaze (GazeSource) but those in GAZE_FREE, so without a tracker the game is as
+## before whatever the switches say. id -> [label, default, tooltip], in the user's order; owners in TASKS.md. Saved
+## as [eyes] <id>; anything but a real bool, or an unknown id, leaves the default.
+const EYE_FEATURES := {
+	"tracker": ["Use the eye tracker", true, "Lets the features on the right use where you look. Off: none do."],
+	"zoom": ["Zoom where you look", true, "Holding the zoom key narrows the view toward the spot you look at."],
+	"edge_turn": ["See past the edge", true, "Looking at a screen edge turns the view a little that way (flat screen)."],
+	"labels": ["Name what you look at", true, "A short label over what you look at for a moment."],
+	"light_adapt": ["Eyes adjust to light", false, "Bright and dark places take a moment to see in, like real eyes."],
+	"throw_look": ["Throw where you look", true,
+			"A throw goes to the square you look at; the trigger or throw key throws. Gun aim stays on the sights."],
+	"menus": ["Point at menus by eye", true, "What you look at in a menu is pointed at; a key still clicks it."],
+	"away_pause": ["Pause when you look away", true, "Real-time play pauses while you look away from the screen."],
+	"unease": ["Unease at the edges", false, "Things move at the edge of your sight now and then. Atmosphere only."],
+	"lean": ["Lean to peek", true, "Lean keys tilt the view and peek around a corner. Needs no eye tracker."],
+}
+const GAZE_FREE := ["lean"]   # features that work without a tracker (and without the master switch)
+var eyes := {}                # id -> bool, the switches set; a missing one is its default
+var eyes_from_file := false   # the file had an [eyes] section (lead-vr: VrSettings' old `eyes` moves here once)
+
+
+## Feature `id` (EYE_FEATURES) may run: its switch on and, unless GAZE_FREE, the master switch too. Whether a gaze is
+## tracked is the feature's own check (GazeSource). False for an unknown id.
+func eye_on(id: String) -> bool:
+	if not EYE_FEATURES.has(id):
+		return false
+	if id != "tracker" and not id in GAZE_FREE and not eye_switch("tracker"):
+		return false
+	return eye_switch(id)
+
+
+## Switch `id` as set (its default when never set); false for an unknown id.
+func eye_switch(id: String) -> bool:
+	if not EYE_FEATURES.has(id):
+		return false
+	var v: Variant = eyes.get(id)
+	return v if v is bool else bool(EYE_FEATURES[id][1])
+
+
+## Sets switch `id`; false for an unknown id (nothing set).
+func set_eye(id: String, on: bool) -> bool:
+	if not EYE_FEATURES.has(id):
+		return false
+	eyes[id] = on
+	return true
 
 
 ## The index of the AMBIENCE_BUS, added (sending to Master) when it isn't there yet. main calls it first thing, so
@@ -174,6 +221,12 @@ func load_file(path := FILE) -> String:
 	context_menu = clampi(cm, MENU_HOLD, MENU_LIST) if cm is int else MENU_HOLD
 	volume = clamp_to(cfg.get_value("sound", "volume", 1.0), VOLUMES, 1.0)
 	ambience_volume = clamp_to(cfg.get_value("sound", "ambience", 1.0), VOLUMES, 1.0)
+	eyes.clear()
+	eyes_from_file = cfg.has_section("eyes")
+	for id: String in EYE_FEATURES:
+		var e: Variant = cfg.get_value("eyes", id) if cfg.has_section_key("eyes", id) else null
+		if e is bool:
+			eyes[id] = e
 	var v: Variant = cfg.get_value("compass", "opacity", DEFAULT_COMPASS_OPACITY)
 	if v is float or v is int:
 		compass_opacity = clamp_opacity(float(v))
@@ -205,4 +258,6 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("controls", "context_menu", clampi(context_menu, MENU_HOLD, MENU_LIST))
 	cfg.set_value("sound", "volume", snappedf(clamp_to(volume, VOLUMES, 1.0), 0.01))
 	cfg.set_value("sound", "ambience", snappedf(clamp_to(ambience_volume, VOLUMES, 1.0), 0.01))
+	for id: String in EYE_FEATURES:
+		cfg.set_value("eyes", id, eye_switch(id))
 	return cfg.save(path)
