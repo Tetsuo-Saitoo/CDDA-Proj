@@ -209,6 +209,11 @@ var gun: VrGun             # L2: the wielded gun in the main hand (built in _bui
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
+## Where the player looks (look()): the eyes when tracked (setting `eyes`), else the head. Gaze stays in memory only.
+var gaze := VrGaze.new()
+var eyes: XRController3D   # OpenXR eye gaze (XR_EXT_eye_gaze_interaction, /user/eyes_ext); tracked on eye-tracking headsets
+var _eyes_ok := -1         # the runtime has eye gaze: -1 not known yet (asked once OpenXR is up), 0 no, 1 yes
+var looking: VrLook        # look at: hold the left X button, a ring where the player looks (main trigger: cheat teleport)
 var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
 var hint: VrHint           # G6: the one-time hint shown now, low in front (main.gd gives the flat Hints)
 var mouth: VrMouth         # eat or drink what a hand brings to the mouth (main.gd gives it ItemActions)
@@ -313,6 +318,12 @@ func _build() -> void:
 	camera.near = 0.05
 	camera.far = 600.0
 	add_child(camera)
+	eyes = XRController3D.new()
+	eyes.name = "Eyes"
+	eyes.tracker = &"/user/eyes_ext"
+	eyes.pose = &"default"   # the action map's default_pose, bound to /user/eyes_ext/input/gaze_ext/pose
+	add_child(eyes)
+	gaze.eyes = _eye_pose
 	left = _controller("LeftHand", &"left_hand", Color(0.35, 0.6, 1.0))
 	right = _controller("RightHand", &"right_hand", Color(1.0, 0.6, 0.25))
 	left.button_pressed.connect(func(n: String) -> void: press(left, n))
@@ -355,6 +366,8 @@ func _build() -> void:
 	wheel = VrWheel.new()
 	wheel.world = world
 	add_child(wheel)
+	looking = VrLook.new()
+	add_child(looking)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -478,6 +491,7 @@ func _process(delta: float) -> void:
 	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
 			world.snapshot != null and not ui_open())
 	update_wheel()
+	looking.update(delta, world, look() if looking.held else {}, not ui_open(), cheats_allowed)
 	follow_teleport(delta)
 
 
@@ -485,6 +499,7 @@ func _process(delta: float) -> void:
 func place_hud(delta: float) -> void:
 	hud.enabled = settings["wrist_hud"] == "on"
 	mood.enabled = settings["mood_cues"] == "on"
+	gaze.on = settings.get("eyes", "on") == "on"
 	hud.place(self, delta)
 
 
@@ -982,6 +997,10 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 
 
 func release(c: XRController3D, n: String) -> void:
+	if n == "ax_button" and c == left and looking.held:
+		looking.held = false
+		looking.hide_look()
+		return
 	if n == "trigger_click" and wheel.release(0 if c == left else 1):
 		return   # the trigger that opened a wheel: letting go picks
 	if n != "grip_click":
@@ -1612,7 +1631,7 @@ func update_wheel() -> void:
 		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
 				and not menu_open() and not panel.shown and fire.target_at(at[i], null).is_empty()
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
-	wheel.update(at, sticks, free, camera.global_transform)
+	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() else {})
 
 
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
@@ -1746,10 +1765,61 @@ func follow_teleport(delta: float) -> void:
 ## A menu change takes effect now: the height, and the held items when the main hand changed sides.
 func _settings_changed() -> void:
 	place_height()
+	gaze.on = settings.get("eyes", "on") == "on"
+	if not gaze.on:
+		gaze.forget()
 	if left_held != null:
 		show_held(_held)
 	if menu != null:
 		menu.refresh()
+
+
+## Where the player looks now (VrGaze.ray): {"from", "dir" (unit), "eyes": the eyes' (else the head's)}; {} outside
+## the tree. Ask it when needed; never keep or log it.
+func look() -> Dictionary:
+	if not is_inside_tree():
+		return {}
+	return gaze.ray(camera.global_transform, Time.get_ticks_msec() / 1000.0)
+
+
+## The eye gaze pose (world) for VrGaze, or null: no eye gaze in the runtime, not tracked, or no confidence.
+func _eye_pose() -> Variant:
+	if eyes == null or not eyes.is_inside_tree() or not _eyes_supported() or not eyes.get_has_tracking_data():
+		return null
+	var p := eyes.get_pose()
+	if p == null or not p.has_tracking_data or p.tracking_confidence == XRPose.XR_TRACKING_CONFIDENCE_NONE:
+		return null
+	return eyes.global_transform
+
+
+## Whether OpenXR is up with eye gaze interaction (asked once it is up).
+func _eyes_supported() -> bool:
+	if _eyes_ok < 0:
+		var xr := XRServer.find_interface("OpenXR")
+		if xr == null or not xr.is_initialized():
+			return false
+		_eyes_ok = 1 if xr.has_method(&"is_eye_gaze_interaction_supported") \
+				and xr.call(&"is_eye_gaze_interaction_supported") == true else 0
+	return _eyes_ok == 1
+
+
+## Where the tracked eyes meet `plane` (its space, z = 0), or null: eye tracking off or lost (the head never
+## points here), looking away or past POINTER_MAX.
+func eyes_on(plane: Transform3D) -> Variant:
+	var g := look()
+	if g.is_empty() or not g["eyes"]:
+		return null
+	return ray_on_plane(plane, g["from"], g["dir"], POINTER_MAX)
+
+
+## What controller c's trigger presses on the open menu (menu space): where its ray meets the menu, else where the
+## tracked eyes rest on it, else its ray's point off the menu (or null).
+func menu_point(c: XRController3D) -> Variant:
+	var p: Variant = pointer_at(c)
+	if menu.covers(p) or not menu_open():
+		return p
+	var e: Variant = eyes_on(menu.global_transform)
+	return e if menu.covers(e) else p
 
 
 ## Where controller c's ray meets the open menu's plane, in menu space (z = 0), or null (menu closed, pointing
@@ -1794,15 +1864,22 @@ func update_pointer(all_hands := false) -> void:
 	var plane := menu.global_transform if on_menu else panel.global_transform
 	var p: Variant = pointer_at(c) if on_menu 			else ray_on_plane(plane, c.global_position, -c.global_basis.z, POINTER_MAX)
 	var hit := menu.covers(p) if on_menu else VrPanel.covers(p)
+	var by_eyes := false
+	if not hit:   # eye tracking: where the eyes rest on it is pointed at (the trigger still presses)
+		var e: Variant = eyes_on(plane)
+		if (menu.covers(e) if on_menu else VrPanel.covers(e)):
+			p = e
+			hit = true
+			by_eyes = true
 	if on_menu:
 		menu.hover(p if hit else null)
 	else:
 		panel.point(p)
 	var from := c.global_position
-	var to: Vector3 = plane * (p as Vector3) if hit else from - c.global_basis.z.normalized() * POINTER_LEN
+	var to: Vector3 = plane * (p as Vector3) if hit and not by_eyes else from - c.global_basis.z.normalized() * POINTER_LEN
 	pointer.global_transform = _segment(from, to, POINTER_R)
 	if hit:
-		pointer_dot.global_position = to
+		pointer_dot.global_position = plane * (p as Vector3)
 		pointer_dot.visible = true
 
 
@@ -1829,7 +1906,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		if n == "trigger_click":
 			# The main hand's trigger presses where its pointer meets the panel; off the panel (or the other
 			# trigger) it changes the row the stick picked.
-			var p: Variant = pointer_at(c) if c == main_ctrl() else null
+			var p: Variant = menu_point(c) if c == main_ctrl() else null
 			var changed := menu.click_at(p) if menu.covers(p) else menu.click()
 			if changed:
 				_settings_changed()
@@ -1843,6 +1920,10 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			wheel.cancel()
 		return
 	if world.snapshot == null:
+		return
+	if looking.held and n == "trigger_click":   # the look ring up: the main trigger teleports there (cheat), else a buzz
+		if c != main_ctrl() or not looking.teleport(cheats_allowed):
+			_feel(c)
 		return
 	var ci := 0 if c == left else 1
 	if n == "trigger_click" and pack.is_open() \
@@ -1899,6 +1980,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		"ax_button":
 			if c == right:
 				change_level(-1)
+			else:   # held: look at (VrLook)
+				looking.held = true
 		"secondary_click":   # WMR / Index trackpads
 			if c == left:
 				go_to_player(world.snapshot.player_pos)
