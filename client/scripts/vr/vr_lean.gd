@@ -1,14 +1,15 @@
 class_name VrLean
 extends RefCounted
-## VR leaning (VrRig `leaning`): tilting the head sideways past LEAN_DEG for HOLD_S, as when leaning out around a
-## corner, asks CDDA to peek that way (VrRig.on_lean -> main.gd's lean: CDDA's peek); straightening up under BACK_DEG,
+## VR leaning (VrRig `leaning`): tilting the head sideways past LEAN_DEG, as when leaning out around a corner, asks
+## CDDA to peek that way (VrRig.on_lean -> main.gd's lean, which waits 250 ms before CDDA's peek, so a short tilt
+## does nothing there); straightening up under BACK_DEG,
 ## tilting the other way or the switch going off ends it (on_unlean). The way is the head's level left or right,
 ## snapped to the 8 ways (CDDA dx, dy: world x is CDDA x, world z is CDDA y). Only the head's pose is read; the lean
 ## itself does nothing in CDDA but ask for the peek, which CDDA charges and judges.
 
 const LEAN_DEG := 20.0
 const BACK_DEG := 10.0
-const HOLD_S := 0.25
+const HOLD_S := 0.0   # main.lean holds the lean itself (LeanPeek): a wait here would add to it
 
 var enabled := true             # the feature's switch (eye_on "lean")
 var side := Vector2i.ZERO       # the way peeked now, ZERO: none

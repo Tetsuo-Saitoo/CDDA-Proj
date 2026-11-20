@@ -477,7 +477,7 @@ func _frame_player() -> void:
 	if world.snapshot == null:
 		return
 	if vr != null:
-		vr.go_to_player(world.snapshot.player_pos)
+		vr.go_to_player(vr.body_square())   # during a peek: the body's square, not the peeked one
 		print("VR: player square %s, rig at %s, head at %s, player at %s" % [world.snapshot.player_pos,
 				vr.global_position, vr.camera.global_position,
 				world.coords.ms_center_to_world(world.snapshot.player_pos)])
@@ -635,6 +635,8 @@ func _start_vr() -> void:
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
 	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
+	vr.on_lean = lean   # VR leaning (VrLean): a sideways head tilt asks for CDDA's peek that way; held 250 ms here
+	vr.on_unlean = unlean
 	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm

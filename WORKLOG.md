@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — VR leaning peeks (lead-vr): tilting your head sideways past 20 degrees for a quarter second asks CDDA to peek around that corner; during the peek, Y and the frame key bring you back to your body's square, not the peeked one.
 - 2026-11-19 — While you peek around a corner, your body stays drawn on its own square (the view is from the square you lean to). The "Eyes adjust to light" and "Unease at the edges" switches now turn those effects on and off. Leaning was checked in a running game by the QA lead. Client tests pass.
 - 2026-11-19 — VR eye tracking follows the opt-in switch (lead-vr): an eye tracking value left in an older vr.json is ignored; only F1 > Eye tracking > "Use the eye tracker" (off by default) turns the eyes on.
 - 2026-11-19 — The F1 Eye tracking switches now reach VR (lead-vr): the tracker, zoom, labels and lean can be turned off in the headset too, and "Point at menus by eye" covers the VR menu, panel and wheel.
