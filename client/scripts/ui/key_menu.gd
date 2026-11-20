@@ -38,6 +38,7 @@ var hurt_check: CheckBox
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
+var eye_checks := {}   # HudSettings.EYE_FEATURES id -> its CheckBox
 ## G7 options (HudSettings look_speed, invert_y, fov, render_scale, ui_scale, fullscreen, vsync, weather_quality).
 var look_slider: HSlider
 var invert_check: CheckBox
@@ -311,6 +312,23 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	ambience_slider.tooltip_text = "Rain, wind and thunder, under the volume on the left."
 	_box.add_child(sound_row)
 	_box.move_child(sound_row, 5)
+	var eye_row := HFlowContainer.new()   # eye tracking: one box per feature (HudSettings.EYE_FEATURES)
+	var el := Label.new()
+	el.text = "Eye tracking"
+	eye_row.add_child(el)
+	for id: String in HudSettings.EYE_FEATURES:
+		var f: Array = HudSettings.EYE_FEATURES[id]
+		var c := CheckBox.new()
+		c.text = f[0]
+		c.tooltip_text = f[2]
+		c.focus_mode = Control.FOCUS_NONE
+		c.button_pressed = settings.eye_switch(id)
+		c.toggled.connect(_on_eye.bind(id))
+		eye_checks[id] = c
+		eye_row.add_child(c)
+	_box.add_child(eye_row)
+	_box.move_child(eye_row, 6)
+	_show_eyes()
 	_show_compass_value()
 	_show_options()
 
@@ -469,6 +487,23 @@ func _on_feed_group(on: bool, group: String) -> void:
 	if err != OK:
 		_status.text = "Message filter not saved: %s" % error_string(err)
 	hud_changed.emit()
+
+
+## An eye tracking box (HudSettings.set_eye): saved; with the master switch off the others grey out (but GAZE_FREE).
+func _on_eye(on: bool, id: String) -> void:
+	if not hud.set_eye(id, on):
+		return
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Eye tracking setting not saved: %s" % error_string(err)
+	_show_eyes()
+	hud_changed.emit()
+
+
+func _show_eyes() -> void:
+	var master := hud.eye_switch("tracker")
+	for id: String in eye_checks:
+		(eye_checks[id] as CheckBox).disabled = not master and id != "tracker" and not id in HudSettings.GAZE_FREE
 
 
 func _on_mood_cues(on: bool) -> void:

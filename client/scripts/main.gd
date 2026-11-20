@@ -104,6 +104,12 @@ var snapshot_path := ""
 var status := ""
 var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and click pick
+## Eye tracking (user, 2026-11-19): where the player looks on the flat screen. No device yet: the base source tracks
+## nothing, so every gaze feature is off and the game is as before (a desktop tracker's source replaces it later).
+var gaze: GazeSource = GazeSource.new()
+var eye_pause := EyePause.new()   # eye tracking 7: real time pauses while you look away
+var eye_menus: EyeMenus           # eye tracking 6: menus by eye
+var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
@@ -1455,6 +1461,23 @@ func _update_aim() -> void:
 	viewmodel.set_mods(GunMods.mods_of(world.snapshot.player_gun if world.snapshot != null else null))
 
 
+## Eye tracking 7: a few times a second, EyePause decides from the gaze (looking at the screen or not) and the sim's
+## clock; only the pause or resume goes to the bridge. Nothing is asked of the bridge without a gaze that can tell.
+func _eye_away_pause(now_ms: int) -> void:
+	if live == null or live.state != "running" or (_eye_check_ms >= 0 and now_ms - _eye_check_ms < 250):
+		return
+	_eye_check_ms = now_ms
+	var look: Variant = gaze.on_screen() if vr == null else null
+	if not look is bool and not eye_pause.paused_by_eyes:
+		return
+	match eye_pause.step(hud_settings.eye_on("away_pause"), look, live.clock(), now_ms):
+		EyePause.PAUSE:
+			if live.set_paused(true):
+				status = "paused: you looked away"
+		EyePause.RESUME:
+			live.set_paused(false)
+
+
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
@@ -1789,9 +1812,26 @@ func _setup_hud() -> void:
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
 	layer.add_child(text_dock)
 	_setup_back_out()
+	_setup_eye_menus()
 
 
 ## What Esc / pad Start backs out of, one per press (BackOut.ORDER); the parts are read when the key comes.
+## Eye tracking 6: the pointer follows the eyes in a menu, `gaze_click` clicks there (EyeMenus). Added last, so it
+## sees that key before the menus do.
+func _setup_eye_menus() -> void:
+	eye_menus = EyeMenus.new()
+	eye_menus.gaze = gaze
+	eye_menus.allowed = func() -> bool: return vr == null and hud_settings.eye_on("menus") and _menu_open()
+	add_child(eye_menus)
+
+
+## A menu or prompt has the mouse: the F1 menu, the Tab view, the character screen, a prompt / list / wheel, the
+## tray, the vise panel, the main menu.
+func _menu_open() -> bool:
+	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
+			or vise_bench.visible or main_menu != null
+
+
 func _setup_back_out() -> void:
 	back_out.add("keyboard", func() -> bool: return text_dock != null and text_dock.is_open(),
 			func() -> bool:
@@ -1928,6 +1968,7 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
+	_eye_away_pause(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)
