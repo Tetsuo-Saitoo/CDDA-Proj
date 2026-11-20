@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Eye tracking, first part: an "Eye tracking" row in the F1 menu with one switch per idea; with a tracker (none is read yet), real-time play pauses while you look away and menus follow your eyes, a key clicks. Without one nothing changes. Client tests pass.
 - 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
 - 2026-11-18 — Car tyres stay black when worn (they took on the rust tint of damaged parts; lead-qa spotted it in the car pictures). Client tests pass.
 - 2026-11-18 — Cars look like cars (C5 slice 2, lead-world): each vehicle is one rounded body (floor, sides, glass panes, roof) in one paint, turned smoothly to its facing, wheels on its sides, seats inside; walking into it and looking at it still work square by square. Fields, blood and vehicles no longer end up a submap off after the map shifts. Client tests pass; render check pictures look right.
