@@ -123,6 +123,7 @@ func _run() -> void:
 		await _counts_live()   # before anything is poured out or eaten
 		await _rebind_live(&"cdda_inventory")
 		await _eyes_live()
+		await _lean_live()
 		_hud_live()
 		await _hands_live()
 		await _consume_live()
@@ -224,6 +225,150 @@ func _eyes_live() -> void:
 	_check(not km.visible and not tracked and not by_eyes and clock.get("paused") == false
 			and await _until(later, OP_TIMEOUT_MS, true),
 			"eye tracking: with no tracker nothing is tracked, the eyes paused nothing, and a turn passes as before (clock %s)" % clock)
+
+
+## Leaning to peek in a running game (the flat lean keys; skipped, said so, on a client without them), first person.
+## With the lean-right key held, CDDA's peek opens on the square to the right of where the player faces: its request
+## is held with no prompt shown and the snapshot is seen from that square (peeking_from, on a bridge that sends it,
+## is the body's square). Letting go closes it: back on the body's square a turn or two later. With Alt held a move
+## key never steps, though the same key without Alt does. Leaning toward a square a car blocks opens no peek, takes
+## no turn and asks the game once only.
+func _lean_live() -> void:
+	var lp: Variant = _main.get("lean_peek")
+	if lp == null or not InputMap.has_action(&"lean_right") or not _main._fp_active() or _main.view_mode != "first":
+		print("  (no lean keys in this client, or not in first person: leaning not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var home: Vector3i = _main.world.snapshot.player_pos
+	var turn0: int = _main.world.snapshot.turn
+	var way: Vector2i = lp.WAYS[_main._octant(Vector2(1, 0))]
+	var side := home + Vector3i(way.x, way.y, 0)
+	Input.action_press(&"lean_right")
+	var open := func() -> bool: return lp.peeking()
+	var opened := await _until(open, OP_TIMEOUT_MS, false)
+	var req := _live.request
+	var from_there := func() -> bool: return _main.world.snapshot.player_pos == side and not _main.world.busy()
+	var looked := opened and await _until(from_there, OP_TIMEOUT_MS, false)
+	var body: Variant = _peeking_from()
+	_check(opened and looked and req.get("kind") == "target" and req.get("mode") == "peek"
+			and not _main.request_ui.is_showing() and (body == null or body == home),
+			"lean: the lean-right key held opens CDDA's peek on the square to the right (%s from %s): no prompt shows, the view is from there (request %s %s; peeking_from %s)"
+			% [side, home, req.get("kind", "none"), req.get("mode", ""), body])
+	Input.action_release(&"lean_right")
+	var closed := func() -> bool: return not lp.peeking() and _main.world.snapshot.player_pos == home and in_loop.call()
+	var back := await _until(closed, OP_TIMEOUT_MS, false)
+	var took: int = _main.world.snapshot.turn - turn0
+	_check(back and took >= 1 and took <= 3 and _peeking_from() == null,
+			"lean: letting go closes the peek: back on %s, %d turns later" % [_main.world.snapshot.player_pos, took])
+	# Alt with a move key: no step; the same key alone: a step
+	var alt := InputEventKey.new()
+	alt.keycode = KEY_ALT
+	alt.physical_keycode = KEY_ALT
+	alt.pressed = true
+	Input.parse_input_event(alt)
+	Input.flush_buffered_events()
+	var turn1: int = _main.world.snapshot.turn
+	Input.action_press(&"move_right")
+	await create_timer(0.8).timeout
+	var stayed: bool = _main.world.snapshot.player_pos == home and _main.world.snapshot.turn == turn1 \
+			and _live.queued_actions() == 0
+	alt = alt.duplicate()
+	alt.pressed = false
+	Input.parse_input_event(alt)
+	Input.flush_buffered_events()
+	var moved := func() -> bool: return _main.world.snapshot.player_pos != home
+	var stepped := await _until(moved, OP_TIMEOUT_MS, false)
+	Input.action_release(&"move_right")
+	_check(stayed and stepped, "lean: with Alt held a move key never steps (stayed: %s); the same key alone does (%s)"
+			% [stayed, _main.world.snapshot.player_pos])
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	_live.cheat_teleport(home)
+	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+	await _lean_blocked_live(lp, home)
+
+
+## A lean toward a square a car blocks (the range's vehicle spawn; skipped, said so, without it): a car is spawned
+## near `home`, the player is put on a free square beside one of its squares that block walking and turned so that
+## square is on the right; with the lean-right key held 1.5 s no peek opens, no turn passes and the main loop asks at
+## most once more (the refused peek isn't sent again). Then back to `home`.
+func _lean_blocked_live(lp: Variant, home: Vector3i) -> void:
+	if not _live.sim().has_method("range_spawn_vehicle"):
+		print("  (no vehicle spawn in this bridge: a lean into something that blocks not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	var before := {}
+	for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+		before[veh.uid] = true
+	var placed := false
+	for d: Vector3i in [Vector3i(-18, 18, 0), Vector3i(22, 0, 0), Vector3i(0, 22, 0), Vector3i(-22, 0, 0), Vector3i(0, -22, 0)]:
+		if placed:
+			break
+		var id: int = _live._range_op("range_spawn_vehicle", ["car", home + d, 0])
+		var answered := func() -> bool: return _done.has(id)
+		placed = id > 0 and await _until(answered, OP_TIMEOUT_MS, true) and _done[id] == ""
+	var car_of := func() -> Snapshot.Vehicle:
+		for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+			if not before.has(veh.uid):
+				return veh
+		return null
+	var listed := func() -> bool: return car_of.call() != null and not _main.world.busy()
+	if not placed or not await _until(listed, OP_TIMEOUT_MS, true):
+		_check(false, "lean: a car to lean against is spawned near the player")
+		return
+	var car: Snapshot.Vehicle = car_of.call()
+	var snap: Snapshot = _main.world.snapshot
+	# a square of the car that blocks walking, a free square beside it, and the look that puts it on the right
+	var stand := Vector3i.MAX
+	var wall := Vector3i.MAX
+	for i in car.part_count():
+		var sq := car.square(i)
+		if stand != Vector3i.MAX or not VehicleView.blocks(snap, _main.world.tables, sq):
+			continue
+		for d: Vector3i in [Vector3i(0, -2, 0), Vector3i(0, 2, 0), Vector3i(-2, 0, 0), Vector3i(2, 0, 0)]:
+			var beside: Vector3i = sq + d / 2
+			if stand == Vector3i.MAX and snap.vehicle_at(beside).is_empty() and snap.vehicle_at(sq + d).is_empty():
+				stand = beside
+				wall = sq
+	var there := func() -> bool: return _main.world.snapshot.player_pos == stand and in_loop.call()
+	var on_spot: bool = stand != Vector3i.MAX and _live.cheat_teleport(stand) > 0 and await _until(there, OP_TIMEOUT_MS, true)
+	var faced := false
+	for yaw: float in [0.0, PI / 2.0, PI, -PI / 2.0]:
+		if on_spot and not faced:
+			_main.fp.set_look(yaw, 0.0)
+			var w: Vector2i = lp.WAYS[_main._octant(Vector2(1, 0))]
+			faced = Vector3i(w.x, w.y, 0) == wall - stand
+	if not on_spot or not faced:
+		_check(false, "lean: the player stands beside a blocking square of the car, facing along it (stand %s, the car's square %s, player %s)"
+				% [stand, wall, _main.world.snapshot.player_pos])
+	else:
+		await _until(in_loop, ASK_TIMEOUT_MS, true)
+		var turn: int = _main.world.snapshot.turn
+		var asked := {}
+		var peeked := false
+		Input.action_press(&"lean_right")
+		var until := Time.get_ticks_msec() + 1500
+		while Time.get_ticks_msec() < until:
+			peeked = peeked or lp.peeking()
+			if _live.request.get("timed", false):
+				asked[int(_live.request.get("id", 0))] = true
+			await create_timer(0.05).timeout
+		Input.action_release(&"lean_right")
+		_check(not peeked and _main.world.snapshot.turn == turn and asked.size() <= 2 and _main.world.snapshot.player_pos == stand,
+				"lean: toward a square the car blocks no peek opens, no turn passes and the game is asked once more at most (%d main-loop requests in 1.5 s)"
+				% asked.size())
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	_live.cheat_teleport(home)
+	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## `player.peeking_from` of the bridge's newest snapshot (the body's square during CDDA's peek), null when it isn't
+## there.
+func _peeking_from() -> Variant:
+	var d: Variant = JSON.parse_string(_live.sim().get_snapshot_json(0, 0))
+	var p: Variant = (d as Dictionary).get("player") if d is Dictionary else null
+	var v: Variant = (p as Dictionary).get("peeking_from") if p is Dictionary else null
+	return Vector3i(int(v[0]), int(v[1]), int(v[2])) if v is Array and (v as Array).size() == 3 else null
 
 
 ## The screen HUD (main's HudView) in the live game: body bars, needs and the move line from CDDA's snapshot, and
