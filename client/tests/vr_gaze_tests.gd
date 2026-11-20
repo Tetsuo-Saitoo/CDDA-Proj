@@ -4,6 +4,7 @@ extends RefCounted
 
 var _check: Callable
 var _pose: Variant = null   # what the simulated eye tracker gives (a member: lambdas copy locals)
+var _leans: Array = []      # what the rig's on_lean / on_unlean got
 
 
 func run(root: Node, check: Callable) -> void:
@@ -14,6 +15,8 @@ func run(root: Node, check: Callable) -> void:
 	_test_rig(root)
 	_test_menu(root)
 	_test_look(root)
+	_test_zoom(root)
+	_test_lean(root)
 
 
 ## The head at the origin looking along -Z, turned `yaw` degrees left.
@@ -103,24 +106,36 @@ func _test_rig(root: Node) -> void:
 	_pose = _eyes(rig.camera.global_transform, -15, 5)
 	var r1 := rig.look()
 	var eyes: bool = r1["eyes"] and (r1["dir"] as Vector3).is_equal_approx((-(_pose as Transform3D).basis.z).normalized())
-	rig.settings["eyes"] = "off"
-	rig._settings_changed()
+	rig.eye_on = func(id: String) -> bool: return id != "tracker" and id != "zoom"
+	rig.apply_eye_switches()
 	var r2 := rig.look()
-	var off: bool = not r2["eyes"] and not rig.gaze.eyes_live(Time.get_ticks_msec() / 1000.0)
-	# The setting is saved; the gaze never is.
+	var off: bool = not r2["eyes"] and not rig.gaze.eyes_live(Time.get_ticks_msec() / 1000.0) \
+			and not rig.zoom.enabled and rig.label.enabled
+	rig.eye_on = func(id: String) -> Variant: return "yes"   # junk from the switch: off
+	rig.apply_eye_switches()
+	off = off and not rig.gaze.on and not rig.label.enabled
+	rig.eye_on = Callable()
+	rig.apply_eye_switches()
+	off = off and rig.gaze.on and rig.zoom.enabled
+	# The VR settings file holds no gaze, and no longer the switch (HudSettings' "tracker"); an old one is read once.
 	var path := "user://vr_gaze_test.json"
 	var saved := VrSettings.save_file(rig.settings, path)
 	var real := UserFiles.at(path)
 	var back: Variant = JSON.parse_string(FileAccess.get_file_as_string(real))
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(real))
 	var keys_only: bool = saved and back is Dictionary and (back as Dictionary).size() == VrSettings.DEFAULTS.size() \
 			and VrSettings.DEFAULTS.keys().all(func(k: String) -> bool: return (back as Dictionary).has(k)) \
-			and back["eyes"] == "off"
-	var setting: bool = VrSettings.DEFAULTS["eyes"] == "on" and VrSettings.clean("eyes", "off") == "off" \
-			and VrSettings.clean("eyes", "maybe") == null and VrSettings.ARGS["vr-eyes"] == "eyes" \
-			and VrSettings.ROWS.any(func(row: Array) -> bool: return row[0] == "eyes")
+			and not (back as Dictionary).has("eyes") and VrSettings.old_eyes(path) == null
+	var olds := []
+	for v: Variant in ["off", "on", true, 5, "maybe"]:
+		var f := FileAccess.open(real, FileAccess.WRITE)
+		f.store_string(JSON.stringify({"move": "smooth", "eyes": v}))
+		f.close()
+		olds.append(VrSettings.old_eyes(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(real))
+	var setting: bool = olds == [false, true, true, null, null] and VrSettings.old_eyes(path) == null \
+			and not VrSettings.DEFAULTS.has("eyes") and not VrSettings.ROWS.any(func(row: Array) -> bool: return row[0] == "eyes")
 	_check.call(desktop and eyes and off and keys_only and setting,
-			"vr gaze: the rig looks by the head without eye tracking, by the eyes with it; the setting turns it off; only the setting is saved")
+			"vr gaze: the rig looks by the head without eye tracking, by the eyes with it; the switches turn it off; an old vr.json switch is read (%s)" % [olds])
 	rig.free()
 	world.free()
 
@@ -212,5 +227,106 @@ func _test_look(root: Node) -> void:
 	_check.call(idle and nothing and no_square and shown and no_cheats and off_hand and went and gone and not rig.looking.visible,
 			"vr gaze: left X held: a ring where you look, named; only the main trigger teleports (cheats on); let go: gone (%s)"
 			% [asked])
+	rig.free()
+	world.free()
+
+
+## Zoom: the right stick click held shows a magnified inset where the player looks (narrow camera, its own layer
+## unseen by that camera, level horizon), its aim smoothed; let go, a bad gaze, a menu or off: gone, not rendering.
+func _test_zoom(root: Node) -> void:
+	var world := WorldView.new()
+	world.snapshot = Snapshot.new()
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.camera.position = Vector3(0, 1.6, 0)
+	var z := rig.zoom
+	var from := rig.camera.global_position
+	var d1 := Vector3(0.3, -0.1, -1.0).normalized()
+	rig.press(rig.right, "primary_click")
+	var held := z.held
+	z.update(0.016, {"from": from, "dir": d1, "eyes": true}, true)
+	var aim := -z.cam.global_basis.z
+	var shown: bool = z.visible and aim.is_equal_approx(d1) and is_equal_approx(z.cam.fov, VrZoom.INSET_DEG / VrZoom.MAG) \
+			and z.view.render_target_update_mode == SubViewport.UPDATE_ALWAYS and z.cam.cull_mask & VrZoom.LAYER == 0 \
+			and z.get_child_count() >= 3 and absf(z.cam.global_basis.x.y) < 0.001 \
+			and z.global_position.distance_to(from + d1 * VrZoom.DIST_M) < 0.001
+	var d2 := Vector3(-0.5, 0.0, -1.0).normalized()
+	z.update(0.016, {"from": from, "dir": d2, "eyes": true}, true)
+	var a1 := (-z.cam.global_basis.z).angle_to(d2)
+	var smooth := a1 > 0.05 and a1 < d1.angle_to(d2)
+	for i in 60:
+		z.update(0.016, {"from": from, "dir": d2, "eyes": false}, true)
+	var follows := (-z.cam.global_basis.z).angle_to(d2) < 0.01 and z.visible
+	z.update(0.016, {"from": from, "dir": Vector3(NAN, 0, 0), "eyes": true}, true)
+	var junk := not z.visible and z.view.render_target_update_mode == SubViewport.UPDATE_DISABLED
+	z.update(0.016, {"from": from, "dir": d1, "eyes": true}, false)
+	var menu := not z.visible
+	z.enabled = false
+	z.update(0.016, {"from": from, "dir": d1, "eyes": true}, true)
+	var off := not z.visible
+	z.enabled = true
+	z.update(0.016, {"from": from, "dir": d1, "eyes": true}, true)
+	rig.release(rig.right, "primary_click")
+	var let_go: bool = not z.held and not z.visible and z.view.render_target_update_mode == SubViewport.UPDATE_DISABLED
+	z.update(0.016, {"from": from, "dir": d1, "eyes": true}, true)
+	_check.call(held and shown and smooth and follows and junk and menu and off and let_go and not z.visible,
+			"vr zoom: right stick held: a magnified inset where you look, aim smoothed, horizon level; let go, junk, menu or off: gone")
+	rig.free()
+	world.free()
+
+
+## A head facing `yaw` degrees left of north, tilted `roll` degrees to the left (negative: right).
+static func _tilt(yaw: float, roll: float) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, deg_to_rad(yaw)) * Basis(Vector3.BACK, deg_to_rad(roll)), Vector3(0, 1.6, 0))
+
+
+## Leaning: a sideways head tilt past LEAN_DEG held HOLD_S peeks that way (snapped to the 8 ways); straightening up,
+## tilting the other way, a bad pose or the switch off ends it; a short tilt does nothing. The rig calls on_lean /
+## on_unlean.
+func _test_lean(root: Node) -> void:
+	var l := VrLean.new()
+	var evs := []
+	for i in 3:
+		evs.append(l.update(0.1, _tilt(0, 30)))
+	var west := evs == ["", "", "lean"] and l.side == Vector2i(-1, 0) and l.update(0.1, _tilt(0, 25)) == ""
+	var back := l.update(0.1, _tilt(0, 5)) == "unlean" and l.side == Vector2i.ZERO
+	for i in 3:
+		l.update(0.1, _tilt(-90, -30))
+	var south := l.side == Vector2i(0, 1)
+	var other := l.update(0.1, _tilt(-90, -15)) == "" and l.update(0.1, _tilt(-90, -12)) == "" \
+			and l.update(0.1, _tilt(-90, 12)) == "unlean"
+	for i in 3:
+		l.update(0.1, _tilt(-45, 30))
+	var nw := l.side == Vector2i(-1, -1)
+	var junk := l.update(0.1, Transform3D(Basis(), Vector3(NAN, 0, 0))) == "unlean"
+	l.update(0.1, _tilt(0, 30))
+	var short := l.update(0.1, _tilt(0, 5)) == "" and l.side == Vector2i.ZERO
+	for i in 3:
+		l.update(0.1, _tilt(0, 30))
+	l.enabled = false
+	var off := l.side != Vector2i.ZERO and l.update(0.1, _tilt(0, 30)) == "unlean" and l.update(0.1, _tilt(0, 30)) == ""
+	var ways := VrLean.way_of(Vector3(1, 0, 0.1)) == Vector2i(1, 0) and VrLean.way_of(Vector3(0, 0, -1)) == Vector2i(0, -1) \
+			and VrLean.way_of(Vector3(INF, 0, 0)) == Vector2i.ZERO and VrLean.way_of(Vector3.UP) == Vector2i.ZERO
+	_check.call(west and back and south and other and nw and junk and short and off and ways,
+			"vr lean: a sideways head tilt held peeks that way (8 ways); straightening, the other way, junk or off ends it (%s)"
+			% [evs])
+	var world := WorldView.new()
+	world.snapshot = Snapshot.new()
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.on_lean = func(d: Vector2i) -> void: _leans.append(d)
+	rig.on_unlean = func() -> void: _leans.append("end")
+	rig.camera.transform = _tilt(0, 30)
+	for i in 3:
+		rig.update_lean(0.1)
+	rig.camera.transform = _tilt(0, 0)
+	rig.update_lean(0.1)
+	rig.eye_on = func(id: String) -> bool: return id != "lean"
+	rig.apply_eye_switches()
+	rig.camera.transform = _tilt(0, 30)
+	for i in 3:
+		rig.update_lean(0.1)
+	_check.call(_leans == [Vector2i(-1, 0), "end"],
+			"vr lean: the rig asks main for the peek and its end; the lean switch off: nothing (%s)" % [_leans])
 	rig.free()
 	world.free()

@@ -2,7 +2,7 @@ class_name VrGaze
 extends RefCounted
 ## Where the player looks (VrRig `gaze`): the gaze source the look-at code asks for a ray. Eyes first: `eyes` gives
 ## the eye gaze pose (VrRig: OpenXR's XR_EXT_eye_gaze_interaction, an XRController3D on /user/eyes_ext; later a desktop
-## eye tracker can feed it a pose made from its screen point). With eye tracking off (`on`, VrSettings "eyes"), no eye
+## eye tracker can feed it a pose made from its screen point). With eye tracking off (`on`, HudSettings' "tracker"), no eye
 ## tracker, the pose not tracked, or a pose that isn't believable, the head gaze (the camera's forward) is used, as
 ## before eye tracking. A blink (the eyes lost for at most HOLD_S) keeps the last eye direction, turned with the head.
 ## The pose is hostile input: NaN or inf, an origin more than MAX_OFF_M from the head or a direction more than MAX_DEG
@@ -15,7 +15,7 @@ const MAX_DEG := 60.0        # the eyes at most this far off the head's forward
 const HOLD_S := 0.3          # the eyes lost this long (a blink) still look where they last did
 const MIN_LEN := 0.5         # a pose basis whose forward is shorter than this is junk
 
-## Eye tracking wanted (VrSettings "eyes"); off: always the head.
+## Eye tracking wanted (VrRig.eye_on "tracker"); off: always the head.
 var on := true
 ## () -> Variant: the eyes' pose (Transform3D, world) this frame, or null when there is none or it isn't tracked.
 var eyes := Callable()
