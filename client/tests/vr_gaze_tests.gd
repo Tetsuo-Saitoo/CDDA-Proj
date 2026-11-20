@@ -173,12 +173,18 @@ func _test_menu(root: Node) -> void:
 	rig.update_pointer(true)
 	var off := rig.pointer.visible and not rig.pointer_dot.visible
 	rig.gaze.on = true
+	rig.eye_on = func(id: String) -> bool: return id != "menus"
+	rig.apply_eye_switches()
+	rig.update_pointer(true)
+	var menus_off := rig.gaze.on and rig.pointer.visible and not rig.pointer_dot.visible
+	rig.eye_on = Callable()
+	rig.apply_eye_switches()
 	_pose = null
 	rig.gaze.forget()
 	rig.update_pointer(true)
 	var head_only := rig.pointer.visible and not rig.pointer_dot.visible
-	_check.call(hover and pressed and off and head_only,
-			"vr gaze: the eyes on the menu point at a row, the trigger changes it; eyes off or head only: nothing pointed")
+	_check.call(hover and pressed and off and menus_off and head_only,
+			"vr gaze: the eyes on the menu point at a row, the trigger changes it; eyes off, the menus switch off or head only: nothing pointed")
 	rig.settings["speed"] = speed0
 	rig.press(rig.left, "menu_button")
 	rig.free()

@@ -212,6 +212,7 @@ var mood: VrMood           # the player's mood as a soft edge, under the hurt ed
 ## Where the player looks (look()): the eyes when tracked (eye_on "tracker"), else the head. Gaze stays in memory only.
 ## main.gd: (id: String) -> bool, HudSettings.eye_on: the Eye tracking group's switches ("tracker", "zoom", "labels",
 ## "lean"); unset: all on.
+var menus_by_eye := true   # HudSettings' "menus": the eyes point at the menu, panel and wheel (eyes_on, wheel)
 var eye_on := Callable()
 ## Throw where you look (lead-combat's AimController, main.gd): () -> Variant, the square the tracked eyes look at
 ## (Vector3i) or null (no eyes: always null) ...
@@ -1686,7 +1687,7 @@ func update_wheel() -> void:
 		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
 				and not menu_open() and not panel.shown and fire.target_at(at[i], null).is_empty()
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
-	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() else {})
+	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() and menus_by_eye else {})
 
 
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
@@ -1826,11 +1827,12 @@ func _settings_changed() -> void:
 		menu.refresh()
 
 
-## The Eye tracking switches (eye_on), each frame: the eye tracker, zoom, labels.
+## The Eye tracking switches (eye_on), each frame: the eye tracker, zoom, labels, menus by eye, leaning.
 func apply_eye_switches() -> void:
 	gaze.on = eye_feature("tracker")
 	if not gaze.on:
 		gaze.forget()
+	menus_by_eye = eye_feature("menus")
 	zoom.enabled = eye_feature("zoom")
 	label.enabled = eye_feature("labels")
 	leaning.enabled = eye_feature("lean")
@@ -1886,6 +1888,8 @@ func _eyes_supported() -> bool:
 ## Where the tracked eyes meet `plane` (its space, z = 0), or null: eye tracking off or lost (the head never
 ## points here), looking away or past POINTER_MAX.
 func eyes_on(plane: Transform3D) -> Variant:
+	if not menus_by_eye:
+		return null
 	var g := look()
 	if g.is_empty() or not g["eyes"]:
 		return null
