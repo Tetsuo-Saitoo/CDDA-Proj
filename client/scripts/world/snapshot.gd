@@ -167,6 +167,9 @@ var z_min := CddaCoords.Z_MIN_DEFAULT
 var z_max := CddaCoords.Z_MAX_DEFAULT
 var bubble_origin := Vector3i.ZERO
 var player_pos := Vector3i.ZERO
+## While CDDA's peek is open: the square the body is on (player_pos is then the peeked square, which everything is
+## seen from); null otherwise, also when it isn't next to player_pos on its level (contracts/snapshot.md).
+var player_peeking_from: Variant = null
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed; mods, fits,
                                            # slots only when sent}, {} for none
@@ -419,6 +422,7 @@ func max_submaps() -> int:
 
 func _read_player(v: Variant) -> void:
 	player_pos = CddaCoords.sm_to_ms(bubble_origin) + Vector3i(66, 66, 0)   # bubble centre
+	player_peeking_from = null
 	if v == null or not is_valid():
 		return
 	if not v is Dictionary:
@@ -427,6 +431,7 @@ func _read_player(v: Variant) -> void:
 	var p: Variant = (v as Dictionary).get("pos")
 	if p != null:
 		player_pos = _vec3i(p, MAX_ABS_SM * CddaCoords.SEEX, "player.pos")
+	player_peeking_from = _next_to(player_pos, (v as Dictionary).get("peeking_from"), MAX_ABS_SM * CddaCoords.SEEX)
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
@@ -518,6 +523,22 @@ static func morale_from(v: Variant) -> Array[Dictionary]:
 
 
 ## v as an int when it is a whole number in lo..hi, else null (NaN, infinities, fractions and strings too).
+## An optional [x, y, z] square next to `at` on its level (player.peeking_from): a Vector3i, else null (junk is left
+## out, never failing the snapshot).
+func _next_to(at: Vector3i, v: Variant, limit: int) -> Variant:
+	if not v is Array or (v as Array).size() != 3:
+		return null
+	var a: Array = v
+	var x: Variant = _whole(a[0], -limit, limit)
+	var y: Variant = _whole(a[1], -limit, limit)
+	var z: Variant = _whole(a[2], z_min, z_max)
+	if not x is int or not y is int or not z is int:
+		return null
+	var sq := Vector3i(x, y, z)
+	var d := sq - at
+	return sq if d.z == 0 and absi(d.x) <= 1 and absi(d.y) <= 1 else null
+
+
 static func _whole(v: Variant, lo: int, hi: int) -> Variant:
 	if v is int:
 		return v if v >= lo and v <= hi else null

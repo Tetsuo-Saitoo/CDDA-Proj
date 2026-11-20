@@ -206,6 +206,7 @@ func _ready() -> void:
 	gaze_fx = GazeEffects.new()   # eye tracking, visual only: gaze set in _start_vr, switches by the settings
 	gaze_fx.world = world
 	gaze_fx.lighting = world.lighting
+	gaze_fx.gaze = _flat_gaze   # the flat screen's eyes; _start_vr gives it the headset's
 	add_child(gaze_fx)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
@@ -514,13 +515,16 @@ func _place_player_body() -> void:
 	if world.snapshot == null:
 		player_body.visible = false
 		return
-	var own := vr != null or (first_person and view_mode == "first")
+	var from: Variant = world.snapshot.player_peeking_from   # CDDA's peek: the eyes are on the peeked square
+	var own := vr != null or (first_person and view_mode == "first" and from == null)
 	player_body.show_head = not own
 	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	var yaw := fp.yaw
 	if vr != null:
 		at = Vector3(vr.camera.global_position.x, vr.floor_y(), vr.camera.global_position.z)
 		yaw = vr.camera.global_rotation.y
+	elif from is Vector3i:
+		at = world.coords.ms_center_to_world(from)   # the body stays on its own square
 	elif first_person:
 		at = fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0)
 	elif vehicles_view != null:
@@ -1692,6 +1696,9 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
+		gaze_fx.adapt_on = o.eye_on("light_adapt")
+		gaze_fx.unease_on = o.eye_on("unease")
 	for c: Camera3D in [fp, view_cam, camera]:
 		if c != null:
 			var f := HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
@@ -1898,6 +1905,17 @@ func _eye_view_step(now_ms: int) -> void:
 	var zoom := shown and hud_settings.eye_on("zoom") and Input.is_action_pressed(&"zoom_look", true)
 	var o := eye_view.step(look, edge, zoom, _lean_keys if shown else 0, lean_peek.peeking())
 	fp.set_view_offset(o[0], o[1], o[2], o[3], o[4])
+
+
+## The flat screen's gaze for GazeEffects: {from, dir, eyes} through the first-person view; {} in other views, in a
+## menu or while the eyes aren't tracked (main's `gaze`).
+func _flat_gaze() -> Dictionary:
+	if vr != null or not _fp_active() or view_mode != "first" or _menu_open():
+		return {}
+	var r := gaze.ray(fp)
+	if not r.is_empty():
+		r["eyes"] = true
+	return r
 
 
 func _menu_open() -> bool:

@@ -22,6 +22,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_invert_y(world)
 	_test_follow(world)
 	_test_view_offset(world)
+	_test_peeking_from(data)
 	_test_octants(world)
 	_test_compass()
 	_test_look_ray(world)
@@ -285,6 +286,29 @@ func _test_view_offset(world: WorldView) -> void:
 			and fp.position.distance_to(fp.base_position()) <= 0.3001,
 			"fp: leaning while following or riding keeps the body's place; a map shift carries both")
 	fp.free()
+
+
+## Eye tracking 9 (lead-ui): while CDDA's peek is open, player.peeking_from is the body's square, next to pos (the
+## peeked square); anything else, junk included, is left out without failing the snapshot.
+func _test_peeking_from(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pos: Vector3i = Snapshot.from_data(d).player_pos
+	var pl: Dictionary = d["player"]
+	pl["peeking_from"] = [pos.x - 1, pos.y + 1, pos.z]
+	var near := Snapshot.from_data(d)
+	pl["peeking_from"] = [pos.x - 3, pos.y, pos.z]
+	var far := Snapshot.from_data(d)
+	pl["peeking_from"] = [pos.x, pos.y, pos.z + 1]
+	var above := Snapshot.from_data(d)
+	pl["peeking_from"] = "left"
+	var junk := Snapshot.from_data(d)
+	pl.erase("peeking_from")
+	var none := Snapshot.from_data(d)
+	_check.call(near.is_valid() and near.player_peeking_from == pos + Vector3i(-1, 1, 0) and far.is_valid()
+			and far.player_peeking_from == null and above.player_peeking_from == null and junk.is_valid()
+			and junk.player_peeking_from == null
+			and none.is_valid() and none.player_peeking_from == null,
+			"peek: player.peeking_from is the body's square next to pos; far or junk is left out, the snapshot stays")
 
 
 func _test_octants(world: WorldView) -> void:
