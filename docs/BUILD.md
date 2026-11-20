@@ -113,7 +113,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
    Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls and closed doors
    stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
-   release; right B / A: level up / down; left Y: back to the player (WMR / Index: trackpad click, right up /
+   release; right B / A: level up / down; left Y: back to the player; hold left X (Index: left A) to look at: a ring
+   on the square you look at, named (right trigger: teleport there, cheats on) (WMR / Index: trackpad click, right up /
    down half = level up / down, left = back to the player). Vive wands ("vive" layout): left pad touched walks;
    right pad click left/right turns, held up aims the teleport, down = level down; right menu = level up; left
    pad click = back to the player. **Left menu button** (Index: left stick click) opens the settings in the
@@ -121,7 +122,9 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    Godot's user folder. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
-   from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=
+   from trigger/grip/thumb; or simple boxes), eye tracking (on: on a headset that tracks the eyes, where you look
+   points at the menu, the wheel and the look-at ring; a trigger still does the act; off or untracked: the head and
+   hands as before). Command-line options win over the file: `--vr-move= --vr-move-dir=
    --vr-speed= --vr-turn= --vr-snap= --vr-turn-speed= --vr-vignette= --vr-blink=on|off --vr-swap-sticks=on|off
    --vr-layout=auto|quest|vive --vr-hands=auto|buttons|boxes`. Every 10 s frame times go to the
    console and to `vr_perf.log` in Godot's user folder (Windows `%APPDATA%\Godot\app_userdata\CDDA-3D\`,

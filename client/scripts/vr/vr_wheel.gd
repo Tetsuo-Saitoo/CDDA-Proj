@@ -23,6 +23,8 @@ const WAIT_MS := 1500        # CDDA's menu arriving this soon after the press sh
 const RADIUS_M := 0.12       # the wheel's rim
 const INNER_M := RADIUS_M * RadialRequestWidget.INNER / RadialRequestWidget.RADIUS   # its dead middle
 const FLICK_M := 0.08        # the hand this far off the middle points at the rim
+const EYES_REACH := 1.5      # tracked eyes within this many rims of the middle point (VrRig.look); the stick wins
+const EYES_MOVE_M := 0.02    # after the stick pointed, the eyes moving this far on the wheel point again
 const STICK_ON := 0.5        # a stick past this points
 const MOVE_M := 0.02         # after the stick pointed, the hand moving this far points again
 const HINT_UP := 0.1         # the line this far over the hand
@@ -54,6 +56,7 @@ var _labels: Array[Label3D] = []
 var _painted := -2           # the slot painted as pointed at
 var _by_stick := false
 var _stick_at := Vector3.ZERO
+var _stick_eyes := Vector2.INF   # where the eyes were on the wheel when the stick last pointed
 
 
 func _init() -> void:
@@ -169,36 +172,59 @@ func cancel() -> bool:
 
 ## Per frame (the rig): the wheel's drawing and pointing while one is up, else the line by each free hand on
 ## something to use. `at`: both hands' points (world), `sticks`: their sticks (x right, y up), `free`: hand i holds
-## nothing, `head`: the head's pose.
-func update(at: Array[Vector3], sticks: Array[Vector2], free: Array[bool], head: Transform3D) -> void:
+## nothing, `head`: the head's pose, `look`: where the player looks while a wheel is up (VrRig.look; only the tracked
+## eyes point, never the head).
+func update(at: Array[Vector3], sticks: Array[Vector2], free: Array[bool], head: Transform3D, look := {}) -> void:
 	var w := shown()
 	if w != _widget:
 		_build(w, head)
 	if w != null:
-		_point(w, at, sticks)
+		_point(w, at, sticks, look)
 		_paint(w)
 	for i in 2:
 		var t := {} if w != null or i >= at.size() or i >= free.size() or not free[i] or not live else target_at(at[i])
 		_hint(i, at[i] if i < at.size() else Vector3.ZERO, str(t.get("text", "")))
 
 
-## Points `w` where hand `hand`'s stick or its offset from the wheel's middle says.
-func _point(w: RadialRequestWidget, at: Array[Vector3], sticks: Array[Vector2]) -> void:
+## Points `w` where hand `hand`'s stick, else the hand moved off the wheel's middle, else the tracked eyes on the
+## wheel (`look`), else the hand's offset says. Pointing only: letting go of the trigger picks.
+func _point(w: RadialRequestWidget, at: Array[Vector3], sticks: Array[Vector2], look := {}) -> void:
 	var i := hand if hand >= 0 and hand < at.size() else -1
 	if i < 0 or wheel == null:
 		return
 	var s := sticks[i] if i < sticks.size() and sticks[i].is_finite() else Vector2.ZERO
 	var p := at[i]
+	var e := eyes_at(look)
 	if s.length() >= STICK_ON:
 		_by_stick = true
 		_stick_at = p
+		_stick_eyes = e
 		w.aim(Vector2(s.x, -s.y).normalized() * RadialRequestWidget.RADIUS)
 		return
-	if not p.is_finite() or (_by_stick and p.distance_to(_stick_at) < MOVE_M):
+	var hand_ok := p.is_finite() and not (_by_stick and p.distance_to(_stick_at) < MOVE_M)
+	var l := wheel.global_transform.affine_inverse() * p if hand_ok else Vector3.ZERO
+	var flicked := hand_ok and Vector2(l.x, l.y).length() >= FLICK_M * INNER_M / RADIUS_M
+	if not flicked and e.is_finite() 			and (not _by_stick or not _stick_eyes.is_finite() or e.distance_to(_stick_eyes) >= EYES_MOVE_M):
+		_by_stick = false
+		w.aim(Vector2(e.x, -e.y) / RADIUS_M * RadialRequestWidget.RADIUS)
+		return
+	if not hand_ok:
 		return
 	_by_stick = false
-	var l := wheel.global_transform.affine_inverse() * p
 	w.aim(Vector2(l.x, -l.y) / FLICK_M * RadialRequestWidget.RADIUS)
+
+
+## Where the tracked eyes (`look`: VrRig.look) meet the wheel, in its plane (x right, y up, metres from the
+## middle); INF when there is no wheel, the gaze is the head's, or they look past EYES_REACH rims from the middle.
+func eyes_at(look: Dictionary) -> Vector2:
+	if wheel == null or look.is_empty() or not look.get("eyes", false) or not look.get("from") is Vector3 \
+			or not look.get("dir") is Vector3:
+		return Vector2.INF
+	var p: Variant = VrRig.ray_on_plane(wheel.global_transform, look["from"], look["dir"], 2.0)
+	if not p is Vector3:
+		return Vector2.INF
+	var v := Vector2((p as Vector3).x, (p as Vector3).y)
+	return v if v.is_finite() and v.length() <= RADIUS_M * EYES_REACH else Vector2.INF
 
 
 ## A new wheel (or none): the old drawing goes; `w`'s is made at the opening hand's point, facing the head.
@@ -210,6 +236,7 @@ func _build(w: RadialRequestWidget, head: Transform3D) -> void:
 	_labels.clear()
 	_painted = -2
 	_by_stick = false
+	_stick_eyes = Vector2.INF
 	_widget = w
 	if w == null:
 		return
