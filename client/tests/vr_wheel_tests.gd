@@ -54,6 +54,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_test_tap()
 	_test_click_and_cancel()
 	_test_list()
+	_test_label()
 	d.examine = was[0]
 	tables.has_examine = was[1]
 	_rig.free()
@@ -260,3 +261,59 @@ func _test_list() -> void:
 	_w.live = true
 	_check.call(sent and list and refused and mock and _sent == ["fp3d_use_RIGHT", "fp3d_use_RIGHT"],
 			"vr wheel: the list option: CDDA's list on the panel; the queue refusing or no live game: nothing used")
+
+
+## Labels on look (LookLabel): the tracked eyes resting on the sink name it after DWELL_S; head gaze never does;
+## looking away it stays LINGER_S, then goes; off: nothing.
+func _test_label() -> void:
+	var l := _rig.label
+	l.clear()
+	var sm: Snapshot.Submap = _world.snapshot.submaps[SM]
+	sm.flags.resize(CddaCoords.SEEX * CddaCoords.SEEX)   # LookRay reads every square's flags
+	# a creature on the sink's square: LookRay meets creatures before the mock map's terrain (drawn as solid boxes)
+	var zed := Snapshot.Creature.new()
+	zed.uid = 77
+	zed.pos = SINK_AT
+	zed.hp_frac = 128
+	_world.snapshot.creatures.append(zed)
+	_world.snapshot.creatures_moved()
+	var cam := _over(SINK_AT + Vector3i(-1, 0, 0), 0.5)   # next door: the mock map's terrain is solid everywhere
+	var at := _over(SINK_AT, 0.5)
+	var eyes := {"from": cam, "dir": (at - cam).normalized(), "eyes": true}
+	l.update(0.1, _world, eyes, true)
+	var waits := not l.visible
+	for i in 3:
+		l.update(0.1, _world, eyes, true)
+	var shown := l.visible and l.text.ends_with("\nhealth 50%") and l.text.length() > 12 \
+			and l.global_position.distance_to(at) < 1.2
+	var named := l.text
+	var head := eyes.duplicate()
+	head["eyes"] = false
+	l.update(0.1, _world, head, true)
+	var head_none := not l.visible
+	for i in 4:
+		l.update(0.1, _world, eyes, true)
+	var sky := {"from": cam, "dir": Vector3(0, 1, 0), "eyes": true}
+	l.update(0.1, _world, sky, true)
+	l.update(0.1, _world, sky, true)
+	var lingers := l.visible
+	l.update(0.1, _world, sky, true)
+	l.update(0.1, _world, sky, true)
+	var gone := not l.visible
+	for i in 4:
+		l.update(0.1, _world, eyes, true)
+	l.enabled = false
+	l.update(0.1, _world, eyes, true)
+	var off := not l.visible
+	l.enabled = true
+	l.update(0.1, _world, eyes, false)
+	var menu := not l.visible
+	var junk := {"from": cam, "dir": Vector3(NAN, 0, 0), "eyes": true}
+	l.update(0.1, _world, junk, true)
+	l.update(0.1, _world, {"eyes": true}, true)
+	_check.call(waits and shown and head_none and lingers and gone and off and menu and not l.visible,
+			"vr label: the eyes on a creature name it after a moment (%s); the head never; looking away it lingers, then goes"
+			% [named.replace("\n", " / ")])
+	l.clear()
+	_world.snapshot.creatures.erase(zed)
+	_world.snapshot.creatures_moved()

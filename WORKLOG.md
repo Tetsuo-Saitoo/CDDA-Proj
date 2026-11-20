@@ -1,5 +1,8 @@
 # WORKLOG
 
+- 2026-11-19 — VR eye tracking follows the opt-in switch (lead-vr): an eye tracking value left in an older vr.json is ignored; only F1 > Eye tracking > "Use the eye tracker" (off by default) turns the eyes on.
+- 2026-11-19 — The F1 Eye tracking switches now reach VR (lead-vr): the tracker, zoom, labels and lean can be turned off in the headset too, and "Point at menus by eye" covers the VR menu, panel and wheel.
+- 2026-11-19 — More VR eye tracking (lead-vr): hold the right stick click for a 3x zoom where you look; what the eyes rest on is named over it; tilting the head sideways asks for CDDA's peek; throws go where the eyes look (with lead-combat); each has its own switch in lead-ui's Eye tracking settings, which also take over the VR menu's eye tracking row.
 - 2026-11-19 — VR eye tracking (lead-vr): where the eyes look points at the VR menu, the action wheel and a new look-at ring (hold left X; the main trigger teleports there with cheats on), through OpenXR eye gaze, falling back to the head; on/off in the VR menu; gaze is never stored or logged; tested with a simulated eye tracker.
 - 2026-11-19 — Bridge: ready for leaning around corners. The game's peek can be started toward a side the client names, without the game asking which way, and the snapshot then shows what is seen from there and says where the body still stands. Ending the lean puts the view back. The lean keys and the VR lean come next (UI and VR leads). Fork tests pass on Windows and Linux, client tests pass.
 - 2026-11-19 — Tester AppImage test-2026-11-19 (private test repo, pre-release, not a release) from main 2da4a28 + fork 1479c60, after the QA lead's GO (smoke, Linux live suites incl. driving, personal-strings check pass on the file).

@@ -209,11 +209,27 @@ var gun: VrGun             # L2: the wielded gun in the main hand (built in _bui
 var swing: VrSwing         # L3: melee by hand (a fast hand meeting a creature strikes; uses the gun's aim and queue)
 var hurt: VrHurt           # F3: the player's hurt as a red edge, under the tunnel vignette (main.gd gives its source)
 var mood: VrMood           # the player's mood as a soft edge, under the hurt edge (from hud.data; setting `mood_cues`)
-## Where the player looks (look()): the eyes when tracked (setting `eyes`), else the head. Gaze stays in memory only.
+## Where the player looks (look()): the eyes when tracked (eye_on "tracker"), else the head. Gaze stays in memory only.
+## main.gd: (id: String) -> bool, HudSettings.eye_on: the Eye tracking group's switches ("tracker", "zoom", "labels",
+## "lean"); unset: all on.
+var menus_by_eye := true   # HudSettings' "menus": the eyes point at the menu, panel and wheel (eyes_on, wheel)
+var eye_on := Callable()
+## Throw where you look (lead-combat's AimController, main.gd): () -> Variant, the square the tracked eyes look at
+## (Vector3i) or null (no eyes: always null) ...
+var gaze_throw_square := Callable()
+## ... and () -> bool: a CDDA throw request showed and was answered at that square.
+var gaze_throw_request := Callable()
 var gaze := VrGaze.new()
 var eyes: XRController3D   # OpenXR eye gaze (XR_EXT_eye_gaze_interaction, /user/eyes_ext); tracked on eye-tracking headsets
 var _eyes_ok := -1         # the runtime has eye gaze: -1 not known yet (asked once OpenXR is up), 0 no, 1 yes
 var looking: VrLook        # look at: hold the left X button, a ring where the player looks (main trigger: cheat teleport)
+var zoom: VrZoom           # hold the right stick click: a magnified inset where the player looks
+var label: LookLabel       # what the tracked eyes rest on, named over it
+var leaning := VrLean.new()   # the head tilted sideways: CDDA's peek that way
+## main.gd: (d: Vector2i) -> void, CDDA's peek toward d (lean), and () -> void, its end (unlean); shared with the flat
+## lean keys (lead-ui).
+var on_lean := Callable()
+var on_unlean := Callable()
 var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
 var hint: VrHint           # G6: the one-time hint shown now, low in front (main.gd gives the flat Hints)
 var mouth: VrMouth         # eat or drink what a hand brings to the mouth (main.gd gives it ItemActions)
@@ -368,6 +384,10 @@ func _build() -> void:
 	add_child(wheel)
 	looking = VrLook.new()
 	add_child(looking)
+	zoom = VrZoom.new()
+	add_child(zoom)
+	label = LookLabel.new()
+	add_child(label)
 	gun = VrGun.new()
 	gun.rig = self
 	add_child(gun)
@@ -492,6 +512,9 @@ func _process(delta: float) -> void:
 			world.snapshot != null and not ui_open())
 	update_wheel()
 	looking.update(delta, world, look() if looking.held else {}, not ui_open(), cheats_allowed)
+	zoom.update(delta, look() if zoom.held else {}, not menu_open() and not panel.shown)
+	label.update(delta, world, look() if label.enabled else {}, not ui_open() and not looking.held)
+	update_lean(delta)
 	follow_teleport(delta)
 
 
@@ -499,7 +522,7 @@ func _process(delta: float) -> void:
 func place_hud(delta: float) -> void:
 	hud.enabled = settings["wrist_hud"] == "on"
 	mood.enabled = settings["mood_cues"] == "on"
-	gaze.on = settings.get("eyes", "on") == "on"
+	apply_eye_switches()
 	hud.place(self, delta)
 
 
@@ -982,8 +1005,9 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 	var shoulder := over_shoulder(camera.global_transform, c.global_position)
 	if drop.is_empty() and not shoulder and throw_ok:
 		var sq: Variant = throw_square(c)
-		if sq is Vector3i:
-			return hands.throw(id, sq)   # CDDA throws it (a lying item is taken first); refused: back where it was
+		if sq is Vector3i:   # a throw: where the tracked eyes look, else where the motion lands
+			var g: Variant = gaze_square()
+			return hands.throw(id, g if g is Vector3i else sq)   # CDDA throws it (a lying item is taken first); refused: back where it was
 	if drop.is_empty() and shoulder:
 		var bag := shoulder_bag(hands.picker.worn_containers(), it, world.tables)
 		if bag != null:
@@ -997,6 +1021,10 @@ func let_go(c: XRController3D, throw_ok := true) -> String:
 
 
 func release(c: XRController3D, n: String) -> void:
+	if n == "primary_click" and c == right and zoom.held:
+		zoom.held = false
+		zoom.stop()
+		return
 	if n == "ax_button" and c == left and looking.held:
 		looking.held = false
 		looking.hide_look()
@@ -1086,6 +1114,34 @@ static func throw_point(from: Vector3, vel: Vector3, floor_y: float) -> Variant:
 	var t := (vel.y + sqrt(vel.y * vel.y + 2.0 * GRAVITY * h)) / GRAVITY
 	var p := from + flat / speed * minf(speed * t, THROW_MAX_M)
 	return Vector3(p.x, floor_y, p.z)
+
+
+## The square the tracked eyes look at for a throw (gaze_throw_square), null when none: no eyes, unset, junk or the
+## player's own square.
+func gaze_square() -> Variant:
+	var v: Variant = gaze_throw_square.call() if gaze_throw_square.is_valid() else null
+	var s := world.snapshot if world != null else null
+	return v if v is Vector3i and s != null and v != s.player_pos else null
+
+
+## The main trigger with an item in the main hand (no gun shown): a CDDA throw request showing is answered where the
+## tracked eyes look (gaze_throw_request), else the item is thrown there. False: neither (no eyes, no item, unset):
+## the trigger does what it did before.
+func gaze_throw(c: XRController3D) -> bool:
+	if hands == null or gun.shown:
+		return false
+	var held := hands.holding(hand_id(c))
+	if held.get("kind") != "item" or held.get("item") == null:
+		return false
+	var asked: Variant = gaze_throw_request.call() if gaze_throw_request.is_valid() else false
+	if asked is bool and asked:
+		return true
+	var sq: Variant = gaze_square()
+	if not sq is Vector3i:
+		return false
+	if hands.throw(hand_id(c), sq).is_empty():
+		_feel(c)   # refused (CDDA's reason shows): the item stays in hand
+	return true
 
 
 ## The square controller c's item is thrown at when let go now: faster than Hands.THROW_SPEED with at least
@@ -1631,7 +1687,7 @@ func update_wheel() -> void:
 		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
 				and not menu_open() and not panel.shown and fire.target_at(at[i], null).is_empty()
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
-	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() else {})
+	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() and menus_by_eye else {})
 
 
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
@@ -1765,13 +1821,39 @@ func follow_teleport(delta: float) -> void:
 ## A menu change takes effect now: the height, and the held items when the main hand changed sides.
 func _settings_changed() -> void:
 	place_height()
-	gaze.on = settings.get("eyes", "on") == "on"
-	if not gaze.on:
-		gaze.forget()
 	if left_held != null:
 		show_held(_held)
 	if menu != null:
 		menu.refresh()
+
+
+## The Eye tracking switches (eye_on), each frame: the eye tracker, zoom, labels, menus by eye, leaning.
+func apply_eye_switches() -> void:
+	gaze.on = eye_feature("tracker")
+	if not gaze.on:
+		gaze.forget()
+	menus_by_eye = eye_feature("menus")
+	zoom.enabled = eye_feature("zoom")
+	label.enabled = eye_feature("labels")
+	leaning.enabled = eye_feature("lean")
+
+
+## Leaning (VrLean), each frame: a sideways head tilt held asks for CDDA's peek that way (on_lean), straightening up
+## ends it (on_unlean); not with a menu, panel or wheel up or without a game.
+func update_lean(delta: float) -> void:
+	var ev := leaning.update(delta, camera.global_transform) if world.snapshot != null and not ui_open() else leaning.stop()
+	if ev == "lean" and on_lean.is_valid():
+		on_lean.call(leaning.side)
+	elif ev == "unlean" and on_unlean.is_valid():
+		on_unlean.call()
+
+
+## Eye tracking switch `id` (eye_on; unset: on).
+func eye_feature(id: String) -> bool:
+	if not eye_on.is_valid():
+		return true
+	var v: Variant = eye_on.call(id)
+	return v is bool and v
 
 
 ## Where the player looks now (VrGaze.ray): {"from", "dir" (unit), "eyes": the eyes' (else the head's)}; {} outside
@@ -1806,6 +1888,8 @@ func _eyes_supported() -> bool:
 ## Where the tracked eyes meet `plane` (its space, z = 0), or null: eye tracking off or lost (the head never
 ## points here), looking away or past POINTER_MAX.
 func eyes_on(plane: Transform3D) -> Variant:
+	if not menus_by_eye:
+		return null
 	var g := look()
 	if g.is_empty() or not g["eyes"]:
 		return null
@@ -1951,6 +2035,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():
 			use_stair(c, s)
+		elif c == main_ctrl() and gaze_throw(c):
+			pass   # an item in the main hand thrown where the tracked eyes look
 		elif not pull_with(c) and not open_tray(c):
 			_feel(c)
 		return
@@ -1982,6 +2068,9 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 				change_level(-1)
 			else:   # held: look at (VrLook)
 				looking.held = true
+		"primary_click":
+			if c == right:   # held: zoom (VrZoom)
+				zoom.held = true
 		"secondary_click":   # WMR / Index trackpads
 			if c == left:
 				go_to_player(world.snapshot.player_pos)

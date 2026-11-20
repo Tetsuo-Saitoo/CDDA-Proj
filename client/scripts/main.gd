@@ -622,6 +622,7 @@ func _start_vr() -> void:
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
+	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
