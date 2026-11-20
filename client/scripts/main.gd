@@ -110,6 +110,9 @@ var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and 
 var gaze: GazeSource = GazeSource.new()
 var eye_pause := EyePause.new()   # eye tracking 7: real time pauses while you look away
 var eye_menus: EyeMenus           # eye tracking 6: menus by eye
+var lean_peek := LeanPeek.new()   # 9: leaning to peek (flat keys here, VR's lean through lean / unlean)
+var eye_view := EyeView.new()     # 1, 2 and the lean's tilt: the first-person view offset
+var _lean_keys := 0               # the flat lean keys: -1 left, 1 right, 0 none
 var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
@@ -519,7 +522,7 @@ func _place_player_body() -> void:
 		at = Vector3(vr.camera.global_position.x, vr.floor_y(), vr.camera.global_position.z)
 		yaw = vr.camera.global_rotation.y
 	elif first_person:
-		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
+		at = fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0)
 	elif vehicles_view != null:
 		var r := vehicles_view.ride_transform(world.snapshot)
 		at = r * at if r.is_finite() else at
@@ -596,7 +599,7 @@ func _toggle_view() -> void:
 		return
 	_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
 	if view_mode == "outside":
-		_frame_outside(fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0))
+		_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
 	hud_settings.view = view_mode
 	var err := hud_settings.save_file()
 	if err != OK:
@@ -1077,6 +1080,13 @@ func _on_live_request(req: Dictionary) -> void:
 	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
 		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
+	lean_peek.request_seen(req)
+	var peek: Variant = lean_peek.on_request(req)   # 9: the lean's own peek: held with no UI, or closed
+	if peek != null:
+		request_ui.clear()
+		if not (peek as Dictionary).is_empty() and not live.answer(peek):
+			push_warning("live: bridge refused the peek's cancel")
+		return
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
@@ -1145,7 +1155,9 @@ func _context_line() -> String:
 
 
 func _octant(dir: Vector2) -> int:
-	return octant_for(_view().global_basis, dir)
+	var v := _view()
+	# first person: the look itself, not the eye-tracking view offset (steps go where you face)
+	return octant_for(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)) if v == fp else v.global_basis, dir)
 
 
 ## Octant (index into OCT_ACTIONS) of a (right, forward) direction for a view with basis b.
@@ -1607,7 +1619,7 @@ func _reach_square() -> Variant:
 		var at := world.coords.world_to_ms(vr.camera.global_position)
 		return Vector3i(at.x, at.y, vr.z)
 	if live == null and _fp_active():
-		var sq := world.coords.world_to_ms(fp.position)
+		var sq := world.coords.world_to_ms(fp.base_position())
 		return Vector3i(sq.x, sq.y, fp.z)
 	return world.snapshot.player_pos
 
@@ -1635,7 +1647,7 @@ func _pointer() -> Vector2:
 ## next step waits until the sim has taken the last one, so letting go leaves nothing queued.
 func _fp_live_step(now: bool) -> void:
 	var mv := Input.get_vector(&"move_left", &"move_right", &"move_back", &"move_forward")
-	if mv == Vector2.ZERO or not _in_main_loop() or Input.is_key_pressed(KEY_SHIFT):
+	if mv == Vector2.ZERO or not _in_main_loop() or Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_ALT):
 		return
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
@@ -1682,7 +1694,11 @@ func _apply_options() -> void:
 	var o := hud_settings
 	for c: Camera3D in [fp, view_cam, camera]:
 		if c != null:
-			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+			var f := HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+			if c is FirstPersonCamera:
+				(c as FirstPersonCamera).base_fov = f   # its zoom (eye tracking) goes on top
+			else:
+				c.fov = f
 	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
 	if fp != null:
 		fp.sensitivity = speed
@@ -1834,6 +1850,56 @@ func _setup_eye_menus() -> void:
 
 ## A menu or prompt has the mouse: the F1 menu, the Tab view, the character screen, a prompt / list / wheel, the
 ## tray, the vise panel, the main menu.
+## Leaning to peek (eye tracking 9, needs no tracker; the flat lean keys and lead-vr's physical lean): toward the
+## neighbouring square `d` (x east, y south). Held LeanPeek.HOLD_MS in a live game, CDDA's peek looks from there.
+## False when the lean switch is off or d isn't one of the 8 ways.
+func lean(d: Vector2i) -> bool:
+	return hud_settings.eye_on("lean") and lean_peek.lean(d, Time.get_ticks_msec())
+
+
+## Ends the lean; an open peek closes (its request is cancelled).
+func unlean() -> void:
+	var a := lean_peek.unlean()
+	if not a.is_empty() and live != null and not live.answer(a):
+		push_warning("live: bridge refused the peek's cancel")
+
+
+## Eye tracking on the flat screen: the lean keys and the peek they lead to (9), zoom where you look while
+## `zoom_look` is held (1) and seeing past a screen edge (2), as one view offset on the first-person camera. The eyes
+## only turn the view; the peek's square is all that reaches the game.
+func _eye_view_step(now_ms: int) -> void:
+	var shown := vr == null and _fp_active() and view_mode == "first"
+	if vr == null:   # VR leans through lean() / unlean() (lead-vr)
+		var side := 0
+		if shown and not _menu_open():
+			side = int(Input.is_action_pressed(&"lean_right", true)) - int(Input.is_action_pressed(&"lean_left", true))
+		if side != _lean_keys:
+			if _lean_keys != 0:
+				unlean()
+			_lean_keys = side if side != 0 and lean(LeanPeek.WAYS[_octant(Vector2(side, 0))]) else 0
+	if lean_peek.leaning() and not hud_settings.eye_on("lean"):
+		unlean()
+		_lean_keys = 0
+	if live != null and world.snapshot != null:
+		var sq: Variant = lean_peek.peek_square(now_ms, _in_main_loop(), world.snapshot.player_pos)
+		if sq != null:
+			lean_peek.sent(live.queue_action_at("peek", sq))
+	if fp == null:
+		return
+	var look: Variant = null
+	var edge: Variant = null
+	if shown and gaze.tracked() and not _menu_open():
+		var p: Variant = gaze.screen_point()
+		var size := get_viewport().get_visible_rect().size
+		if hud_settings.eye_on("zoom") and GazeSource.point_in(p, size) != null:
+			look = EyeView.angles(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)), fp.project_ray_normal(p))
+		if hud_settings.eye_on("edge_turn"):
+			edge = EyeView.on_screen(p, size)
+	var zoom := shown and hud_settings.eye_on("zoom") and Input.is_action_pressed(&"zoom_look", true)
+	var o := eye_view.step(look, edge, zoom, _lean_keys if shown else 0, lean_peek.peeking())
+	fp.set_view_offset(o[0], o[1], o[2], o[3], o[4])
+
+
 func _menu_open() -> bool:
 	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
 			or vise_bench.visible or main_menu != null
@@ -1976,6 +2042,7 @@ func _process(_delta: float) -> void:
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
 	_eye_away_pause(Time.get_ticks_msec())
+	_eye_view_step(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)
