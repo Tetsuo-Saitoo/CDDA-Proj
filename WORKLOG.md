@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Eye tracking, visual only (lead-world): with eye tracking switched on in a headset that tracks the eyes, your eyes adjust to the dark (gaze into darkness and what's lit slowly brightens), a fire or lamp you look into dims the rest of the view for a moment, and faint shadows can drift at the edge of your sight and fade when you look at them. They never sit on a zombie or look like one. Both are off by default. Client tests pass; not yet tried in a headset.
 - 2026-11-18 — Angled cars sit on their squares (C5, lead-world): a car at an angle is now laid out the way CDDA lays it out, so its body covers the squares that block you (before, a wide car at 45 degrees was drawn up to a square and a half off). Client tests pass.
 - 2026-11-18 — Cars move smoothly (C5 slice 3, lead-world): a car that moves or turns glides to its new place instead of jumping square by square, leans on ramps, and the first-person view rides along when you're in it. Its shape is only rebuilt when the car itself changes. Client tests pass; not yet seen driving in a running game.
 - 2026-11-18 — The flat-screen vise gives the same bonus as in VR: a mod fitted while the gun is in the vise goes on more easily and with less risk, and its panel shows those better odds. Client tests pass.
