@@ -1646,6 +1646,14 @@ func calibrate_height() -> void:
 
 
 ## Stands on a free square next to the player (CDDA square p), facing them.
+## The square the player's body is on: during CDDA's peek (leaning) the snapshot's player_pos is the peeked square
+## and player_peeking_from the body's, so Y, the frame key and a teleport's follow come back to the body. Needs a snapshot.
+func body_square() -> Vector3i:
+	var s := world.snapshot
+	var b: Variant = s.player_peeking_from if s != null else null
+	return b if b is Vector3i else (s.player_pos if s != null else Vector3i.ZERO)
+
+
 func go_to_player(p: Vector3i) -> void:
 	var spot: Variant = walk.nearest_standable(p, true)
 	go_to_square(spot if spot != null else p)
@@ -1815,7 +1823,7 @@ func follow_teleport(delta: float) -> void:
 	if _follow_s >= 0.0 and _follow_from is Vector3i and s.player_pos == _follow_from:
 		return
 	_follow_s = -1.0
-	go_to_player(s.player_pos)
+	go_to_player(body_square())
 
 
 ## A menu change takes effect now: the height, and the held items when the main hand changed sides.
@@ -2051,7 +2059,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		if c == right and n == "menu_button":
 			change_level(1)
 		elif n == "primary_click" and c == _move_ctrl():
-			go_to_player(world.snapshot.player_pos)
+			go_to_player(body_square())
 		elif n == "primary_click":
 			var v := _stick(c) if pad == Vector2.INF else pad
 			if v.y < -0.5 and absf(v.y) > absf(v.x):
@@ -2060,7 +2068,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 	match n:
 		"by_button":
 			if c == left:
-				go_to_player(world.snapshot.player_pos)
+				go_to_player(body_square())
 			else:
 				change_level(1)
 		"ax_button":
@@ -2073,7 +2081,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 				zoom.held = true
 		"secondary_click":   # WMR / Index trackpads
 			if c == left:
-				go_to_player(world.snapshot.player_pos)
+				go_to_player(body_square())
 			else:
 				var v := c.get_vector2(&"secondary") if pad == Vector2.INF else pad
 				change_level(1 if v.y >= 0.0 else -1)

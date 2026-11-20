@@ -280,15 +280,15 @@ static func _tilt(yaw: float, roll: float) -> Transform3D:
 	return Transform3D(Basis(Vector3.UP, deg_to_rad(yaw)) * Basis(Vector3.BACK, deg_to_rad(roll)), Vector3(0, 1.6, 0))
 
 
-## Leaning: a sideways head tilt past LEAN_DEG held HOLD_S peeks that way (snapped to the 8 ways); straightening up,
-## tilting the other way, a bad pose or the switch off ends it; a short tilt does nothing. The rig calls on_lean /
-## on_unlean.
+## Leaning: a sideways head tilt past LEAN_DEG asks for the peek that way at once (snapped to the 8 ways; main.lean
+## holds it 250 ms); straightening up, tilting the other way, a bad pose or the switch off ends it. The rig calls
+## on_lean / on_unlean.
 func _test_lean(root: Node) -> void:
 	var l := VrLean.new()
 	var evs := []
 	for i in 3:
 		evs.append(l.update(0.1, _tilt(0, 30)))
-	var west := evs == ["", "", "lean"] and l.side == Vector2i(-1, 0) and l.update(0.1, _tilt(0, 25)) == ""
+	var west := evs == ["lean", "", ""] and l.side == Vector2i(-1, 0) and l.update(0.1, _tilt(0, 25)) == ""
 	var back := l.update(0.1, _tilt(0, 5)) == "unlean" and l.side == Vector2i.ZERO
 	for i in 3:
 		l.update(0.1, _tilt(-90, -30))
@@ -299,8 +299,8 @@ func _test_lean(root: Node) -> void:
 		l.update(0.1, _tilt(-45, 30))
 	var nw := l.side == Vector2i(-1, -1)
 	var junk := l.update(0.1, Transform3D(Basis(), Vector3(NAN, 0, 0))) == "unlean"
-	l.update(0.1, _tilt(0, 30))
-	var short := l.update(0.1, _tilt(0, 5)) == "" and l.side == Vector2i.ZERO
+	var short := l.update(0.1, _tilt(0, 30)) == "lean" and l.update(0.1, _tilt(0, 5)) == "unlean" \
+			and l.side == Vector2i.ZERO
 	for i in 3:
 		l.update(0.1, _tilt(0, 30))
 	l.enabled = false
@@ -308,7 +308,7 @@ func _test_lean(root: Node) -> void:
 	var ways := VrLean.way_of(Vector3(1, 0, 0.1)) == Vector2i(1, 0) and VrLean.way_of(Vector3(0, 0, -1)) == Vector2i(0, -1) \
 			and VrLean.way_of(Vector3(INF, 0, 0)) == Vector2i.ZERO and VrLean.way_of(Vector3.UP) == Vector2i.ZERO
 	_check.call(west and back and south and other and nw and junk and short and off and ways,
-			"vr lean: a sideways head tilt held peeks that way (8 ways); straightening, the other way, junk or off ends it (%s)"
+			"vr lean: a sideways head tilt asks for the peek that way (8 ways); straightening, the other way, junk or off ends it (%s)"
 			% [evs])
 	var world := WorldView.new()
 	world.snapshot = Snapshot.new()

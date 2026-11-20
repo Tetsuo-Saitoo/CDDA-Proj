@@ -39,6 +39,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_far_and_door()
 	_test_refused()
 	_test_throw()
+	_test_peek()
 	_rig.free()
 	_hands.free()
 	_actions.free()
@@ -489,3 +490,19 @@ func _test_gaze_throw() -> void:
 	_rig.gaze_throw_square = Callable()
 	_rig.gaze_throw_request = Callable()
 	_gz = null
+
+
+## Leaning: during CDDA's peek (Snapshot.player_peeking_from, lead-ui's, the body's square next to the peeked
+## player_pos) the rig's body_square (Y, the frame key, a teleport's follow) is the body's square, not the peeked one.
+func _test_peek() -> void:
+	var snap := _world.snapshot
+	var keep_pos := snap.player_pos
+	var keep_from: Variant = snap.player_peeking_from
+	snap.player_peeking_from = keep_pos
+	snap.player_pos = keep_pos + Vector3i(1, 0, 0)
+	var body := _rig.body_square() == keep_pos
+	snap.player_peeking_from = null
+	var plain := _rig.body_square() == keep_pos + Vector3i(1, 0, 0)
+	snap.player_pos = keep_pos
+	snap.player_peeking_from = keep_from
+	_check.call(body and plain, "vr peek: during a peek the rig comes back to the body's square, not the peeked one")
