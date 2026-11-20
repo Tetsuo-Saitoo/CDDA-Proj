@@ -50,6 +50,7 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_w.live = true
 	_test_target(d)
 	_test_hold_pick()
+	_test_eyes()
 	_test_tap()
 	_test_click_and_cancel()
 	_test_list()
@@ -159,6 +160,48 @@ func _test_hold_pick() -> void:
 	_frame(p)
 	_check.call(_answers == [{"id": 41, "entry": 2}] and not _w.active() and _w.wheel == null,
 			"vr wheel: letting go of the trigger picks what it points at (%s)" % [_answers])
+
+
+
+## Eye tracking (VrRig.look): the tracked eyes on the wheel point while the hand rests in its middle; the stick and a
+## flick of the hand win; head gaze never points; looking only points, letting go of the trigger picks.
+func _test_eyes() -> void:
+	var p := _over(SINK_AT)
+	var opened := _open(p)
+	var w := _ui.widget as RadialRequestWidget
+	var cam := _rig.camera.global_transform
+	var gaze := func(to: Vector3, eyes: bool) -> Dictionary:
+		return {"from": cam.origin, "dir": (to - cam.origin).normalized(), "eyes": eyes}
+	var right := _w.wheel.global_basis.x * VrWheel.RADIUS_M * 0.7
+	var up := _w.wheel.global_basis.y * VrWheel.RADIUS_M * 0.7
+	var hands: Array[Vector3] = [p, p]
+	var sticks: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
+	var free: Array[bool] = [true, true]
+	var seen := []
+	for g: Dictionary in [gaze.call(p + right, true), gaze.call(p - up, true), gaze.call(p + right, false),
+			gaze.call(p + right * 5.0, true), {"from": cam.origin, "dir": Vector3(NAN, 0, 0), "eyes": true}]:
+		_w.update(hands, sticks, free, cam, g)
+		seen.append(w.hovered)
+	sticks[1] = Vector2(0, 1)
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))
+	var stick := w.hovered
+	sticks[1] = Vector2.ZERO
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))   # the eyes still: the stick's pick stays
+	var stays := w.hovered
+	_w.update(hands, sticks, free, cam, gaze.call(p - up, true))   # the eyes moved: they point again
+	var moved := w.hovered
+	hands[1] = p - _w.wheel.global_basis.y * VrWheel.FLICK_M
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))   # a flick down: the hand wins
+	var flick := w.hovered
+	var none_yet := _answers.is_empty()
+	hands[1] = p
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))
+	_rig.release(_rig.right, "trigger_click")
+	_frame(p)
+	_check.call(opened and seen == [2, 4, -1, -1, -1] and stick == 0 and stays == 0 and moved == 4 and flick == 4
+			and none_yet and _answers == [{"id": 41, "entry": 1}],   # slot 2: the second entry
+			"vr wheel: tracked eyes point (the head, far off or junk: not); the stick and a flick win; the trigger picks (%s %d %d %d %d %s)"
+			% [seen, stick, stays, moved, flick, _answers])
 
 
 func _test_tap() -> void:
