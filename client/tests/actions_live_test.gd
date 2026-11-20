@@ -122,6 +122,7 @@ func _run() -> void:
 	if _live.state == "running":
 		await _counts_live()   # before anything is poured out or eaten
 		await _rebind_live(&"cdda_inventory")
+		await _eyes_live()
 		_hud_live()
 		await _hands_live()
 		await _consume_live()
@@ -177,6 +178,52 @@ func _rebind_live(action: StringName) -> void:
 	_check(not km.visible, "Esc closes the key menu")
 	await _try_key(action, "list", key)
 	InputActions.set_slots(action, old)
+
+
+## The F1 menu's Eye tracking row in a running game (eye tracking, part 1; skipped, said so, on a client without
+## it): a box per switch; a click on one is saved under [eyes] in this run's own hud.cfg, then put back. With no
+## tracker the game is as before: nothing is tracked, the eyes paused nothing, and a turn passes once the menu is
+## closed.
+func _eyes_live() -> void:
+	var km := _main.key_menu
+	var checks: Variant = km.get("eye_checks")
+	if not checks is Dictionary or not (checks as Dictionary).has("away_pause") or not _live.has_method("clock"):
+		print("  (no Eye tracking row in this client's F1 menu: not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, false)
+	var f1 := InputEventKey.new()
+	f1.keycode = InputActions.MENU_KEY
+	f1.physical_keycode = InputActions.MENU_KEY
+	f1.pressed = true
+	root.push_input(f1)
+	var box: CheckBox = checks["away_pause"]
+	var was := box.button_pressed
+	var shown: bool = km.visible and box.is_visible_in_tree()
+	var path: String = UserFiles.at(km.hud_path)
+	box.button_pressed = not was   # as a click: toggled -> saved
+	var cfg := ConfigFile.new()
+	var saved: Variant = cfg.get_value("eyes", "away_pause", null) if cfg.load(path) == OK else null
+	var set_now: bool = _main.hud_settings.eye_switch("away_pause")
+	box.button_pressed = was
+	var cfg2 := ConfigFile.new()
+	var back: Variant = cfg2.get_value("eyes", "away_pause", null) if cfg2.load(path) == OK else null
+	_check(shown and saved is bool and saved == (not was) and set_now == (not was) and back is bool and back == was
+			and path.contains("test-runs"),
+			"F1: the Eye tracking row shows %d boxes; a click on \"%s\" is saved under [eyes] in this run's hud.cfg and put back (%s -> %s -> %s; %s)"
+			% [(checks as Dictionary).size(), box.text, was, saved, back, path])
+	root.push_input(_esc_key())
+	var gaze: Variant = _main.get("gaze")
+	var tracked: bool = gaze != null and gaze.tracked()
+	var pause: Variant = _main.get("eye_pause")
+	var by_eyes: bool = pause != null and pause.paused_by_eyes
+	var clock: Dictionary = _live.call("clock")
+	var turn := _main.world.snapshot.turn
+	_live.queue_action("pause")
+	var later := func() -> bool: return _main.world.snapshot.turn > turn
+	_check(not km.visible and not tracked and not by_eyes and clock.get("paused") == false
+			and await _until(later, OP_TIMEOUT_MS, true),
+			"eye tracking: with no tracker nothing is tracked, the eyes paused nothing, and a turn passes as before (clock %s)" % clock)
 
 
 ## The screen HUD (main's HudView) in the live game: body bars, needs and the move line from CDDA's snapshot, and
