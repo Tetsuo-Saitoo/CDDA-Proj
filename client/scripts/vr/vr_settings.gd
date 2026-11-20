@@ -124,23 +124,6 @@ static func load_file(path := FILE) -> Dictionary:
 	return s
 
 
-## The eye tracking switch an older vr.json kept (`eyes`: "on" / "off"; it is now HudSettings' "tracker", F1 >
-## Eye tracking): true / false, null when the file or the key isn't there or is bad. HudSettings asks once, when
-## hud.cfg has no eye section yet; the next save of vr.json drops it.
-static func old_eyes(path := FILE) -> Variant:
-	path = UserFiles.at(path)
-	if not FileAccess.file_exists(path):
-		return null
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f == null or f.get_length() > MAX_FILE_BYTES:
-		return null
-	var data: Variant = JSON.parse_string(f.get_as_text())
-	var v: Variant = (data as Dictionary).get("eyes") if data is Dictionary else null
-	if v is bool:
-		return v
-	return {"on": true, "off": false}.get(v) if v is String else null
-
-
 static func save_file(s: Dictionary, path := FILE) -> bool:
 	path = UserFiles.at(path)
 	var out := {}

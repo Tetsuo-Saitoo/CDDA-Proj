@@ -117,25 +117,19 @@ func _test_rig(root: Node) -> void:
 	rig.eye_on = Callable()
 	rig.apply_eye_switches()
 	off = off and rig.gaze.on and rig.zoom.enabled
-	# The VR settings file holds no gaze, and no longer the switch (HudSettings' "tracker"); an old one is read once.
+	# The VR settings file holds no gaze, and no longer the switch (HudSettings' "tracker"; an old vr.json's `eyes`
+	# is ignored: eye tracking is opt-in).
 	var path := "user://vr_gaze_test.json"
 	var saved := VrSettings.save_file(rig.settings, path)
 	var real := UserFiles.at(path)
 	var back: Variant = JSON.parse_string(FileAccess.get_file_as_string(real))
 	var keys_only: bool = saved and back is Dictionary and (back as Dictionary).size() == VrSettings.DEFAULTS.size() \
 			and VrSettings.DEFAULTS.keys().all(func(k: String) -> bool: return (back as Dictionary).has(k)) \
-			and not (back as Dictionary).has("eyes") and VrSettings.old_eyes(path) == null
-	var olds := []
-	for v: Variant in ["off", "on", true, 5, "maybe"]:
-		var f := FileAccess.open(real, FileAccess.WRITE)
-		f.store_string(JSON.stringify({"move": "smooth", "eyes": v}))
-		f.close()
-		olds.append(VrSettings.old_eyes(path))
+			and not (back as Dictionary).has("eyes")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(real))
-	var setting: bool = olds == [false, true, true, null, null] and VrSettings.old_eyes(path) == null \
-			and not VrSettings.DEFAULTS.has("eyes") and not VrSettings.ROWS.any(func(row: Array) -> bool: return row[0] == "eyes")
+	var setting: bool = not VrSettings.DEFAULTS.has("eyes") and not VrSettings.ROWS.any(func(row: Array) -> bool: return row[0] == "eyes")
 	_check.call(desktop and eyes and off and keys_only and setting,
-			"vr gaze: the rig looks by the head without eye tracking, by the eyes with it; the switches turn it off; an old vr.json switch is read (%s)" % [olds])
+			"vr gaze: the rig looks by the head without eye tracking, by the eyes with it; the switches turn it off; vr.json has no eye switch")
 	rig.free()
 	world.free()
 
