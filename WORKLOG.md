@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Lean to peek, and two eye-tracking views (flat screen): Alt+A / Alt+D lean the view; held a moment in a running game, you peek around the corner that way, letting go ends it. With an eye tracker (none is read yet), holding N zooms in where you look, and looking at a screen edge turns the view a little that way. Client tests pass; not yet tried in a running game.
 - 2026-11-19 — Eye tracking, first part: an "Eye tracking" row in the F1 menu with one switch per idea; with a tracker (none is read yet), real-time play pauses while you look away and menus follow your eyes, a key clicks. Without one nothing changes. Client tests pass.
 - 2026-11-19 — VR eye tracking (lead-vr): where the eyes look points at the VR menu, the action wheel and a new look-at ring (hold left X; the main trigger teleports there with cheats on), through OpenXR eye gaze, falling back to the head; on/off in the VR menu; gaze is never stored or logged; tested with a simulated eye tracker.
 - 2026-11-19 — Tester AppImage test-2026-11-19 (private test repo, pre-release, not a release) from main 2da4a28 + fork 1479c60, after the QA lead's GO (smoke, Linux live suites incl. driving, personal-strings check pass on the file).
