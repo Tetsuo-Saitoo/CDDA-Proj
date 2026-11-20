@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-19 — Eye tracking settings and leaning checked in a running game (QA lead): the F1 row saves into the run's own settings file, and holding the lean key opens CDDA's peek and closes it on release. The first run showed the peek left open as an ordinary prompt; fixed by the UI lead.
 - 2026-11-19 — VR eye tracking (lead-vr): where the eyes look points at the VR menu, the action wheel and a new look-at ring (hold left X; the main trigger teleports there with cheats on), through OpenXR eye gaze, falling back to the head; on/off in the VR menu; gaze is never stored or logged; tested with a simulated eye tracker.
 - 2026-11-19 — Tester AppImage test-2026-11-19 (private test repo, pre-release, not a release) from main 2da4a28 + fork 1479c60, after the QA lead's GO (smoke, Linux live suites incl. driving, personal-strings check pass on the file).
 - 2026-11-18 — Angled cars sit on their squares (C5, lead-world): a car at an angle is now laid out the way CDDA lays it out, so its body covers the squares that block you (before, a wide car at 45 degrees was drawn up to a square and a half off). Client tests pass.
