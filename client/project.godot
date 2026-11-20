@@ -22,6 +22,7 @@ anti_aliasing/quality/msaa_3d=2
 [xr]
 
 openxr/extensions/hand_tracking=true
+openxr/extensions/eye_gaze_interaction=true
 openxr/extensions/hand_tracking_unobstructed_data_source=true
 openxr/extensions/hand_tracking_controller_data_source=true
 shaders/enabled=true

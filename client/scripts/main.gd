@@ -615,6 +615,7 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
+	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
@@ -1256,12 +1257,20 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 
 ## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
 ## ray's direction. {hit: false} without a snapshot or camera. `creatures` false: the ray passes through them.
+## In VR the gaze instead (VrRig.look: eyes or head), whatever `pos` says.
 func _cast_screen(pos: Vector2, creatures := true) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if world.snapshot == null or cam == null:
 		return {"hit": false}
 	if look_ray == null:
 		look_ray = LookRay.new(world)
+	if vr != null:   # VR: where the player looks (the eyes when tracked, else the head: VrRig.look)
+		var g := vr.look()
+		if g.is_empty():
+			return {"hit": false}
+		var hit := look_ray.cast(g["from"], g["dir"], LookRay.MAX_M, creatures)
+		hit["dir"] = g["dir"]
+		return hit
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
 	var v := eyes_view()
