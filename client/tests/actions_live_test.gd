@@ -255,9 +255,27 @@ func _lean_live() -> void:
 			and not _main.request_ui.is_showing() and (body == null or body == home),
 			"lean: the lean-right key held opens CDDA's peek on the square to the right (%s from %s): no prompt shows, the view is from there (request %s %s; peeking_from %s; opened %s, seen from there %s, prompt showing %s)"
 			% [side, home, req.get("kind", "none"), req.get("mode", ""), body, opened, looked, _main.request_ui.is_showing()])
+	var draws_body: bool = "player_peeking_from" in _main.world.snapshot   # the client knows where the body is
+	if opened and looked and draws_body:
+		var side_w: Vector3 = _main.world.coords.ms_center_to_world(side)
+		var home_w: Vector3 = _main.world.coords.ms_center_to_world(home)
+		var over := func() -> bool: return _flat(_main.fp.base_position()).distance_to(_flat(side_w)) < 0.3
+		var eyes_there := await _until(over, ASK_TIMEOUT_MS, false)
+		var at: Vector3 = _main.player_body.position
+		_check(eyes_there and _main.world.snapshot.get("player_peeking_from") == home
+				and _flat(at).distance_to(_flat(home_w)) < 0.3 and _main.player_body.visible and _main.player_body.show_head,
+				"lean: during the peek the body stands on its own square, head shown, and the eyes are over the peeked square (body %s, eyes %s, own square %s)"
+				% [at, _main.fp.base_position(), home_w])
 	Input.action_release(&"lean_right")
 	var closed := func() -> bool: return not lp.peeking() and _main.world.snapshot.player_pos == home and in_loop.call()
 	var back := await _until(closed, ASK_TIMEOUT_MS, false)
+	if draws_body:
+		var under := func() -> bool:
+			return _flat(_main.player_body.position).distance_to(_flat(_main.fp.base_position())) < 0.3 \
+					and not _main.player_body.show_head
+		_check(back and await _until(under, ASK_TIMEOUT_MS, false),
+				"lean: after the peek the body is back under the eyes, head hidden (body %s, eyes %s)"
+				% [_main.player_body.position, _main.fp.base_position()])
 	var took: int = _main.world.snapshot.turn - turn0
 	_check(back and took >= 1 and took <= 3 and _peeking_from() == null,
 			"lean: letting go closes the peek: back on %s, %d turns later (key down %s, leaning %s, peeking %s, request %s %s timed %s, peeking_from %s)"
@@ -362,6 +380,11 @@ func _lean_blocked_live(lp: Variant, home: Vector3i) -> void:
 	await _until(in_loop, ASK_TIMEOUT_MS, true)
 	_live.cheat_teleport(home)
 	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## A world position seen from above (x, z).
+func _flat(v: Vector3) -> Vector2:
+	return Vector2(v.x, v.z)
 
 
 ## `player.peeking_from` of the bridge's newest snapshot (the body's square during CDDA's peek), null when it isn't
