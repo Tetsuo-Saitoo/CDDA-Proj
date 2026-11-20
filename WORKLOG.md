@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-20 — Tester AppImage test-2026-11-20 (private test repo, pre-release, not a release) from main b10da10 + fork 5890e17, after the QA lead's GO (smoke, nine Linux live suites, personal-strings check pass on the file). Notes cover leaning and opt-in eye tracking; no headset or eye tracker tried yet.
 - 2026-11-19 — VR leaning peeks (lead-vr): tilting your head sideways past 20 degrees for a quarter second asks CDDA to peek around that corner; during the peek, Y and the frame key bring you back to your body's square, not the peeked one.
 - 2026-11-19 — While you peek around a corner, your body stays drawn on its own square (the view is from the square you lean to). The "Eyes adjust to light" and "Unease at the edges" switches now turn those effects on and off. Leaning was checked in a running game by the QA lead. Client tests pass.
 - 2026-11-19 — VR eye tracking follows the opt-in switch (lead-vr): an eye tracking value left in an older vr.json is ignored; only F1 > Eye tracking > "Use the eye tracker" (off by default) turns the eyes on.
