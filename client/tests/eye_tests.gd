@@ -106,6 +106,11 @@ func _test_pause() -> void:
 			and r4 == ["", EyePause.PAUSE, EyePause.RESUME] and r5 == ["", ""] and not p.paused_by_eyes,
 			"eyes: another pause meanwhile stays; switching off or losing the tracker gives ours back; a paused game isn't paused again (%s %s %s %s)"
 			% [r2, r3, r4, r5])
+	var r6: Array = [p.step(true, true, rt, 49000), p.step(true, false, rt, 50000), p.step(true, false, rt, 52000), p.step(true, false, ours, 52100)]
+	p.forget()   # the player paused by hand meanwhile (same reason text)
+	r6.append(p.step(true, true, ours, 52200))
+	_check.call(r6 == ["", "", EyePause.PAUSE, "", ""] and not p.paused_by_eyes,
+			"eyes: a pause the player took over by hand isn't resumed by looking back (%s)" % [r6])
 
 
 func _test_menus() -> void:
