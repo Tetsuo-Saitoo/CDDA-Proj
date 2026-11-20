@@ -253,14 +253,16 @@ func _lean_live() -> void:
 	var body: Variant = _peeking_from()
 	_check(opened and looked and req.get("kind") == "target" and req.get("mode") == "peek"
 			and not _main.request_ui.is_showing() and (body == null or body == home),
-			"lean: the lean-right key held opens CDDA's peek on the square to the right (%s from %s): no prompt shows, the view is from there (request %s %s; peeking_from %s)"
-			% [side, home, req.get("kind", "none"), req.get("mode", ""), body])
+			"lean: the lean-right key held opens CDDA's peek on the square to the right (%s from %s): no prompt shows, the view is from there (request %s %s; peeking_from %s; opened %s, seen from there %s, prompt showing %s)"
+			% [side, home, req.get("kind", "none"), req.get("mode", ""), body, opened, looked, _main.request_ui.is_showing()])
 	Input.action_release(&"lean_right")
 	var closed := func() -> bool: return not lp.peeking() and _main.world.snapshot.player_pos == home and in_loop.call()
-	var back := await _until(closed, OP_TIMEOUT_MS, false)
+	var back := await _until(closed, ASK_TIMEOUT_MS, false)
 	var took: int = _main.world.snapshot.turn - turn0
 	_check(back and took >= 1 and took <= 3 and _peeking_from() == null,
-			"lean: letting go closes the peek: back on %s, %d turns later" % [_main.world.snapshot.player_pos, took])
+			"lean: letting go closes the peek: back on %s, %d turns later (key down %s, leaning %s, peeking %s, request %s %s timed %s, peeking_from %s)"
+			% [_main.world.snapshot.player_pos, took, Input.is_action_pressed(&"lean_right", true), lp.leaning(), lp.peeking(),
+			_live.request.get("kind", "none"), _live.request.get("mode", ""), _live.request.get("timed", false), _peeking_from()])
 	# Alt with a move key: no step; the same key alone: a step
 	var alt := InputEventKey.new()
 	alt.keycode = KEY_ALT
