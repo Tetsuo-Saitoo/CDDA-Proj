@@ -19,6 +19,7 @@ const FIRE := Color(1.0, 0.58, 0.28)
 const SHADER := preload("res://shaders/world_light.gdshader")
 const SHADOW_LAMPS := 4   # default shadow_lamps: shadows cost a render of the casters near each lamp that changed
 const VR_SHADOW_LAMPS := 0   # default vr_shadow_lamps: off in VR until their cost at 90 fps is measured
+const GAZE_BLOBS := 3        # the shader's gaze_blobs
 
 ## Off: no darkening and no lamps (--no-light).
 var enabled := true:
@@ -61,6 +62,7 @@ var lut_ambient := -1
 var ambient := -1          # natural light of the last applied map
 var levels := 0
 var sources_shown := 0     # OmniLights in use
+var map: LightMap          # the last applied (GazeEffects looks up what the eyes see)
 var _mat := ShaderMaterial.new()
 var _quad := MeshInstance3D.new()
 var _atlas: ImageTexture
@@ -96,29 +98,30 @@ func _init() -> void:
 
 
 ## Shows a map built for the snapshot `coords` was just rebased on. Main thread.
-func apply(map: LightMap, coords: CddaCoords) -> void:
-	if map.lut != null:
-		_lut = _upload(_lut, map.lut, "lut")
-		lut_ambient = map.ambient
-	_atlas = _upload(_atlas, map.image, "atlas")
-	ambient = map.ambient
-	levels = map.levels
-	var o := coords.ms_to_world(map.origin_ms)
+func apply(m: LightMap, coords: CddaCoords) -> void:
+	map = m
+	if m.lut != null:
+		_lut = _upload(_lut, m.lut, "lut")
+		lut_ambient = m.ambient
+	_atlas = _upload(_atlas, m.image, "atlas")
+	ambient = m.ambient
+	levels = m.levels
+	var o := coords.ms_to_world(m.origin_ms)
 	if is_inside_tree():
 		o = global_transform * o
 	_mat.set_shader_parameter("origin", o)
-	_mat.set_shader_parameter("z_lo", map.z_lo)
-	_mat.set_shader_parameter("levels", map.levels)
-	_mat.set_shader_parameter("sky_color", _vec(map.sky))
-	_mat.set_shader_parameter("outside_color", _vec(map.outside))
+	_mat.set_shader_parameter("z_lo", m.z_lo)
+	_mat.set_shader_parameter("levels", m.levels)
+	_mat.set_shader_parameter("sky_color", _vec(m.sky))
+	_mat.set_shader_parameter("outside_color", _vec(m.outside))
 	_place_shadows()
 	sources_shown = 0
 	for i in _lights.size():
 		var l := _lights[i]
-		l.set_meta("used", i < map.sources.size())
-		if i >= map.sources.size():
+		l.set_meta("used", i < m.sources.size())
+		if i >= m.sources.size():
 			continue
-		var s := map.sources[i]
+		var s := m.sources[i]
 		var height := 0.4 if s.kind == Snapshot.LIGHT_FIRE else (1.0 if s.kind == Snapshot.LIGHT_ITEM else 1.5)
 		l.position = coords.ms_center_to_world(s.square) + Vector3(0, height, 0)
 		l.light_color = FIRE if s.kind == Snapshot.LIGHT_FIRE else LAMP
@@ -126,6 +129,33 @@ func apply(map: LightMap, coords: CddaCoords) -> void:
 		l.light_energy = LightMap.light_energy(s.luminance)
 		sources_shown += 1
 	_update_visible()
+
+
+## The eye-tracking effects (GazeEffects): lit pixels `boost` brighter, all but a small cone about `glare_dir`
+## `glare` darker, and up to GAZE_BLOBS soft shadows, each [direction (unit, world), cos of its radius, strength
+## 0..1]. All 0 / []: the pass as without them. Values are bounded here too.
+func set_gaze(boost: float, glare: float, glare_dir: Vector3, blobs: Array) -> void:
+	var dirs := PackedVector4Array()
+	var cosines := PackedFloat32Array()
+	for i in GAZE_BLOBS:
+		var e: Variant = blobs[i] if i < blobs.size() else null
+		var ok: bool = e is Array and (e as Array).size() == 3 and e[0] is Vector3 and (e[0] as Vector3).is_finite() \
+				and (e[0] as Vector3).length() > 0.5 and e[1] is float and is_finite(e[1]) and e[2] is float and is_finite(e[2])
+		var d: Vector3 = (e[0] as Vector3).normalized() if ok else Vector3.FORWARD
+		dirs.append(Vector4(d.x, d.y, d.z, clampf(e[2], 0.0, 1.0) if ok else 0.0))
+		cosines.append(clampf(e[1], 0.0, 0.999) if ok else 0.0)
+	var gd := glare_dir.normalized() if glare_dir.is_finite() and glare_dir.length() > 0.5 else Vector3.FORWARD
+	_mat.set_shader_parameter("gaze_boost", clampf(boost, 0.0, 1.0) if is_finite(boost) else 0.0)
+	_mat.set_shader_parameter("gaze_glare", clampf(glare, 0.0, 0.9) if is_finite(glare) else 0.0)
+	_mat.set_shader_parameter("gaze_glare_dir", gd)
+	_mat.set_shader_parameter("gaze_blobs", dirs)
+	_mat.set_shader_parameter("gaze_blob_cos", cosines)
+
+
+## The eye-tracking values the pass draws now (tests): {boost, glare, blobs: PackedVector4Array}.
+func gaze_now() -> Dictionary:
+	return {"boost": _mat.get_shader_parameter("gaze_boost"), "glare": _mat.get_shader_parameter("gaze_glare"),
+			"blobs": _mat.get_shader_parameter("gaze_blobs")}
 
 
 ## Lamps with shadows for these settings: shadow_lamps, at most vr_shadow_lamps in VR.

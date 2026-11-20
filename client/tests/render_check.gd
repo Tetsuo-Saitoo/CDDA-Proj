@@ -26,7 +26,9 @@ const STORM := {"precip": 3, "precip_kind": 1, "sight_penalty": 1.25, "light_mod
 ## 0 looks north, 90 west), night, move (squares from the mock's player), roof (the player counts as sheltered),
 ## settle (seconds before the picture), flash (a lightning event, pictured at once and again after it), lamp (a
 ## light source on the player's square: CDDA's light falls off around it), turn (game seconds after the mock's turn:
-## snow lies and the ground gets wet over game time; a shot back at the mock's turn starts afresh).
+## snow lies and the ground gets wet over game time; a shot back at the mock's turn starts afresh), gaze (the eye
+## tracking effects forced on, WorldLighting.set_gaze: boost, glare about the view's centre, blob [yaw, pitch off the
+## centre in degrees, strength]).
 const SHOTS := [
 	{"name": "clear", "env": CLEAR, "yaw": 45.0},
 	{"name": "cloudy", "env": CLOUDY, "yaw": 45.0},
@@ -64,6 +66,12 @@ const SHOTS := [
 			"night": true, "lamp": true},
 	{"name": "room_night_dark", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true,
 			"night": true},
+	# Eye tracking (GazeEffects): the same rooms with eyes adjusted to the dark and a shadow 30 degrees left of the
+	# gaze, and dazzled by the lamp (all but the middle of the view darker).
+	{"name": "eyes_dark", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true,
+			"night": true, "lamp": true, "gaze": {"boost": 0.6, "blob": [30.0, -8.0, 1.0]}},
+	{"name": "eyes_glare", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true,
+			"night": true, "lamp": true, "gaze": {"glare": 0.45}},
 ]
 
 var _main: Main
@@ -157,6 +165,17 @@ func _shot(index: int, shot: Dictionary) -> void:
 	_main._frame_player()
 	_main.fp.set_look(deg_to_rad(shot.get("yaw", 0.0)), deg_to_rad(shot.get("pitch", 0.0)))
 	await _seconds(shot.get("settle", 1.5))
+	var gz: Dictionary = shot.get("gaze", {})
+	if not gz.is_empty():
+		var cam := get_root().get_viewport().get_camera_3d()
+		var fwd := -cam.global_transform.basis.z
+		var blobs := []
+		if gz.has("blob"):
+			var bl: Array = gz["blob"]
+			var bd := fwd.rotated(Vector3.UP, deg_to_rad(bl[0])).rotated(cam.global_transform.basis.x, deg_to_rad(bl[1]))
+			blobs.append([bd.normalized(), cos(deg_to_rad(10.0)), float(bl[2])])
+		_main.world.lighting.set_gaze(gz.get("boost", 0.0), gz.get("glare", 0.0), fwd, blobs)
+		await process_frame
 	if shot.get("flash", false):
 		await _save(index, shot["name"] + "_before")
 		_main.weather.on_events([{"kind": "lightning"}])
@@ -166,6 +185,7 @@ func _shot(index: int, shot: Dictionary) -> void:
 		await _save(index, shot["name"] + "_after")
 	else:
 		await _save(index, shot["name"])
+	_main.world.lighting.set_gaze(0.0, 0.0, Vector3.FORWARD, [])
 
 
 ## A light source on square `at`: 60 there, 8 less per square away (CDDA light levels), on that level.

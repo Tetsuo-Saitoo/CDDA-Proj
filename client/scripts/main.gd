@@ -58,6 +58,7 @@ var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var fields_view: FieldView       # fire, sparks, smoke and gas fields
 var vehicles_view: VehicleView   # CDDA's vehicles, part by part (C5)
+var gaze_fx: GazeEffects   # eyes adjust to light, peripheral unease (eye tracking; off until switched on)
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
@@ -199,6 +200,10 @@ func _ready() -> void:
 	add_child(vehicles_view)
 	world.coords.origin_shifted.connect(vehicles_view.shift)
 	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
+	gaze_fx = GazeEffects.new()   # eye tracking, visual only: gaze set in _start_vr, switches by the settings
+	gaze_fx.world = world
+	gaze_fx.lighting = world.lighting
+	add_child(gaze_fx)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -623,6 +628,7 @@ func _start_vr() -> void:
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
 	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
+	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
