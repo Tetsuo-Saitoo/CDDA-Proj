@@ -231,6 +231,7 @@ var leaning := VrLean.new()   # the head tilted sideways: CDDA's peek that way
 var on_lean := Callable()
 var on_unlean := Callable()
 var busy: VrBusy           # "Time passes..." low in the view while the game runs on (main.gd gives the flat BusyNote)
+var time_pause := Callable()   # main's toggle_time_pause -> its note: the menu's Time row pauses real time or goes on
 var hint: VrHint           # G6: the one-time hint shown now, low in front (main.gd gives the flat Hints)
 var mouth: VrMouth         # eat or drink what a hand brings to the mouth (main.gd gives it ItemActions)
 var aid: VrAid             # first aid a hand brings to a body part (main.gd gives it ItemActions)
@@ -402,6 +403,7 @@ func _build() -> void:
 	mood.rig = self
 	camera.add_child(mood)
 	busy = VrBusy.new()
+	busy.clock = func() -> String: return hud.data.clock if hud != null and hud.data != null else ""
 	camera.add_child(busy)
 	hint = VrHint.new()   # top level: placed in world space, following the head lazily
 	hint.rig = self
@@ -1720,6 +1722,8 @@ func toggle_menu() -> void:
 	arc = {}
 	if menu.visible:
 		menu.place(camera.transform)
+		if not busy.paused_line().is_empty() and menu.page == VrMenu.SETTINGS_PAGE:
+			menu.row = menu.row_of("time")   # paused: menu, then trigger goes on
 		menu.refresh()
 	else:
 		update_pointer()
@@ -1730,6 +1734,8 @@ func toggle_menu() -> void:
 func _menu_action(key: String) -> void:
 	if key == "calibrate":
 		calibrate_height()
+	elif key == "time":
+		toggle_time()
 	elif key == "report":
 		report_bug()
 	elif VrSettings.UI_ROWS.has(key):
@@ -1741,6 +1747,18 @@ func _menu_action(key: String) -> void:
 			toggle_menu()   # its questions come on the panel: the laser is free for them
 		if not queue_cdda(VrSettings.CDDA_ROWS[key]):
 			_feel(left)
+
+
+## Menu row "Time": the menu goes and real time pauses or goes on (main's toggle_time_pause); its note shows low in
+## the view, naming the row instead of the flat screen's key. Nothing to call: a buzz.
+func toggle_time() -> void:
+	if menu_open():
+		toggle_menu()
+	var note: Variant = time_pause.call() if time_pause.is_valid() else null
+	if not note is String or (note as String).is_empty():
+		_feel(left)
+		return
+	busy.flash((note as String).replace(InputActions.prompt_of(ClockControl.PAUSE), "menu > Time"))
 
 
 ## Queues CDDA action `act` ("wait", "sleep"; the bridge's allow-list decides) through main's queue (VrGun's

@@ -122,7 +122,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    right pad click left/right turns, held up aims the teleport, down = level down; right menu = level up; left
    pad click = back to the player. **Left menu button** (Index: left stick click) opens the settings in the
    headset: stick up/down picks, left/right or trigger changes, menu closes and saves them to `vr.json` in
-   Godot's user folder. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
+   Godot's user folder. VR always runs in real time: when it pauses (a hostile spotted) the view says so and
+   the menu opens on its **Time** row (trigger: go on; also pauses). Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
    from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=

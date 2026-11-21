@@ -644,6 +644,7 @@ func _start_vr() -> void:
 	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
 	vr.on_lean = lean   # VR leaning (VrLean): a sideways head tilt asks for CDDA's peek that way; held 250 ms here
 	vr.on_unlean = unlean
+	vr.time_pause = toggle_time_pause   # the VR menu's Time row: pause real time or go on (a hostile's auto-pause too)
 	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
