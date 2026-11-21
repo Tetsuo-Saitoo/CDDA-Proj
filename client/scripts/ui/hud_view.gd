@@ -29,12 +29,13 @@ var data: HudData:
 		data = d
 		if d != null:
 			d.changed.connect(_on_changed)
-		_on_changed(PackedStringArray(["body", "needs", "effects", "move", "mood", "messages", "warnings", "cheats"]))
+		_on_changed(PackedStringArray(["body", "needs", "effects", "move", "mood", "messages", "warnings", "cheats", "clock"]))
 
 var feed: Label
 var mood: Label
 var warn: Label
 var cheat_mark: Label
+var clock_mark: Label   # HudData.clock: time runs, waits for you, or is paused
 var _body: Control
 var _pulse := 0.0
 
@@ -67,6 +68,10 @@ func _init() -> void:
 	cheat_mark.size = Vector2(600, 20)
 	cheat_mark.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	cheat_mark.add_theme_color_override("font_color", CHEAT_COLOR)
+	clock_mark = _label("Clock", HORIZONTAL_ALIGNMENT_RIGHT)
+	clock_mark.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	clock_mark.position = Vector2(-612, 8)
+	clock_mark.size = Vector2(600, 20)
 	_body = Control.new()
 	_body.name = "Body"
 	_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -175,6 +180,7 @@ func _on_changed(parts: PackedStringArray) -> void:
 		mood.text = ""
 		warn.text = ""
 		cheat_mark.text = ""
+		clock_mark.text = ""
 		_body.queue_redraw()
 		return
 	if "messages" in parts:
@@ -191,6 +197,11 @@ func _on_changed(parts: PackedStringArray) -> void:
 		warn.add_theme_color_override("font_color", HudData.level_color(worst))
 	if "cheats" in parts:
 		cheat_mark.text = cheat_text(data.cheats)
+	if "clock" in parts:
+		clock_mark.text = data.clock
+		clock_mark.add_theme_color_override("font_color",
+				HudData.level_color(HudData.HURT if data.clock.begins_with("TIME PAUSED") else HudData.OK))
+		cheat_mark.position.y = 30.0 if not data.clock.is_empty() else 8.0   # the cheats under it
 	if "mood" in parts:
 		var ml := mood_line()
 		mood.text = ml[0] if not ml.is_empty() else ""

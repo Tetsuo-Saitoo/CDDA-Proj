@@ -29,6 +29,8 @@ var _capture: Array = []      # [action, slot] while waiting for a key
 var _pending_mod := KEY_NONE  # a modifier pressed while capturing, bound alone if let go first
 var _box: VBoxContainer
 var hud: HudSettings          # set by add_hud_settings
+var real_time_check: CheckBox   # the Time row (ClockControl)
+var auto_pause_check: CheckBox
 var hud_path := HudSettings.FILE
 var compass_slider: HSlider
 var _compass_value: Label
@@ -328,6 +330,16 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		eye_row.add_child(c)
 	_box.add_child(eye_row)
 	_box.move_child(eye_row, 6)
+	var clock_row := HFlowContainer.new()   # real time or turns (ClockControl)
+	var tl := Label.new()
+	tl.text = "Time"
+	clock_row.add_child(tl)
+	real_time_check = _clock_box(clock_row, "Real time", settings.real_time, _on_real_time,
+			"On: the game runs on its own, a second a turn. Off: it waits for you each turn. VR always runs in real time.")
+	auto_pause_check = _clock_box(clock_row, "Pause when a hostile comes into view", settings.auto_pause,
+			_on_auto_pause, "Real time only. The time pause key goes on.")
+	_box.add_child(clock_row)
+	_box.move_child(clock_row, 7)
 	_show_eyes()
 	_show_compass_value()
 	_show_options()
@@ -498,6 +510,41 @@ func _on_eye(on: bool, id: String) -> void:
 		_status.text = "Eye tracking setting not saved: %s" % error_string(err)
 	_show_eyes()
 	hud_changed.emit()
+
+
+func _clock_box(row: Control, text: String, on: bool, call: Callable, tip: String) -> CheckBox:
+	var c := CheckBox.new()
+	c.text = text
+	c.tooltip_text = tip
+	c.focus_mode = Control.FOCUS_NONE
+	c.button_pressed = on
+	c.toggled.connect(call)
+	row.add_child(c)
+	return c
+
+
+func _on_real_time(on: bool) -> void:
+	hud.real_time = on
+	_save_clock()
+
+
+func _on_auto_pause(on: bool) -> void:
+	hud.auto_pause = on
+	_save_clock()
+
+
+func _save_clock() -> void:
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Time setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+## The Time row as the settings are now (the real-time key flips it outside the menu).
+func show_clock() -> void:
+	if hud != null and real_time_check != null:
+		real_time_check.set_pressed_no_signal(hud.real_time)
+		auto_pause_check.set_pressed_no_signal(hud.auto_pause)
 
 
 func _show_eyes() -> void:

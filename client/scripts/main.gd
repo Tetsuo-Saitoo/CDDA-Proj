@@ -113,6 +113,7 @@ var eye_menus: EyeMenus           # eye tracking 6: menus by eye
 var lean_peek := LeanPeek.new()   # 9: leaning to peek (flat keys here, VR's lean through lean / unlean)
 var eye_view := EyeView.new()     # 1, 2 and the lean's tilt: the first-person view offset
 var _lean_keys := 0               # the flat lean keys: -1 left, 1 right, 0 none
+var _clock_ms := -1               # the HUD's time line: last read (ClockControl.text)
 var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
@@ -701,6 +702,7 @@ func _start_vr() -> void:
 	if vr.has_signal("ui_asked"):   # the VR menu's rows for the F1 menu and the Tab view
 		vr.connect("ui_asked", open_ui)
 	print("VR on: %s" % vr.settings)
+	_apply_clock()   # VR always runs in real time (PLAN.md); a game already running switches now
 
 
 ## Moves the screen menus in `menus` (Controls; others skipped) under the VR panel's root, in order, each drawn
@@ -770,6 +772,9 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(func(s: String) -> void:   # real time or turns, auto-pause: each new or loaded game
+		if s == "running":
+			_apply_clock())
 	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	live.state_changed.connect(_on_game_over)   # died, saved and quit, failed: back to the main menu
 	key_menu.quit_to_menu.connect(_quit_to_menu)
@@ -1698,6 +1703,7 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	_apply_clock()   # the F1 Time row
 	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
 		gaze_fx.adapt_on = o.eye_on("light_adapt")
 		gaze_fx.unease_on = o.eye_on("unease")
@@ -1920,6 +1926,47 @@ func _flat_gaze() -> Dictionary:
 	return r
 
 
+## Real time or turns and auto-pause on the running game (ClockControl): the flat screen's settings, VR always
+## real time. At each game start or load, VR start and any HUD setting change.
+func _apply_clock() -> void:
+	if live != null and live.state == "running" and not ClockControl.apply(live, hud_settings, vr != null):
+		push_warning("live: the game didn't take the clock settings")
+	_clock_ms = -1
+
+
+## The real-time key: flips the flat screen's setting (saved) and the running game; VR stays in real time.
+func _toggle_real_time() -> void:
+	if vr != null:
+		grab.flash("VR always runs in real time.")
+		return
+	hud_settings.real_time = not hud_settings.real_time
+	var err := hud_settings.save_file()
+	if err != OK:
+		push_warning("real time not saved: %s" % error_string(err))
+	key_menu.show_clock()
+	_apply_clock()
+	grab.flash(ClockControl.flip_note(hud_settings.real_time))
+
+
+## Pauses real time or lets it go on (also after a hostile's auto-pause): the flat pause key and VR's menu row
+## (lead-vr, vr.time_pause). Returns the note to show.
+func toggle_time_pause() -> String:
+	if live == null or live.state != "running":
+		return "No game is running."
+	eye_pause.forget()   # the pause (or going on) is the player's now
+	_clock_ms = -1
+	return ClockControl.toggle_pause(live)
+
+
+## The HUD's time line, twice a second while a game runs.
+func _clock_tick(now_ms: int) -> void:
+	if _clock_ms >= 0 and now_ms - _clock_ms < 500:
+		return
+	_clock_ms = now_ms
+	var running := live != null and live.state == "running"
+	hud_data.set_clock(ClockControl.text(live.clock() if running else {}, running, vr != null))
+
+
 func _menu_open() -> bool:
 	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
 			or vise_bench.visible or main_menu != null
@@ -2062,6 +2109,7 @@ func _process(_delta: float) -> void:
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
 	_eye_away_pause(Time.get_ticks_msec())
+	_clock_tick(Time.get_ticks_msec())
 	_eye_view_step(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
@@ -2212,6 +2260,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if InputActions.pressed(event, &"classic_view"):
 		classic.toggle()
+		return
+	if InputActions.pressed(event, ClockControl.TOGGLE):
+		_toggle_real_time()
+		return
+	if InputActions.pressed(event, ClockControl.PAUSE) and live != null and live.state == "running":
+		grab.flash(toggle_time_pause())
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return

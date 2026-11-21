@@ -314,6 +314,15 @@ func set_auto_pause(on: bool) -> bool:
 	return true
 
 
+## Real time (true: each turn lasts a second of wall time) or turns (false: the game waits for the player), the
+## bridge's set_real_time. False without a game or a bridge that has it.
+func set_real_time(on: bool) -> bool:
+	if not _can("set_real_time"):
+		return false
+	_sim.set_real_time(on)
+	return true
+
+
 ## Pauses or resumes turns (the bridge's set_paused; real time and turn-based alike). False without a game or a
 ## bridge that has it.
 func set_paused(on: bool) -> bool:

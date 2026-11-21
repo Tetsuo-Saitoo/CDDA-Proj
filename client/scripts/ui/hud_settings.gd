@@ -21,6 +21,13 @@ const MIN_COMPASS_OPACITY := 0.0   # 0 hides the compass; the F1 slider brings i
 var compass_opacity := DEFAULT_COMPASS_OPACITY
 ## The F1 menu's Cheats page (testing). Off unless turned on; only a real bool in the file turns it on.
 var debug_cheats := false
+## Real time on the flat screen (ClockControl; user via the coordinator, 2026-11-20): off, the game waits for you each
+## turn, until real time has been played. VR always runs in real time. Saved as [clock] real_time; anything but a
+## real bool leaves it off.
+var real_time := false
+## Real time pauses itself when a new hostile comes into view (the bridge's auto-pause; it only acts in real time).
+## On unless turned off. Saved as [clock] auto_pause.
+var auto_pause := true
 ## The mood's screen tint (MoodCue). On unless turned off; anything but a real bool in the file leaves it on.
 var mood_cues := true
 ## F3: the hurt tint at the view's edges (HurtCue). On unless turned off, like the mood tint. Saved as [hurt] cues.
@@ -194,6 +201,10 @@ func load_file(path := FILE) -> String:
 		return "%s doesn't parse" % path
 	var d: Variant = cfg.get_value("debug", "cheats", false)
 	debug_cheats = d if d is bool else false
+	var rt: Variant = cfg.get_value("clock", "real_time", false)
+	real_time = rt if rt is bool else false
+	var ap: Variant = cfg.get_value("clock", "auto_pause", true)
+	auto_pause = ap if ap is bool else true
 	var mc: Variant = cfg.get_value("mood", "cues", true)
 	mood_cues = mc if mc is bool else true
 	var hc: Variant = cfg.get_value("hurt", "cues", true)
@@ -241,6 +252,8 @@ func save_file(path := FILE) -> Error:
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)
+	cfg.set_value("clock", "real_time", real_time)
+	cfg.set_value("clock", "auto_pause", auto_pause)
 	cfg.set_value("mood", "cues", mood_cues)
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
