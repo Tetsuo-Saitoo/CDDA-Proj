@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-20 — Live checks for real time and turns (lead-qa): actions_live_test (turns by default, the real-time key, a hostile's auto-pause and the pause key, a step and a lean in real time, back to turns), rest_live_test (a wait in real time is still fast-forwarded), menu_live_test (real time saved before quitting is on after a load). All pass on lead-ui's real-time switch; skipped, said so, on a client without it.
 - 2026-11-20 — Tester AppImage test-2026-11-20 (private test repo, pre-release, not a release) from main b10da10 + fork 5890e17, after the QA lead's GO (smoke, nine Linux live suites, personal-strings check pass on the file). Notes cover leaning and opt-in eye tracking; no headset or eye tracker tried yet.
 - 2026-11-19 — VR leaning peeks (lead-vr): tilting your head sideways past 20 degrees for a quarter second asks CDDA to peek around that corner; during the peek, Y and the frame key bring you back to your body's square, not the peeked one.
 - 2026-11-19 — While you peek around a corner, your body stays drawn on its own square (the view is from the square you lean to). The "Eyes adjust to light" and "Unease at the edges" switches now turn those effects on and off. Leaning was checked in a running game by the QA lead. Client tests pass.
