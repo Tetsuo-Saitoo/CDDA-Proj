@@ -420,10 +420,10 @@ func _drive_live(start: Vector3i) -> void:
 		var on_side: bool = _main.world.snapshot.player_pos == side
 		var found: int = _main.world.snapshot.call("controls_at", side, _main.world.tables)
 		var note := str((Main as Script).get_script_constant_map().get("NO_CONTROLS_NOTE", "?"))
-		var had := str(_main.hud_data.messages).count(note)
+		var had := _said_times(note)
 		await _until(asking, SHOW_TIMEOUT_MS)
 		root.push_input(_key_of(&"cdda_control_vehicle"))
-		var said := func() -> bool: return str(_main.hud_data.messages).count(note) > had
+		var said := func() -> bool: return _said_times(note) > had
 		var hinted := await _until(said, 5000)
 		_check(on_side and found == 1 and hinted and _player_field("driving") == null and _live.request.get("timed", false),
 				"driving: on the seat beside the driver's (no controls there) %s takes nothing and the feed says why (\"%s\"; on the seat %s, controls_at %d, said %s)"
@@ -452,7 +452,7 @@ func _bike_live(start: Vector3i) -> void:
 		return
 	var key_name := InputActions.prompt_of(&"cdda_control_vehicle")
 	var note := str((Main as Script).get_script_constant_map().get("NO_CONTROLS_NOTE", "?"))
-	var hints := func() -> int: return str(_main.hud_data.messages).count(note)
+	var hints := func() -> int: return _said_times(note)
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
 	_watch_messages()
@@ -636,6 +636,14 @@ func _key_of(action: StringName) -> InputEventKey:
 			k.pressed = true
 			return k
 	return null
+
+
+## How many of the HUD's messages have `text` (by their own text: str() of the list would escape it).
+func _said_times(text: String) -> int:
+	var n := 0
+	for m: Dictionary in _main.hud_data.messages:
+		n += 1 if str(m.get("text", "")) == text else 0
+	return n
 
 
 ## Counts the changes of the HUD's message feed from now on (_msg_changes); once.
