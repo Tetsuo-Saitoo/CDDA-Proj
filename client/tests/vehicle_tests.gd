@@ -22,6 +22,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_hostile(data)
 	_test_caps()
 	_test_squares()
+	_test_driving(data)
 	_test_view(root, data, tables)
 
 
@@ -229,6 +230,50 @@ func _test_squares() -> void:
 			"parts": [[2, 1, 3, 255, 0, 1, 3, 0], [3, 0, 3, 255, 0, 2, 2, 1]]}], 0, 1)
 	_check.call(vs.size() == 1 and vs[0].exact and vs[0].square(0) == Vector3i(101, 103, 0) and vs[0].square(1) == Vector3i(102, 102, 1),
 			"vehicles: the bridge's own squares (dx, dy, dz) are used as they are")
+
+
+## The driving key (^, CDDA's control_vehicle): player.driving and player.vehicle are read, junk as not driving and
+## no vehicle without failing the snapshot; controls_at tells the controls, the reins, a square without (a seat, broken
+## controls) and no vehicle apart, as CDDA's control_vehicle does.
+func _test_driving(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pl: Dictionary = d["player"]
+	pl["driving"] = true
+	pl["vehicle"] = (2 << 32) + 5
+	var on := Snapshot.from_data(d)
+	var junk_ok := true
+	for bad: Array in [["yes", -3], [1, "car"], [null, 1e30], [false, NAN], [[true], [5]]]:
+		pl["driving"] = bad[0]
+		pl["vehicle"] = bad[1]
+		var j := Snapshot.from_data(d)
+		junk_ok = junk_ok and j.is_valid() and not j.player_driving and j.player_vehicle == 0
+	pl.erase("driving")
+	pl.erase("vehicle")
+	var off := Snapshot.from_data(d)
+	_check.call(on.is_valid() and on.player_driving and on.player_vehicle == (2 << 32) + 5 and junk_ok and off.is_valid()
+			and not off.player_driving and off.player_vehicle == 0,
+			"vehicles: player.driving and player.vehicle are read; junk or none is not driving, no vehicle, the snapshot stays")
+	var tables := IdTables.from_data({"generation": 1, "ter": [], "furn": [], "trap": [], "field": [], "itype": [],
+			"vpart": [{"id": ""}, {"id": "frame", "name": "frame", "location": "structure", "flags": ["MOUNTABLE"]},
+			{"id": "controls", "name": "controls", "location": "on_frame", "flags": ["CONTROLS"]},
+			{"id": "seat", "name": "seat", "location": "center", "flags": ["SEAT", "BOARDABLE"]},
+			{"id": "reins", "name": "reins", "location": "on_frame", "flags": ["CONTROL_ANIMAL"]}]})
+	# squares east of 20, 30: frame + controls, frame + seat, frame + broken controls, frame + reins
+	var rows := []
+	for x in 4:
+		rows.append([x, 0, 1, 255, 0, x, 0, 0])
+	rows.append([0, 0, 2, 255, 0, 0, 0, 0])
+	rows.append([1, 0, 3, 255, 0, 1, 0, 0])
+	rows.append([2, 0, 2, 0, Snapshot.VPART_BROKEN, 2, 0, 0])
+	rows.append([3, 0, 4, 255, 0, 3, 0, 0])
+	var snap := Snapshot.new()
+	snap.ids_generation = 1
+	snap.vehicles = Snapshot.vehicles_from([{"uid": 4, "pos": [20, 30, 0], "face_deg": 0.0, "parts": rows}], 0, 0)
+	var at := func(x: int, t: IdTables) -> int: return snap.controls_at(Vector3i(x, 30, 0), t)
+	_check.call(tables.is_valid() and at.call(20, tables) == Snapshot.CONTROLS and at.call(21, tables) == Snapshot.NO_CONTROLS
+			and at.call(22, tables) == Snapshot.NO_CONTROLS and at.call(23, tables) == Snapshot.CONTROLS
+			and at.call(24, tables) == Snapshot.NO_VEHICLE and at.call(20, null) == Snapshot.NO_CONTROLS,
+			"vehicles: the driving key finds the controls and the reins; a seat or broken controls are none; off the car no vehicle")
 
 
 ## The test car's body (face 0: its cells on its squares): inside its cells and heights; walls above the deck only

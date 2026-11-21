@@ -1166,6 +1166,18 @@ func _octant(dir: Vector2) -> int:
 	return octant_for(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)) if v == fp else v.global_basis, dir)
 
 
+## Octant of a step key's (right, forward) direction: where you look, or while driving CDDA's own driving keys
+## (forward UP speeds up, back DOWN slows down, left / right steer), whichever way the camera faces.
+func _step_octant(dir: Vector2) -> int:
+	if world.snapshot != null and world.snapshot.player_driving:
+		return octant_for(Basis.IDENTITY, dir)
+	return _octant(dir)
+
+
+## CDDA's control_vehicle on a vehicle square without controls does nothing and says nothing: say why.
+const NO_CONTROLS_NOTE := "There are no controls here: sit at the vehicle's controls to drive."
+
+
 ## Octant (index into OCT_ACTIONS) of a (right, forward) direction for a view with basis b.
 static func octant_for(b: Basis, dir: Vector2) -> int:
 	var fwd := -b.z
@@ -1196,7 +1208,7 @@ func _live_action(event: InputEvent) -> bool:
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
-			act = OCT_ACTIONS[_octant(InputActions.STEPS[a])]
+			act = OCT_ACTIONS[_step_octant(InputActions.STEPS[a])]
 	for a: StringName in InputActions.CDDA:
 		if InputActions.pressed(event, a):
 			act = InputActions.CDDA[a]
@@ -1226,6 +1238,9 @@ func _live_action(event: InputEvent) -> bool:
 			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
 					captured, world.snapshot.player_pos, facing)
+	if act == "control_vehicle" and _in_main_loop() and world.snapshot != null and not world.snapshot.player_driving \
+			and world.snapshot.controls_at(world.snapshot.player_pos, world.tables) == Snapshot.NO_CONTROLS:
+		hud_data.on_events([MockItems.message_event(NO_CONTROLS_NOTE)])
 	if act == "eat" and _in_main_loop():
 		var food := _held_consumable()
 		if food != null and item_actions.consume(food):
@@ -1658,7 +1673,7 @@ func _fp_live_step(now: bool) -> void:
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
 		return
-	live.queue_action(OCT_ACTIONS[_octant(mv)])
+	live.queue_action(OCT_ACTIONS[_step_octant(mv)])
 	_step_ms = t
 
 
