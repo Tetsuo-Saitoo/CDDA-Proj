@@ -24,6 +24,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_squares()
 	_test_starts()
 	_test_emitters(root)
+	_test_far(root)
 
 
 ## The mock around the player (the submaps the drops can reach), with this weather and wind.
@@ -140,19 +141,23 @@ func _test_emitters(root: Node) -> void:
 			and view.rain.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
 			"rain: two emitters, off, with a fixed number of particles (%d rain, %d snow)" %
 			[view.rain.amount, view.snow.amount])
-	var mat := (view.rain.draw_pass_1 as QuadMesh).material as StandardMaterial3D
-	_check.call(mat.render_priority == WorldLighting.UNDER_PRIORITY and mat.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED,
-			"rain: drawn before the light pass (dark at night like the scene)")
-	# Seen on screen: a drop right at the eye covered half the view, and square flakes looked like confetti.
+	var mat := (view.rain.draw_pass_1 as QuadMesh).material as ShaderMaterial
+	var code := PrecipView.SHADER.code
+	_check.call(mat != null and mat.shader == PrecipView.SHADER and mat.render_priority == WorldLighting.UNDER_PRIORITY
+			and code.contains("unshaded") and code.contains("CAMERA_POSITION_WORLD"),
+			"rain: drawn before the light pass (dark at night like the scene), by its own shader")
+	# Seen on screen: a drop right at the eye covered half the view, and square flakes looked like confetti; looking up
+	# (lead-world, 2026-11-20) the streaks looked like falling sticks: seen along its fall a streak is a drop.
 	var snow_mat := (view.snow.draw_pass_1 as QuadMesh).material as StandardMaterial3D
-	_check.call(mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
-			and snow_mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
-			and is_equal_approx(mat.distance_fade_min_distance, PrecipView.NEAR_GONE_M)
-			and is_equal_approx(mat.distance_fade_max_distance, PrecipView.NEAR_FULL_M)
-			and PrecipView.NEAR_GONE_M < PrecipView.NEAR_FULL_M, "rain: drops fade out on the last metres to the camera")
+	_check.call(snow_mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+			and is_equal_approx(mat.get_shader_parameter("near_gone"), PrecipView.NEAR_GONE_M)
+			and is_equal_approx(mat.get_shader_parameter("near_full"), PrecipView.NEAR_FULL_M)
+			and mat.get_shader_parameter("streak") == true and mat.get_shader_parameter("fade_from") == null
+			and PrecipView.NEAR_GONE_M < PrecipView.NEAR_FULL_M,
+			"rain: drops fade out on the last metres to the camera, streaks shorten seen along their fall")
 	var flake := PrecipView.flake_image()
 	var mid := PrecipView.FLAKE_PX / 2
-	_check.call(snow_mat.albedo_texture != null and mat.albedo_texture == null and flake.get_pixel(mid, mid).a > 0.99
+	_check.call(snow_mat.albedo_texture != null and flake.get_pixel(mid, mid).a > 0.99
 			and flake.get_pixel(0, 0).a == 0.0 and flake.get_pixel(mid, 0).a < 0.05
 			and is_same(PrecipView.flake_texture(), PrecipView.flake_texture()), "snow: flakes are soft round dots")
 	var snap := Snapshot.from_data(_near(RAIN))
@@ -281,6 +286,106 @@ func _test_emitters(root: Node) -> void:
 	root.remove_child(weather)
 	weather.free()
 	_test_quality(root, snap, clear, coords)
+
+
+## The far layer (top view zoomed out, the outside view): off near the player's eyes and in first person; from afar
+## it rains on the ring past the near drops, on open cells only (none into a building), bounded, fading out at its
+## edge, placed anew only on a change, halved at LOW quality, none underground; far_view follows the camera.
+func _test_far(root: Node) -> void:
+	var view := PrecipView.new()
+	view.follow_camera = false
+	root.add_child(view)
+	var coords := CddaCoords.new()
+	var d := _data.duplicate(false)
+	d["env"] = _near(RAIN)["env"]
+	var snap := Snapshot.from_data(d)
+	coords.set_bubble_origin(snap.bubble_origin)
+	var state := WeatherState.from_snapshot(snap)
+	view.apply(snap, coords, state)
+	var near_only := view.rain.emitting and not view.far_rain.emitting and view.far_rebuilds == 0
+	var t0 := Time.get_ticks_usec()
+	view.far_view = true   # placed at once, not on the next snapshot
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var total := PrecipView.far_total()
+	var ring := PI * (PrecipView.FAR_RADIUS * PrecipView.FAR_RADIUS - PrecipView.RADIUS * PrecipView.RADIUS) \
+			/ (PrecipView.FAR_CELL * PrecipView.FAR_CELL)
+	_check.call(near_only and view.far_rain.emitting and view.rain.emitting and not view.far_snow.emitting
+			and view.far_rebuilds == 1 and view.far_cells > 100 and view.far_cells <= total
+			and view.far_points == view.far_cells * PrecipView.FAR_POINTS_PER_CELL
+			and view.far_points <= PrecipView.MAX_FAR_POINTS and absf(total - ring) < 0.1 * ring
+			and is_equal_approx(view.far_rain.amount_ratio, float(view.far_cells) / total),
+			"rain far: from afar it rains on %d of %d cells past the near drops too (placed in %.1f ms)" %
+			[view.far_cells, total, ms])
+	var c := PrecipView.centre(snap)
+	var floor_y := coords.ms_to_world(snap.player_pos).y
+	var roofed := 0
+	var out := 0
+	for at in view.far_start_points():
+		var sq := coords.world_to_ms(Vector3(at.x, floor_y + 0.1, at.z))
+		var cell := c + Vector3i(floori((sq.x - c.x) / float(PrecipView.FAR_CELL)) * PrecipView.FAR_CELL,
+				floori((sq.y - c.y) / float(PrecipView.FAR_CELL)) * PrecipView.FAR_CELL, 0)
+		roofed += int(_roofed(snap, cell + Vector3i(1, 1, 0)))
+		var r := Vector2(sq.x - c.x, sq.y - c.y).length()
+		out += int(r < PrecipView.RADIUS - PrecipView.FAR_CELL or r > PrecipView.FAR_RADIUS + PrecipView.FAR_CELL
+				or not is_equal_approx(at.y, floor_y + PrecipView.TOP_M))
+	var mat := (view.far_rain.draw_pass_1 as QuadMesh).material as ShaderMaterial
+	var fade_mid: Vector3 = mat.get_shader_parameter("fade_centre")
+	_check.call(view.far_start_points().size() == view.far_points and roofed == 0 and out == 0
+			and fade_mid.is_equal_approx(coords.ms_to_world(c)) and float(mat.get_shader_parameter("fade_from")) < float(mat.get_shader_parameter("fade_to"))
+			and is_equal_approx(mat.get_shader_parameter("fade_to"), PrecipView.FAR_RADIUS * CddaCoords.TILE_M),
+			"rain far: every far drop starts over an open cell on the ring, fading out towards its edge")
+	view.apply(snap, coords, state)
+	var step := snap.player_pos + Vector3i(1, 0, 0)
+	var dd := d.duplicate(false)
+	var pl: Dictionary = (d["player"] as Dictionary).duplicate(true)
+	pl["pos"] = [step.x, step.y, step.z]
+	dd["player"] = pl
+	view.apply(Snapshot.from_data(dd), coords, state)
+	_check.call(view.far_rebuilds == 1, "rain far: the same turn or a step of one square places nothing anew")
+	var move := Vector3(-12, 0, 0)
+	view.shift(move)
+	var shifted: Vector3 = mat.get_shader_parameter("fade_centre")
+	view.shift(-move)
+	view.particle_share = 0.5
+	var half := view.far_rain.amount
+	view.particle_share = 1.0
+	var wide_snow := _data.duplicate(false)
+	wide_snow["env"] = _near(SNOWING)["env"]
+	var snowing := Snapshot.from_data(wide_snow)
+	view.apply(snowing, coords, WeatherState.from_snapshot(snowing))
+	var snow_ok := view.far_snow.emitting and not view.far_rain.emitting and view.snow.emitting
+	var cellar_d := d.duplicate(false)
+	var cp: Dictionary = (d["player"] as Dictionary).duplicate(true)
+	cp["pos"] = [snap.player_pos.x, snap.player_pos.y, -1]
+	cellar_d["player"] = cp
+	var cellar := Snapshot.from_data(cellar_d)
+	view.apply(cellar, coords, WeatherState.from_snapshot(cellar))
+	var deep := not view.far_rain.emitting and not view.far_snow.emitting
+	view.apply(snap, coords, state)
+	view.far_view = false
+	_check.call(shifted.is_equal_approx(fade_mid + move) and half == PrecipView.MAX_FAR_RAIN / 2 and snow_ok and deep
+			and not view.far_rain.emitting and view.rain.emitting,
+			"rain far: moves with a bubble shift, halves at low quality, snows too, none underground, off up close")
+	# far_view follows the camera: at the player's eyes (first person, VR) off, from afar on.
+	var cam := Camera3D.new()
+	root.add_child(cam)
+	cam.make_current()
+	view.follow_camera = true
+	var eye := coords.ms_to_world(snap.player_pos) + Vector3(0, PrecipView.EYE_M, 0)
+	cam.global_position = eye + Vector3(0.3, 0.0, 0.0)
+	view._process(0.0)
+	var close := view.far_view
+	cam.global_position = eye + Vector3(0.0, 20.0, 15.0)
+	view._process(0.0)
+	var afar := view.far_view
+	root.remove_child(cam)
+	cam.free()
+	view._process(0.0)
+	_check.call(not close and afar and not view.far_view and not view.far_rain.emitting,
+			"rain far: on while the camera is %.0f m or more from the player's eyes, off at the eyes or without a camera"
+			% PrecipView.FAR_VIEW_M)
+	root.remove_child(view)
+	view.free()
 
 
 ## WeatherView.quality: LOW halves the particles and blends in fewer steps; MINIMAL draws no rain, clouds or wet

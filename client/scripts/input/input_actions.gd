@@ -98,6 +98,7 @@ const ACTIONS := [
 	[&"cdda_butcher", "Act", "butcher", ["Shift+B"]],
 	[&"cdda_grab", "Act", "grab", ["Shift+G"]],
 	[&"cdda_safemode", "Act", "safe mode on / off", ["Shift+1"]],
+	[&"cdda_control_vehicle", "Act", "drive: take a vehicle's controls (driving: its menu)", ["Shift+6"]],
 	# G2 hotbar (ui/hotbar.gd): 1 and 2 are the hand strikes, so the slots start at 3
 	[&"hotbar_1", "Hotbar", "slot 1: into the main hand (Tab view: put the selected item here)", ["3"]],
 	[&"hotbar_2", "Hotbar", "slot 2", ["4"]],
@@ -117,6 +118,7 @@ const CDDA := {
 	&"cdda_throw": "throw", &"cdda_fire": "fire", &"cdda_reload": "reload_weapon", &"cdda_eat": "eat", &"cdda_wear": "wear",
 	&"cdda_take_off": "take_off", &"cdda_read": "read", &"cdda_drop": "drop", &"cdda_unload": "unload",
 	&"cdda_butcher": "butcher", &"cdda_grab": "grab", &"cdda_safemode": "safemode",
+	&"cdda_control_vehicle": "control_vehicle",
 	&"cdda_run": "toggle_run", &"cdda_crouch": "toggle_crouch", &"cdda_wait": "wait", &"cdda_sleep": "sleep",
 }
 ## Live steps: action -> (right, forward) relative to where you look.
