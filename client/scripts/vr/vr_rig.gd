@@ -1723,7 +1723,7 @@ func toggle_menu() -> void:
 	if menu.visible:
 		menu.place(camera.transform)
 		if not busy.paused_line().is_empty():   # paused: menu, then trigger goes on (from any page)
-			menu.page = VrMenu.SETTINGS_PAGE
+			menu.open_page(VrMenu.SETTINGS_PAGE)   # as "< Back" does: the other page's status goes
 			menu.row = maxi(menu.row_of("time"), 0)
 		menu.refresh()
 	else:
