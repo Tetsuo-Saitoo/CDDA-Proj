@@ -22,6 +22,7 @@ extends Node3D
 
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
+const HUD_FIT_MS := 250   # the HUD text's room is measured no more often
 const PAUSE_NOTE_MS := 1500   # a held move key repeats the "time is paused" note no faster
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
@@ -121,6 +122,9 @@ var back_out := BackOut.new()         # Esc / pad Start: one thing per press, th
 var _args := {}
 var _log := PackedStringArray()
 var _pause_note_ms := -PAUSE_NOTE_MS   # the last "time is paused" note for a dropped action (_held_by_pause)
+var _hud_fit_ms := -HUD_FIT_MS   # the HUD text's fit (fit_index): when last measured, how many texts, the pick
+var _hud_fit_n := 0
+var _hud_pick := 0
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
@@ -2164,28 +2168,70 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
-	var help := _help() if hud_settings.key_help else KEY_HELP_SHORT
 	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
 		status = LiveSession.boot_text(live.boot_info())
-	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
-			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
-			Engine.get_frames_per_second()], help])
-	if vr != null:
-		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
-				vr_perf.last_line])
-	if live != null:
-		if hud_settings.key_help:
-			lines.append(_act_help())
-		lines.append("in hands: " + _wielded_name())
+	var info := "%s  camera square %s  %s  roofs %s  %d fps" % [view, tile, world.level_text(),
+			"on" if world.roofs_visible else "off", Engine.get_frames_per_second()]
+	var vr_line := "" if vr == null else "VR level %d  controllers %s  settings: left menu button  %s" % [
+			vr.z, vr.current_layout(), vr_perf.last_line]
+	var hands := "" if live == null else "in hands: " + _wielded_name()
+	var on := hud_settings.key_help
+	var texts := hud_texts(on, status, info, _help() if on else "", vr_line,
+			_act_help() if on and live != null else "", hands)
+	var now := Time.get_ticks_msec()
+	if now - _hud_fit_ms >= HUD_FIT_MS or texts.size() != _hud_fit_n:   # measuring wraps the text: not every frame
+		_hud_fit_ms = now
+		_hud_fit_n = texts.size()
+		_hud_pick = fit_index(hud, texts, hud_view.text_limit() - hud.position.y)
 	# messages: hud_view's feed
-	hud.text = "\n".join(lines)
+	hud.text = texts[mini(_hud_pick, texts.size() - 1)]
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
 	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
 	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
 
 
-## The key help when F1 > HUD > Key help is off.
+## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
+## moves down under it, HudView.avoid): all the key help, then without CDDA's keys (`act`), then one short line
+## (the only one with F1 > HUD > Key help off), then the status alone.
+static func hud_texts(key_help: bool, status: String, info: String, help: String, vr_line: String, act: String,
+		hands: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if key_help:
+		if not act.is_empty():
+			out.append(hud_lines([status, info, help, vr_line, act, hands]))
+		out.append(hud_lines([status, info, help, vr_line, hands]))
+	out.append(hud_lines([status, info, KEY_HELP_SHORT, vr_line, hands]))
+	out.append(hud_lines([status, KEY_HELP_SHORT]))
+	return out
+
+
+## `parts` that aren't empty, one to a line.
+static func hud_lines(parts: Array) -> String:
+	var out := PackedStringArray()
+	for p: String in parts:
+		if not p.is_empty():
+			out.append(p)
+	return "\n".join(out)
+
+
+## The first of `texts` whose height in `l` (its font and width, wrapped) is at most `max_h` px, else the last.
+static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
+	var font := l.get_theme_font(&"font")
+	var fs := l.get_theme_font_size(&"font_size")
+	var fh := font.get_height(fs)
+	if l.size.x <= 0.0 or fh <= 0.0:
+		return 0
+	var flags := TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+	for i in texts.size():
+		var h := font.get_multiline_string_size(texts[i], HORIZONTAL_ALIGNMENT_LEFT, l.size.x, fs, -1, flags).y
+		var lines := ceili(h / fh - 0.01)
+		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
+			return i
+	return texts.size() - 1
+
+
+## The key help when F1 > HUD > Key help is off, or there's no room for more.
 const KEY_HELP_SHORT := "Esc back / menu  F1 keys, HUD, key help"
 
 

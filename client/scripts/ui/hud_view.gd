@@ -21,6 +21,8 @@ const BODY_TOP := -140.0
 ## status lines (avoid).
 const WARN_TOP := 40.0
 const MOOD_H := 36.0
+## px the left column leaves at the bottom (the look panel) when it moves down under the status text (avoid).
+const BOTTOM_KEEP := 80.0
 
 var data: HudData:
 	set(d):
@@ -37,6 +39,8 @@ var warn: Label
 var cheat_mark: Label
 var clock_mark: Label   # HudData.clock: time runs, waits for you, or is paused
 var _body: Control
+var _shift := 0.0      # the left column's move down, under main's status text (avoid)
+var _column_h := 0.0   # the left column's height: body block, mood line, feed (_layout)
 var _pulse := 0.0
 
 
@@ -217,16 +221,16 @@ func _on_changed(parts: PackedStringArray) -> void:
 func _layout() -> void:
 	var needs := need_lines().size() + (0 if move_line().is_empty() else 1)
 	var rows := maxi(body_rows().size(), maxi(needs, effect_lines().size()))
-	var y := BODY_TOP + rows * ROW_H + 6.0
+	var top := BODY_TOP + _shift
+	_place(_body, top)
+	var y := top + rows * ROW_H + 6.0
 	_place(mood, y)
 	if not mood.text.is_empty():
 		y += MOOD_H + 4.0
 	_place(feed, y)
+	_column_h = y + (feed.offset_bottom - feed.offset_top) - top
 
 
-## `box`: the developer status lines' text (main.gd's top-left label, in this view's canvas; empty while hidden). The
-## warning lines go just under it while their text (centred) would overlap it, else back under the compass. A box
-## reaching down the screen pushes them no lower than the bottom edge: they stay in sight.
 ## Where the top right marks (the time line, the cheats) end, in px from the top; 0 when both are empty. The
 ## hints go under them.
 func marks_bottom() -> float:
@@ -237,7 +241,25 @@ func marks_bottom() -> float:
 	return b
 
 
+## How far down (px from this view's top) main's status text may reach: the left column moves down under it
+## (avoid) while keeping BOTTOM_KEEP px at the bottom, and never above its own place.
+func text_limit() -> float:
+	var home := size.y / 2.0 + BODY_TOP
+	return maxf(home, size.y - BOTTOM_KEEP - _column_h) - 4.0
+
+
+## `box`: the developer status lines' text (main.gd's top-left label, in this view's canvas; empty while hidden). The
+## left column (body, mood, feed) moves down under it, as far as text_limit allows. The warning lines go just
+## under it while their text (centred) would overlap it, else back under the compass. A box reaching down the
+## screen pushes them no lower than the bottom edge: they stay in sight.
 func avoid(box: Rect2) -> void:
+	var home := size.y / 2.0 + BODY_TOP
+	var shift := 0.0
+	if box.has_area():
+		shift = clampf(box.end.y - global_position.y + 4.0 - home, 0.0, maxf(text_limit() + 4.0 - home, 0.0))
+	if not is_equal_approx(shift, _shift):
+		_shift = shift
+		_layout()
 	var top := WARN_TOP
 	if not warn.text.is_empty() and box.has_area():
 		var w := warn.get_combined_minimum_size().x

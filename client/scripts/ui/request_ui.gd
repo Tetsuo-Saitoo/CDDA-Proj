@@ -166,8 +166,10 @@ func show_request(req: Dictionary) -> bool:
 func _fit_panel() -> void:
 	if widget == null or not is_instance_valid(widget):
 		return
-	var want := widget.get_combined_minimum_size().y
 	var cap := size.y - FIT_MARGIN - _bottom.custom_minimum_size.y
+	if size.y > 0.0:
+		widget.fit_height(maxf(cap, 80.0))   # its list or long text gets shorter first
+	var want := widget.get_combined_minimum_size().y
 	_fit_box.custom_minimum_size.y = minf(want, maxf(cap, 80.0)) if size.y > 0.0 else want
 
 

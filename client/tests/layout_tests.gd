@@ -1,7 +1,8 @@
 extends RefCounted
 ## Small windows (the user, 2026-11-20): the F1 menu (keys and Cheats pages), the HUD's text along the top and the
 ## other flat-screen panels stay inside the window at every size in SIZES; what doesn't fit scrolls. Each panel is
-## laid out in a Control of the window's size under the test root, two frames for its containers to sort.
+## laid out in a Control of the window's size under the test root, two frames for its containers to sort. The F1
+## menu is opened large and then the window shrinks, as when the player drags it (lead-qa, 2026-11-20).
 
 const UiTests := preload("res://tests/ui_tests.gd")
 const TestDir := preload("res://tests/test_dir.gd")
@@ -11,7 +12,7 @@ const HELP := ("RMB look  MMB look at (again: close)  LMB take, hold on a door a
 		+ "it (wheel: nearer / farther)  E take it  I inventory  W A S D or KP8 KP4 KP2 KP6 walk where you look  KP5 "
 		+ "wait  < > stairs  prompts: mouse or keys, Esc cancels  PgUp/PgDn cutaway  R roofs  V next view  Esc back / "
 		+ "menu  F1 keys, HUD")
-const MIN_LIST_H := 60.0   # a scrolling list keeps at least this much (three rows) on the smallest window
+const BIG := Vector2(1600, 900)   # the project's window size
 
 var _check: Callable
 var _root: Node
@@ -25,6 +26,7 @@ func run(root: Node, check: Callable) -> void:
 		await _test_key_menu(s)
 		await _test_hud_text(s)
 		await _test_requests(s)
+		await _test_list_prompt(s)
 		await _test_panels(s)
 
 
@@ -83,12 +85,15 @@ func _test_key_menu(s: Vector2) -> void:
 	menu.add_cheat_page(CheatPanel.new())
 	menu.show_clock()
 	menu.show_quit_to_menu(true)
-	var f := await _frame(s, menu)
+	var f := await _frame(BIG, menu)
 	menu.open()
 	await _root.get_tree().process_frame
-	await _root.get_tree().process_frame
+	f.size = s   # the window shrinks with the menu open
+	for i in 3:
+		await _root.get_tree().process_frame
 	_fits(f, menu, "the F1 menu")
-	var lists := menu._settings_scroll.size.y >= MIN_LIST_H and menu._scroll.size.y >= MIN_LIST_H \
+	var keep := KeyMenu.LIST_MIN_H - 1.0
+	var lists := menu._settings_scroll.size.y >= keep and menu._scroll.size.y >= keep \
 			and menu._settings_scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED \
 			and menu._scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
 	_check.call(lists, "layout %s: the F1 settings and key list both show and scroll (%.0f, %.0f px)" % [
@@ -103,16 +108,37 @@ func _test_key_menu(s: Vector2) -> void:
 
 
 func _test_hud_text(s: Vector2) -> void:
-	var l := preload("res://scripts/main.gd").hud_label()
+	var main_gd := preload("res://scripts/main.gd")
+	var l: Label = main_gd.hud_label()
 	var act := PackedStringArray()   # as main's _act_help: every CDDA action key
 	for a: StringName in InputActions.CDDA:
 		act.append("%s %s" % [InputActions.key_of(a), InputActions.info(a)[2]])
-	l.text = "\n".join(["Ready.", "first person  camera square (12, 40)  level 0  roofs on  60 fps", HELP,
-			"  ".join(act), "in hands: a 9mm pistol"])
-	var f := await _frame(s, l)
+	var info := "first person  camera square (12, 40)  level 0  roofs on  60 fps"
+	var texts: PackedStringArray = main_gd.hud_texts(true, "Ready.", info, HELP, "", "  ".join(act),
+			"in hands: a 9mm pistol")
+	var d := HudData.new()
+	for part in ["head", "torso", "left arm", "right arm", "left leg", "right leg"]:
+		d.body.append({"name": part, "frac": 0.8, "level": 0})
+	var v := HudView.new()
+	v.data = d
+	v.warn.text = "You are hungry."
+	var f := await _frame(s, v)
+	f.add_child(l)
+	await _root.get_tree().process_frame
+	var pick: int = main_gd.fit_index(l, texts, v.text_limit() - l.position.y)
+	l.text = texts[pick]
+	for i in 2:
+		await _root.get_tree().process_frame
+	v.avoid(l.get_global_rect())
+	await _root.get_tree().process_frame
+	var text_end := l.get_global_rect().end.y
 	_fits(f, l, "the HUD's text along the top")
-	_check.call(l.get_line_count() > 1 and l.position.y >= 50.0,
-			"layout %s: the HUD's text wraps (%d lines), under the compass" % [_size_text(s), l.get_line_count()])
+	_fits(f, v, "the HUD (body, feed, warnings)")
+	var column := v._body.get_global_rect().position.y
+	_check.call(l.get_line_count() > 1 and column >= text_end and v.warn.get_global_rect().position.y >= text_end
+			and (s.y < 700.0 or pick == 0),
+			"layout %s: the HUD's text (%d lines, version %d) ends at %.0f, over the body bars (%.0f) and the warning (%.0f)" % [
+			_size_text(s), l.get_line_count(), pick, text_end, column, v.warn.get_global_rect().position.y])
 	f.free()
 
 
@@ -135,11 +161,35 @@ func _test_key_help() -> void:
 	junk.load_file(path)
 	_check.call(was_on and not hs.key_help and not back.key_help and seen[0] == 1 and junk.key_help,
 			"layout: Key help is on by default; the F1 box turns it off and saves it; junk leaves it on")
-	var main_src := FileAccess.get_file_as_string("res://scripts/main.gd")
-	_check.call(main_src.contains("_help() if hud_settings.key_help else KEY_HELP_SHORT")
-			and preload("res://scripts/main.gd").KEY_HELP_SHORT.contains("F1"),
+	var main_gd := preload("res://scripts/main.gd")
+	var off: PackedStringArray = main_gd.hud_texts(false, "s", "i", "", "", "", "h")
+	var on: PackedStringArray = main_gd.hud_texts(true, "s", "i", "HELP", "", "ACT", "h")
+	var short_only := true
+	for x in off:
+		short_only = short_only and x.contains(main_gd.KEY_HELP_SHORT) and not x.contains("HELP ")
+	_check.call(short_only and off.size() == 2 and on.size() == 4 and on[0].contains("ACT") and not on[1].contains("ACT")
+			and on[1].contains("HELP") and main_gd.KEY_HELP_SHORT.contains("F1"),
 			"layout: with Key help off the HUD shows one short line that points to F1")
 	menu.free()
+
+
+func _test_list_prompt(s: Vector2) -> void:
+	var entries := []
+	for i in 41:
+		entries.append({"id": i, "label": "item %d" % i, "enabled": true, "description": "A thing, number %d." % i})
+	var ui := RequestUI.new()
+	var f := await _frame(s, ui)
+	_check.call(ui.show_request(UiTests.new()._req("menu", {"title": "Inventory", "entries": entries})),
+			"layout %s: a 41-row list shows" % _size_text(s))
+	for i in 3:
+		await _root.get_tree().process_frame
+	_fits(f, ui, "a 41-row list prompt")
+	var w := ui.widget
+	var inside := f.get_global_rect().grow(1.0).encloses(w.get_global_rect())
+	_check.call(inside and ui._fit_box.size.y >= w.get_combined_minimum_size().y - 1.0,
+			"layout %s: a long list scrolls on its own, its description and buttons in the window (%s, box %.0f)" % [
+			_size_text(s), w.get_global_rect(), ui._fit_box.size.y])
+	f.free()
 
 
 func _test_requests(s: Vector2) -> void:

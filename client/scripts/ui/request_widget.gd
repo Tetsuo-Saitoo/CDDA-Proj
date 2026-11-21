@@ -16,6 +16,8 @@ const MAX_PICKS := 4096
 const LONG_TEXT_CHARS := 700
 const LONG_TEXT_LINES := 12
 const HINT_COLOR := Color(0.7, 0.7, 0.7)
+const LONG_TEXT_H := 280.0   # add_header's box for a long text
+const FIT_MIN_H := 96.0      # a scrolling part fit_height shrinks keeps at least this (or its own height)
 ## Readable names for CDDA's common action ids; others are shown as "Some action".
 const ACTION_NAMES := {
 	"CONFIRM": "OK", "YES": "Yes", "NO": "No", "QUIT": "Cancel", "ANY_INPUT": "Continue",
@@ -31,6 +33,7 @@ const MOVE_KEYS := {
 var request_id := 0
 var allow_cancel := true
 var done := false
+var _long_text: RichTextLabel   # add_header's long text box, if any (fit_height)
 ## (right, forward) on screen -> CDDA step (x east, y south), each axis -1..1. Set by RequestUI.
 var direction_mapper := Callable()
 
@@ -171,7 +174,24 @@ func add_header(req: Dictionary) -> void:
 			r.fit_content = false
 			r.scroll_active = true
 			r.mouse_filter = Control.MOUSE_FILTER_STOP
-			r.custom_minimum_size.y = 280
+			r.custom_minimum_size.y = LONG_TEXT_H
+			_long_text = r
+
+
+## RequestUI: the panel has `h` px for this widget. Its scrolling parts (a long text; a list, ListRequestWidget)
+## get shorter, down to FIT_MIN_H, so the whole widget fits; RequestUI scrolls what still doesn't.
+func fit_height(h: float) -> void:
+	_fit_part(_long_text, LONG_TEXT_H, h)
+
+
+## `part` (vertical scroll of its own) as tall as `full`, or less so this widget is at most `h` tall.
+func _fit_part(part: Control, full: float, h: float) -> void:
+	if part == null or not is_instance_valid(part):
+		return
+	var others := get_combined_minimum_size().y - part.get_combined_minimum_size().y
+	var want := clampf(h - others, minf(full, FIT_MIN_H), full)
+	if not is_equal_approx(part.custom_minimum_size.y, want):
+		part.custom_minimum_size.y = want
 
 
 func add_button(label: String, on_press: Callable, parent: Control) -> Button:

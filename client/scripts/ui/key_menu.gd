@@ -125,6 +125,7 @@ func _init() -> void:
 	_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_settings_scroll.add_child(_settings)
 	_settings.minimum_size_changed.connect(_fit_settings)
+	box.minimum_size_changed.connect(_fit_settings, CONNECT_DEFERRED)   # the title or bar wrapped: refit
 	resized.connect(_fit_settings)
 	var scroll := ScrollContainer.new()
 	_scroll = scroll
