@@ -21,6 +21,13 @@ const MIN_COMPASS_OPACITY := 0.0   # 0 hides the compass; the F1 slider brings i
 var compass_opacity := DEFAULT_COMPASS_OPACITY
 ## The F1 menu's Cheats page (testing). Off unless turned on; only a real bool in the file turns it on.
 var debug_cheats := false
+## Real time on the flat screen (ClockControl; user via the coordinator, 2026-11-20): off, the game waits for you each
+## turn, until real time has been played. VR always runs in real time. Saved as [clock] real_time; anything but a
+## real bool leaves it off.
+var real_time := false
+## Real time pauses itself when a new hostile comes into view (the bridge's auto-pause; it only acts in real time).
+## On unless turned off. Saved as [clock] auto_pause.
+var auto_pause := true
 ## The mood's screen tint (MoodCue). On unless turned off; anything but a real bool in the file leaves it on.
 var mood_cues := true
 ## F3: the hurt tint at the view's edges (HurtCue). On unless turned off, like the mood tint. Saved as [hurt] cues.
@@ -28,6 +35,9 @@ var hurt_cues := true
 ## Bright flashes: lightning (WeatherView.flash_enabled) and the first-person muzzle flash (the viewmodel's
 ## `flashes`). On unless turned off, like the mood tint. Saved as [weather] flash (its first use).
 var weather_flash := true
+## The key help along the top of the screen (main.gd's HUD text). Off: one short line; F1 lists every key. On
+## unless turned off. Saved as [hud] key_help.
+var key_help := true
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
@@ -194,12 +204,18 @@ func load_file(path := FILE) -> String:
 		return "%s doesn't parse" % path
 	var d: Variant = cfg.get_value("debug", "cheats", false)
 	debug_cheats = d if d is bool else false
+	var rt: Variant = cfg.get_value("clock", "real_time", false)
+	real_time = rt if rt is bool else false
+	var ap: Variant = cfg.get_value("clock", "auto_pause", true)
+	auto_pause = ap if ap is bool else true
 	var mc: Variant = cfg.get_value("mood", "cues", true)
 	mood_cues = mc if mc is bool else true
 	var hc: Variant = cfg.get_value("hurt", "cues", true)
 	hurt_cues = hc if hc is bool else true
 	var wf: Variant = cfg.get_value("weather", "flash", true)
 	weather_flash = wf if wf is bool else true
+	var kh: Variant = cfg.get_value("hud", "key_help", true)
+	key_help = kh if kh is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
@@ -241,9 +257,12 @@ func save_file(path := FILE) -> Error:
 	var cfg := ConfigFile.new()
 	cfg.set_value("compass", "opacity", snappedf(compass_opacity, 0.01))
 	cfg.set_value("debug", "cheats", debug_cheats)
+	cfg.set_value("clock", "real_time", real_time)
+	cfg.set_value("clock", "auto_pause", auto_pause)
 	cfg.set_value("mood", "cues", mood_cues)
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
+	cfg.set_value("hud", "key_help", key_help)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))

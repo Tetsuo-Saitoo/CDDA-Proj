@@ -82,6 +82,8 @@ var _all_messages: Array[Dictionary] = []
 var warnings: Array[Dictionary] = []
 ## Testing cheats that are on, in LiveSession.CHEATS order: the views show a marker while it isn't empty.
 var cheats := PackedStringArray()
+## Whether time runs or waits for the player (ClockControl.text, from main a few times a second); "" without a game.
+var clock := ""
 
 var _bridge_held := {}
 
@@ -136,6 +138,13 @@ func set_held(d: Dictionary) -> void:
 	if not _same_held(h, held):
 		held = h
 		_emit_with_warnings(PackedStringArray(["held"]))
+
+
+func set_clock(text: String) -> void:
+	text = text.left(120)
+	if text != clock:
+		clock = text
+		changed.emit(PackedStringArray(["clock"]))
 
 
 ## LiveSession.cheats_changed: {name: bool}. Only known names that are really true count.

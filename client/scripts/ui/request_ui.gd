@@ -15,6 +15,7 @@ signal answered(answer: Dictionary)
 signal queue_after(actions: PackedStringArray)
 
 const PANEL_WIDTH := 580.0
+const FIT_MARGIN := 48.0   # px kept clear above and below the panel's text when it has to scroll (and its border)
 ## Kinds shown low on the screen, so the world they point into stays visible.
 const LOW_KINDS := ["direction", "target"]
 ## ui_* actions -> the key each stands for in the widgets (as_key).
@@ -50,6 +51,9 @@ var wheel_hold := false
 var wheel_down := Callable()
 var wheel_pressed := -1   # when E went down (want_wheel): letting go within TAP_MS is a tap
 var _panel: PanelContainer
+## Holds the widget in the panel: a prompt taller than the window (character creation on a small one) scrolls
+## (_fit_panel).
+var _fit_box: ScrollContainer
 var _bottom: Control
 
 
@@ -77,6 +81,12 @@ func _init() -> void:
 	style.set_content_margin_all(14)
 	_panel.add_theme_stylebox_override("panel", style)
 	column.add_child(_panel)
+	_fit_box = ScrollContainer.new()
+	_fit_box.name = "FitBox"
+	_fit_box.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_fit_box.follow_focus = true
+	_panel.add_child(_fit_box)
+	resized.connect(_fit_panel)
 	_bottom = Control.new()
 	_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_bottom)
@@ -135,17 +145,32 @@ func show_request(req: Dictionary) -> bool:
 	if widget is StringRequestWidget:
 		(widget as StringRequestWidget).show_keys = keyboard
 	widget.answered.connect(_on_answered)
-	_panel.add_child(widget)
+	_fit_box.add_child(widget)
+	widget.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	widget.setup(req)
+	widget.minimum_size_changed.connect(_fit_panel)
 	_panel.custom_minimum_size.x = maxf(PANEL_WIDTH, widget.custom_minimum_size.x)
 	var low: bool = kind in LOW_KINDS
 	_bottom.size_flags_vertical = Control.SIZE_FILL if low else Control.SIZE_EXPAND_FILL
 	_bottom.custom_minimum_size.y = 40.0 if low else 0.0
+	_fit_panel()
 	visible = true
 	var rw := widget as RadialRequestWidget
 	if rw != null and not rw.hold and Time.get_ticks_msec() <= rw.tap_until:
 		rw.pick(rw.default_slot)   # E tapped and let go before the menu came: CDDA's default, no wheel to see
 	return true
+
+
+## The widget takes its own height, but at most the window's less FIT_MARGIN (and the bottom gap): taller, it
+## scrolls.
+func _fit_panel() -> void:
+	if widget == null or not is_instance_valid(widget):
+		return
+	var cap := size.y - FIT_MARGIN - _bottom.custom_minimum_size.y
+	if size.y > 0.0:
+		widget.fit_height(maxf(cap, 80.0))   # its list or long text gets shorter first
+	var want := widget.get_combined_minimum_size().y
+	_fit_box.custom_minimum_size.y = minf(want, maxf(cap, 80.0)) if size.y > 0.0 else want
 
 
 static func make_widget(kind: String, req: Dictionary) -> RequestWidget:

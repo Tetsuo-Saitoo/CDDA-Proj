@@ -64,6 +64,8 @@ const ACTIONS := [
 	[&"lean_left", "View", "lean left (held: peek around a corner)", ["Alt+A"]],
 	[&"lean_right", "View", "lean right (held: peek around a corner)", ["Alt+D"]],
 	[&"zoom_look", "View", "eye tracking: held, zoom in where you look", ["N"]],
+	[&"real_time_toggle", "Game", "real time on / off (flat screen; VR always runs in real time)", ["F2"]],
+	[&"time_pause", "Game", "real time: pause, or go on (also after a hostile paused it)", ["Backspace"]],
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike with the left hand (the off hand, unless left-handed in Options)", ["1"]],
 	[&"hand_main", "Act", "strike with the right hand (the main hand, unless left-handed in Options)", ["2"]],
