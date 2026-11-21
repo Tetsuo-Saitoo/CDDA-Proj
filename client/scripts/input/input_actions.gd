@@ -64,6 +64,8 @@ const ACTIONS := [
 	[&"lean_left", "View", "lean left (held: peek around a corner)", ["Alt+A"]],
 	[&"lean_right", "View", "lean right (held: peek around a corner)", ["Alt+D"]],
 	[&"zoom_look", "View", "eye tracking: held, zoom in where you look", ["N"]],
+	[&"real_time_toggle", "Game", "real time on / off (flat screen; VR always runs in real time)", ["F2"]],
+	[&"time_pause", "Game", "real time: pause, or go on (also after a hostile paused it)", ["Backspace"]],
 	[&"save_game", "Act", "save the game (live)", ["F5"]],
 	[&"hand_off", "Act", "strike with the left hand (the off hand, unless left-handed in Options)", ["1"]],
 	[&"hand_main", "Act", "strike with the right hand (the main hand, unless left-handed in Options)", ["2"]],
@@ -98,6 +100,7 @@ const ACTIONS := [
 	[&"cdda_butcher", "Act", "butcher", ["Shift+B"]],
 	[&"cdda_grab", "Act", "grab", ["Shift+G"]],
 	[&"cdda_safemode", "Act", "safe mode on / off", ["Shift+1"]],
+	[&"cdda_control_vehicle", "Act", "drive: take a vehicle's controls (driving: its menu)", ["Shift+6"]],
 	# G2 hotbar (ui/hotbar.gd): 1 and 2 are the hand strikes, so the slots start at 3
 	[&"hotbar_1", "Hotbar", "slot 1: into the main hand (Tab view: put the selected item here)", ["3"]],
 	[&"hotbar_2", "Hotbar", "slot 2", ["4"]],
@@ -117,6 +120,7 @@ const CDDA := {
 	&"cdda_throw": "throw", &"cdda_fire": "fire", &"cdda_reload": "reload_weapon", &"cdda_eat": "eat", &"cdda_wear": "wear",
 	&"cdda_take_off": "take_off", &"cdda_read": "read", &"cdda_drop": "drop", &"cdda_unload": "unload",
 	&"cdda_butcher": "butcher", &"cdda_grab": "grab", &"cdda_safemode": "safemode",
+	&"cdda_control_vehicle": "control_vehicle",
 	&"cdda_run": "toggle_run", &"cdda_crouch": "toggle_crouch", &"cdda_wait": "wait", &"cdda_sleep": "sleep",
 }
 ## Live steps: action -> (right, forward) relative to where you look.

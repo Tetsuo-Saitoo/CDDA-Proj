@@ -28,7 +28,7 @@ const STORM := {"precip": 3, "precip_kind": 1, "sight_penalty": 1.25, "light_mod
 ## light source on the player's square: CDDA's light falls off around it), turn (game seconds after the mock's turn:
 ## snow lies and the ground gets wet over game time; a shot back at the mock's turn starts afresh), gaze (the eye
 ## tracking effects forced on, WorldLighting.set_gaze: boost, glare about the view's centre, blob [yaw, pitch off the
-## centre in degrees, strength]).
+## centre in degrees, strength]), zoom (the top view's distance, metres).
 const SHOTS := [
 	{"name": "clear", "env": CLEAR, "yaw": 45.0},
 	{"name": "cloudy", "env": CLOUDY, "yaw": 45.0},
@@ -43,6 +43,12 @@ const SHOTS := [
 	{"name": "rain_under_roof_up", "env": RAIN, "yaw": -90.0, "pitch": 40.0, "move": Vector3i(-8, -6, 0), "roof": true},
 	{"name": "rain_shoulder", "env": RAIN, "view": "shoulder", "yaw": 45.0},
 	{"name": "rain_top", "env": RAIN, "view": "top"},
+	# Looking up into the rain: drops coming at you, not falling sticks; from afar (zoomed-out top view, the outside
+	# view): the rain reaches past the drops around the player and fades out, no edge.
+	{"name": "rain_look_up", "env": RAIN, "yaw": 45.0, "pitch": 70.0},
+	{"name": "rain_top_far", "env": RAIN, "view": "top", "zoom": 40.0, "settle": 3.0},
+	{"name": "rain_outside", "env": RAIN, "view": "outside", "settle": 3.0},
+	{"name": "snow_top_far", "env": SNOW, "view": "top", "zoom": 40.0, "settle": 6.0},
 	{"name": "fog_top", "env": FOG, "view": "top"},
 	{"name": "clear_again", "env": CLEAR, "yaw": 45.0},
 	# The mock's coupe (C5): one rounded body with glass, wheels on its sides, seen from the south and from above.
@@ -162,6 +168,7 @@ func _shot(index: int, shot: Dictionary) -> void:
 		return
 	_main._show(snap)
 	_main._set_view(shot.get("view", "first"))
+	_main.view_cam.top_dist = shot.get("zoom", ViewCamera.TOP_DIST)
 	_main._frame_player()
 	_main.fp.set_look(deg_to_rad(shot.get("yaw", 0.0)), deg_to_rad(shot.get("pitch", 0.0)))
 	await _seconds(shot.get("settle", 1.5))

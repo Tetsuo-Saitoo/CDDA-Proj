@@ -2,7 +2,8 @@ extends SceneTree
 ## Headless live run of CDDA's wait and sleep through the client (the `wait` and `sleep` main-loop actions, as the
 ## Shift+. and Shift+S keys send them), in the test range, where nothing is hostile:
 ## 1. `wait`: CDDA's "Wait for how long?" menu comes as a request (after its alarm clock question); 30 minutes is
-##    picked and the game passes those 1800 turns by itself.
+##    picked and the game passes those 1800 turns by itself. Then the same wait with real time on
+##    (_real_time_wait): still fast-forwarded.
 ## 2. Three waits of 6 hours, so the character is tired: long stretches of turns the game passes by itself.
 ## 3. `sleep`: CDDA's questions are answered (yes, no alarm, keep trying and don't ask again); the character lies
 ##    down and time passes by itself, until an hour has passed or the character is up again. How long that takes
@@ -67,7 +68,7 @@ func _run() -> void:
 	var t0 := Time.get_ticks_msec()
 	var up := await _until(func() -> bool: return _live.state == "running" and _main.world.snapshot != null, BOOT_TIMEOUT_MS)
 	_check(up, "the test range runs (%.0f s, state %s %s)" % [(Time.get_ticks_msec() - t0) / 1000.0, _live.state, _live.error])
-	if up and await _wait(4, "30 minutes", 1800):
+	if up and await _wait(4, "30 minutes", 1800) and await _real_time_wait():
 		var tired := true
 		for i in 3:
 			tired = tired and await _wait(8, "6 hours", 6 * 3600)
@@ -206,6 +207,43 @@ func _watch(turn0: int, turns: int, timeout_ms: int, each := Callable(), until :
 	var passed := last_turn - turn0
 	return {"done": done, "ended": ended, "turns": passed, "ms": ms, "rate": float(ms) / maxi(passed, 1), "seen": seen,
 			"silent": silent, "sent": sent, "quiet": quiet, "noted": noted}
+
+
+## The same 30-minute wait with real time on (lead-ui's real-time key; skipped, said so, on a client without it):
+## the game still passes those turns by itself, far faster than a turn a second, real time is still on afterwards,
+## and the key again puts the game back in turns for the rest of this run. False when it can't go on.
+func _real_time_wait() -> bool:
+	if not InputMap.has_action(&"real_time_toggle") or not _live.has_method("set_real_time"):
+		print("  (no real-time switch in this client: a wait in real time not checked)")
+		return true
+	var real := func() -> bool: return _live.clock().get("real_time") == true
+	var on := _press(&"real_time_toggle") and await _until(real, ASK_TIMEOUT_MS)
+	_check(on, "the real-time key turns real time on")
+	var t0 := Time.get_ticks_msec()
+	var passed := on and await _wait(4, "30 minutes", 1800)
+	var s := (Time.get_ticks_msec() - t0) / 1000.0
+	_check(passed and s < 120.0 and real.call(),
+			"in real time a 30-minute wait is still fast-forwarded (1800 turns in %.0f s, not half an hour), and real time stays on (%s)"
+			% [s, real.call()])
+	var turns := func() -> bool: return not real.call()
+	var off := _press(&"real_time_toggle") and await _until(turns, ASK_TIMEOUT_MS)
+	_check(off, "the real-time key again: back in turns")
+	return passed and off
+
+
+## Presses the first key bound to `action` (F1 defaults) in the window; false when it has none.
+func _press(action: StringName) -> bool:
+	for e in InputActions.slots(action):
+		if e is InputEventKey:
+			var k := (e as InputEventKey).duplicate() as InputEventKey
+			if k.keycode == KEY_NONE:
+				k.keycode = k.physical_keycode
+			if k.physical_keycode == KEY_NONE:
+				k.physical_keycode = k.keycode
+			k.pressed = true
+			root.push_input(k)
+			return true
+	return false
 
 
 ## The seq of the bridge's newest snapshot (CddaSim.get_snapshot_seq), whether the client has read it yet or not;

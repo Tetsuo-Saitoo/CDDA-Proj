@@ -9,6 +9,12 @@ extends Node3D
 ## open ground. The GPU moves them (once a frame, not per eye); the start points are worked out again only when
 ## the player has walked a few squares, or the wind or the map nearby changes. `particle_share` (WeatherView.quality)
 ## cuts the particles down, or off.
+##
+## Seen from afar (far_view: the top view zoomed out, the outside view; never in first person or VR) a far layer
+## runs too: two more emitters with fewer, bigger drops on the ring from RADIUS to FAR_RADIUS squares, one roof check
+## per FAR_CELL-wide cell (nothing falls into a building, also with its roof hidden), fading out towards its edge.
+## Rain is drawn by precip.gdshader: seen along its fall (looking up) a streak shortens to a drop; a drop is never
+## thinner than a pixel (a far one is fainter instead, so the rain doesn't end where its drops get too thin).
 
 const RADIUS := 12             # squares around the centre
 const CENTRE_STEP := 3         # the centre follows the player in steps of this many squares
@@ -30,9 +36,32 @@ const FLAKE_PX := 32           # the snow flake's texture: a soft round dot
 const RAIN_COLOR := Color(0.8, 0.85, 0.95, 0.3)
 const SNOW_COLOR := Color(1.0, 1.0, 1.0, 0.9)
 const BOUNDS_UP := 12.0        # the drops' box reaches this far above their start and below the player's level
+const FAR_RADIUS := 48         # squares: the far layer's outer edge
+const FAR_CELL := 3            # squares: it lands on cells this wide, one roof check each
+const FAR_POINTS_PER_CELL := 3
+const MAX_FAR_POINTS := 4096
+const FAR_FADE_FROM := 32.0    # metres from the centre: the far layer fades out from here to FAR_RADIUS
+const MAX_FAR_RAIN := 9000     # fewer, bigger and stronger drops than near: about the same rain seen from afar
+const MAX_FAR_SNOW := 4000
+const FAR_VIEW_M := 8.0        # the far layer runs while the camera is this far from the player's eyes or further
+const EYE_M := 1.6
+const FAR_RAIN_COLOR := Color(0.8, 0.85, 0.95, 0.75)
+const FAR_SNOW_COLOR := Color(1.0, 1.0, 1.0, 0.9)
+const SHADER := preload("res://shaders/precip.gdshader")
 
 var rain := GPUParticles3D.new()
 var snow := GPUParticles3D.new()
+var far_rain := GPUParticles3D.new()
+var far_snow := GPUParticles3D.new()
+## The camera is far from the player (set each frame while follow_camera): the far layer runs.
+var far_view := false:
+	set(v):
+		if v == far_view:
+			return
+		far_view = v
+		if _last.size() == 3:
+			apply(_last[0], _last[1], _last[2])
+var follow_camera := true      # _process sets far_view from the camera's distance (tests set it themselves)
 ## Share of MAX_RAIN / MAX_SNOW the emitters have (WeatherView.quality); 0 shows no rain or snow at all.
 var particle_share := 1.0:
 	set(s):
@@ -43,6 +72,8 @@ var particle_share := 1.0:
 		if s > 0.0:
 			rain.amount = maxi(1, roundi(MAX_RAIN * s))
 			snow.amount = maxi(1, roundi(MAX_SNOW * s))
+			far_rain.amount = maxi(1, roundi(MAX_FAR_RAIN * s))
+			far_snow.amount = maxi(1, roundi(MAX_FAR_SNOW * s))
 		if _last.size() == 3:
 			apply(_last[0], _last[1], _last[2])   # at once, not on the next snapshot
 var _last := []                # the last apply's [snap, coords, state]
@@ -53,31 +84,57 @@ var _key := []                 # what the start points were made for
 var _tex: ImageTexture
 var _starts := PackedVector3Array()   # the start points, as placed (world space)
 var _bounds := AABB()                 # the box around all drops, in this node's space
+var far_cells := 0             # the far layer's open cells
+var far_points := 0
+var far_rebuilds := 0
+var _far_key := []
+var _far_tex: ImageTexture
+var _far_starts := PackedVector3Array()
+var _far_bounds := AABB()
+var _eye := Vector3.INF        # the player's eyes (world space), for far_view
+var _fade_centre := Vector3.ZERO   # the far layer fades out around this (world space)
+static var _far_total := -1    # cells in the far ring
 static var _flake: ImageTexture
 
 
 func _init() -> void:
 	_setup(rain, MAX_RAIN, Vector2(0.012, 0.45), RAIN_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD_Y_TO_VELOCITY)
 	_setup(snow, MAX_SNOW, Vector2(0.05, 0.05), SNOW_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD)
-	add_child(rain)
-	add_child(snow)
+	_setup(far_rain, MAX_FAR_RAIN, Vector2(0.02, 0.7), FAR_RAIN_COLOR,
+			GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD_Y_TO_VELOCITY)
+	_setup(far_snow, MAX_FAR_SNOW, Vector2(0.1, 0.1), FAR_SNOW_COLOR, GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD)
+	for p: GPUParticles3D in [rain, snow, far_rain, far_snow]:
+		add_child(p)
 
 
 func _setup(p: GPUParticles3D, amount: int, size: Vector2, color: Color, align: GPUParticles3D.TransformAlign) -> void:
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = color
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mat.disable_receive_shadows = true
+	var mat: Material
+	if p == snow:
+		var flake := StandardMaterial3D.new()
+		flake.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		flake.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		flake.albedo_color = color
+		flake.cull_mode = BaseMaterial3D.CULL_DISABLED
+		flake.disable_receive_shadows = true
+		# A flake right at the eye would cover half the view: they fade out on the last metres to the camera.
+		flake.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+		flake.distance_fade_min_distance = NEAR_GONE_M
+		flake.distance_fade_max_distance = NEAR_FULL_M
+		flake.albedo_texture = flake_texture()
+		mat = flake
+	else:
+		var sm := ShaderMaterial.new()
+		sm.shader = SHADER
+		sm.set_shader_parameter("color", color)
+		sm.set_shader_parameter("streak", p == rain or p == far_rain)
+		sm.set_shader_parameter("near_gone", NEAR_GONE_M)
+		sm.set_shader_parameter("near_full", NEAR_FULL_M)
+		if p == far_rain or p == far_snow:
+			sm.set_shader_parameter("fade_from", FAR_FADE_FROM)
+			sm.set_shader_parameter("fade_to", FAR_RADIUS * CddaCoords.TILE_M)
+		mat = sm
 	# Before the light pass, like glass: the drops take the darkness of what is behind them.
 	mat.render_priority = WorldLighting.UNDER_PRIORITY
-	# A drop right at the eye would cover half the view: they fade out on the last metres to the camera.
-	mat.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
-	mat.distance_fade_min_distance = NEAR_GONE_M
-	mat.distance_fade_max_distance = NEAR_FULL_M
-	if p == snow:
-		mat.albedo_texture = flake_texture()
 	var quad := QuadMesh.new()
 	quad.size = size
 	quad.material = mat
@@ -99,17 +156,44 @@ func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
 	var on := (state.precip > 0.0 and snap != null and coords != null and snap.is_valid()
 			and snap.player_pos.z >= 0 and particle_share > 0.0)   # nothing underground
 	var p := snow if state.snow else rain
+	var fp := far_snow if state.snow else far_rain
 	(rain if state.snow else snow).emitting = false
+	(far_rain if state.snow else far_snow).emitting = false
 	if not on:
 		p.emitting = false
+		fp.emitting = false
 		return
+	_eye = coords.ms_to_world(snap.player_pos) + Vector3(0.0, EYE_M, 0.0)
 	var speed := SNOW_SPEED if state.snow else RAIN_SPEED
 	var lean := lean_of(state.wind, speed, SNOW_LEAN_MAX if state.snow else RAIN_LEAN_MAX)
 	var key := [centre(snap), coords.origin_ms, state.snow, lean.snappedf(0.05), _revisions(snap)]
 	if key != _key:
 		_key = key
 		_place(snap, coords, lean)
-	if points == 0:
+	_emit(p, _tex, points, snap, state, speed, lean, amount_ratio(state.precip, squares), _bounds)
+	if not far_view:
+		fp.emitting = false
+		return
+	var far_key := [centre(snap), coords.origin_ms, state.snow, lean.snappedf(0.05), _revisions(snap, FAR_RADIUS)]
+	if far_key != _far_key:
+		_far_key = far_key
+		_place_far(snap, coords, lean)
+	var total := far_total()
+	_emit(fp, _far_tex, far_points, snap, state, speed, lean,
+			clampf(state.precip * state.precip * far_cells / maxf(total, 1.0), 0.0, 1.0), _far_bounds)
+	_set_fade_centre(coords.ms_to_world(centre(snap)))
+
+
+func _set_fade_centre(at: Vector3) -> void:
+	_fade_centre = at
+	for f: GPUParticles3D in [far_rain, far_snow]:
+		((f.draw_pass_1 as QuadMesh).material as ShaderMaterial).set_shader_parameter("fade_centre", at)
+
+
+## Runs emitter p from `count` start points in `tex` (none: off).
+func _emit(p: GPUParticles3D, tex: ImageTexture, count: int, snap: Snapshot, state: WeatherState, speed: float,
+		lean: Vector2, ratio: float, bounds: AABB) -> void:
+	if count == 0 or tex == null:
 		p.emitting = false
 		return
 	var process := p.process_material as ParticleProcessMaterial
@@ -118,12 +202,20 @@ func apply(snap: Snapshot, coords: CddaCoords, state: WeatherState) -> void:
 	process.spread = 12.0 if state.snow else 2.0
 	process.initial_velocity_min = velocity.length() * 0.9
 	process.initial_velocity_max = velocity.length() * 1.1
-	process.emission_point_texture = _tex
-	process.emission_point_count = points
+	process.emission_point_texture = tex
+	process.emission_point_count = count
 	p.lifetime = drop_m(snap) / speed
-	p.amount_ratio = amount_ratio(state.precip, squares)
-	p.visibility_aabb = _bounds
+	p.amount_ratio = ratio
+	p.visibility_aabb = bounds
 	p.emitting = true
+
+
+## far_view follows the camera: far from the player's eyes (the top view zoomed out, the outside view).
+func _process(_delta: float) -> void:
+	if not follow_camera:
+		return
+	var cam := get_viewport().get_camera_3d()
+	far_view = cam != null and _eye.is_finite() and cam.global_position.distance_to(_eye) >= FAR_VIEW_M
 
 
 ## A soft round white dot (made once, on the main thread).
@@ -147,6 +239,9 @@ static func flake_image() -> Image:
 ## The start points are stored relative to this node, so they stay right until they are placed again.
 func shift(d: Vector3) -> void:
 	position += d
+	if _eye.is_finite():
+		_eye += d
+	_set_fade_centre(_fade_centre + d)
 
 
 ## Sideways metres per metre fallen (x east, y south), for a wind in world space.
@@ -224,6 +319,39 @@ static func way_clear(snap: Snapshot, p: Vector3i, offsets: Array[Vector3i]) -> 
 	return true
 
 
+## The far layer's cells: FAR_CELL squares wide, on the ring from RADIUS to FAR_RADIUS around the centre, by their
+## middle square; each one open to the sky as its north-west square with the level drops land on (landing_level).
+static func far_squares(snap: Snapshot) -> Array[Vector3i]:
+	var out: Array[Vector3i] = []
+	var c := centre(snap)
+	if c.z < 0:
+		return out   # underground
+	for o in _far_ring():
+		var z := landing_level(snap, Vector3i(c.x + o.x + FAR_CELL / 2, c.y + o.y + FAR_CELL / 2, c.z))
+		if z >= 0:
+			out.append(Vector3i(c.x + o.x, c.y + o.y, z))
+	return out
+
+
+## The far ring's cells (their north-west squares, from the centre).
+static func _far_ring() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for dy in range(-FAR_RADIUS, FAR_RADIUS + 1, FAR_CELL):
+		for dx in range(-FAR_RADIUS, FAR_RADIUS + 1, FAR_CELL):
+			var m := Vector2i(dx + FAR_CELL / 2, dy + FAR_CELL / 2)
+			var d2 := m.length_squared()
+			if d2 > RADIUS * RADIUS and d2 <= FAR_RADIUS * FAR_RADIUS:
+				out.append(Vector2i(dx, dy))
+	return out
+
+
+## How many cells the far ring has.
+static func far_total() -> int:
+	if _far_total < 0:
+		_far_total = _far_ring().size()
+	return _far_total
+
+
 ## The squares within RADIUS of the centre where drops land, with the level they land on (x, y, level).
 static func landing_squares(snap: Snapshot, lean: Vector2) -> Array[Vector3i]:
 	var out: Array[Vector3i] = []
@@ -255,10 +383,10 @@ static func start_point(coords: CddaCoords, snap: Snapshot, p: Vector3i, lean: V
 
 ## The revisions of the submaps the drops can land on, as one number: a changed map (a roof gone) gives new
 ## start points.
-static func _revisions(snap: Snapshot) -> int:
+static func _revisions(snap: Snapshot, radius := RADIUS) -> int:
 	var revs := PackedInt64Array()
 	var c := CddaCoords.ms_to_sm(snap.player_pos)
-	var reach := RADIUS / CddaCoords.SEEX + 1
+	var reach := radius / CddaCoords.SEEX + 1
 	for z in range(_lowest(snap), snap.player_pos.z + 3):
 		for y in range(c.y - reach, c.y + reach + 1):
 			for x in range(c.x - reach, c.x + reach + 1):
@@ -276,34 +404,71 @@ func _place(snap: Snapshot, coords: CddaCoords, lean: Vector2) -> void:
 	_starts.resize(points)
 	if points == 0:
 		return
+	var made := _fill(land, per, 1, snap, coords, lean, _tex)
+	_starts = made[0]
+	_tex = made[1]
+	_bounds = _box(snap, coords, RADIUS)
+
+
+func _place_far(snap: Snapshot, coords: CddaCoords, lean: Vector2) -> void:
+	far_rebuilds += 1
+	var land := far_squares(snap)
+	far_cells = land.size()
+	var per := clampi(MAX_FAR_POINTS / maxi(far_cells, 1), 1, FAR_POINTS_PER_CELL)
+	far_points = far_cells * per
+	_far_starts.resize(far_points)
+	if far_points == 0:
+		return
+	var made := _fill(land, per, FAR_CELL, snap, coords, lean, _far_tex)
+	_far_starts = made[0]
+	_far_tex = made[1]
+	_far_bounds = _box(snap, coords, FAR_RADIUS + FAR_CELL)
+
+
+## `per` start points over each of `land` (cells `cell` squares wide from their north-west square) and their point
+## texture (`tex` updated when it fits): [PackedVector3Array, ImageTexture].
+func _fill(land: Array[Vector3i], per: int, cell: int, snap: Snapshot, coords: CddaCoords, lean: Vector2,
+		tex: ImageTexture) -> Array:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([snap.player_pos, snap.turn])
-	var rows := ceili(points / float(POINTS_W))
+	rng.seed = hash([snap.player_pos, snap.turn, cell])
+	var starts := PackedVector3Array()
+	starts.resize(land.size() * per)
+	var rows := ceili(starts.size() / float(POINTS_W))
 	var data := PackedFloat32Array()
 	data.resize(POINTS_W * rows * 3)
 	var i := 0
 	var n := 0
+	var w := cell * CddaCoords.TILE_M
 	for p in land:
 		var corner := start_point(coords, snap, p, lean)
 		for k in per:
-			var at := Vector3(corner.x + rng.randf() * CddaCoords.TILE_M, corner.y, corner.z + rng.randf() * CddaCoords.TILE_M)
-			_starts[n] = at
+			var at := Vector3(corner.x + rng.randf() * w, corner.y, corner.z + rng.randf() * w)
+			starts[n] = at
 			n += 1
 			data[i] = at.x - position.x
 			data[i + 1] = at.y - position.y
 			data[i + 2] = at.z - position.z
 			i += 3
-	var mid := coords.ms_to_world(centre(snap)) - position
-	var reach := RADIUS + 1.0 + BOUNDS_UP   # the circle, and how far a leaning drop starts outside it
-	_bounds = AABB(mid - Vector3(reach, BOUNDS_UP + drop_m(snap), reach),
-			Vector3(2.0 * reach, 2.0 * BOUNDS_UP + drop_m(snap) + TOP_M, 2.0 * reach))
 	var img := Image.create_from_data(POINTS_W, rows, false, Image.FORMAT_RGBF, data.to_byte_array())
-	if _tex != null and _tex.get_height() == rows:
-		_tex.update(img)
-	else:
-		_tex = ImageTexture.create_from_image(img)
+	if tex != null and tex.get_height() == rows:
+		tex.update(img)
+		return [starts, tex]
+	return [starts, ImageTexture.create_from_image(img)]
+
+
+## The box around the drops of a circle of `radius` squares about the centre, in this node's space.
+func _box(snap: Snapshot, coords: CddaCoords, radius: int) -> AABB:
+	var mid := coords.ms_to_world(centre(snap)) - position
+	var reach := radius + 1.0 + BOUNDS_UP   # the circle, and how far a leaning drop starts outside it
+	return AABB(mid - Vector3(reach, BOUNDS_UP + drop_m(snap), reach),
+			Vector3(2.0 * reach, 2.0 * BOUNDS_UP + drop_m(snap) + TOP_M, 2.0 * reach))
 
 
 ## The start points in use, as placed (for tests and debugging).
 func start_points() -> PackedVector3Array:
 	return _starts
+
+
+## The far layer's start points in use, as placed.
+func far_start_points() -> PackedVector3Array:
+	return _far_starts

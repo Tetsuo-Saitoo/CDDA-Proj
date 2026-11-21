@@ -22,6 +22,8 @@ extends Node3D
 
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
+const HUD_FIT_MS := 250   # the HUD text's room is measured no more often
+const PAUSE_NOTE_MS := 1500   # a held move key repeats the "time is paused" note no faster
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
 ## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
@@ -113,11 +115,16 @@ var eye_menus: EyeMenus           # eye tracking 6: menus by eye
 var lean_peek := LeanPeek.new()   # 9: leaning to peek (flat keys here, VR's lean through lean / unlean)
 var eye_view := EyeView.new()     # 1, 2 and the lean's tilt: the first-person view offset
 var _lean_keys := 0               # the flat lean keys: -1 left, 1 right, 0 none
+var _clock_ms := -1               # the HUD's time line: last read (ClockControl.text)
 var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
 var _log := PackedStringArray()
+var _pause_note_ms := -PAUSE_NOTE_MS   # the last "time is paused" note for a dropped action (_held_by_pause)
+var _hud_fit_ms := -HUD_FIT_MS   # the HUD text's fit (fit_index): when last measured, how many texts, the pick
+var _hud_fit_n := 0
+var _hud_pick := 0
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
@@ -701,6 +708,7 @@ func _start_vr() -> void:
 	if vr.has_signal("ui_asked"):   # the VR menu's rows for the F1 menu and the Tab view
 		vr.connect("ui_asked", open_ui)
 	print("VR on: %s" % vr.settings)
+	_apply_clock()   # VR always runs in real time (PLAN.md); a game already running switches now
 
 
 ## Moves the screen menus in `menus` (Controls; others skipped) under the VR panel's root, in order, each drawn
@@ -770,6 +778,9 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(func(s: String) -> void:   # real time or turns, auto-pause: each new or loaded game
+		if s == "running":
+			_apply_clock())
 	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	live.state_changed.connect(_on_game_over)   # died, saved and quit, failed: back to the main menu
 	key_menu.quit_to_menu.connect(_quit_to_menu)
@@ -1166,6 +1177,18 @@ func _octant(dir: Vector2) -> int:
 	return octant_for(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)) if v == fp else v.global_basis, dir)
 
 
+## Octant of a step key's (right, forward) direction: where you look, or while driving CDDA's own driving keys
+## (forward UP speeds up, back DOWN slows down, left / right steer), whichever way the camera faces.
+func _step_octant(dir: Vector2) -> int:
+	if world.snapshot != null and world.snapshot.player_driving:
+		return octant_for(Basis.IDENTITY, dir)
+	return _octant(dir)
+
+
+## CDDA's control_vehicle on a vehicle square without controls does nothing and says nothing: say why.
+const NO_CONTROLS_NOTE := "There are no controls here: sit at the vehicle's controls to drive."
+
+
 ## Octant (index into OCT_ACTIONS) of a (right, forward) direction for a view with basis b.
 static func octant_for(b: Basis, dir: Vector2) -> int:
 	var fwd := -b.z
@@ -1196,7 +1219,7 @@ func _live_action(event: InputEvent) -> bool:
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
-			act = OCT_ACTIONS[_octant(InputActions.STEPS[a])]
+			act = OCT_ACTIONS[_step_octant(InputActions.STEPS[a])]
 	for a: StringName in InputActions.CDDA:
 		if InputActions.pressed(event, a):
 			act = InputActions.CDDA[a]
@@ -1226,6 +1249,9 @@ func _live_action(event: InputEvent) -> bool:
 			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
 					captured, world.snapshot.player_pos, facing)
+	if act == "control_vehicle" and _in_main_loop() and world.snapshot != null and not world.snapshot.player_driving \
+			and world.snapshot.controls_at(world.snapshot.player_pos, world.tables) == Snapshot.NO_CONTROLS:
+		hud_data.on_events([MockItems.message_event(NO_CONTROLS_NOTE)])
 	if act == "eat" and _in_main_loop():
 		var food := _held_consumable()
 		if food != null and item_actions.consume(food):
@@ -1247,6 +1273,8 @@ func _live_action(event: InputEvent) -> bool:
 ## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
 ## isn't sent.
 func _queue_act(act: String) -> bool:
+	if _held_by_pause():
+		return false
 	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
 		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
@@ -1388,6 +1416,8 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
+			return false
+		if _held_by_pause():
 			return false
 		for a in acts:
 			live.queue_action(a)
@@ -1593,6 +1623,8 @@ func _pour_target() -> Dictionary:
 func _use_tap() -> void:
 	if grab.take_hover() or live == null or not _in_main_loop():
 		return
+	if _held_by_pause():
+		return
 	grab.ask = {}
 	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
 
@@ -1632,7 +1664,7 @@ func _reach_square() -> Variant:
 
 ## A door leaf crossed its threshold (live): queue CDDA's open / close; its "where?" prompt is answered for it.
 func _on_door_wants(square: Vector3i, open: bool) -> void:
-	if live == null or world.snapshot == null or not _in_main_loop():
+	if live == null or world.snapshot == null or not _in_main_loop() or _held_by_pause():
 		return
 	if live.can_act_at():   # CDDA takes exactly this square; one it refuses never falls back to its own pick
 		live.open_at(open, square, world.snapshot.player_pos)
@@ -1658,7 +1690,10 @@ func _fp_live_step(now: bool) -> void:
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
 		return
-	live.queue_action(OCT_ACTIONS[_octant(mv)])
+	if _held_by_pause():
+		_step_ms = t   # a held key asks again at the step rate, not every frame
+		return
+	live.queue_action(OCT_ACTIONS[_step_octant(mv)])
 	_step_ms = t
 
 
@@ -1698,6 +1733,7 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	_apply_clock()   # the F1 Time row
 	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
 		gaze_fx.adapt_on = o.eye_on("light_adapt")
 		gaze_fx.unease_on = o.eye_on("unease")
@@ -1749,10 +1785,7 @@ func _setup_hud() -> void:
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
-	hud = Label.new()
-	hud.position = Vector2(10, 50)   # under the compass's hostile markers
-	hud.add_theme_color_override("font_outline_color", Color.BLACK)
-	hud.add_theme_constant_override("outline_size", 4)
+	hud = hud_label()
 	layer.add_child(hud)
 	compass = Compass.new()
 	compass.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -1892,7 +1925,7 @@ func _eye_view_step(now_ms: int) -> void:
 	if live != null and world.snapshot != null:
 		var sq: Variant = lean_peek.peek_square(now_ms, _in_main_loop(), world.snapshot.player_pos)
 		if sq != null:
-			lean_peek.sent(live.queue_action_at("peek", sq))
+			lean_peek.sent(not _held_by_pause() and live.queue_action_at("peek", sq))
 	if fp == null:
 		return
 	var look: Variant = null
@@ -1918,6 +1951,60 @@ func _flat_gaze() -> Dictionary:
 	if not r.is_empty():
 		r["eyes"] = true
 	return r
+
+
+## Real time or turns and auto-pause on the running game (ClockControl): the flat screen's settings, VR always
+## real time. At each game start or load, VR start and any HUD setting change.
+func _apply_clock() -> void:
+	if live != null and live.state == "running" and not ClockControl.apply(live, hud_settings, vr != null):
+		push_warning("live: the game didn't take the clock settings")
+	_clock_ms = -1
+
+
+## The real-time key: flips the flat screen's setting (saved) and the running game; VR stays in real time.
+func _toggle_real_time() -> void:
+	if vr != null:
+		grab.flash("VR always runs in real time.")
+		return
+	hud_settings.real_time = not hud_settings.real_time
+	var err := hud_settings.save_file()
+	if err != OK:
+		push_warning("real time not saved: %s" % error_string(err))
+	key_menu.show_clock()
+	_apply_clock()
+	grab.flash(ClockControl.flip_note(hud_settings.real_time))
+
+
+## Pauses real time or lets it go on (also after a hostile's auto-pause): the flat pause key and VR's menu row
+## (lead-vr, vr.time_pause). Returns the note to show.
+func toggle_time_pause() -> String:
+	if live == null or live.state != "running":
+		return "No game is running."
+	eye_pause.forget()   # the pause (or going on) is the player's now
+	_clock_ms = -1
+	return ClockControl.toggle_pause(live)
+
+
+## Real time paused (the pause key, or a hostile's auto-pause): the game takes no actions, so one sent now would wait
+## and run the moment time goes on, toward whatever stopped it (lead-qa, 2026-11-20). The main loop's actions are
+## dropped instead and a note says how to go on. True while paused.
+func _held_by_pause() -> bool:
+	if live == null or live.state != "running" or not ClockControl.paused(live.clock()):
+		return false
+	var t := Time.get_ticks_msec()
+	if t - _pause_note_ms >= PAUSE_NOTE_MS:
+		_pause_note_ms = t
+		grab.flash(ClockControl.held_note())
+	return true
+
+
+## The HUD's time line, twice a second while a game runs.
+func _clock_tick(now_ms: int) -> void:
+	if _clock_ms >= 0 and now_ms - _clock_ms < 500:
+		return
+	_clock_ms = now_ms
+	var running := live != null and live.state == "running"
+	hud_data.set_clock(ClockControl.text(live.clock() if running else {}, running, vr != null))
 
 
 func _menu_open() -> bool:
@@ -2062,6 +2149,7 @@ func _process(_delta: float) -> void:
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
 	_eye_away_pause(Time.get_ticks_msec())
+	_clock_tick(Time.get_ticks_msec())
 	_eye_view_step(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
@@ -2095,23 +2183,87 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
-	var help := _help()
 	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
 		status = LiveSession.boot_text(live.boot_info())
-	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
-			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
-			Engine.get_frames_per_second()], help])
-	if vr != null:
-		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
-				vr_perf.last_line])
-	if live != null:
-		lines.append(_act_help())
-		lines.append("in hands: " + _wielded_name())
+	var info := "%s  camera square %s  %s  roofs %s  %d fps" % [view, tile, world.level_text(),
+			"on" if world.roofs_visible else "off", Engine.get_frames_per_second()]
+	var vr_line := "" if vr == null else "VR level %d  controllers %s  settings: left menu button  %s" % [
+			vr.z, vr.current_layout(), vr_perf.last_line]
+	var hands := "" if live == null else "in hands: " + _wielded_name()
+	var on := hud_settings.key_help
+	var texts := hud_texts(on, status, info, _help() if on else "", vr_line,
+			_act_help() if on and live != null else "", hands)
+	var now := Time.get_ticks_msec()
+	if now - _hud_fit_ms >= HUD_FIT_MS or texts.size() != _hud_fit_n:   # measuring wraps the text: not every frame
+		_hud_fit_ms = now
+		_hud_fit_n = texts.size()
+		_hud_pick = fit_index(hud, texts, hud_view.text_limit() - hud.position.y)
 	# messages: hud_view's feed
-	hud.text = "\n".join(lines)
+	hud.text = texts[mini(_hud_pick, texts.size() - 1)]
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
-	hud_view.avoid(Rect2(hud.global_position, hud.get_combined_minimum_size()) if hud.visible else Rect2())
+	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
+	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
+
+
+## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
+## moves down under it, HudView.avoid): all the key help, then without CDDA's keys (`act`), then one short line
+## (the only one with F1 > HUD > Key help off), then the status alone.
+static func hud_texts(key_help: bool, status: String, info: String, help: String, vr_line: String, act: String,
+		hands: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if key_help:
+		if not act.is_empty():
+			out.append(hud_lines([status, info, help, vr_line, act, hands]))
+		out.append(hud_lines([status, info, help, vr_line, hands]))
+	out.append(hud_lines([status, info, KEY_HELP_SHORT, vr_line, hands]))
+	out.append(hud_lines([status, KEY_HELP_SHORT]))
+	return out
+
+
+## `parts` that aren't empty, one to a line.
+static func hud_lines(parts: Array) -> String:
+	var out := PackedStringArray()
+	for p: String in parts:
+		if not p.is_empty():
+			out.append(p)
+	return "\n".join(out)
+
+
+## The first of `texts` whose height in `l` (its font and width, wrapped) is at most `max_h` px, else the last.
+static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
+	var font := l.get_theme_font(&"font")
+	var fs := l.get_theme_font_size(&"font_size")
+	var fh := font.get_height(fs)
+	if l.size.x <= 0.0 or fh <= 0.0:
+		return 0
+	var flags := TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+	for i in texts.size():
+		var h := font.get_multiline_string_size(texts[i], HORIZONTAL_ALIGNMENT_LEFT, l.size.x, fs, -1, flags).y
+		var lines := ceili(h / fh - 0.01)
+		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
+			return i
+	return texts.size() - 1
+
+
+## The key help when F1 > HUD > Key help is off, or there's no room for more.
+const KEY_HELP_SHORT := "Esc back / menu  F1 keys, HUD, key help"
+
+
+## The status and controls text along the top: as wide as the window, under the compass's hostile markers, wrapped
+## so a small window shows all of it (the user, 2026-11-20).
+static func hud_label() -> Label:
+	var l := Label.new()
+	l.name = "HudText"
+	l.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	l.offset_left = 10
+	l.offset_right = -12
+	l.offset_top = 50
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 4)
+	return l
 
 
 ## The view's key line, from the current bindings.
@@ -2212,6 +2364,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if InputActions.pressed(event, &"classic_view"):
 		classic.toggle()
+		return
+	if InputActions.pressed(event, ClockControl.TOGGLE):
+		_toggle_real_time()
+		return
+	if InputActions.pressed(event, ClockControl.PAUSE) and live != null and live.state == "running":
+		grab.flash(toggle_time_pause())
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
