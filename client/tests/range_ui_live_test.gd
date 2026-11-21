@@ -414,9 +414,9 @@ func _drive_live(start: Vector3i) -> void:
 			% [stands.velocity if stands != null else "?"])
 	if keys and _main.world.snapshot.has_method("controls_at"):
 		# the seat beside the driver's has no controls: CDDA says nothing there, the client says why
-		var side: Vector3i = seat - (door - seat)
+		var side: Vector3i = _main.world.snapshot.player_pos - (door - seat)   # (the car has rolled on; it faces east again)
 		await _until(asking, SHOW_TIMEOUT_MS)
-		await _turn(_step_name(side - seat))
+		await _turn(_step_name(seat - door))
 		var on_side: bool = _main.world.snapshot.player_pos == side
 		var found: int = _main.world.snapshot.call("controls_at", side, _main.world.tables)
 		var note := str((Main as Script).get_script_constant_map().get("NO_CONTROLS_NOTE", "?"))
@@ -463,12 +463,13 @@ func _bike_live(start: Vector3i) -> void:
 	if alone:
 		var turn: int = _main.world.snapshot.turn
 		var seen := _msg_changes
+		var had0: int = hints.call()
 		root.push_input(_key_of(&"cdda_control_vehicle"))
 		await create_timer(1.5).timeout
-		_check(_live.request.get("timed", false) and _main.world.snapshot.turn == turn and _msg_changes == seen
+		_check(_live.request.get("timed", false) and _main.world.snapshot.turn == turn and hints.call() == had0
 				and _player_field("driving") == null,
-				"control key: with no vehicle around, %s does nothing: no prompt, no turn, no message (messages %d, turns %d)"
-				% [key_name, _msg_changes - seen, _main.world.snapshot.turn - turn])
+				"control key: with no vehicle around, %s takes nothing: no prompt, no turn, no hint from the client (CDDA said: %s)"
+				% [key_name, str(_main.hud_data.messages.back()).left(120) if _msg_changes > seen else "nothing"])
 	else:
 		print("  (a vehicle stands next to the arrival square: the key with no vehicle around not checked)")
 	var before := {}
@@ -539,9 +540,12 @@ func _bike_live(start: Vector3i) -> void:
 		root.push_input(_key_of(&"cdda_control_vehicle"))
 		_check(await _let_go(), "control key: driving, %s brings CDDA's menu and \"Let go\" there ends the driving" % key_name)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
+	await _turn(_step_name(beside - ctl))   # off the bicycle first
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
-	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
-			"control key: the player is back at the arrival square (%s)" % [_main.world.snapshot.player_pos])
+	var why := await _cheat(_live.cheat_teleport(start))
+	_check(why == "" and await _until(back, SHOW_TIMEOUT_MS),
+			"control key: the player steps off and is back at the arrival square (%s; teleport: %s)"
+			% [_main.world.snapshot.player_pos, why if not why.is_empty() else "done"])
 
 
 ## Rain seen from afar (lead-world's far layer; skipped, said so, on a client without it or without the weather
