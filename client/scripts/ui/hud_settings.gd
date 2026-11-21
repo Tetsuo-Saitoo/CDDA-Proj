@@ -35,6 +35,9 @@ var hurt_cues := true
 ## Bright flashes: lightning (WeatherView.flash_enabled) and the first-person muzzle flash (the viewmodel's
 ## `flashes`). On unless turned off, like the mood tint. Saved as [weather] flash (its first use).
 var weather_flash := true
+## The key help along the top of the screen (main.gd's HUD text). Off: one short line; F1 lists every key. On
+## unless turned off. Saved as [hud] key_help.
+var key_help := true
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
@@ -211,6 +214,8 @@ func load_file(path := FILE) -> String:
 	hurt_cues = hc if hc is bool else true
 	var wf: Variant = cfg.get_value("weather", "flash", true)
 	weather_flash = wf if wf is bool else true
+	var kh: Variant = cfg.get_value("hud", "key_help", true)
+	key_help = kh if kh is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
@@ -257,6 +262,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("mood", "cues", mood_cues)
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
+	cfg.set_value("hud", "key_help", key_help)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))

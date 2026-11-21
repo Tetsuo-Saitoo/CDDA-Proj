@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-20 — Small windows: the controls text along the top wraps instead of running off screen, and F1 > HUD > "Key help" shrinks it to one line. The F1 menu, its Cheats page and the character and world creation screens fit windows down to 800x450 and scroll where they must. Client tests pass, with a new layout test at three window sizes; not yet tried in a running game.
 - 2026-11-20 — Real time on the flat screen: F1 > Time > "Real time" or F2 switches between real time and turns (turns stay the default); Backspace pauses real time or goes on after a hostile paused it; "Pause when a hostile comes into view" sits in the same row. The top right of the screen says whether time runs, waits for you or is paused. VR always runs in real time. Client tests pass; not yet tried in a running game.
 - 2026-11-20 — Tester AppImage test-2026-11-20 (private test repo, pre-release, not a release) from main b10da10 + fork 5890e17, after the QA lead's GO (smoke, nine Linux live suites, personal-strings check pass on the file). Notes cover leaning and opt-in eye tracking; no headset or eye tracker tried yet.
 - 2026-11-19 — VR leaning peeks (lead-vr): tilting your head sideways past 20 degrees for a quarter second asks CDDA to peek around that corner; during the peek, Y and the frame key bring you back to your body's square, not the peeked one.

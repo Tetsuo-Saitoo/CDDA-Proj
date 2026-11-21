@@ -1755,10 +1755,7 @@ func _setup_hud() -> void:
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
-	hud = Label.new()
-	hud.position = Vector2(10, 50)   # under the compass's hostile markers
-	hud.add_theme_color_override("font_outline_color", Color.BLACK)
-	hud.add_theme_constant_override("outline_size", 4)
+	hud = hud_label()
 	layer.add_child(hud)
 	compass = Compass.new()
 	compass.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -2143,7 +2140,7 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
-	var help := _help()
+	var help := _help() if hud_settings.key_help else KEY_HELP_SHORT
 	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
 		status = LiveSession.boot_text(live.boot_info())
 	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
@@ -2153,13 +2150,34 @@ func _process(_delta: float) -> void:
 		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
 				vr_perf.last_line])
 	if live != null:
-		lines.append(_act_help())
+		if hud_settings.key_help:
+			lines.append(_act_help())
 		lines.append("in hands: " + _wielded_name())
 	# messages: hud_view's feed
 	hud.text = "\n".join(lines)
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
-	hud_view.avoid(Rect2(hud.global_position, hud.get_combined_minimum_size()) if hud.visible else Rect2())
+	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
+
+
+## The key help when F1 > HUD > Key help is off.
+const KEY_HELP_SHORT := "Esc back / menu  F1 keys, HUD, key help"
+
+
+## The status and controls text along the top: as wide as the window, under the compass's hostile markers, wrapped
+## so a small window shows all of it (the user, 2026-11-20).
+static func hud_label() -> Label:
+	var l := Label.new()
+	l.name = "HudText"
+	l.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	l.offset_left = 10
+	l.offset_right = -12
+	l.offset_top = 50
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 4)
+	return l
 
 
 ## The view's key line, from the current bindings.

@@ -18,6 +18,11 @@ signal quit_to_menu   # "Save and quit to menu" pressed (main.gd: CDDA's save an
 
 const SLOTS := 2
 const PAD_SLOTS := 2
+const MARGIN := Vector2(60, 50)          # px around the menu; less on a small window (MARGIN_SHARE of it)
+const MARGIN_SHARE := Vector2(0.047, 0.07)
+const SETTINGS_SHARE := 0.45   # of the menu's height, at most, for the settings rows (the rest: the key list)
+const LIST_MIN_H := 80.0       # px the key list (or the Cheats page) keeps at least, when the window allows
+const LABEL_MIN_W := 160.0     # an action's text wraps down to this
 const PAD_SLOT := SLOTS   # slot index of the first pad column (more bindings than columns show as +N)
 const LAST_SLOT := SLOTS + PAD_SLOTS - 1
 const WARN := Color(1.0, 0.75, 0.3)
@@ -37,6 +42,7 @@ var _compass_value: Label
 var debug_check: CheckBox
 var mood_check: CheckBox
 var hurt_check: CheckBox
+var key_help_check: CheckBox   # HUD row: the key help along the top, or one short line
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
 var feed_checks := {}
@@ -79,6 +85,8 @@ var cheats_forced := false:
 			_update_cheats_button()
 var _title: Label
 var _scroll: ScrollContainer
+var _settings_scroll: ScrollContainer   # the HUD / options rows: scroll when taller than SETTINGS_SHARE of the menu
+var _settings: VBoxContainer
 ## The slot picked with the pad: (row in InputActions.ACTIONS, slot); row -1 = none picked yet.
 var cursor := Vector2i(-1, PAD_SLOT)
 var _axis_held := {}   # stick axis -> -1 / 0 / 1 as last pushed: one step per push
@@ -92,10 +100,10 @@ const KEYS_TITLE := ("Keys: click a slot, then press a key or mouse button (pad 
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	offset_left = 60
-	offset_top = 50
-	offset_right = -60
-	offset_bottom = -50
+	offset_left = MARGIN.x
+	offset_top = MARGIN.y
+	offset_right = -MARGIN.x
+	offset_bottom = -MARGIN.y
 	visible = false
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.08, 0.08, 0.1, 0.96)
@@ -106,12 +114,22 @@ func _init() -> void:
 	add_child(box)
 	var title := Label.new()
 	title.text = KEYS_TITLE
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # a narrow window wraps it, not the menu
 	_title = title
 	box.add_child(title)
+	_settings_scroll = ScrollContainer.new()
+	_settings_scroll.name = "SettingsScroll"
+	_settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(_settings_scroll)
+	_settings = VBoxContainer.new()
+	_settings.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_settings_scroll.add_child(_settings)
+	_settings.minimum_size_changed.connect(_fit_settings)
+	resized.connect(_fit_settings)
 	var scroll := ScrollContainer.new()
 	_scroll = scroll
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO   # the key columns scroll sideways on a narrow window
 	box.add_child(scroll)
 	var grid := GridContainer.new()
 	grid.columns = 1 + SLOTS + PAD_SLOTS
@@ -129,6 +147,8 @@ func _init() -> void:
 		var l := Label.new()
 		l.text = a[2]
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # a narrow window wraps the text, not the menu
+		l.custom_minimum_size = Vector2(LABEL_MIN_W, 0)
 		grid.add_child(l)
 		var row: Array[Button] = []
 		for s in SLOTS + PAD_SLOTS:
@@ -139,7 +159,7 @@ func _init() -> void:
 			grid.add_child(b)
 			row.append(b)
 		_buttons[a[0]] = row
-	var bar := HBoxContainer.new()
+	var bar := HFlowContainer.new()   # wraps on a narrow window
 	box.add_child(bar)
 	_status = Label.new()
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -175,7 +195,7 @@ func show_quit_to_menu(on: bool) -> void:
 func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	hud = settings
 	hud_path = path
-	var row := HBoxContainer.new()
+	var row := HFlowContainer.new()
 	var l := Label.new()
 	l.text = "HUD   compass opacity"
 	row.add_child(l)
@@ -212,6 +232,13 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	flash_check.button_pressed = settings.weather_flash
 	flash_check.toggled.connect(_on_weather_flash)
 	row.add_child(flash_check)
+	key_help_check = CheckBox.new()
+	key_help_check.text = "Key help"
+	key_help_check.tooltip_text = "The keys along the top of the screen. Off: one short line (this menu lists them all)."
+	key_help_check.focus_mode = Control.FOCUS_NONE
+	key_help_check.button_pressed = settings.key_help
+	key_help_check.toggled.connect(_on_key_help)
+	row.add_child(key_help_check)
 	debug_check = CheckBox.new()
 	debug_check.text = "Debug: cheats page"
 	debug_check.tooltip_text = "Shows the Cheats button here (testing only; off by default)."
@@ -219,9 +246,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	debug_check.button_pressed = settings.debug_cheats
 	debug_check.toggled.connect(_on_debug_cheats)
 	row.add_child(debug_check)
-	_box.add_child(row)
-	_box.move_child(row, 1)
-	var feed_row := HBoxContainer.new()
+	_put_setting(row, 0)
+	var feed_row := HFlowContainer.new()
 	var fl := Label.new()
 	fl.text = "Messages shown"
 	feed_row.add_child(fl)
@@ -234,9 +260,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		c.toggled.connect(_on_feed_group.bind(g))
 		feed_checks[g] = c
 		feed_row.add_child(c)
-	_box.add_child(feed_row)
-	_box.move_child(feed_row, 2)
-	var opt_row := HBoxContainer.new()
+	_put_setting(feed_row, 1)
+	var opt_row := HFlowContainer.new()
 	var ol := Label.new()
 	ol.text = "Look speed"
 	opt_row.add_child(ol)
@@ -269,9 +294,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	opt_row.add_child(vl)
 	fov_slider = _option_slider(opt_row, HudSettings.FOVS, 1.0, settings.fov, &"fov")
 	fov_slider.tooltip_text = "How wide the view is, in degrees across the screen's height."
-	_box.add_child(opt_row)
-	_box.move_child(opt_row, 3)
-	var disp_row := HBoxContainer.new()
+	_put_setting(opt_row, 2)
+	var disp_row := HFlowContainer.new()
 	var sl := Label.new()
 	sl.text = "3D resolution"
 	disp_row.add_child(sl)
@@ -298,9 +322,8 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	weather_pick.select(clampi(settings.weather_quality, 0, WeatherView.QUALITY_NAMES.size() - 1))
 	weather_pick.item_selected.connect(func(i: int) -> void: set_option(&"weather_quality", i))
 	disp_row.add_child(weather_pick)
-	_box.add_child(disp_row)
-	_box.move_child(disp_row, 4)
-	var sound_row := HBoxContainer.new()
+	_put_setting(disp_row, 3)
+	var sound_row := HFlowContainer.new()
 	var vol := Label.new()
 	vol.text = "Volume"
 	sound_row.add_child(vol)
@@ -312,8 +335,7 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	ambience_slider = _option_slider(sound_row, HudSettings.VOLUMES, 0.05, settings.ambience_volume,
 			&"ambience_volume")
 	ambience_slider.tooltip_text = "Rain, wind and thunder, under the volume on the left."
-	_box.add_child(sound_row)
-	_box.move_child(sound_row, 5)
+	_put_setting(sound_row, 4)
 	var eye_row := HFlowContainer.new()   # eye tracking: one box per feature (HudSettings.EYE_FEATURES)
 	var el := Label.new()
 	el.text = "Eye tracking"
@@ -328,8 +350,7 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		c.toggled.connect(_on_eye.bind(id))
 		eye_checks[id] = c
 		eye_row.add_child(c)
-	_box.add_child(eye_row)
-	_box.move_child(eye_row, 6)
+	_put_setting(eye_row, 5)
 	var clock_row := HFlowContainer.new()   # real time or turns (ClockControl)
 	var tl := Label.new()
 	tl.text = "Time"
@@ -338,8 +359,7 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 			"On: the game runs on its own, a second a turn. Off: it waits for you each turn. VR always runs in real time.")
 	auto_pause_check = _clock_box(clock_row, "Pause when a hostile comes into view", settings.auto_pause,
 			_on_auto_pause, "Real time only. The time pause key goes on.")
-	_box.add_child(clock_row)
-	_box.move_child(clock_row, 7)
+	_put_setting(clock_row, 6)
 	_show_eyes()
 	_show_compass_value()
 	_show_options()
@@ -348,7 +368,7 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 ## G6: the Hints row under the options: show hints on / off, and "Show hints again" (Hints.reset).
 func add_hints(h: Hints) -> void:
 	hints = h
-	var row := HBoxContainer.new()
+	var row := HFlowContainer.new()
 	hints_check = CheckBox.new()
 	hints_check.text = "Hints"
 	hints_check.tooltip_text = "Short tips the first time you meet something (each shows once)."
@@ -363,11 +383,39 @@ func add_hints(h: Hints) -> void:
 		hints.reset()
 		_status.text = "Each hint shows once more.")
 	row.add_child(hints_again)
-	_box.add_child(row)
-	_box.move_child(row, mini(6, _box.get_child_count() - 1))
+	_put_setting(row, 5)
 
 
-func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
+## A settings row at place `at` among them (clamped: rows come in any order).
+func _put_setting(row: Control, at: int) -> void:
+	_settings.add_child(row)
+	_settings.move_child(row, mini(at, _settings.get_child_count() - 1))
+
+
+## The settings rows take their own height, but at most SETTINGS_SHARE of the menu: on a small window they scroll
+## and the key list (or the Cheats page) keeps the rest.
+func _fit_settings() -> void:
+	if _settings == null:
+		return
+	var avail := size.y   # the menu's height when nothing in it overflows (not its size: that grows with it)
+	if is_inside_tree():
+		var area := get_parent_area_size()
+		var m := Vector2(minf(MARGIN.x, roundf(area.x * MARGIN_SHARE.x)), minf(MARGIN.y, roundf(area.y * MARGIN_SHARE.y)))
+		if not is_equal_approx(offset_left, m.x) or not is_equal_approx(offset_top, m.y):
+			offset_left = m.x
+			offset_right = -m.x
+			offset_top = m.y
+			offset_bottom = -m.y
+		avail = area.y - 2.0 * m.y
+	var want := _settings.get_combined_minimum_size().y
+	var cap := want
+	if avail > 0.0:   # the title, buttons and margins keep their room, and the list LIST_MIN_H
+		var others := get_combined_minimum_size().y - _settings_scroll.get_combined_minimum_size().y
+		cap = maxf(minf(avail * SETTINGS_SHARE, avail - others - LIST_MIN_H), 60.0)
+	_settings_scroll.custom_minimum_size.y = minf(want, cap)
+
+
+func _option_slider(row: Container, limits: Vector2, step: float, value: float, key: StringName) -> HSlider:
 	var s := HSlider.new()
 	s.min_value = limits.x
 	s.max_value = limits.y
@@ -385,7 +433,7 @@ func _option_slider(row: HBoxContainer, limits: Vector2, step: float, value: flo
 	return s
 
 
-func _option_check(row: HBoxContainer, text: String, tip: String, key: StringName, on: bool) -> CheckBox:
+func _option_check(row: Container, text: String, tip: String, key: StringName, on: bool) -> CheckBox:
 	var c := CheckBox.new()
 	c.text = text
 	c.tooltip_text = tip
@@ -475,6 +523,14 @@ func _on_debug_cheats(on: bool) -> void:
 	if err != OK:
 		_status.text = "Debug setting not saved: %s" % error_string(err)
 	_update_cheats_button()
+	hud_changed.emit()
+
+
+func _on_key_help(on: bool) -> void:
+	hud.key_help = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Key help setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 
@@ -584,6 +640,7 @@ func _show_compass_value() -> void:
 
 func open() -> void:
 	visible = true
+	_fit_settings()   # the window may have changed while it was shut
 	if compass_slider != null:
 		compass_slider.set_value_no_signal(hud.compass_opacity)
 		_show_compass_value()
