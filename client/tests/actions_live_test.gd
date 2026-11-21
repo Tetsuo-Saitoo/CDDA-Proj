@@ -11,7 +11,8 @@ extends SceneTree
 ## live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
 ## puts it away. Then F3's classic view of the map around the player. Near the end, first aid on a named body part
-## (_first_aid_live). Uses this run's own CDDA folder, never the player's saves.
+## (_first_aid_live). Last, real time and turns (_real_time_live). Uses this run's own CDDA folder, never the
+## player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -135,6 +136,7 @@ func _run() -> void:
 		await _vise_live()
 		await _first_aid_live()
 		await _esc_live()
+		await _real_time_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -380,6 +382,184 @@ func _lean_blocked_live(lp: Variant, home: Vector3i) -> void:
 	await _until(in_loop, ASK_TIMEOUT_MS, true)
 	_live.cheat_teleport(home)
 	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## Real time or turns in the running game (lead-ui's switch: the real-time key, the pause key, the F1 Time row and
+## the HUD's time line; skipped, said so, on a client without them), with the monsters frozen. The game is in turns:
+## nothing passes while the player does nothing. The real-time key turns real time on (saved in this run's hud.cfg,
+## the F1 box follows): turns pass by themselves, about one a second, and in first person a step and a lean's peek
+## still work. A new hostile in view pauses it: the HUD says so with the reason and the key, nothing passes, and the
+## pause key goes on. With the F1 row's auto-pause off the next hostile pauses nothing. Then the player's own pause
+## and the real-time key again: back in turns with the pause lifted, and a queued action takes its turn as before.
+func _real_time_live() -> void:
+	var km := _main.key_menu
+	if not InputMap.has_action(&"real_time_toggle") or not InputMap.has_action(&"time_pause") \
+			or not _live.has_method("set_real_time") or not "clock" in _main.hud_data \
+			or not km.get("auto_pause_check") is CheckBox or not km.get("real_time_check") is CheckBox:
+		print("  (no real-time switch in this client: not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	var hud_line := func() -> String: return str(_main.hud_data.get("clock"))
+	var turn_now := func() -> int: return _main.world.snapshot.turn
+	var path: String = UserFiles.at(km.hud_path)
+	var box := km.get("real_time_check") as CheckBox
+	var ap := km.get("auto_pause_check") as CheckBox
+	var toggle_key := InputActions.prompt_of(&"real_time_toggle")
+	var pause_key := InputActions.prompt_of(&"time_pause")
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	if not _live.range_info().get("ai_frozen", false):
+		_check(await _op(func() -> void: _cp.set_frozen(true), "Freeze") == "", "monsters frozen")
+	var home: Vector3i = _main.world.snapshot.player_pos
+	# turns first
+	var t0: int = turn_now.call()
+	await create_timer(2.5).timeout
+	var waits := func() -> bool: return hud_line.call().contains("waits")
+	_check(_live.clock().get("real_time") == false and _main.hud_settings.get("real_time") == false
+			and turn_now.call() == t0 and await _until(waits, 3000, false),
+			"time: the game is in turns: nothing passes in 2.5 s with no input, and the HUD says \"%s\"" % hud_line.call())
+	# the real-time key
+	root.push_input(_key_of(&"real_time_toggle"))
+	var real := func() -> bool: return _live.clock().get("real_time") == true
+	var on := await _until(real, ASK_TIMEOUT_MS, false)
+	var t1: int = turn_now.call()
+	var ms1 := Time.get_ticks_msec()
+	var four := func() -> bool: return turn_now.call() >= t1 + 4
+	var ran := await _until(four, 20000, false)
+	var rate: float = (turn_now.call() - t1) * 1000.0 / maxf(Time.get_ticks_msec() - ms1, 1.0)
+	var runs := func() -> bool: return hud_line.call().contains("runs")
+	_check(on and _clock_saved(path, "real_time", true) and path.contains("test-runs") and box.button_pressed
+			and ran and rate > 0.4 and rate < 2.5 and await _until(runs, 3000, false),
+			"time: %s turns real time on: saved under [clock] in this run's hud.cfg, the F1 box ticked, turns pass by themselves (%.2f a second) and the HUD says \"%s\" (on %s, box %s; %s)"
+			% [toggle_key, rate, hud_line.call(), on, box.button_pressed, path])
+	# a step and a lean's peek while time runs
+	var lp: Variant = _main.get("lean_peek")
+	if lp == null or not InputMap.has_action(&"lean_right") or not _main._fp_active() or _main.view_mode != "first":
+		print("  (no lean keys in this client, or not in first person: a step and a lean in real time not checked)")
+	else:
+		var stepped := false
+		for act: StringName in [&"move_back", &"move_left", &"move_right"]:
+			if stepped:
+				break
+			Input.action_press(act)
+			var moved := func() -> bool: return _main.world.snapshot.player_pos != home
+			stepped = await _until(moved, 4000, false)
+			Input.action_release(act)
+		await _until(in_loop, ASK_TIMEOUT_MS, true)
+		_live.cheat_teleport(home)
+		var at_home := func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call()
+		await _until(at_home, OP_TIMEOUT_MS, true)
+		var yaw0: float = _main.fp.yaw
+		var pitch0: float = _main.fp.pitch
+		var peeked := false
+		var closed := false
+		for yaw: float in [yaw0, yaw0 + PI / 2.0, yaw0 + PI, yaw0 - PI / 2.0]:   # a side that is free to peek from
+			if peeked:
+				break
+			_main.fp.set_look(yaw, pitch0)
+			await process_frame
+			Input.action_press(&"lean_right")
+			var open := func() -> bool: return lp.peeking()
+			var away := func() -> bool: return _main.world.snapshot.player_pos != home and not _main.world.busy()
+			peeked = await _until(open, 4000, false) and await _until(away, OP_TIMEOUT_MS, false)
+			Input.action_release(&"lean_right")
+			var shut := func() -> bool: return not lp.peeking() and at_home.call()
+			closed = await _until(shut, ASK_TIMEOUT_MS, false)
+		_main.fp.set_look(yaw0, pitch0)
+		_check(stepped and peeked and closed and real.call(),
+				"time: in real time a move key still steps and the lean key still opens CDDA's peek and closes it (stepped %s, peeked %s, closed %s; now %s)"
+				% [stepped, peeked, closed, _main.world.snapshot.player_pos])
+	# a new hostile in view pauses real time
+	var spawned := await _spawn_hostile()
+	var is_paused := func() -> bool: return _live.clock().get("paused") == true
+	var stopped := spawned and await _until(is_paused, 15000, false)
+	var why := str(_live.clock().get("pause_reason"))
+	var says := func() -> bool: return hud_line.call().contains("PAUSED")
+	var said := await _until(says, 3000, false)
+	var line: String = hud_line.call()
+	await create_timer(1.0).timeout
+	var t2: int = turn_now.call()
+	var queued := _live.queued_actions()
+	Input.action_press(&"move_back")   # a step key during the pause: reported, not judged
+	await create_timer(0.3).timeout
+	Input.action_release(&"move_back")
+	queued = _live.queued_actions() - queued
+	await create_timer(2.2).timeout
+	_check(ap.button_pressed and stopped and why == "hostile spotted" and said and line.contains(why)
+			and line.contains(pause_key) and turn_now.call() == t2,
+			"time: a zombie spawned in view pauses real time (\"%s\"): the HUD says \"%s\" and nothing passes in 2.5 s (spawned %s, paused %s)"
+			% [why, line, spawned, stopped])
+	var before_go: Vector3i = _main.world.snapshot.player_pos
+	root.push_input(_key_of(&"time_pause"))
+	var free := func() -> bool: return _live.clock().get("paused") == false
+	var went := await _until(free, ASK_TIMEOUT_MS, false)
+	var t3: int = turn_now.call()
+	var two := func() -> bool: return turn_now.call() >= t3 + 2
+	_check(went and await _until(two, 10000, false) and await _until(runs, 3000, false),
+			"time: %s goes on: turns pass again and the HUD says \"%s\"" % [pause_key, hud_line.call()])
+	print("    (a step key pressed during the pause: %d queued; after going on the player is on %s, was on %s)"
+			% [queued, _main.world.snapshot.player_pos, before_go])
+	# the F1 Time row: auto-pause off, and the next hostile pauses nothing
+	var f1 := InputEventKey.new()
+	f1.keycode = InputActions.MENU_KEY
+	f1.physical_keycode = InputActions.MENU_KEY
+	f1.pressed = true
+	root.push_input(f1)
+	var shown: bool = km.visible and ap.is_visible_in_tree() and box.is_visible_in_tree()
+	ap.button_pressed = false   # as a click: toggled -> saved -> on the game
+	var off_saved := _clock_saved(path, "auto_pause", false)
+	root.push_input(_esc_key())
+	var unarmed := func() -> bool: return not _live.auto_pause()
+	var off := await _until(unarmed, ASK_TIMEOUT_MS, false)
+	var more := await _spawn_hostile()
+	var t4: int = turn_now.call()
+	var four_more := func() -> bool: return turn_now.call() >= t4 + 4
+	var on_past := more and await _until(four_more, 20000, false)
+	_check(shown and off_saved and off and on_past and not is_paused.call(),
+			"time: F1's Time row shows both boxes; with \"%s\" off (saved) another zombie in view pauses nothing: %d turns on (shown %s, spawned %s, paused %s)"
+			% [ap.text, turn_now.call() - t4, shown, more, is_paused.call()])
+	ap.button_pressed = true
+	var armed := func() -> bool: return _live.auto_pause()
+	_check(_clock_saved(path, "auto_pause", true) and await _until(armed, ASK_TIMEOUT_MS, false),
+			"time: the box ticked again: auto-pause is back on (saved)")
+	# the player's own pause, then back to turns
+	root.push_input(_key_of(&"time_pause"))
+	var own := await _until(is_paused, ASK_TIMEOUT_MS, false) and await _until(says, 3000, false)
+	var own_line: String = hud_line.call()
+	root.push_input(_key_of(&"real_time_toggle"))
+	var turns_again := func() -> bool: return not real.call() and not is_paused.call()
+	var back := await _until(turns_again, ASK_TIMEOUT_MS, false)
+	await create_timer(1.0).timeout
+	var t5: int = turn_now.call()
+	await create_timer(2.5).timeout
+	var still: bool = turn_now.call() == t5
+	_live.queue_action("pause")
+	var later := func() -> bool: return turn_now.call() > t5
+	_check(own and back and _clock_saved(path, "real_time", false) and not box.button_pressed and still
+			and await _until(later, OP_TIMEOUT_MS, true) and await _until(waits, 3000, false),
+			"time: paused with %s (\"%s\"), then %s again: back in turns with the pause lifted (saved, the F1 box cleared); nothing passes by itself, a queued action takes its turn, and the HUD says \"%s\" (paused %s, back %s, still %s)"
+			% [pause_key, own_line, toggle_key, hud_line.call(), own, back, still])
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	_live.cheat_teleport(home)
+	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## A zombie on a free square three squares from the player; false when none of eight squares took one.
+func _spawn_hostile() -> bool:
+	var here: Vector3i = _main.world.snapshot.player_pos
+	for d: Vector3i in [Vector3i(3, 0, 0), Vector3i(-3, 0, 0), Vector3i(0, 3, 0), Vector3i(0, -3, 0), Vector3i(3, 3, 0),
+			Vector3i(-3, -3, 0), Vector3i(3, -3, 0), Vector3i(-3, 3, 0)]:
+		var id := _live.range_spawn_monster("mon_zombie", here + d)
+		var answered := func() -> bool: return _done.has(id)
+		if id > 0 and await _until(answered, OP_TIMEOUT_MS, true) and _done[id] == "":
+			return true
+	return false
+
+
+## Whether the HUD settings file at `path` has [clock] `key` saved as the bool `want`.
+func _clock_saved(path: String, key: String, want: bool) -> bool:
+	var cfg := ConfigFile.new()
+	var v: Variant = cfg.get_value("clock", key, null) if cfg.load(path) == OK else null
+	return v is bool and v == want
 
 
 ## A world position seen from above (x, z).
