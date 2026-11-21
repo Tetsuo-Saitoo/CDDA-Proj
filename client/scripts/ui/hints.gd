@@ -67,12 +67,15 @@ var _left := 0.0
 var _label: Label
 
 
+const TOP := 44.0   # px from the top, under the compass; main moves it below the HUD's top right marks
+
+
 func _init() -> void:
 	name = "Hints"
 	set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	offset_right = -12
-	offset_top = 44
+	offset_top = TOP
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_label = Label.new()
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

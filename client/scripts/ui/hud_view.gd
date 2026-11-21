@@ -227,6 +227,16 @@ func _layout() -> void:
 ## `box`: the developer status lines' text (main.gd's top-left label, in this view's canvas; empty while hidden). The
 ## warning lines go just under it while their text (centred) would overlap it, else back under the compass. A box
 ## reaching down the screen pushes them no lower than the bottom edge: they stay in sight.
+## Where the top right marks (the time line, the cheats) end, in px from the top; 0 when both are empty. The
+## hints go under them.
+func marks_bottom() -> float:
+	var b := 0.0
+	for m: Label in [clock_mark, cheat_mark]:
+		if m.visible and not m.text.is_empty():
+			b = maxf(b, m.position.y + maxf(m.size.y, m.get_combined_minimum_size().y))
+	return b
+
+
 func avoid(box: Rect2) -> void:
 	var top := WARN_TOP
 	if not warn.text.is_empty() and box.has_area():

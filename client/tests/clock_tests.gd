@@ -82,8 +82,8 @@ func _test_apply() -> void:
 	s.auto_pause = false
 	var on := ClockControl.wanted(s, false)
 	_check.call(flat == {"real_time": false, "auto_pause": true} and vr["real_time"] == true
-			and on == {"real_time": true, "auto_pause": false},
-			"clock: the flat screen follows the switch, VR always runs in real time")
+			and vr["auto_pause"] == false and on == {"real_time": true, "auto_pause": false},
+			"clock: the flat screen follows the switch, VR always runs in real time (no auto-pause yet)")
 	var g := FakeLive.new()
 	var took := ClockControl.apply(g, s, false)
 	var first := g.real_time and not g.auto
@@ -129,11 +129,21 @@ func _test_text() -> void:
 	var v := HudView.new()
 	v.data = d
 	d.set_clock(hostile)
+	d.set_cheats({"invincible": true})
 	var shown: bool = v.clock_mark.text == hostile and v.cheat_mark.position.y > 8.0
+	var below: bool = v.marks_bottom() >= v.cheat_mark.position.y + 20.0 and v.marks_bottom() <= 100.0
 	d.set_clock("")
 	shown = shown and v.clock_mark.text == "" and v.cheat_mark.position.y == 8.0
+	d.set_cheats({})
+	shown = shown and below and v.marks_bottom() == 0.0
 	v.free()
-	_check.call(shown, "clock: the HUD view shows the time line top right, the cheats marker under it")
+	_check.call(shown, "clock: the HUD view shows the time line top right, the cheats marker under it, the hints below")
+	_check.call(ClockControl.paused({"real_time": true, "paused": true}) and not ClockControl.paused({"paused": true})
+			and not ClockControl.paused({"real_time": true, "paused": false}) and ClockControl.held_note().contains("go on"),
+			"clock: actions are held back only while real time is paused, with a note how to go on")
+	var main_src := FileAccess.get_file_as_string("res://scripts/main.gd")
+	_check.call(main_src.count("_held_by_pause()") >= 7,
+			"clock: main drops walking, hand and key actions, stairs, use, doors and the peek while paused")
 
 
 func _test_live() -> void:

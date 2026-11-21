@@ -10,9 +10,10 @@ const TOGGLE := &"real_time_toggle"
 const PAUSE := &"time_pause"
 
 
-## The clock the game should have: {real_time, auto_pause}.
+## The clock the game should have: {real_time, auto_pause}. VR never auto-pauses for now: only the client resumes,
+## and VR has no way to yet (lead-qa, 2026-11-20); lead-vr's menu row brings it.
 static func wanted(settings: HudSettings, vr: bool) -> Dictionary:
-	return {"real_time": vr or settings.real_time, "auto_pause": settings.auto_pause}
+	return {"real_time": vr or settings.real_time, "auto_pause": settings.auto_pause and not vr}
 
 
 ## Puts `wanted` on a running game (live: LiveSession or a stand-in with set_real_time, set_auto_pause, set_paused
@@ -39,6 +40,17 @@ static func toggle_pause(live: Object) -> String:
 	if not live.set_paused(not paused):
 		return "The game didn't take the pause."
 	return "Time runs again." if paused else "Paused. %s: go on." % InputActions.prompt_of(PAUSE)
+
+
+## Whether `clock` (LiveSession.clock()) is real time, paused: nothing the player does now would happen until it
+## goes on.
+static func paused(clock: Dictionary) -> bool:
+	return clock.get("real_time") == true and clock.get("paused") == true
+
+
+## The note when an action is dropped because time is paused.
+static func held_note() -> String:
+	return "Time is paused (%s: go on)." % InputActions.prompt_of(PAUSE)
 
 
 ## The note when the toggle flips the flat screen's mode to `on`.

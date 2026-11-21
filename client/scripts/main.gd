@@ -22,6 +22,7 @@ extends Node3D
 
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
+const PAUSE_NOTE_MS := 1500   # a held move key repeats the "time is paused" note no faster
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
 ## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
@@ -119,6 +120,7 @@ var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
 var _log := PackedStringArray()
+var _pause_note_ms := -PAUSE_NOTE_MS   # the last "time is paused" note for a dropped action (_held_by_pause)
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
@@ -1252,6 +1254,8 @@ func _live_action(event: InputEvent) -> bool:
 ## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
 ## isn't sent.
 func _queue_act(act: String) -> bool:
+	if _held_by_pause():
+		return false
 	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
 		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
@@ -1393,6 +1397,8 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
+			return false
+		if _held_by_pause():
 			return false
 		for a in acts:
 			live.queue_action(a)
@@ -1598,6 +1604,8 @@ func _pour_target() -> Dictionary:
 func _use_tap() -> void:
 	if grab.take_hover() or live == null or not _in_main_loop():
 		return
+	if _held_by_pause():
+		return
 	grab.ask = {}
 	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
 
@@ -1637,7 +1645,7 @@ func _reach_square() -> Variant:
 
 ## A door leaf crossed its threshold (live): queue CDDA's open / close; its "where?" prompt is answered for it.
 func _on_door_wants(square: Vector3i, open: bool) -> void:
-	if live == null or world.snapshot == null or not _in_main_loop():
+	if live == null or world.snapshot == null or not _in_main_loop() or _held_by_pause():
 		return
 	if live.can_act_at():   # CDDA takes exactly this square; one it refuses never falls back to its own pick
 		live.open_at(open, square, world.snapshot.player_pos)
@@ -1662,6 +1670,9 @@ func _fp_live_step(now: bool) -> void:
 		return
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
+		return
+	if _held_by_pause():
+		_step_ms = t   # a held key asks again at the step rate, not every frame
 		return
 	live.queue_action(OCT_ACTIONS[_octant(mv)])
 	_step_ms = t
@@ -1895,7 +1906,7 @@ func _eye_view_step(now_ms: int) -> void:
 	if live != null and world.snapshot != null:
 		var sq: Variant = lean_peek.peek_square(now_ms, _in_main_loop(), world.snapshot.player_pos)
 		if sq != null:
-			lean_peek.sent(live.queue_action_at("peek", sq))
+			lean_peek.sent(not _held_by_pause() and live.queue_action_at("peek", sq))
 	if fp == null:
 		return
 	var look: Variant = null
@@ -1953,6 +1964,19 @@ func toggle_time_pause() -> String:
 	eye_pause.forget()   # the pause (or going on) is the player's now
 	_clock_ms = -1
 	return ClockControl.toggle_pause(live)
+
+
+## Real time paused (the pause key, or a hostile's auto-pause): the game takes no actions, so one sent now would wait
+## and run the moment time goes on, toward whatever stopped it (lead-qa, 2026-11-20). The main loop's actions are
+## dropped instead and a note says how to go on. True while paused.
+func _held_by_pause() -> bool:
+	if live == null or live.state != "running" or not ClockControl.paused(live.clock()):
+		return false
+	var t := Time.get_ticks_msec()
+	if t - _pause_note_ms >= PAUSE_NOTE_MS:
+		_pause_note_ms = t
+		grab.flash(ClockControl.held_note())
+	return true
 
 
 ## The HUD's time line, twice a second while a game runs.
@@ -2158,6 +2182,7 @@ func _process(_delta: float) -> void:
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
 	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
+	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
 
 
 ## The key help when F1 > HUD > Key help is off.
