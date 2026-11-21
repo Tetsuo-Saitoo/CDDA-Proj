@@ -11,8 +11,8 @@ extends SceneTree
 ## live game.
 ## Then the off hand: H holds a kit item (water when it pours, else a knife), holding E pours a liquid out, Shift+H
 ## puts it away. Then F3's classic view of the map around the player. Near the end, first aid on a named body part
-## (_first_aid_live). Last, real time and turns (_real_time_live). Uses this run's own CDDA folder, never the
-## player's saves.
+## (_first_aid_live). Last, real time and turns (_real_time_live) and the screen in a small window
+## (_small_window_live). Uses this run's own CDDA folder, never the player's saves.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda, or --cdda=<folder>). ~3 min. From the repo
 ## root:
 ##   godot --headless --path client --script res://tests/actions_live_test.gd -- --live
@@ -137,6 +137,7 @@ func _run() -> void:
 		await _first_aid_live()
 		await _esc_live()
 		await _real_time_live()
+		await _small_window_live()
 	print("  what each key did:")
 	for line in _seen:
 		print("    " + line)
@@ -541,6 +542,147 @@ func _real_time_live() -> void:
 	await _until(in_loop, ASK_TIMEOUT_MS, true)
 	_live.cheat_teleport(home)
 	await _until(func() -> bool: return _main.world.snapshot.player_pos == home and in_loop.call(), OP_TIMEOUT_MS, true)
+
+
+## Small windows (lead-ui's layout; skipped, said so, on a client without it). The game's window is made 1280x720,
+## then 800x450, and each time: the HUD's text along the top wraps and stays in the window, and a warning (put into
+## HudData by hand: only its place is checked) sits under it, in the window; the F1 menu fits the window, and its
+## settings rows and its key list scroll to their last row; with Key help off (saved in this run's hud.cfg) the text
+## is shorter and has the one short line; the Cheats page fits and scrolls to its last row; the inventory's list
+## fits and its picked last row is in sight. Then the window is as it was.
+func _small_window_live() -> void:
+	var km := _main.key_menu
+	var lt: Variant = load("res://tests/layout_tests.gd") if ResourceLoader.exists("res://tests/layout_tests.gd") else null
+	var kh := km.get("key_help_check") as CheckBox
+	var ss := km.get("_settings_scroll") as ScrollContainer
+	var fit := _main.request_ui.get("_fit_box") as ScrollContainer
+	if lt == null or kh == null or ss == null or fit == null or not "key_help" in _main.hud_settings:
+		print("  (no small-window layout in this client: not checked)")
+		return
+	var in_loop := func() -> bool: return _main._in_main_loop() and not _main.request_ui.is_showing()
+	await _until(in_loop, ASK_TIMEOUT_MS, true)
+	var hud: Label = _main.hud
+	var hv := _main.hud_view
+	var was: Vector2i = root.size
+	var path: String = UserFiles.at(km.hud_path)
+	var short := str((Main as Script).get_script_constant_map().get("KEY_HELP_SHORT", "?"))
+	var f1 := InputEventKey.new()
+	f1.keycode = InputActions.MENU_KEY
+	f1.physical_keycode = InputActions.MENU_KEY
+	f1.pressed = true
+	for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
+		var tag := "%dx%d" % [s.x, s.y]
+		root.size = s
+		await _frames(4)
+		var win := Rect2(Vector2.ZERO, Vector2(s))
+		if Vector2i(_main.get_viewport().get_visible_rect().size) != s:
+			_check(false, "layout %s: the window takes that size (it is %s)" % [tag, _main.get_viewport().get_visible_rect().size])
+			break
+		# the text along the top, and a warning under it
+		var lines := hud.get_line_count()
+		var text_lines := hud.text.count("\n") + 1
+		var r := hud.get_global_rect()
+		_check(win.grow(1.0).encloses(r) and lines > text_lines,
+				"layout %s: the HUD's text wraps and stays in the window (%d lines on screen for %d of text, down to y %.0f)"
+				% [tag, lines, text_lines, r.end.y])
+		var body := hv.get("_body") as Control
+		print("    (%s: the body bars start at y %.0f, the message feed at y %.0f)"
+				% [tag, body.global_position.y if body != null else -1.0, hv.feed.global_position.y])
+		var keep: Array[Dictionary] = _main.hud_data.warnings
+		var fake: Array[Dictionary] = [{"id": "layout", "text": "Layout check", "level": HudData.BAD}]
+		_main.hud_data.warnings = fake
+		_main.hud_data.changed.emit(PackedStringArray(["warnings"]))
+		await _frames(3)
+		var wy: float = hv.warn.global_position.y
+		_check(hv.warn.text.contains("Layout check") and wy >= hud.get_global_rect().end.y and wy + 20.0 <= s.y,
+				"layout %s: a warning sits under the wrapped text, in the window (the warning at y %.0f, the text down to y %.0f)"
+				% [tag, wy, hud.get_global_rect().end.y])
+		_main.hud_data.warnings = keep
+		_main.hud_data.changed.emit(PackedStringArray(["warnings"]))
+		# F1: the menu fits; its settings rows and its key list scroll to their ends
+		root.push_input(f1)
+		await _frames(4)
+		var off: PackedStringArray = lt.outside(km, win)
+		var rows_box := ss.get_child(0) as Control
+		var last_row := rows_box.get_child(rows_box.get_child_count() - 1) as Control
+		var last_key: Button = (km._buttons[InputActions.ACTIONS[-1][0]] as Array)[0]
+		ss.scroll_vertical = int(rows_box.size.y)
+		km._scroll.ensure_control_visible(last_key)
+		await _frames(3)
+		var row_seen: bool = ss.get_global_rect().grow(1.0).encloses(
+				Rect2(last_row.global_position + Vector2(0.0, last_row.size.y - 4.0), Vector2(4.0, 4.0)))
+		var key_seen: bool = km._scroll.get_global_rect().grow(1.0).encloses(last_key.get_global_rect())
+		_check(km.visible and off.is_empty() and ss.size.y >= 60.0 and km._scroll.size.y >= 60.0 and row_seen and key_seen,
+				"layout %s: F1 fits the window; its settings (%.0f px shown of %.0f) scroll to their last row and its keys (%.0f px shown) to the last key (outside the window: %s; row %s, key %s)"
+				% [tag, ss.size.y, rows_box.size.y, km._scroll.size.y, off.slice(0, 3), row_seen, key_seen])
+		# Key help off: one short line
+		kh.button_pressed = false   # as a click: saved, and the text follows
+		var off_saved := _cfg_bool(path, "hud", "key_help", false)
+		root.push_input(_esc_key())
+		await _frames(4)
+		var short_lines := hud.get_line_count()
+		var short_end := hud.get_global_rect().end.y
+		var short_ok: bool = hud.text.contains(short) and short_lines < lines and win.grow(1.0).encloses(hud.get_global_rect())
+		kh.button_pressed = true
+		await _frames(4)
+		_check(not km.visible and off_saved and short_ok and _cfg_bool(path, "hud", "key_help", true)
+				and hud.get_line_count() > short_lines,
+				"layout %s: Key help off (saved under [hud]) leaves the one short line: %d lines down to y %.0f instead of %d; on again (saved): the help is back"
+				% [tag, short_lines, short_end, lines])
+		# the Cheats page
+		root.push_input(f1)
+		await _frames(2)
+		km.show_cheats(true)
+		await _frames(4)
+		var off2: PackedStringArray = lt.outside(km, win)
+		km.cheat_scroll.ensure_control_visible(_cp.monster_id)
+		await _frames(3)
+		var cheat_seen: bool = km.cheat_scroll.get_global_rect().grow(1.0).encloses(_cp.monster_id.get_global_rect())
+		_check(km.showing_cheats() and off2.is_empty() and km.cheat_scroll.size.y >= 60.0 and cheat_seen,
+				"layout %s: the Cheats page fits the window and scrolls to its last row (%.0f px shown; outside the window: %s; row %s)"
+				% [tag, km.cheat_scroll.size.y, off2.slice(0, 3), cheat_seen])
+		km.show_cheats(false)
+		root.push_input(_esc_key())
+		await _frames(2)
+		if km.visible:
+			km.close()
+		# a long list prompt: the picked row stays in sight
+		await _until(in_loop, ASK_TIMEOUT_MS, true)
+		root.push_input(_key_of(&"cdda_inventory"))
+		var listed := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ListRequestWidget
+		if await _until(listed, ASK_TIMEOUT_MS, false):
+			var w := _main.request_ui.widget as ListRequestWidget
+			w.select(w.rows.size() - 1)
+			await _frames(4)
+			var pr: Rect2 = w.rows[w.selected].get_global_rect() if w.selected >= 0 else Rect2()
+			var inner := w.get("_scroll") as ScrollContainer
+			var off3: PackedStringArray = lt.outside(_main.request_ui, win)
+			var in_sight: bool = pr.has_area() and win.encloses(pr) and fit.get_global_rect().grow(1.0).encloses(pr) \
+					and (inner == null or inner.get_global_rect().grow(1.0).encloses(pr))
+			_check(off3.is_empty() and in_sight,
+					"layout %s: the inventory's list (%d rows) fits the window and its picked last row is in sight (the row %s, the panel's box %s; outside the window: %s)"
+					% [tag, w.rows.size(), pr, fit.get_global_rect(), off3.slice(0, 3)])
+		else:
+			_check(false, "layout %s: the inventory opens as a list" % tag)
+		var esc := 0
+		while not in_loop.call() and esc < MAX_ESC:
+			root.push_input(_esc_key())
+			esc += 1
+			await _until(in_loop, 3000, false)
+	root.size = was
+	await _frames(4)
+
+
+func _frames(n: int) -> void:
+	for i in n:
+		await process_frame
+
+
+## Whether the settings file at `path` has [section] `key` saved as the bool `want`.
+func _cfg_bool(path: String, section: String, key: String, want: bool) -> bool:
+	var cfg := ConfigFile.new()
+	var v: Variant = cfg.get_value(section, key, null) if cfg.load(path) == OK else null
+	return v is bool and v == want
 
 
 ## A zombie on a free square three squares from the player; false when none of eight squares took one.

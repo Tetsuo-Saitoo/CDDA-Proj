@@ -233,7 +233,8 @@ func _second_game() -> bool:
 	return true
 
 
-## Run 2: the Load page's Delete button and its confirm. No game is started.
+## Run 2: the Load page's Delete button and its confirm. Then character creation in a small window (_small_chargen),
+## stopped before a character is made.
 func _run_delete() -> void:
 	await _start_main()
 	var menu := _main.main_menu
@@ -263,9 +264,56 @@ func _run_delete() -> void:
 	_check(menu.message == "Deleted %s, and the world %s with them." % [MainMenu.shown(saves[0]), WORLD]
 			and not WORLD in LiveSession.list_worlds(_user_dir) and gone,
 			"Delete removes the character and its empty world (%s; folder gone %s)" % [menu.message, gone])
+	await _small_chargen(menu)
 	_main.queue_free()
 	await process_frame
 	_finish()
+
+
+## Character creation in a small window (lead-ui's layout; skipped, said so, on a client without it): with the
+## window at 800x450 the New game page starts a custom character in a fresh world; the creation screen's panel is
+## inside the window, its content is taller than the panel and scrolls, and scrolled to its end the Start button is
+## in sight. Then the game is stopped (no character is made) and the window is as it was.
+func _small_chargen(menu: MainMenu) -> void:
+	var fit := _main.request_ui.get("_fit_box") as ScrollContainer
+	if fit == null:
+		print("  (no small-window layout in this client: character creation in a small window not checked)")
+		return
+	var was: Vector2i = root.size
+	var s := Vector2i(800, 450)
+	root.size = s
+	menu.show_page("new")
+	menu._world_edit.text = WORLD + "Small"
+	menu._custom.button_pressed = true
+	menu._setup.button_pressed = false
+	_find_button(menu, "Start").pressed.emit()
+	var asked := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ChargenRequestWidget
+	var deadline := Time.get_ticks_msec() + BOOT_TIMEOUT_MS
+	while Time.get_ticks_msec() < deadline and not asked.call() and not _live.state in ["failed", "ended"]:
+		if _live.request.get("kind", "") != "chargen":   # anything asked on the way gets a player's answer
+			_answer_prompt()
+		await create_timer(0.05).timeout
+	for i in 4:
+		await process_frame
+	var shown: bool = asked.call() and Vector2i(_main.get_viewport().get_visible_rect().size) == s
+	_check(shown, "small window: character creation shows at 800x450 (state %s %s; the window is %s)"
+			% [_live.state, _live.error, _main.get_viewport().get_visible_rect().size])
+	if shown:
+		var w := _main.request_ui.widget as ChargenRequestWidget
+		var panel := fit.get_parent() as Control
+		var win := Rect2(Vector2.ZERO, Vector2(s))
+		var in_win := win.grow(1.0).encloses(panel.get_global_rect())
+		var taller := w.size.y > fit.size.y + 1.0
+		fit.scroll_vertical = int(w.size.y)
+		for i in 3:
+			await process_frame
+		var start_seen: bool = w.start_button != null and fit.get_global_rect().grow(1.0).encloses(w.start_button.get_global_rect())
+		_check(in_win and taller and start_seen,
+				"small window: the creation screen's panel is inside the window (%s), its content (%.0f px) scrolls in it (%.0f px), and at the end the Start button is in sight (%s)"
+				% [panel.get_global_rect(), w.size.y, fit.size.y, start_seen])
+	_live.stop()
+	await _until(func() -> bool: return not _live.state in ["booting", "running"], 30000, false)
+	root.size = was
 
 
 ## Waits for range_done of op `id` (0 = refused before sending).

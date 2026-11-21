@@ -33,6 +33,11 @@ var _deltas_off := false
 var _full_after := {"shift": 0, "level": 0}   # full answers _deltas_ok read after a map shift, on another level
 var _veh_off := false
 var _veh_seen := []   # per _vehicles_ok that had vehicles to compare: how many points it compared
+var _drive_keys := false   # _send: driving actions go as step keys through main's input path (lead-world's driving keys)
+var _msg_changes := 0      # changes of the HUD's message feed since _watch_messages
+var _msg_watched := false
+## CDDA's driving actions and the step keys that send them while driving, whichever way the camera faces.
+const DRIVE_STEP := {"UP": &"step_forward", "DOWN": &"step_back", "LEFT": &"step_left", "RIGHT": &"step_right"}
 
 
 func _initialize() -> void:
@@ -180,6 +185,8 @@ func _stairs_live() -> void:
 	await _deltas_ok("back at the arrival square")
 	await _spawn_vehicle_live(start)
 	await _drive_live(start)
+	await _bike_live(start)
+	await _rain_far_live()
 
 
 ## The range's vehicle spawn through the client (the bridge's range_spawn_vehicle; skipped, said so, on a bridge
@@ -238,7 +245,10 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 ## meanwhile, and the whole glide ends on the pose with the ride the identity again (_drive_turn). The player stays
 ## on the car. Where the floor leaves room, LEFT twice steers it off the axis: the node's turn must glide too, and
 ## the car must lie on CDDA's squares at that angle; RIGHT twice steers it back. Then the car is stopped, the
-## controls let go, and the player walks out and goes back to `start`.
+## controls let go, and the player walks out and goes back to `start`. On a client with lead-world's driving keys
+## the controls are taken with CDDA's control key and the car is driven by the step keys with the camera turned off
+## its heading (they must still be CDDA's driving keys); then, on the seat beside the driver's, the key takes
+## nothing and the feed says there are no controls.
 func _drive_live(start: Vector3i) -> void:
 	var vv: VehicleView = _main.vehicles_view
 	var asking := func() -> bool: return _live.request.get("timed", false)   # the main loop's request lists its actions
@@ -312,16 +322,35 @@ func _drive_live(start: Vector3i) -> void:
 			% [step_in, _main.world.snapshot.player_pos])
 	if not seated.call():
 		return
-	_live.queue_action("control_vehicle")
+	# lead-world's driving keys (a client with them): CDDA's control key, and the step keys as CDDA's driving keys
+	var keys: bool = InputMap.has_action(&"cdda_control_vehicle") and _main.has_method("_step_octant")
+	if keys:
+		root.push_input(_key_of(&"cdda_control_vehicle"))
+	else:
+		_live.queue_action("control_vehicle")
 	var driving := func() -> bool: return _player_field("driving") == true
 	var took := await _until_slow(driving, OP_TIMEOUT_MS)
-	_check(took and _player_field("vehicle") == uid, "driving: control_vehicle takes the controls: the snapshot says driving, on that vehicle (%s)"
-			% [_player_field("vehicle")])
+	_check(took and _player_field("vehicle") == uid, "driving: %s takes the controls: the snapshot says driving, on that vehicle (%s)"
+			% [InputActions.prompt_of(&"cdda_control_vehicle") if keys else "control_vehicle", _player_field("vehicle")])
 	if not took:
 		return
+	var yaw0: float = _main.fp.yaw
+	var pitch0: float = _main.fp.pitch
+	var cam_way := ""   # what the forward step key would be by the camera alone
+	if keys:
+		var known := func() -> bool: return _main.world.snapshot.get("player_driving") == true
+		await _until(known, SHOW_TIMEOUT_MS)
+		_drive_keys = true
+		for yaw: float in [PI / 2.0, PI, -PI / 2.0]:   # the camera turned off the car's heading
+			if _main._fp_active() and (cam_way.is_empty() or cam_way == "UP"):
+				_main.fp.set_look(yaw, 0.0)
+				cam_way = _main.OCT_ACTIONS[_main._octant(Vector2(0, 1))]
+		_check(_main.world.snapshot.get("player_driving") == true and not cam_way.is_empty() and cam_way != "UP",
+				"driving: the client's snapshot says driving, and the camera is turned off the car's heading (by the camera alone the forward key would send %s)"
+				% [cam_way if not cam_way.is_empty() else "nothing: not in first person"])
 	vv.set_process(false)   # its glide by hand from here on
 	for n in 2:
-		_live.queue_action("UP")
+		_send("UP")
 	var rolled := 0
 	var bad := []
 	for n in 6:
@@ -363,7 +392,7 @@ func _drive_live(start: Vector3i) -> void:
 				% [again.face_deg if again != null else "?", bad])
 	# stop (back to no speed), let go, walk out
 	for n in 2:
-		_live.queue_action("DOWN")
+		_send("DOWN")
 	for n in 12:
 		var v: Snapshot.Vehicle = car_of.call()
 		if v == null or is_zero_approx(v.velocity):
@@ -371,21 +400,34 @@ func _drive_live(start: Vector3i) -> void:
 		await _turn("pause")
 	vv.call("glide", 10.0)
 	vv.set_process(true)
-	_live.queue_action("control_vehicle")
-	var menu := func() -> bool: return _live.request.get("kind", "") == "menu"
-	var let_go := -1
-	if await _until(menu, SHOW_TIMEOUT_MS):
-		for e: Variant in _live.request.get("entries", []):
-			if e is Dictionary and e.get("enabled", false) and CddaText.plain(str(e.get("label", ""))).contains("Let go"):
-				let_go = int(e.get("id", -1))
-		_answered = int(_live.request["id"])
-		_live.answer({"id": _answered, "entry": let_go} if let_go >= 0 else {"id": _answered, "cancel": true})
-	var free := func() -> bool: return _player_field("driving") == null
-	var stopped := let_go >= 0 and await _until_slow(free, OP_TIMEOUT_MS)
+	_drive_keys = false
+	if keys:
+		_main.fp.set_look(yaw0, pitch0)
+		print("    (driven by the step keys with the camera turned: forward UP, left / right steer, back DOWN)")
+		root.push_input(_key_of(&"cdda_control_vehicle"))
+	else:
+		_live.queue_action("control_vehicle")
+	var stopped := await _let_go()
 	var stands: Snapshot.Vehicle = car_of.call()
 	_check(stopped and stands != null and is_zero_approx(stands.velocity),
 			"driving: DOWN stops the car and \"Let go of controls\" from CDDA's menu ends the driving (velocity %s)"
 			% [stands.velocity if stands != null else "?"])
+	if keys and _main.world.snapshot.has_method("controls_at"):
+		# the seat beside the driver's has no controls: CDDA says nothing there, the client says why
+		var side: Vector3i = seat - (door - seat)
+		await _until(asking, SHOW_TIMEOUT_MS)
+		await _turn(_step_name(side - seat))
+		var on_side: bool = _main.world.snapshot.player_pos == side
+		var found: int = _main.world.snapshot.call("controls_at", side, _main.world.tables)
+		var note := str((Main as Script).get_script_constant_map().get("NO_CONTROLS_NOTE", "?"))
+		var had := str(_main.hud_data.messages).count(note)
+		await _until(asking, SHOW_TIMEOUT_MS)
+		root.push_input(_key_of(&"cdda_control_vehicle"))
+		var said := func() -> bool: return str(_main.hud_data.messages).count(note) > had
+		var hinted := await _until(said, 5000)
+		_check(on_side and found == 1 and hinted and _player_field("driving") == null and _live.request.get("timed", false),
+				"driving: on the seat beside the driver's (no controls there) %s takes nothing and the feed says why (\"%s\"; on the seat %s, controls_at %d, said %s)"
+				% [InputActions.prompt_of(&"cdda_control_vehicle"), note.left(40), on_side, found, hinted])
 	var step_out := _step_name(out - door)
 	var here := _main.world.snapshot.player_pos
 	for n in 6:   # onto the door's square, then out
@@ -396,6 +438,215 @@ func _drive_live(start: Vector3i) -> void:
 	_check(_main.world.snapshot.player_pos != here and await _cheat(_live.cheat_teleport(start)) == ""
 			and await _until(back, SHOW_TIMEOUT_MS), "driving: the player walks out of the car (%s) and is back at the arrival square (%s)"
 			% [step_out, _main.world.snapshot.player_pos])
+
+
+## CDDA's control_vehicle key away from a car (lead-world's key; skipped, said so, on a client without it or a bridge
+## without the vehicle spawn). With no vehicle next to the player the key does nothing: no prompt, no turn, no
+## message. Then a bicycle is spawned. From the floor next to its controls the key is CDDA's to answer (what it does
+## is printed) and the client adds no hint of its own. On the bicycle the key takes the controls (the snapshot says
+## driving), the key again brings CDDA's menu, and "Let go" there ends the driving. Then back to `start`.
+func _bike_live(start: Vector3i) -> void:
+	if not InputMap.has_action(&"cdda_control_vehicle") or not _main.world.snapshot.has_method("controls_at") \
+			or not _live.sim().has_method("range_spawn_vehicle"):
+		print("  (no control_vehicle key in this client, or no vehicle spawn: the key away from a car not checked)")
+		return
+	var key_name := InputActions.prompt_of(&"cdda_control_vehicle")
+	var note := str((Main as Script).get_script_constant_map().get("NO_CONTROLS_NOTE", "?"))
+	var hints := func() -> int: return str(_main.hud_data.messages).count(note)
+	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	await _until(in_loop, SHOW_TIMEOUT_MS)
+	_watch_messages()
+	var alone := true
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			alone = alone and _main.world.snapshot.vehicle_at(start + Vector3i(dx, dy, 0)).is_empty()
+	if alone:
+		var turn: int = _main.world.snapshot.turn
+		var seen := _msg_changes
+		root.push_input(_key_of(&"cdda_control_vehicle"))
+		await create_timer(1.5).timeout
+		_check(_live.request.get("timed", false) and _main.world.snapshot.turn == turn and _msg_changes == seen
+				and _player_field("driving") == null,
+				"control key: with no vehicle around, %s does nothing: no prompt, no turn, no message (messages %d, turns %d)"
+				% [key_name, _msg_changes - seen, _main.world.snapshot.turn - turn])
+	else:
+		print("  (a vehicle stands next to the arrival square: the key with no vehicle around not checked)")
+	var before := {}
+	for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+		before[veh.uid] = true
+	var feet := _floor_at(start)
+	var placed := false
+	for d: Vector3i in [Vector3i(4, 0, 0), Vector3i(-4, 0, 0), Vector3i(0, 4, 0), Vector3i(0, -4, 0), Vector3i(6, 6, 0)]:
+		if not placed and _floor_at(start + d) == feet and await _cheat(_spawn_vehicle("bicycle", start + d, 0)) == "":
+			placed = true
+	var bike_of := func() -> Snapshot.Vehicle:
+		for veh: Snapshot.Vehicle in _main.world.snapshot.vehicles:
+			if not before.has(veh.uid):
+				return veh
+		return null
+	var listed := func() -> bool: return bike_of.call() != null and not _main.world.busy()
+	if not placed or not await _until(listed, SHOW_TIMEOUT_MS):
+		_check(false, "control key: a bicycle is spawned near the arrival square")
+		return
+	var bike: Snapshot.Vehicle = bike_of.call()
+	var ctl := Vector3i.MAX
+	var beside := Vector3i.MAX
+	for i in bike.part_count():
+		var sq := bike.square(i)
+		if ctl == Vector3i.MAX and _main.world.snapshot.call("controls_at", sq, _main.world.tables) == 2:
+			ctl = sq
+	for d: Vector3i in [Vector3i(0, -1, 0), Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(1, 0, 0)]:
+		if ctl != Vector3i.MAX and beside == Vector3i.MAX and _floor_at(ctl + d) == feet:   # not a vehicle's square
+			beside = ctl + d
+	var there := func() -> bool: return _main.world.snapshot.player_pos == beside and not _main.world.busy()
+	var by: bool = beside != Vector3i.MAX and await _cheat(_live.cheat_teleport(beside)) == "" \
+			and await _until(there, SHOW_TIMEOUT_MS)
+	_check(by, "control key: the player stands on the floor next to the bicycle's controls (controls %s, player %s, %d parts)"
+			% [ctl, _main.world.snapshot.player_pos, bike.part_count()])
+	if not by:
+		return
+	# from beside it: CDDA's own answer, no hint from the client
+	await _until(in_loop, SHOW_TIMEOUT_MS)
+	var had: int = hints.call()
+	var seen_msgs := _msg_changes
+	root.push_input(_key_of(&"cdda_control_vehicle"))
+	var got := ""
+	var until := Time.get_ticks_msec() + 3000
+	while Time.get_ticks_msec() < until and got.is_empty():
+		var r := _live.request
+		if not r.is_empty() and not r.get("timed", false):
+			got = "%s \"%s\"" % [r.get("kind", "?"), (str(r.get("title", "")) + " " + str(r.get("text", ""))).strip_edges().left(60)]
+		elif _msg_changes > seen_msgs:
+			got = "a message: %s" % str(_main.hud_data.messages.back()).left(120)
+		await create_timer(0.05).timeout
+	print("    (%s from beside the bicycle: CDDA answers with %s)" % [key_name, got if not got.is_empty() else "nothing"])
+	_check(hints.call() == had and _player_field("driving") == null,
+			"control key: from beside the bicycle the client adds no hint and nothing is driven (CDDA: %s)"
+			% [got if not got.is_empty() else "nothing"])
+	await _until(in_loop, SHOW_TIMEOUT_MS)   # (a menu of CDDA's is cancelled here)
+	# on it
+	await _turn(_step_name(ctl - beside))
+	var on_it: bool = _main.world.snapshot.player_pos == ctl
+	root.push_input(_key_of(&"cdda_control_vehicle"))
+	var driving := func() -> bool: return _player_field("driving") == true
+	var took := on_it and await _until_slow(driving, 20000)
+	var shown := func() -> bool: return _main.world.snapshot.get("player_driving") == true
+	_check(took and await _until(shown, SHOW_TIMEOUT_MS) and _main.world.snapshot.get("player_vehicle") == bike.uid,
+			"control key: on the bicycle, %s takes its controls: the snapshot says driving, on that vehicle (on its square %s, driving %s, vehicle %s)"
+			% [key_name, on_it, took, _main.world.snapshot.get("player_vehicle")])
+	if took:
+		await _until(in_loop, SHOW_TIMEOUT_MS)
+		root.push_input(_key_of(&"cdda_control_vehicle"))
+		_check(await _let_go(), "control key: driving, %s brings CDDA's menu and \"Let go\" there ends the driving" % key_name)
+	await _until(in_loop, SHOW_TIMEOUT_MS)
+	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
+	_check(await _cheat(_live.cheat_teleport(start)) == "" and await _until(back, SHOW_TIMEOUT_MS),
+			"control key: the player is back at the arrival square (%s)" % [_main.world.snapshot.player_pos])
+
+
+## Rain seen from afar (lead-world's far layer; skipped, said so, on a client without it or without the weather
+## cheat). With rain held by the cheat: in first person the far layer is off. In the top view zoomed out it runs:
+## its start points are bounded, and it rains wherever a cell of its ring is open to the sky. How long working the
+## ring out takes is printed. Then the view and the weather are as they were.
+func _rain_far_live() -> void:
+	var precip: Variant = _main.weather.get("precip") if _main.weather != null else null
+	if precip == null or not "far_view" in precip or not _live.can_set_weather() or not _main._fp_active():
+		print("  (no far rain in this client, no weather cheat, or not in first person: rain from afar not checked)")
+		return
+	var rain_id := ""
+	for t: Dictionary in _live.weather_types():
+		if rain_id.is_empty() and str(t["id"]).contains("rain") and not str(t["id"]).contains("acid"):
+			rain_id = t["id"]
+	var held := _live.cheat_weather()
+	var set_ok := not rain_id.is_empty() and await _cheat(_live.cheat_set_weather(rain_id, LiveSession.WIND_GAME)) == ""
+	_live.queue_action("pause")
+	var raining := func() -> bool:
+		var last: Array = precip.get("_last")
+		return last.size() == 3 and last[2] != null and last[2].precip > 0.0
+	var wet := set_ok and await _until(raining, SHOW_TIMEOUT_MS)
+	await _frames(3)
+	var near_only: bool = not precip.far_view and not precip.far_rain.emitting
+	var near_points: int = precip.points
+	_main._set_view("top")
+	for n in 10:
+		if precip.far_view:
+			break
+		_main.view_cam.zoom(1)
+		await _frames(3)
+	await _frames(3)
+	var is_far: bool = precip.far_view
+	var cells: int = precip.far_cells
+	var pts: int = precip.far_points
+	var cap := int((precip.get_script() as Script).get_script_constant_map().get("MAX_FAR_POINTS", 4096))
+	var falls: bool = precip.far_rain.emitting
+	var ms := -1.0
+	var last: Array = precip.get("_last")
+	if wet and last.size() == 3:   # the ring worked out again, timed
+		precip.set("_far_key", [])
+		var t0 := Time.get_ticks_usec()
+		precip.apply(last[0], last[1], last[2])
+		ms = (Time.get_ticks_usec() - t0) / 1000.0
+	_check(wet and near_only and is_far and pts <= cap and falls == (pts > 0) and (cells == 0 or pts > 0),
+			"rain from afar (%s): off in first person; on in the top view zoomed out, raining on %d of %d cells of its ring from %d start points (at most %d); the near rain has %d (set %s, raining %s, far view %s, falling %s)"
+			% [rain_id, cells, int(precip.call("far_total")), pts, cap, near_points, set_ok, wet, is_far, falls])
+	print("    (working the far ring out again took %.1f ms)" % ms)
+	_main._set_view("first")
+	await _frames(3)
+	_check(not precip.far_view and not precip.far_rain.emitting, "rain from afar: back in first person the far layer is off again")
+	await _cheat(_live.cheat_set_weather(held, LiveSession.WIND_GAME))
+
+
+## With CDDA's menu for the controls asked for while driving: picks its "Let go" entry. True once the snapshot no
+## longer says driving.
+func _let_go() -> bool:
+	var menu := func() -> bool: return _live.request.get("kind", "") == "menu"
+	var entry := -1
+	if await _until(menu, SHOW_TIMEOUT_MS):
+		for e: Variant in _live.request.get("entries", []):
+			if e is Dictionary and e.get("enabled", false) and CddaText.plain(str(e.get("label", ""))).contains("Let go"):
+				entry = int(e.get("id", -1))
+		_answered = int(_live.request["id"])
+		_live.answer({"id": _answered, "entry": entry} if entry >= 0 else {"id": _answered, "cancel": true})
+	var free := func() -> bool: return _player_field("driving") == null
+	return entry >= 0 and await _until_slow(free, OP_TIMEOUT_MS)
+
+
+## Sends CDDA action `act`: while this script drives by the step keys (_drive_keys), a driving action goes as its
+## step key through main's own input path, whichever way the camera faces; otherwise it is queued.
+func _send(act: String) -> void:
+	if _drive_keys and DRIVE_STEP.has(act):
+		root.push_input(_key_of(DRIVE_STEP[act]))
+	else:
+		_live.queue_action(act)
+
+
+## The key bound first to `action` (F1 defaults), as a press; null if it has none.
+func _key_of(action: StringName) -> InputEventKey:
+	for e in InputActions.slots(action):
+		if e is InputEventKey:
+			var k := (e as InputEventKey).duplicate() as InputEventKey
+			if k.keycode == KEY_NONE:
+				k.keycode = k.physical_keycode
+			if k.physical_keycode == KEY_NONE:
+				k.physical_keycode = k.keycode
+			k.pressed = true
+			return k
+	return null
+
+
+## Counts the changes of the HUD's message feed from now on (_msg_changes); once.
+func _watch_messages() -> void:
+	if _msg_watched:
+		return
+	_msg_watched = true
+	_main.hud_data.changed.connect(func(parts: PackedStringArray) -> void:
+		if "messages" in parts:
+			_msg_changes += 1)
+
+
+func _frames(n: int) -> void:
+	for i in n:
+		await process_frame
 
 
 ## One turn at the wheel with the view's own gliding off: queues `act`, and when the car `uid` (car_of gives its
@@ -470,7 +721,7 @@ func _cells_ok(what: String, veh: Snapshot.Vehicle) -> void:
 func _turn(act: String) -> void:
 	var turn := _main.world.snapshot.turn
 	var pos := _main.world.snapshot.player_pos
-	_live.queue_action(act)
+	_send(act)
 	var passed := func() -> bool:
 		var s: Snapshot = _main.world.snapshot
 		return (s.turn > turn or s.player_pos != pos) and s.seq == _live.sim().get_snapshot_seq() and not _main.world.busy()
