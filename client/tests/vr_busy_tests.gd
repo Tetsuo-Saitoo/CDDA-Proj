@@ -81,12 +81,16 @@ func _test_pause(rig: VrRig) -> void:
 	var flashed: bool = _calls == 1 and not rig.menu_open() and b.visible and b.text == "Paused. menu > Time: go on."
 	b.step(now + VrBusy.FLASH_MS + 1)
 	var after: bool = b.text == "TIME PAUSED\n" + VrBusy.GO_ON
+	rig.menu.page = VrMenu.CHEATS_PAGE   # left on another page: a pause still opens on the Time row
+	rig.toggle_menu()
+	var from_page := rig.menu.page == VrMenu.SETTINGS_PAGE and rig.menu.row == rig.menu.row_of("time")
+	rig.toggle_menu()
 	rig.time_pause = Callable()
 	data.set_clock("")
 	rig.toggle_time()
 	b.step(now + 2 * VrBusy.FLASH_MS)
 	var none := not b.visible and _calls == 1
-	_check.call(paused and runs and junk and picked and flashed and after and none,
+	_check.call(paused and runs and junk and picked and flashed and after and from_page and none,
 			"vr pause: real time paused shows in the headset with how to go on; the menu opens on its Time row, which goes on (%s)"
-			% [[paused, runs, junk, picked, flashed, after, none]])
+			% [[paused, runs, junk, picked, flashed, after, from_page, none]])
 	rig.hud.data = null

@@ -1722,8 +1722,9 @@ func toggle_menu() -> void:
 	arc = {}
 	if menu.visible:
 		menu.place(camera.transform)
-		if not busy.paused_line().is_empty() and menu.page == VrMenu.SETTINGS_PAGE:
-			menu.row = menu.row_of("time")   # paused: menu, then trigger goes on
+		if not busy.paused_line().is_empty():   # paused: menu, then trigger goes on (from any page)
+			menu.page = VrMenu.SETTINGS_PAGE
+			menu.row = maxi(menu.row_of("time"), 0)
 		menu.refresh()
 	else:
 		update_pointer()
