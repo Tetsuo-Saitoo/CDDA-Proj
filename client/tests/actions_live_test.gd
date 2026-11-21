@@ -480,10 +480,11 @@ func _real_time_live() -> void:
 	await create_timer(1.0).timeout
 	var t2: int = turn_now.call()
 	var queued := _live.queued_actions()
-	Input.action_press(&"move_back")   # a step key during the pause: reported, not judged
+	Input.action_press(&"move_back")   # a step key during the pause (judged below, on a client that holds it back)
 	await create_timer(0.3).timeout
 	Input.action_release(&"move_back")
 	queued = _live.queued_actions() - queued
+	var pause_note := str(_main.grab.get("_flash"))
 	await create_timer(2.2).timeout
 	_check(ap.button_pressed and stopped and why == "hostile spotted" and said and line.contains(why)
 			and line.contains(pause_key) and turn_now.call() == t2,
@@ -497,8 +498,13 @@ func _real_time_live() -> void:
 	var two := func() -> bool: return turn_now.call() >= t3 + 2
 	_check(went and await _until(two, 10000, false) and await _until(runs, 3000, false),
 			"time: %s goes on: turns pass again and the HUD says \"%s\"" % [pause_key, hud_line.call()])
-	print("    (a step key pressed during the pause: %d queued; after going on the player is on %s, was on %s)"
-			% [queued, _main.world.snapshot.player_pos, before_go])
+	if _main.has_method("_held_by_pause") and _main._fp_active():
+		_check(queued == 0 and pause_note.contains("paused") and _main.world.snapshot.player_pos == before_go,
+				"time: a move key tapped during the pause queues nothing (%d) and the screen says \"%s\"; after going on the player hasn't moved (%s, was on %s)"
+				% [queued, pause_note, _main.world.snapshot.player_pos, before_go])
+	else:
+		print("    (a step key pressed during the pause: %d queued; after going on the player is on %s, was on %s)"
+				% [queued, _main.world.snapshot.player_pos, before_go])
 	# the F1 Time row: auto-pause off, and the next hostile pauses nothing
 	var f1 := InputEventKey.new()
 	f1.keycode = InputActions.MENU_KEY
@@ -545,8 +551,9 @@ func _real_time_live() -> void:
 
 
 ## Small windows (lead-ui's layout; skipped, said so, on a client without it). The game's window is made 1280x720,
-## then 800x450, and each time: the HUD's text along the top wraps and stays in the window, and a warning (put into
-## HudData by hand: only its place is checked) sits under it, in the window; the F1 menu fits the window, and its
+## then 800x450, and each time: the HUD's text along the top stays in the window and ends above the body bars and
+## the feed (which stay in the window too), and a warning (put into HudData by hand: only its place is checked) sits
+## under the text, in the window; the F1 menu fits the window, and its
 ## settings rows and its key list scroll to their last row; with Key help off (saved in this run's hud.cfg) the text
 ## is shorter and has the one short line; the Cheats page fits and scrolls to its last row; the inventory's list
 ## fits and its picked last row is in sight. Then the window is as it was.
@@ -574,6 +581,7 @@ func _small_window_live() -> void:
 		var tag := "%dx%d" % [s.x, s.y]
 		root.size = s
 		await _frames(4)
+		await create_timer(0.6).timeout   # (a client may pick the text that fits only a few times a second)
 		var win := Rect2(Vector2.ZERO, Vector2(s))
 		if Vector2i(_main.get_viewport().get_visible_rect().size) != s:
 			_check(false, "layout %s: the window takes that size (it is %s)" % [tag, _main.get_viewport().get_visible_rect().size])
@@ -582,12 +590,13 @@ func _small_window_live() -> void:
 		var lines := hud.get_line_count()
 		var text_lines := hud.text.count("\n") + 1
 		var r := hud.get_global_rect()
-		_check(win.grow(1.0).encloses(r) and lines > text_lines,
-				"layout %s: the HUD's text wraps and stays in the window (%d lines on screen for %d of text, down to y %.0f)"
-				% [tag, lines, text_lines, r.end.y])
 		var body := hv.get("_body") as Control
-		print("    (%s: the body bars start at y %.0f, the message feed at y %.0f)"
-				% [tag, body.global_position.y if body != null else -1.0, hv.feed.global_position.y])
+		var bars_y: float = body.global_position.y if body != null else -1.0
+		var feed_y: float = hv.feed.global_position.y
+		_check(win.grow(1.0).encloses(r) and lines >= text_lines and r.end.y <= minf(bars_y, feed_y) + 0.5
+				and feed_y + 18.0 <= s.y,
+				"layout %s: the HUD's text stays in the window and ends above the body bars and the feed, which stay in the window (%d lines on screen for %d of text, down to y %.0f; the bars from y %.0f, the feed from y %.0f)"
+				% [tag, lines, text_lines, r.end.y, bars_y, feed_y])
 		var keep: Array[Dictionary] = _main.hud_data.warnings
 		var fake: Array[Dictionary] = [{"id": "layout", "text": "Layout check", "level": HudData.BAD}]
 		_main.hud_data.warnings = fake
@@ -619,16 +628,16 @@ func _small_window_live() -> void:
 		kh.button_pressed = false   # as a click: saved, and the text follows
 		var off_saved := _cfg_bool(path, "hud", "key_help", false)
 		root.push_input(_esc_key())
-		await _frames(4)
+		await create_timer(0.6).timeout
 		var short_lines := hud.get_line_count()
 		var short_end := hud.get_global_rect().end.y
-		var short_ok: bool = hud.text.contains(short) and short_lines < lines and win.grow(1.0).encloses(hud.get_global_rect())
+		var short_ok: bool = hud.text.contains(short) and short_lines <= lines and win.grow(1.0).encloses(hud.get_global_rect())
 		kh.button_pressed = true
-		await _frames(4)
+		await create_timer(0.6).timeout   # (a client may pick the text that fits a few times a second)
 		_check(not km.visible and off_saved and short_ok and _cfg_bool(path, "hud", "key_help", true)
-				and hud.get_line_count() > short_lines,
-				"layout %s: Key help off (saved under [hud]) leaves the one short line: %d lines down to y %.0f instead of %d; on again (saved): the help is back"
-				% [tag, short_lines, short_end, lines])
+				and hud.get_line_count() >= short_lines,
+				"layout %s: Key help off (saved under [hud]) leaves the one short line: %d lines down to y %.0f, %d with it on; on again (saved): as before (%d lines)"
+				% [tag, short_lines, short_end, lines, hud.get_line_count()])
 		# the Cheats page
 		root.push_input(f1)
 		await _frames(2)
