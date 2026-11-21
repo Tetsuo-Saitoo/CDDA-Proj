@@ -10,10 +10,10 @@ const TOGGLE := &"real_time_toggle"
 const PAUSE := &"time_pause"
 
 
-## The clock the game should have: {real_time, auto_pause}. VR never auto-pauses for now: only the client resumes,
-## and VR has no way to yet (lead-qa, 2026-11-20); lead-vr's menu row brings it.
+## The clock the game should have: {real_time, auto_pause}. VR always runs in real time; its auto-pause follows the
+## setting like the flat screen's (the VR menu's Time row goes on: VrRig.toggle_time).
 static func wanted(settings: HudSettings, vr: bool) -> Dictionary:
-	return {"real_time": vr or settings.real_time, "auto_pause": settings.auto_pause and not vr}
+	return {"real_time": vr or settings.real_time, "auto_pause": settings.auto_pause}
 
 
 ## Puts `wanted` on a running game (live: LiveSession or a stand-in with set_real_time, set_auto_pause, set_paused

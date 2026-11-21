@@ -82,8 +82,8 @@ func _test_apply() -> void:
 	s.auto_pause = false
 	var on := ClockControl.wanted(s, false)
 	_check.call(flat == {"real_time": false, "auto_pause": true} and vr["real_time"] == true
-			and vr["auto_pause"] == false and on == {"real_time": true, "auto_pause": false},
-			"clock: the flat screen follows the switch, VR always runs in real time (no auto-pause yet)")
+			and vr["auto_pause"] == true and on == {"real_time": true, "auto_pause": false},
+			"clock: the flat screen follows the switch, VR always runs in real time (auto-pause as set)")
 	var g := FakeLive.new()
 	var took := ClockControl.apply(g, s, false)
 	var first := g.real_time and not g.auto
