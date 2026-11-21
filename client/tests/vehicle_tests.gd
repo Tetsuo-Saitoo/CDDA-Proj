@@ -274,6 +274,14 @@ func _test_driving(data: Variant) -> void:
 			and at.call(22, tables) == Snapshot.NO_CONTROLS and at.call(23, tables) == Snapshot.CONTROLS
 			and at.call(24, tables) == Snapshot.NO_VEHICLE and at.call(20, null) == Snapshot.NO_CONTROLS,
 			"vehicles: the driving key finds the controls and the reins; a seat or broken controls are none; off the car no vehicle")
+	# ^ (Shift+6 on US keys) sends CDDA's control_vehicle; hotbar slot 4's plain 6 doesn't take it
+	InputActions.ensure(false)
+	var caret := InputActions.parse_event("Shift+6") as InputEventKey
+	caret.pressed = true
+	_check.call(InputActions.CDDA.get(&"cdda_control_vehicle") == "control_vehicle"
+			and InputActions.info(&"cdda_control_vehicle")[3] == ["Shift+6"] and caret.shift_pressed
+			and InputActions.pressed(caret, &"cdda_control_vehicle") and not InputActions.pressed(caret, &"hotbar_4"),
+			"vehicles: ^ (Shift+6) is CDDA's control_vehicle, not hotbar slot 4")
 
 
 ## The test car's body (face 0: its cells on its squares): inside its cells and heights; walls above the deck only
