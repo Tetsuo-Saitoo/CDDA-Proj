@@ -153,6 +153,24 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	for i in 60:
 		view.interiors(0.05, eye)
 	_check.call(held and absf(it.lid_deg(trunk)) < 0.1, "interiors: a held lid isn't moved; let go, it closes")
+	# the client's rule: hands reach into a lidded container only while its lid is open
+	var seat: int = index.call("seat", Vector2i(0, 1))
+	var frame: int = index.call("frame", Vector2i(-1, 0))   # on the trunk's square, under its lid
+	var shut_reach := not view.can_reach(UID, trunk) and not view.can_reach(UID, frame) and view.can_reach(UID, seat) \
+			and not view.can_reach(UID, 9999) and not view.can_reach(OTHER + 5, seat)
+	view.open_lid(UID, frame, true)   # the lid over its square
+	var half_open := false
+	for i in 60:
+		view.interiors(0.05, eye)
+		half_open = half_open or (it.lid_deg(trunk) > 5.0 and it.lid_deg(trunk) < CarInterior.LID_REACH - 1.0 and not view.can_reach(UID, trunk))
+	var open_reach := view.can_reach(UID, trunk) and view.can_reach(UID, frame)
+	view.open_lid(UID, trunk, false)
+	for i in 60:
+		view.interiors(0.05, eye)
+	_check.call(shut_reach and half_open and open_reach and not view.can_reach(UID, trunk)
+			and CarInterior.lid_over(car, snap, tables, CddaCoords.Z_LIMIT, frame) == trunk
+			and CarInterior.lid_over(car, snap, tables, CddaCoords.Z_LIMIT, seat) == -1,
+			"interiors: hands reach into a lidded container only while its lid is open %d degrees or more; elsewhere always" % CarInterior.LID_REACH)
 	# the player's car comes alive; the other stays dark
 	var dash: CarDash = a["Dash"]
 	var other: CarDash = view.interior(OTHER)["Dash"]
@@ -205,9 +223,10 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	car.parts[box * Snapshot.VPART_STRIDE + 2] = tables.index_of("vpart", "cargo_space")   # no lid there now
 	view.apply(snap, world)
 	var gone := view.interior(UID).is_empty()
+	var far_rule := gone and not view.can_reach(UID, trunk) and view.can_reach(UID, seat)   # no interior: lids shut
 	view.interiors(0.0, eye)
 	var again := view.interior(UID)
-	_check.call(dropped and same and gone and again.has("Wheel") and not again.has("Cargo_%d" % box),
+	_check.call(dropped and same and gone and far_rule and again.has("Wheel") and not again.has("Cargo_%d" % box),
 			"interiors: dropped far from the camera (not the player's), kept while parts only wear, built again when they change")
 	view.max_verts = 0
 	view.apply(snap, world)

@@ -27,6 +27,7 @@ const LID_T := 0.03
 const LID_HALF := {VehicleView.Kind.CARGO: 0.4, VehicleView.Kind.HALF: 0.46}   # half the lid's side, by the part's kind
 const LID_OPEN := 80.0        # degrees
 const LID_RATE := 160.0       # degrees per second
+const LID_REACH := 45.0       # degrees a lid is open from which hands reach in (can_reach)
 const MAX_LIDS := 64
 const OPENING := Color(0.03, 0.03, 0.03)
 const HANDLE := Color(0.25, 0.25, 0.27)
@@ -40,6 +41,7 @@ var wheel: Node3D             # "Wheel"; null with no controls drawn
 var spin: Node3D              # its "WheelSpin"
 var dash: CarDash
 var lids := {}                # part index -> "Cargo_<part>"
+var lid_at := {}              # Vector2i mount -> the part whose lid covers that square
 var moving := false           # something is on its way: VehicleView steps it
 var _lid_goal := {}           # part index -> degrees
 var _cdda_open := {}          # part index -> the state last seen (lids CDDA opens)
@@ -49,6 +51,20 @@ var _spin_goal := 0.0
 
 func _init() -> void:
 	name = "Interior"
+
+
+## The part whose lid covers the square of part `part` of `veh` (mount), -1 for none: lid_at in a built interior,
+## else as build() would lay them out.
+static func lid_over(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int, part: int) -> int:
+	if part < 0 or part >= veh.part_count():
+		return -1
+	var j := part * Snapshot.VPART_STRIDE
+	var m := Vector2i(veh.parts[j], veh.parts[j + 1])
+	for e: Array in parts_of(veh, snap, tables, z_max)[1]:
+		var k: int = e[0] * Snapshot.VPART_STRIDE
+		if Vector2i(veh.parts[k], veh.parts[k + 1]) == m:
+			return e[0]
+	return -1
 
 
 ## Whether a part definition is a container with a lid: CDDA's lockable, covered cargo in the middle of a square
@@ -284,6 +300,7 @@ func _add_lid(veh: Snapshot.Vehicle, part: int, kind: int, cdda_open: bool, mid:
 	c.add_child(lid)
 	add_child(c)
 	lids[part] = c
+	lid_at[Vector2i(veh.parts[j], veh.parts[j + 1])] = part
 	_lid_goal[part] = 0.0
 
 

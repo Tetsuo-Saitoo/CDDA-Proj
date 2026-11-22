@@ -457,11 +457,32 @@ func set_ride(uid: int, reading: Dictionary) -> void:
 		car.interior.set_reading(_ride)
 
 
-## Opens or closes the lid of part `part` of vehicle `uid` on the client (CarInterior.open_lid): false when it has
-## no lid drawn.
+## Opens or closes the lid over part `part` of vehicle `uid` (the one on its square; CarInterior.open_lid) on the
+## client: false when none is drawn there.
 func open_lid(uid: int, part: int, open: bool) -> bool:
 	var car: Car = _cars.get(uid)
-	return car != null and car.interior != null and is_instance_valid(car.interior) and car.interior.open_lid(part, open)
+	if car == null or car.veh == null or car.interior == null or not is_instance_valid(car.interior) \
+			or part < 0 or part >= car.veh.part_count():
+		return false
+	var j := part * Snapshot.VPART_STRIDE
+	var lid: int = car.interior.lid_at.get(Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), -1)
+	return lid >= 0 and car.interior.open_lid(lid, open)
+
+
+## The client's rule for cargo (CDDA has none; the coordinator's): whether hands may reach into part `part` of vehicle
+## `uid`: yes where no lid covers its square, else only while that lid is open CarInterior.LID_REACH degrees or more
+## (closed while its interior isn't built). False for a vehicle not drawn or a part it hasn't.
+func can_reach(uid: int, part: int) -> bool:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or car.veh == null or part < 0 or part >= car.veh.part_count():
+		return false
+	if car.interior != null and is_instance_valid(car.interior):
+		var j := part * Snapshot.VPART_STRIDE
+		var lid: int = car.interior.lid_at.get(Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), -1)
+		return lid < 0 or car.interior.lid_deg(lid) >= CarInterior.LID_REACH - 0.01
+	if _snap == null or _world == null or not is_instance_valid(_world):
+		return false
+	return CarInterior.lid_over(car.veh, _snap, _world.tables, view_z_max, part) < 0
 
 
 ## Each frame: vehicles within INTERIOR_NEAR of the camera (`eye`, default: the viewport's; and the one the player is
