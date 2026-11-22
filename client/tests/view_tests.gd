@@ -158,6 +158,24 @@ func _test_setting() -> void:
 	var k := HudSettings.new()
 	k.load_file(path)
 	_check.call(j.view == "first" and k.view == "first", "views: an unknown or non-text view in the file reads as first")
+	var d := HudSettings.new()
+	d.drive = "top"
+	d.save_file(path)
+	var dr := HudSettings.new()
+	dr.load_file(path)
+	var f3 := FileAccess.open(path, FileAccess.WRITE)
+	f3.store_string("[view]\ndrive=\"outside\"\n")
+	f3.close()
+	var dj := HudSettings.new()
+	dj.drive = "first"
+	dj.load_file(path)
+	var f4 := FileAccess.open(path, FileAccess.WRITE)
+	f4.store_string("[view]\ndrive=[\"top\"]\n")
+	f4.close()
+	var dk := HudSettings.new()
+	dk.load_file(path)
+	_check.call(HudSettings.new().drive == "chase" and dr.drive == "top" and dj.drive == "chase" and dk.drive == "chase",
+			"views: the driving view is saved and read back; chase by default and for anything else in the file")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 

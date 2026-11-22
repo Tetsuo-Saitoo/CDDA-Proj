@@ -40,8 +40,7 @@ var first_person := true       # the eyes drive (first, shoulder, top); false = 
 var view_cam: ViewCamera       # C9: shoulder and top views, following the eyes
 var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
 var _ride_look := [0, 0.0]     # [the vehicle the look turns with, its drawn yaw last frame] (_carry_look)
-const DRIVE_VIEWS := ["first", "chase", "top"]   # V while driving (flat screen)
-var drive_view := "chase"      # the view driving starts in (V while driving picks the next)
+const DRIVE_VIEWS := HudSettings.DRIVE_VIEWS   # V while driving (flat screen); hud_settings.drive starts it
 var _driving := false          # the last snapshot's player.driving
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
@@ -535,7 +534,7 @@ func _driving_view(driving: bool) -> void:
 		return
 	_driving = driving
 	if vr == null:
-		_set_view(drive_view if driving else hud_settings.view)
+		_set_view(hud_settings.drive if driving else hud_settings.view)
 
 
 ## C5, flat screen: the look turns with the vehicle the player is on as it is drawn turning (VR: VrRide turns the
@@ -657,13 +656,13 @@ func _toggle_view() -> void:
 	if vr != null:
 		return
 	if _driving:   # driving: first person -> chase -> top-down
-		drive_view = next_drive_view(view_mode)
-		_set_view(drive_view)
-		return
-	_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
-	if view_mode == "outside":
-		_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
-	hud_settings.view = view_mode
+		_set_view(next_drive_view(view_mode))
+		hud_settings.drive = view_mode
+	else:
+		_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
+		if view_mode == "outside":
+			_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
+		hud_settings.view = view_mode
 	var err := hud_settings.save_file()
 	if err != OK:
 		push_warning("view not saved: %s" % error_string(err))
@@ -1924,6 +1923,8 @@ func _setup_hud() -> void:
 			viewmodel.left_handed = hud_settings.left_handed()
 		if hands_panel != null:
 			hands_panel.left_handed = hud_settings.left_handed()
+		if _driving and vr == null and view_mode != hud_settings.drive:   # F1's driving view, picked while driving
+			_set_view(hud_settings.drive)
 		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)

@@ -255,6 +255,19 @@ func _test_driving(data: Variant) -> void:
 	_check.call(on.is_valid() and on.player_driving and on.player_vehicle == (2 << 32) + 5 and junk_ok and off.is_valid()
 			and not off.player_driving and off.player_vehicle == 0,
 			"vehicles: player.driving and player.vehicle are read; junk or none is not driving, no vehicle, the snapshot stays")
+	pl["vehicle_state"] = {"speed": 12, "gear": "D"}
+	var vs := Snapshot.from_data(d)
+	var big := {}
+	for i in Snapshot.MAX_VEHICLE_STATE_KEYS + 1:
+		big["k%d" % i] = i
+	var vs_junk := true
+	for bad: Variant in ["fast", [1, 2], 7, null, big]:
+		pl["vehicle_state"] = bad
+		var j := Snapshot.from_data(d)
+		vs_junk = vs_junk and j.is_valid() and j.player_vehicle_state.is_empty()
+	pl.erase("vehicle_state")
+	_check.call(vs.is_valid() and vs.player_vehicle_state.get("speed") == 12 and vs_junk and off.player_vehicle_state.is_empty(),
+			"vehicles: player.vehicle_state is kept as an object of at most 32 keys; junk, too big or none is {}")
 	var tables := IdTables.from_data({"generation": 1, "ter": [], "furn": [], "trap": [], "field": [], "itype": [],
 			"vpart": [{"id": ""}, {"id": "frame", "name": "frame", "location": "structure", "flags": ["MOUNTABLE"]},
 			{"id": "controls", "name": "controls", "location": "on_frame", "flags": ["CONTROLS"]},
