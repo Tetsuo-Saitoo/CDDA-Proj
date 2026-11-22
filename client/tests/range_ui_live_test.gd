@@ -186,6 +186,7 @@ func _stairs_live() -> void:
 	await _spawn_vehicle_live(start)
 	await _drive_live(start)
 	await _bike_live(start)
+	await _chase_wall_live(start)
 	await _rain_far_live()
 
 
@@ -324,6 +325,9 @@ func _drive_live(start: Vector3i) -> void:
 		return
 	# lead-world's driving keys (a client with them): CDDA's control key, and the step keys as CDDA's driving keys
 	var keys: bool = InputMap.has_action(&"cdda_control_vehicle") and _main.has_method("_step_octant")
+	# lead-world's driving views (a client with them): the chase view while driving, V goes round the driving views
+	var views: bool = "drive_view" in _main and InputMap.has_action(&"view_toggle")
+	var walk_view: String = _main.view_mode
 	if keys:
 		root.push_input(_key_of(&"cdda_control_vehicle"))
 	else:
@@ -334,6 +338,17 @@ func _drive_live(start: Vector3i) -> void:
 			% [InputActions.prompt_of(&"cdda_control_vehicle") if keys else "control_vehicle", _player_field("vehicle")])
 	if not took:
 		return
+	if views:
+		var chase := func() -> bool: return _main.view_mode == "chase"
+		var started := await _until(chase, SHOW_TIMEOUT_MS)
+		var went_round := [_main.view_mode]
+		for n in 3:
+			root.push_input(_key_of(&"view_toggle"))
+			await _frames(2)
+			went_round.append(_main.view_mode)
+		_check(started and went_round == ["chase", "top", "first", "chase"] and _main.hud_settings.view == walk_view,
+				"driving views: taking the controls switches to the chase view and %s goes round %s; the walking view kept for later is still \"%s\""
+				% [InputActions.prompt_of(&"view_toggle"), went_round, _main.hud_settings.view])
 	var yaw0: float = _main.fp.yaw
 	var pitch0: float = _main.fp.pitch
 	var cam_way := ""   # what the forward step key would be by the camera alone
@@ -369,6 +384,8 @@ func _drive_live(start: Vector3i) -> void:
 		# off the axis and back: the turn glides as well, and the car lies on CDDA's squares at that angle
 		var turned := 0
 		bad = []
+		var look0: float = _main.fp.yaw
+		var car0: Variant = vv.call("drawn", uid)
 		for act: String in ["LEFT", "LEFT", "pause"]:
 			var r := await _drive_turn(act, uid, car_of)
 			turned += 1 if r.get("turned", false) else 0
@@ -382,6 +399,21 @@ func _drive_live(start: Vector3i) -> void:
 		if steered != null:
 			_vehicles_ok("the car steered to face %.0f degrees" % face)
 			_cells_ok("driving: facing %.0f degrees" % face, steered)
+		if steered != null and car0 is Transform3D and _main.has_method("_carry_look") and vv.has_method("seat_transform"):
+			# the look turns with the car, and the eyes and the body sit on the driver's cell as the car is drawn
+			await _frames(3)
+			var car1: Transform3D = vv.call("drawn", uid)
+			var car_turn := wrapf(float(_main.call("car_yaw", car1)) - float(_main.call("car_yaw", car0)), -PI, PI)
+			var look_turn := wrapf(_main.fp.yaw - look0, -PI, PI)
+			var snap: Snapshot = _main.world.snapshot
+			var sq_w: Vector3 = _main.world.coords.ms_center_to_world(snap.player_pos)
+			var seat_w: Vector3 = (vv.call("seat_transform", snap, snap.player_pos) as Transform3D) * sq_w
+			var seat_off := Vector2(seat_w.x - sq_w.x, seat_w.z - sq_w.z).length()
+			var eyes_off := Vector2(_main.fp.global_position.x - seat_w.x, _main.fp.global_position.z - seat_w.z).length()
+			var body_off := Vector2(_main.player_body.position.x - seat_w.x, _main.player_body.position.z - seat_w.z).length()
+			_check(absf(car_turn) > 0.4 and absf(look_turn - car_turn) < 0.03 and eyes_off < 0.3 and body_off < 0.3,
+					"driving: the look turns with the car (%.1f degrees for the car's %.1f), and the eyes and the body sit on the driver's cell as drawn (%.2f and %.2f m from it; that cell is %.2f m from its square's middle; view %s)"
+					% [rad_to_deg(look_turn), rad_to_deg(car_turn), eyes_off, body_off, seat_off, _main.view_mode])
 		bad = []
 		for act: String in ["RIGHT", "RIGHT", "pause"]:
 			var r := await _drive_turn(act, uid, car_of)
@@ -412,6 +444,10 @@ func _drive_live(start: Vector3i) -> void:
 	_check(stopped and stands != null and is_zero_approx(stands.velocity),
 			"driving: DOWN stops the car and \"Let go of controls\" from CDDA's menu ends the driving (velocity %s)"
 			% [stands.velocity if stands != null else "?"])
+	if views:
+		var walking := func() -> bool: return _main.view_mode == walk_view
+		_check(await _until(walking, SHOW_TIMEOUT_MS),
+				"driving views: with the controls let go the view is the walking view again (%s)" % _main.view_mode)
 	if keys and _main.world.snapshot.has_method("controls_at"):
 		# the seat beside the driver's has no controls: CDDA says nothing there, the client says why
 		var side: Vector3i = _main.world.snapshot.player_pos - (door - seat)   # (the car has rolled on; it faces east again)
@@ -546,6 +582,53 @@ func _bike_live(start: Vector3i) -> void:
 	_check(why == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"control key: the player steps off and is back at the arrival square (%s; teleport: %s)"
 			% [_main.world.snapshot.player_pos, why if not why.is_empty() else "done"])
+
+
+## The chase camera at something solid (lead-world's driving views; skipped, said so, on a client without them).
+## The camera's own free-way probe looks along the four axes from the arrival square, at the boom's height, for
+## something solid 10 to 40 m away. A car's pose is then given to the camera by hand (no car is there): 3 m in front
+## of that wall heading away from it, and at the arrival square with the same heading. At the wall the boom is
+## pulled in and the camera stays on this side of it; at the arrival square it is out further.
+func _chase_wall_live(start: Vector3i) -> void:
+	var vc: ViewCamera = _main.view_cam
+	if not "chase_heading" in vc or not vc.blocked.is_valid():
+		print("  (no chase view in this client: the chase camera at a wall not checked)")
+		return
+	var k: Dictionary = (vc.get_script() as Script).get_script_constant_map()
+	var pivot_up := Vector3.UP * float(k.get("CHASE_PIVOT_UP", 2.4))
+	var back := float(k.get("CHASE_BACK", 7.0))
+	var floor_w: Vector3 = _main.world.coords.ms_center_to_world(start)
+	var wall_dir := Vector3.ZERO
+	var free_m := INF
+	for dir: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.BACK, Vector3.FORWARD]:
+		var f: Variant = vc.blocked.call(floor_w + pivot_up, floor_w + pivot_up + dir * 40.0)
+		if (f is float or f is int) and float(f) > back + 3.0 and float(f) < 40.0 and float(f) < free_m:
+			free_m = float(f)
+			wall_dir = dir
+	if wall_dir == Vector3.ZERO:
+		print("  (the camera's probe meets nothing solid 10 to 40 m from the arrival square at the boom's height: the chase camera at a wall not checked)")
+		return
+	var was_mode: String = vc.mode
+	var was_car: Variant = vc.get("car")
+	var ahead := -wall_dir
+	var cam_for := func(mid: Vector3) -> Vector3:   # where the chase camera goes for a car at `mid` heading `ahead`
+		vc.set("car", func() -> Variant: return Transform3D(Basis(ahead, Vector3.UP, ahead.cross(Vector3.UP)), mid))
+		vc.set("chase_heading", NAN)
+		vc.mode = "chase"
+		vc.call("follow", 0.0)
+		return vc.global_position
+	var near_mid := floor_w + wall_dir * (free_m - 3.0)
+	var cam_wall: Vector3 = cam_for.call(near_mid)
+	var cam_open: Vector3 = cam_for.call(floor_w)
+	vc.mode = was_mode
+	vc.set("car", was_car)
+	_main._set_view(_main.view_mode)
+	var boom_wall := (near_mid + pivot_up).distance_to(cam_wall)
+	var boom_open := (floor_w + pivot_up).distance_to(cam_open)
+	var this_side := (cam_wall - floor_w).dot(wall_dir) < free_m
+	_check(boom_wall < boom_open - 1.5 and this_side and cam_wall.is_finite() and cam_open.is_finite(),
+			"chase camera: with something solid 3 m behind the car the boom is pulled in to %.1f m and the camera stays on this side of it; with %.0f m free behind it is out %.1f m"
+			% [boom_wall, free_m, boom_open])
 
 
 ## Rain seen from afar (lead-world's far layer; skipped, said so, on a client without it or without the weather
@@ -693,8 +776,13 @@ func _drive_turn(act: String, uid: int, car_of: Callable) -> Dictionary:
 	vv.call("glide", 10.0)
 	var end: Transform3D = vv.call("drawn", uid)
 	var ride1: Transform3D = vv.call("ride_transform", _main.world.snapshot)
+	# the ride at the end: none left; with one rigid model it seats the eyes on the driver's cell as drawn (off the
+	# axes not the square's middle), with no turn left, and the model never stretches or shears on the way
+	var rigid := vv.has_method("seat_transform")
+	var arrived: bool = ride1.is_equal_approx(Transform3D()) if not rigid else (ride1.basis.is_equal_approx(Basis())
+			and not ride0.is_equal_approx(ride1) and _rigid(a1.basis) and _rigid(end.basis))
 	var ok := d0 > 0.5 and d1 < d0 and d1 > 0.0 and not ride0.is_equal_approx(Transform3D()) \
-			and end.is_equal_approx(pose) and ride1.is_equal_approx(Transform3D()) \
+			and end.is_equal_approx(pose) and arrived \
 			and (not turned or (g0 > 0.02 and g1 < g0 and g1 > 0.0))
 	return {"moved": true, "turned": turned, "bad": "" if ok else
 			"%.2f m off, then %.2f; turned %s (%.3f rad off, then %.3f); ride %s, at the end %s; on the pose %s" % [d0, d1,
@@ -724,6 +812,19 @@ func _lanes(start: Vector3i, feet: int, ahead: int, left: int) -> Array:
 func _cells_ok(what: String, veh: Snapshot.Vehicle) -> void:
 	var worst := _cells_off(veh)
 	if worst.is_empty():
+		return
+	var vv: VehicleView = _main.vehicles_view
+	if vv.has_method("seat_transform"):
+		# one rigid model (lead-world, C5 slice 4): turned by CDDA's facing, not laid out on CDDA's stepped squares
+		var f: Transform3D = vv.call("frame_of", veh, _main.world.coords)
+		var on_axes := absf(fposmod(veh.face_deg + 45.0, 90.0) - 45.0) < 0.01
+		var far := float(worst[0][2])
+		var half := worst.filter(func(r: Array) -> bool: return float(r[2]) > 0.5).size()
+		var whole := worst.filter(func(r: Array) -> bool: return float(r[2]) > 1.0).size()
+		_check(_rigid(f.basis) and far <= (0.05 if on_axes else 2.6),
+				"%s: the car is one rigid model, %s (%d of its %d cells over 0.5 m off, %d over 1 m; the farthest, as [mount, square, m]: %s)"
+				% [what, "every cell on its square" if on_axes else "its cells up to %.2f m from CDDA's squares" % far,
+				half, worst.size(), whole, worst.slice(0, 2)])
 		return
 	_check(float(worst[0][2]) <= 0.75, "%s: every cell of the car's drawn grid lies within 0.75 m of its square (the farthest, as [mount, square, m]: %s)"
 			% [what, worst.slice(0, 2)])
@@ -793,8 +894,9 @@ func _until_slow(cond: Callable, timeout_ms: int) -> bool:
 	return false
 
 
-## For a report: the four cells of `veh` whose place in its drawn grid (VehicleView.frame_of) is farthest from the
-## square CDDA has the part on: [[mount, the square's offset from the vehicle's position, metres apart], ...].
+## For a report: the cells of `veh` by how far their place in its drawn grid (VehicleView.frame_of) is from the
+## square CDDA has the part on, farthest first: [[mount, the square's offset from the vehicle's position, metres
+## apart], ...].
 func _cells_off(veh: Snapshot.Vehicle) -> Array:
 	var vv: VehicleView = _main.vehicles_view
 	if not vv.has_method("frame_of"):
@@ -812,7 +914,12 @@ func _cells_off(veh: Snapshot.Vehicle) -> Array:
 		var sq: Vector3 = _main.world.coords.ms_center_to_world(veh.square(i))
 		rows.append([m, Vector2i(veh.parts[k + 5], veh.parts[k + 6]), snappedf(Vector2(cell.x - sq.x, cell.z - sq.z).length(), 0.01)])
 	rows.sort_custom(func(a: Array, b: Array) -> bool: return a[2] > b[2])
-	return rows.slice(0, 4)
+	return rows
+
+
+## Whether basis b turns without stretching or shearing (its level axes at right angles and of one length).
+func _rigid(b: Basis) -> bool:
+	return absf(b.x.normalized().dot(b.z.normalized())) < 1e-3 and absf(b.x.length() - b.z.length()) < 1e-3
 
 
 ## Asks the game for vehicle `id` on `pos` facing `facing` degrees: the op id, 0 when not sent (LiveSession's own
