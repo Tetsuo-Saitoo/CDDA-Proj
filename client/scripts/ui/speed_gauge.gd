@@ -1,8 +1,8 @@
 class_name SpeedGauge
 extends Control
 ## The driving HUD's speedometer (RideHud): a 240-degree dial, its scale green up to the vehicle's safe speed, amber
-## up to its top speed, red beyond; the needle at the speed, a marker at the throttle / cruise setting (the driver's
-## only; dim while cruise is off), and the speed in the player's units under it, "R" in reverse. Drawn, no children.
+## up to its top speed, red beyond; the needle at the speed, a marker at the speed it is set to reach (the driver's
+## only), and the speed in the player's units under it, "R" in reverse. Drawn, no children.
 
 const SIZE := Vector2(220, 142)
 const CENTRE := Vector2(110, 84)
@@ -75,9 +75,9 @@ func _draw() -> void:
 					-1, 11).x / 2.0, 4.0)
 			draw_string_outline(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, 3, Color.BLACK)
 			draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.9, 0.9, 0.9))
-	if info.driver:   # the throttle / cruise setting: a wedge outside the dial
+	if info.driver:   # the speed it is set to reach (cruise_velocity): a wedge outside the dial
 		var c := angle_of(info.shown(info.cruise), top)
-		var col := CRUISE_COLOR if info.cruise_on else CRUISE_COLOR.darkened(0.45)
+		var col := CRUISE_COLOR
 		var tip := CENTRE + Vector2.from_angle(c) * (RADIUS + ARC_W * 0.5)
 		var side := Vector2.from_angle(c + PI / 2.0) * 5.0
 		var out := Vector2.from_angle(c) * 10.0

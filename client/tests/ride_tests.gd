@@ -1,16 +1,21 @@
 extends RefCounted
-## The driving HUD (user via the coordinator, 2026-11-21): RideInfo reads player.ride (junk falls back), the speed
+## The driving HUD (user via the coordinator, 2026-11-21): RideInfo reads player.vehicle_state (junk falls back), the speed
 ## gauge's scale, RideHud for the driver and a passenger, its place on small windows, and the F1 switch.
 
 const TestDir := preload("res://tests/test_dir.gd")
 const SIZES: Array[Vector2] = [Vector2(1600, 900), Vector2(1280, 720), Vector2(1024, 576), Vector2(800, 450)]
-## A car at 40 mph with the throttle at 50, as lead-bridge's block sends it.
-const CAR := {"name": "Sports car", "driver": true, "velocity": 4000, "cruise": 5000, "cruise_on": true,
-		"safe": 6000, "max": 9000, "engine_on": true,
-		"fuel": [{"id": "gasoline", "name": "gasoline", "left": 15000, "cap": 60000},
-			{"id": "diesel", "name": "diesel", "left": 0, "cap": 20000}],
-		"battery": [500, 1000], "skidding": false, "turn": 10, "face": 355, "mass_kg": 1500, "health": 87,
-		"unit": "km/h", "unit_per_mph": 1.609344}
+## A car at 40 mph set to reach 50, as lead-bridge's player.vehicle_state sends it (itype 7 gasoline, 8 diesel).
+const CAR := {"uid": 8589934864, "name": "Station Wagon", "in_control": true, "at_controls": true,
+		"velocity": 4000, "cruise_velocity": 5000, "safe_velocity": 6000, "max_velocity": 9000,
+		"speed_unit": "km/h", "speed_scale": 0.01609344, "engine_on": true,
+		"engines": [[12, 3, 255, 7], [13, 4, 0, 7]], "fuels": [[7, 15000, 60000], [8, 0, 20000]],
+		"battery": [500, 1000], "turn_deg": 10.0, "skidding": false, "mass_kg": 1500, "health_pct": 87}
+const FACE := 355.0
+
+
+static func _fuel_name(t: int) -> String:
+	return {7: "gasoline", 8: "diesel"}.get(t, "")
+
 
 var _check: Callable
 var _root: Node
@@ -29,49 +34,61 @@ func run(root: Node, check: Callable) -> void:
 
 
 func _test_read() -> void:
-	var r := RideInfo.read(CAR)
-	_check.call(r.ok and r.name == "Sports car" and r.driver and r.velocity == 4000 and r.cruise == 5000 and r.cruise_on
-			and r.safe == 6000 and r.top == 9000 and r.engine_on and r.fuels.size() == 2 and r.fuels[0]["left"] == 15000
-			and r.battery_left == 500 and r.battery_cap == 1000 and r.mass_kg == 1500 and r.health == 87
-			and r.unit == "km/h", "ride: player.ride read")
+	var r := RideInfo.read(CAR, _fuel_name, FACE)
+	_check.call(r.ok and r.uid == 8589934864 and r.name == "Station Wagon" and r.driver and r.at_controls
+			and r.velocity == 4000 and r.cruise == 5000 and r.safe == 6000 and r.top == 9000 and r.engine_on
+			and r.engines == 2 and r.engines_running == 1 and r.engines_broken == 1 and r.fuels.size() == 2
+			and r.fuels[0]["name"] == "gasoline" and r.fuels[0]["left"] == 15000 and r.battery_left == 500
+			and r.battery_cap == 1000 and r.mass_kg == 1500 and r.health == 87 and r.unit == "km/h",
+			"ride: player.vehicle_state read (engines running and broken, fuel names from the item table)")
 	_check.call(is_equal_approx(r.shown(4000), 64.37376) and r.band(4000) == RideInfo.Band.SAFE
 			and r.band(-7000) == RideInfo.Band.WARN and r.band(9500) == RideInfo.Band.OVER and r.steer() == 15
-			and r.warning() == "", "ride: km/h, the safe / warning / over bands (reverse too), steering right")
+			and r.warning() == "" and r.health_word() == "dented",
+			"ride: km/h, the safe / strain / over bands (backwards too), steering right, CDDA's condition word")
 	var none := RideInfo.read(null)
-	var skid := RideInfo.read({"skidding": true})
-	var both := RideInfo.read({"skidding": true, "out_of_control": true, "turn": 300, "face": 20})
+	var skid := RideInfo.read({"skidding": true, "turn_deg": 300.0, "health_pct": 0})
+	var left := RideInfo.read({"turn_deg": 300}, Callable(), 20.0)
+	var words := PackedStringArray()
+	for h in [100, 96, 95, 68, 35, 34, 1]:
+		words.append(RideInfo.read({"health_pct": h}).health_word())
 	_check.call(not none.ok and none.band(99999) == RideInfo.Band.SAFE and skid.ok and skid.warning() == "SKIDDING"
-			and both.warning() == "OUT OF CONTROL" and both.steer() == -80 and skid.unit == "mph",
-			"ride: no block, not ok; skid and out-of-control warnings; steering left; mph by default")
+			and skid.steer() == 0 and left.steer() == -80 and skid.unit == "mph" and skid.health_word() == "destroyed"
+			and words == PackedStringArray(["like new", "like new", "dented", "dented", "battered", "wrecked",
+			"wrecked"]) and RideInfo.read({}).health_word() == "",
+			"ride: no block, not ok; the skid warning; steering only with the facing; mph by default; condition words")
 
 
 func _test_junk() -> void:
 	var fuels := []
-	for i in 20:
-		fuels.append({"id": "f%d" % i, "left": 5, "cap": 10})
-	var r := RideInfo.read({"name": 7, "driver": "yes", "velocity": 1e30, "cruise": NAN, "safe": -50, "max": 10,
-			"engine_on": 1, "fuel": [3, {"id": "", "left": 1, "cap": 2}, {"id": "x", "left": 9, "cap": 0},
-				{"id": "y", "left": 50, "cap": 20, "name": "Line\nbreak"}], "battery": [5], "turn": "left",
-			"mass_kg": -3, "health": 400, "unit": "furlongs", "unit_per_mph": 2.0})
-	var many := RideInfo.read({"fuel": fuels, "name": "x".repeat(500), "unit": "t/t"})
-	var tt := RideInfo.read({"unit": "t/t", "unit_per_mph": 0.0025})
-	var bad_k := RideInfo.read({"unit": "km/h", "unit_per_mph": INF})
+	for i in 40:
+		fuels.append([i + 1, 5, 10])
+	var r := RideInfo.read({"name": 7, "in_control": "yes", "velocity": 1e30, "cruise_velocity": NAN,
+			"safe_velocity": -50, "max_velocity": 10, "engine_on": 1, "engines": [3, [1], [1, "x"], [1, 6, 0, 0]],
+			"fuels": [3, [0, 1, 2], [9, 1, 0], [9, 50, 20], [9, 1, 2, 3]], "battery": [0, 0], "turn_deg": "left",
+			"mass_kg": -3, "health_pct": 400, "speed_unit": "furlongs", "speed_scale": 2.0},
+			func(_t: int) -> String: return "Line\nbreak", INF)
+	var many := RideInfo.read({"fuels": fuels, "name": "x".repeat(500), "speed_unit": "t/t"})
+	var tt := RideInfo.read({"speed_unit": "t/t", "speed_scale": 0.0025})
+	var bad_k := RideInfo.read({"speed_unit": "km/h", "speed_scale": INF})
+	var no_names := RideInfo.read({"fuels": [[5, 1, 2]]}, func(_t: int) -> Variant: return 12)
 	_check.call(r.ok and r.name == "" and not r.driver and r.velocity == RideInfo.MAX_VMIPH and r.cruise == 0
-			and r.safe == 0 and r.top == 10 and not r.engine_on and r.fuels.size() == 1 and r.fuels[0]["left"] == 20
-			and r.fuels[0]["name"] == "Line break" and r.battery_cap == -1 and r.turn == 0 and r.mass_kg == 0
-			and r.health == 100 and r.unit == "mph" and r.unit_per_mph == 1.0,
-			"ride: junk fields fall back, numbers clamped, bad fuel entries skipped, names one line")
+			and r.safe == 0 and r.top == 10 and not r.engine_on and r.engines == 1 and r.engines_broken == 1
+			and r.engines_running == 1 and r.fuels.size() == 1 and r.fuels[0]["left"] == 20
+			and r.fuels[0]["name"] == "Line break" and r.battery_cap == -1 and is_nan(r.turn_deg) and is_nan(r.face_deg)
+			and r.mass_kg == 0 and r.health == 100 and r.unit == "mph" and r.scale == 0.01
+			and no_names.fuels[0]["name"] == "fuel",
+			"ride: junk fields fall back, numbers clamped, bad engine and fuel entries skipped, names one line")
 	_check.call(many.fuels.size() == RideInfo.MAX_FUELS and many.name.length() == RideInfo.MAX_NAME
-			and many.unit == "mph" and tt.unit == "t/t" and is_equal_approx(tt.shown(400), 0.01)
-			and bad_k.unit == "km/h" and is_equal_approx(bad_k.unit_per_mph, 1.609344),
-			"ride: fuel list and name capped; t/t only with the bridge's factor; a bad factor uses the unit's own")
+			and many.unit == "t/t" and is_equal_approx(many.scale, 0.0025) and is_equal_approx(tt.shown(400), 1.0)
+			and bad_k.unit == "km/h" and is_equal_approx(bad_k.scale, 0.01609344),
+			"ride: fuel rows and name capped; a bad speed_scale uses the unit's own")
 
 
 func _test_gauge_scale() -> void:
-	var r := RideInfo.read(CAR)
+	var r := RideInfo.read(CAR, _fuel_name, FACE)
 	var top := SpeedGauge.scale_top(r)
 	var ticks := top / SpeedGauge.tick_step(top)
-	var fast := RideInfo.read({"velocity": 30000, "safe": 1000, "max": 2000})
+	var fast := RideInfo.read({"velocity": 30000, "safe_velocity": 1000, "max_velocity": 2000})
 	_check.call(top >= r.shown(r.top) * 1.15 and ticks >= 4.0 and ticks <= 8.0 and is_equal_approx(fmod(top,
 			SpeedGauge.tick_step(top)), 0.0) and SpeedGauge.scale_top(fast) >= 300.0
 			and is_equal_approx(SpeedGauge.angle_of(0.0, top), deg_to_rad(150.0))
@@ -107,27 +124,27 @@ func _test_hud() -> void:
 	_root.add_child(f)
 	f.add_child(h)
 	h.visible = true
-	h.show_ride(RideInfo.read(CAR))
+	h.show_ride(RideInfo.read(CAR, _fuel_name, FACE))
 	await _root.get_tree().process_frame
 	var fuel0: Label = h._fuel_rows[0]["label"]
-	var driver := h.engine_label.visible and h.engine_label.text.contains("cruise on") and fuel0.visible \
+	var driver := h.engine_label.visible and h.engine_label.text == "Engine on  (1 of 2 broken)" and fuel0.visible \
 			and fuel0.text == "gasoline  25%" and (h._fuel_rows[1]["label"] as Label).visible \
 			and not (h._fuel_rows[2]["label"] as Label).visible and h.battery_label.text == "Battery  50%" \
-			and h.health_label.text == "Health  87%   1.5 t" and h.steer_label.visible and h.steer_label.text.contains("right") \
+			and h.health_label.text == "Health  87% (dented)   1.5 t" and h.steer_label.visible and h.steer_label.text.contains("right") \
 			and not h.warn_label.visible and h.name_label.text.contains("driving")
 	var p := CAR.duplicate(true)
-	p["driver"] = false
+	p["in_control"] = false
 	p["skidding"] = true
-	h.show_ride(RideInfo.read(p))
+	h.show_ride(RideInfo.read(p, _fuel_name, FACE))
 	await _root.get_tree().process_frame   # the gauge draws: driver, then a skidding passenger (no throttle marker)
 	var passenger := h.name_label.text.contains("passenger") and h.warn_label.visible and h.warn_label.text == "SKIDDING" \
 			and not h.engine_label.visible and not fuel0.visible and not h.battery_label.visible \
 			and not h.health_label.visible and not h.steer_label.visible
-	h.show_ride(RideInfo.read({"velocity": -500, "driver": true}))   # reversing, no engine data: a grey scale
+	h.show_ride(RideInfo.read({"velocity": -500, "in_control": true}))   # reversing, no engine data: a grey scale
 	await _root.get_tree().process_frame
 	_check.call(driver and passenger and RideHud.mass_text(850) == "850 kg",
 			"%s | %s | %s | %s" % [h.engine_label.text, fuel0.text, h.battery_label.text, h.health_label.text] if not driver else
-			"ride HUD: the driver sees engine, cruise, fuel, battery, health, mass and steering; a passenger the name and warnings")
+			"ride HUD: the driver sees engines, fuel, battery, condition, mass and steering; a passenger the name and warnings")
 	f.free()
 
 
@@ -139,7 +156,7 @@ func _test_place(s: Vector2) -> void:
 	_root.add_child(f)
 	f.add_child(h)
 	h.visible = true
-	h.show_ride(RideInfo.read(CAR))
+	h.show_ride(RideInfo.read(CAR, _fuel_name, FACE))
 	await _root.get_tree().process_frame
 	var hands := Rect2(s.x - 410.0, s.y - 96.0, 400.0, 86.0)
 	var column := Rect2(12.0, s.y / 2.0 - 140.0, 560.0, 230.0)

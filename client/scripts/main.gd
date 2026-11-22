@@ -2251,11 +2251,18 @@ static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
 	return texts.size() - 1
 
 
-## The driving HUD, each frame: player.ride while the player is on a vehicle (flat screen; F1 > HUD > Driving
-## gauge), kept off the hands panel, the look line, the HUD's text and its left column.
+## The driving HUD, each frame: player.vehicle_state while the player is on a vehicle (flat screen; F1 > HUD >
+## Driving gauge), kept off the hands panel, the look line, the HUD's text and its left column.
 func _ride_step() -> void:
-	var raw: Variant = world.snapshot.get("player_ride") if world.snapshot != null else null
-	var r := RideInfo.read(raw)
+	var snap := world.snapshot
+	var raw: Variant = snap.get("player_vehicle_state") if snap != null else null
+	var face := NAN
+	if raw is Dictionary:
+		for veh: Snapshot.Vehicle in snap.vehicles:
+			if veh.uid == snap.player_vehicle:
+				face = veh.face_deg
+				break
+	var r := RideInfo.read(raw, _itype_name, face)
 	ride_hud.visible = r.ok and vr == null and hud_settings.ride_hud and hud_view.visible and not _menu_open()
 	if not ride_hud.visible:
 		return
@@ -2265,6 +2272,14 @@ func _ride_step() -> void:
 		if c.visible:
 			keep.append(c.get_global_rect())
 	ride_hud.place(keep)
+
+
+## An item type's name (its id when nameless), "" for an unknown index.
+func _itype_name(type: int) -> String:
+	var d: IdTables.Def = world.tables.def_at("itype", type) if world.tables != null else null
+	if d == null:
+		return ""
+	return d.name if not d.name.is_empty() else d.id
 
 
 ## The key help when F1 > HUD > Key help is off, or there's no room for more.

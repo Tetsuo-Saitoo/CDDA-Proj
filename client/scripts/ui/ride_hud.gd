@@ -1,8 +1,8 @@
 class_name RideHud
 extends Control
 ## The flat screen's driving HUD (user via the coordinator, 2026-11-21): while the player is on a vehicle, a speed
-## gauge (SpeedGauge) and the vehicle's panel: name, engine, fuel per type, battery, health and mass, steering, and
-## a skid warning. A passenger gets the gauge and the panel's name and warning only. main shows it (F1 > HUD >
+## gauge (SpeedGauge) and the vehicle's panel: name, engine, fuel per type, battery, condition and mass, steering,
+## and a skid warning. A passenger gets the gauge and the panel's name and warning only. main shows it (F1 > HUD >
 ## "Driving gauge" hides it) and calls place() with what it must keep off; a small window shrinks it to MIN_SCALE.
 ## VR has its own (lead-vr).
 
@@ -114,7 +114,10 @@ func show_ride(r: RideInfo) -> void:
 	warn_label.text = info.warning()
 	warn_label.visible = not warn_label.text.is_empty()
 	engine_label.visible = d
-	engine_label.text = "Engine on" + ("   cruise on" if info.cruise_on else "") if info.engine_on else "Engine off"
+	var eng := "Engine on" if info.engine_on else "Engine off"
+	if info.engines_broken > 0:
+		eng += "  (%d of %d broken)" % [info.engines_broken, info.engines]
+	engine_label.text = eng
 	engine_label.add_theme_color_override("font_color", TEXT_COLOR if info.engine_on else DIM_COLOR)
 	var st := info.steer()
 	steer_label.visible = d and absi(st) >= STEER_MIN_DEG
@@ -141,7 +144,7 @@ func show_ride(r: RideInfo) -> void:
 	health_bar.visible = hp
 	var parts := PackedStringArray()
 	if info.health >= 0:
-		parts.append("Health  %d%%" % info.health)
+		parts.append("Health  %d%% (%s)" % [info.health, info.health_word()])
 	if info.mass_kg >= 0:
 		parts.append(mass_text(info.mass_kg))
 	health_label.text = "   ".join(parts)
