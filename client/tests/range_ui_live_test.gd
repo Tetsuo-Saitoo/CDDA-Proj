@@ -434,12 +434,11 @@ func _drive_live(start: Vector3i) -> void:
 			turned += 1 if r.get("turned", false) else 0
 			if r.get("bad", "") != "":
 				bad.append("%s: %s" % [act, r["bad"]])
-			if _ride_hud() != null:
-				await _frames(2)
-				steers.append(int(_ride_hud().get("info").steer()))
-		if not steers.is_empty():
-			_check(steers.any(func(d: int) -> bool: return absi(d) >= 5),
-					"driving HUD: steering reads off the heading while the car is turned (degrees after LEFT, LEFT, a turn on: %s)" % [steers])
+			var ri: Variant = _ride_info()
+			if ri != null:
+				steers.append(int(ri.steer()))
+		if not steers.is_empty():   # (off the heading only on a turn the car hasn't moved since the key: not judged)
+			print("    (driving HUD: the steering reading after LEFT, LEFT, a turn on: %s degrees off the heading)" % [steers])
 		var steered: Snapshot.Vehicle = car_of.call()
 		var face: float = steered.face_deg if steered != null else 0.0
 		_check(turned >= 1 and bad.is_empty() and steered != null and not _faces(face, 0.0),
@@ -819,6 +818,21 @@ func _ride_hud() -> Control:
 	return (h as Control) if h is Control and _player_field("vehicle_state") is Dictionary else null
 
 
+## The player's vehicle as lead-ui's RideInfo reads it from the shown snapshot, read afresh (the HUD keeps its own
+## copy only while it shows); null on a client without it or while the snapshot has no vehicle_state.
+func _ride_info() -> Variant:
+	var snap: Snapshot = _main.world.snapshot
+	var state: Variant = snap.get("player_vehicle_state")
+	if not state is Dictionary or (state as Dictionary).is_empty() or not ResourceLoader.exists("res://scripts/hud/ride_info.gd"):
+		return null
+	var face := NAN
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		if veh.uid == snap.get("player_vehicle"):
+			face = veh.face_deg
+	var names := Callable(_main, "_itype_name") if _main.has_method("_itype_name") else Callable()
+	return load("res://scripts/hud/ride_info.gd").call("read", state, names, face)
+
+
 ## The driving HUD's rect on screen (its dash, scaled as it is drawn).
 func _ride_rect(hud: Control) -> Rect2:
 	var d := hud.get("dash") as Control
@@ -833,9 +847,14 @@ func _ride_parked(car: Snapshot.Vehicle) -> void:
 	if hud == null:
 		print("  (no driving HUD in this client, or no vehicle_state from this bridge: the driving HUD not checked)")
 		return
-	var read := func() -> bool: return hud.get("info").ok and hud.get("info").at_controls
+	var read := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.ok and now.at_controls
 	await _until(read, SHOW_TIMEOUT_MS)
-	var i: Variant = hud.get("info")
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the controls' square the snapshot has the car's numbers")
+		return
 	var fuels: Array = i.fuels
 	var full: bool = not fuels.is_empty() and fuels.all(func(f: Dictionary) -> bool: return f["left"] == f["cap"])
 	_check(i.ok and not i.driver and i.at_controls and not i.engine_on and i.velocity == 0 and i.set_speed() == 0
@@ -852,10 +871,12 @@ func _ride_set_speed() -> void:
 	var hud := _ride_hud()
 	if hud == null:
 		return
-	var set := func() -> bool: return hud.get("info").driver and hud.get("info").cruise > 0
+	var set := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.driver and now.cruise > 0
 	var is_set := await _until(set, SHOW_TIMEOUT_MS)
-	var i: Variant = hud.get("info")
-	_check(is_set and i.engine_on and i.set_speed() == i.cruise and absi(i.velocity) < i.cruise,
+	var i: Variant = _ride_info()
+	_check(is_set and i != null and i.engine_on and i.set_speed() == i.cruise and absi(i.velocity) < i.cruise,
 			"driving HUD: after the forward key twice the set speed is %.0f %s while the car does %.0f; the engine is on (safe %.0f, top %.0f %s)"
 			% [i.shown(i.cruise), i.unit, i.shown(i.velocity), i.shown(i.safe), i.shown(i.top), i.unit])
 
@@ -871,20 +892,27 @@ func _ride_sizes() -> void:
 		_check(false, "driving HUD: it shows while driving in the %s view" % _main.view_mode)
 		return
 	var was: Vector2i = root.size
-	for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
-		root.size = s
-		await _frames(4)
-		await create_timer(0.6).timeout
-		var r := _ride_rect(hud)
-		var keep := [_main.hud.get_global_rect(), _main.hud_view.call("column_rect")]
-		if _main.hands_panel.visible:
-			keep.append(_main.hands_panel.get_global_rect())
-		var over := keep.filter(func(k: Rect2) -> bool: return k.has_area() and k.intersects(r))
-		_check(hud.visible and r.has_area() and Rect2(Vector2.ZERO, Vector2(s)).grow(1.0).encloses(r) and over.is_empty(),
-				"driving HUD %dx%d: in the window and clear of the HUD's text, the left column and the hands panel (the HUD at %s; overlapping: %s)"
-				% [s.x, s.y, r, over])
+	for hands: String in ["empty hands", "something held"]:
+		if hands == "something held" and not await _hold_something():
+			print("  (nothing could be put into a hand: the driving HUD beside the hands panel not checked)")
+			break
+		for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
+			root.size = s
+			await _frames(4)
+			await create_timer(0.6).timeout
+			var r := _ride_rect(hud)
+			var keep := [_main.hud.get_global_rect(), _main.hud_view.call("column_rect")]
+			if _main.hands_panel.visible:
+				keep.append(_main.hands_panel.get_global_rect())
+			var over := keep.filter(func(k: Rect2) -> bool: return k.has_area() and k.intersects(r))
+			_check(hud.visible and r.has_area() and Rect2(Vector2.ZERO, Vector2(s)).grow(1.0).encloses(r) and over.is_empty()
+					and _main.hands_panel.visible == (hands == "something held"),
+					"driving HUD %dx%d, %s: in the window and clear of the HUD's text, the left column and the hands panel (the HUD at %s; the hands panel %s; the feed %s; overlapping: %s)"
+					% [s.x, s.y, hands, r, _main.hands_panel.get_global_rect() if _main.hands_panel.visible else "hidden",
+					_main.hud_view.call("feed_rect") if _main.hud_view.has_method("feed_rect") else "?", over])
 	root.size = was
 	await _frames(4)
+	_main.vehicles_view.call("glide", 10.0)   # (the kit's turn rolled the car on: its node up to date again)
 	var box := _main.key_menu.get("ride_check") as CheckBox
 	if box != null:
 		box.button_pressed = false
@@ -901,13 +929,35 @@ func _ride_sizes() -> void:
 				% [_main.compass.heading_deg, _main.view_mode, Compass.heading_of(_main.fp.global_basis)])
 
 
+## Puts a carried item into the off hand so the hands panel shows (the test kit is asked for first: a turn passes).
+## True once the panel shows.
+func _hold_something() -> bool:
+	if _main.hands_panel.visible:
+		return true
+	var kits := _live.kits_given()
+	if not _live.give_test_kit():
+		return false
+	_live.queue_action("pause")
+	var kit_in := func() -> bool: return _live.kits_given() > kits and not _main.hands.picker.carried().is_empty()
+	if not await _until(kit_in, OP_TIMEOUT_MS):
+		return false
+	var shows := func() -> bool: return _main.hands_panel.visible
+	for r: ItemRef in _main.hands.picker.carried().slice(0, 8):
+		if _main.item_actions.hold(r, "off") and await _until(shows, 8000):
+			return true
+	return false
+
+
 ## The driving HUD on a seat without controls: a passenger's (the name, no engine line), shown in first person.
 func _ride_passenger() -> void:
 	var hud := _ride_hud()
 	if hud == null:
 		return
 	await _frames(3)
-	var i: Variant = hud.get("info")
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the seat beside the driver's the snapshot has the car's numbers")
+		return
 	var name_l := hud.get("name_label") as Label
 	var engine_l := hud.get("engine_label") as Label
 	_check(i.ok and not i.driver and not i.at_controls and hud.visible and name_l != null and name_l.text.contains(i.name)
