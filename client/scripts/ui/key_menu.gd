@@ -42,6 +42,7 @@ var _compass_value: Label
 var debug_check: CheckBox
 var mood_check: CheckBox
 var hurt_check: CheckBox
+var ride_check: CheckBox   # HUD row: the driving HUD on a vehicle
 var key_help_check: CheckBox   # HUD row: the key help along the top, or one short line
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
@@ -240,6 +241,13 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	key_help_check.button_pressed = settings.key_help
 	key_help_check.toggled.connect(_on_key_help)
 	row.add_child(key_help_check)
+	ride_check = CheckBox.new()
+	ride_check.text = "Driving gauge"
+	ride_check.tooltip_text = "The speed gauge and the vehicle's fuel, battery and health while you're on a vehicle."
+	ride_check.focus_mode = Control.FOCUS_NONE
+	ride_check.button_pressed = settings.ride_hud
+	ride_check.toggled.connect(_on_ride_hud)
+	row.add_child(ride_check)
 	debug_check = CheckBox.new()
 	debug_check.text = "Debug: cheats page"
 	debug_check.tooltip_text = "Shows the Cheats button here (testing only; off by default)."
@@ -524,6 +532,14 @@ func _on_debug_cheats(on: bool) -> void:
 	if err != OK:
 		_status.text = "Debug setting not saved: %s" % error_string(err)
 	_update_cheats_button()
+	hud_changed.emit()
+
+
+func _on_ride_hud(on: bool) -> void:
+	hud.ride_hud = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Driving gauge setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 

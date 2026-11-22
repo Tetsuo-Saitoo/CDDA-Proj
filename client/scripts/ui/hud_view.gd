@@ -241,6 +241,13 @@ func marks_bottom() -> float:
 	return b
 
 
+## The left column (body, mood, feed) as drawn on screen; other panels keep off it (RideHud).
+func column_rect() -> Rect2:
+	var w := 330.0 + (EFFECT_W if data != null and not effect_lines().is_empty() else 0.0)
+	w = maxf(w, feed.get_combined_minimum_size().x)
+	return Rect2(global_position + Vector2(12.0, size.y / 2.0 + BODY_TOP + _shift), Vector2(w, _column_h))
+
+
 ## How far down (px from this view's top) main's status text may reach: the left column moves down under it
 ## (avoid) while keeping BOTTOM_KEEP px at the bottom, and never above its own place.
 func text_limit() -> float:

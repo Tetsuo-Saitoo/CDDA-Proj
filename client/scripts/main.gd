@@ -53,6 +53,7 @@ var key_menu: KeyMenu
 var compass: Compass
 var hud_settings := HudSettings.new()   # compass opacity (F1 menu, user://hud.cfg)
 var look_panel: Label
+var ride_hud: RideHud           # the driving HUD: speed gauge and vehicle panel while on a vehicle (flat screen)
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
@@ -1818,6 +1819,8 @@ func _setup_hud() -> void:
 	look_panel.add_theme_constant_override("outline_size", 4)
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
+	ride_hud = RideHud.new()   # under the hands panel and the menus
+	layer.add_child(ride_hud)
 	hands_panel = HandsPanel.new()
 	hands_panel.left_handed = hud_settings.left_handed()
 	hands_panel.tile_of = func(uid: int) -> Dictionary:   # live item tiles behind the held items
@@ -2205,6 +2208,7 @@ func _process(_delta: float) -> void:
 	hud_view.visible = not key_menu.visible
 	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
 	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
+	_ride_step()
 
 
 ## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
@@ -2245,6 +2249,22 @@ static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
 		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
 			return i
 	return texts.size() - 1
+
+
+## The driving HUD, each frame: player.ride while the player is on a vehicle (flat screen; F1 > HUD > Driving
+## gauge), kept off the hands panel, the look line, the HUD's text and its left column.
+func _ride_step() -> void:
+	var raw: Variant = world.snapshot.get("player_ride") if world.snapshot != null else null
+	var r := RideInfo.read(raw)
+	ride_hud.visible = r.ok and vr == null and hud_settings.ride_hud and hud_view.visible and not _menu_open()
+	if not ride_hud.visible:
+		return
+	ride_hud.show_ride(r)
+	var keep: Array[Rect2] = [hud.get_global_rect(), hud_view.column_rect()]
+	for c: Control in [hands_panel, look_panel]:
+		if c.visible:
+			keep.append(c.get_global_rect())
+	ride_hud.place(keep)
 
 
 ## The key help when F1 > HUD > Key help is off, or there's no room for more.
