@@ -956,9 +956,18 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		var hit: Dictionary = _main.call("_cast_screen", _main.call("_pointer"), false)
 		met.append([h, hit.get("square"), str(hit.get("what", "")).left(40)])
 		aimed = hit.get("hit", false) and hit.get("square") == sq and hit.get("vehicle") == uid
+	for down: float in [-0.3, -0.6, -0.9, -1.2]:   # not met head-on (the car is drawn rigid, off its squares): look around
+		for k in 16:
+			if aimed:
+				break
+			_main.fp.set_look(TAU * k / 16.0, down)
+			await _frames(2)
+			var found: Dictionary = _main.call("_cast_screen", _main.call("_pointer"), false)
+			aimed = found.get("hit", false) and found.get("square") == sq and found.get("vehicle") == uid
 	if not aimed:
-		print("    (car storage, %s: from %s the pointer meets no part on its square %s, so E on it is not checked; aimed at heights, it met: %s)"
-				% [what, _main.world.snapshot.player_pos, sq, met])
+		print("    (car storage, %s: from %s the pointer meets no part on its square %s, head-on or looking around, so E on it is not checked; aimed at heights, it met: %s; the eye is at %s, the middle of the player's square at %s)"
+				% [what, _main.world.snapshot.player_pos, sq, met, _main.fp.global_position,
+				_main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos)])
 	else:
 		var on_it: bool = _main.call("_open_cargo")
 		await _frames(3)
