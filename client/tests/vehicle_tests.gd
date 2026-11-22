@@ -556,6 +556,93 @@ func _test_turn(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	cv.free()
 
 
+## C5 marks: which squares of a turned car its rigid model doesn't line up with, and how they are shown.
+func _test_marks(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
+	var counts := {}
+	var as_expected := true
+	var signs45 := 0
+	for f: int in [0, 15, 45, 90]:
+		var rows := []
+		for mx in range(-3, 3):
+			for my in range(-1, 3):
+				var sq := _cdda_square(Vector2i(mx, my), f)
+				rows.append([mx, my, 1, 255, 0, sq.x, sq.y, 0])
+		rows.append([0, 0, 1, 255, Snapshot.VPART_FILLER, 9, 9, 0])   # a gap filler no cell is drawn on
+		var v := Snapshot.vehicles_from([{"uid": 2, "pos": [100, 100, 0], "face_deg": float(f), "parts": rows}], 0, 0)[0]
+		var xf := VehicleView.frame_of(v, world.coords)
+		var body := {}
+		var marked := VehicleView.off_squares(v, xf, world.coords, body)
+		counts[f] = marked.size()
+		var bare := marked.filter(func(sq: Vector3i) -> bool: return not body.has(sq))
+		if f == 45:
+			signs45 = bare.size()
+		# the rule, worked out the long way: a square is marked when its own cell is drawn MARK_TOL or more off it,
+		# or no cell is drawn within MARK_TOL of it
+		var want := []
+		var want_bare := []
+		var seen := {}
+		for i in v.part_count():
+			var sq := v.square(i)
+			if seen.has(sq):
+				continue
+			seen[sq] = true
+			var c := world.coords.ms_center_to_world(sq)
+			var own_off := false
+			var covered := false
+			var under := false
+			for k in v.part_count():
+				var j := k * Snapshot.VPART_STRIDE
+				if v.parts[j + 4] & Snapshot.VPART_FILLER != 0:
+					continue
+				var cell := xf * Vector3(v.parts[j], 0.0, v.parts[j + 1])
+				var dist := Vector2(cell.x - c.x, cell.z - c.z).length()
+				covered = covered or dist < VehicleView.MARK_TOL
+				own_off = own_off or (v.square(k) == sq and dist >= VehicleView.MARK_TOL)
+				under = under or dist < VehicleView.MARK_BODY
+			if own_off or not covered:
+				want.append(sq)
+				if not under:
+					want_bare.append(sq)
+		var filler_sq := v.pos + Vector3i(9, 9, 0)
+		if f % 90 == 0:
+			as_expected = as_expected and marked.is_empty()
+		else:
+			as_expected = as_expected and marked == want and filler_sq in marked and bare == want_bare and filler_sq in bare
+	_check.call(as_expected and counts[15] > 1 and counts[45] > counts[15] and signs45 > 1 and signs45 < counts[45],
+			"vehicles: marks on a 6 by 4 car: none at 0 and 90 degrees, %d squares at 15, %d at 45 (a part's cell %.2f m or more off its square, or a square no cell covers: an uncovered gap filler too); signs only where the drawn body leaves the square bare (%d at 45)" % [counts[15] - 1, counts[45] - 1, VehicleView.MARK_TOL, signs45 - 1])
+	# shown: a block and a sign per marked square, hidden for the vehicle the player sits in, moved by a map shift
+	var car := snap.vehicles[0]
+	var c: VehicleView.Car = view._cars[UID]
+	var kids := view.get_child_count()
+	car.face_deg = 30.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	var made := c.marks != null and view.get_child_count() == kids + 1 and not c.marked.is_empty()
+	var drawn := made and (c.marks.get_child(0) as MultiMeshInstance3D).multimesh.instance_count == c.marked.size() 			and (c.marks.get_child(1) as MultiMeshInstance3D).multimesh.instance_count == c.signed.size()
+	var first := c.marks.position if made else Vector3.INF
+	var at0 := VehicleView.mark_base(world, c.marked[0]) if made else Vector3.INF
+	var sq0 := world.coords.ms_center_to_world(c.marked[0]) if made else Vector3.ZERO
+	var shown := made and c.marks.visible
+	view.hide_marks(UID)
+	var hidden := made and not c.marks.visible
+	view.hide_marks(0)
+	var back := made and c.marks.visible
+	var k0 := c.veh.parts.slice(0, 2)
+	view.hide_marks(0, c.node.transform * Vector3(k0[0], 1.5, k0[1]))   # VR: the head in its model, off its squares
+	var head_in := made and not c.marks.visible
+	view.hide_marks(0, c.node.transform * Vector3(k0[0] + 40, 1.5, k0[1]))
+	back = back and head_in and c.marks.visible
+	view.shift(Vector3(2, 0, 0))
+	var shifted := made and c.marks.position.is_equal_approx(first + Vector3(2, 0, 0))
+	view.shift(Vector3(-2, 0, 0))
+	car.face_deg = 0.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	_check.call(drawn and shown and hidden and back and shifted and is_equal_approx(at0.x, sq0.x) and is_equal_approx(at0.z, sq0.z)
+			and c.marks == null and view.get_child_count() == kids,
+			"vehicles: a turned car's marks are a block and a sign per marked square on it, hidden for the car the player sits in or (VR) whose model the head is in, moved by a map shift, gone on the axes")
+
+
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var snap := Snapshot.from_data(_data(data, tables))
 	if not snap.is_valid() or snap.vehicles.size() != 1:
@@ -604,6 +691,7 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	view.glide(10.0)
 	_test_shift(root, view, snap, world)
 	_test_glide(view, snap, world)
+	_test_marks(view, snap, world)
 	# tint: the half-broken board is darker than intact, the broken halfboard charred, glass only where unbroken
 	var def := func(id: String) -> IdTables.Def: return tables.def_named("vpart", id)
 	var intact := VehicleView.color_of(VehicleView.Kind.BOARD, def.call("board"), 255, 0)
