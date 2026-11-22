@@ -444,14 +444,15 @@ func interior(uid: int) -> Dictionary:
 ## The vehicle the player is in (0: none) and its dash reading (CarDash.reading_of; main.gd, each snapshot): only
 ## its dash and wheel come alive. The one before goes dark, its wheel straight.
 func set_ride(uid: int, reading: Dictionary) -> void:
-	if uid == _ride_uid and reading == _ride:
+	var clean := CarDash.reading_of(reading) if uid != 0 else {}
+	if uid == _ride_uid and clean == _ride:
 		return
 	if uid != _ride_uid:
 		var old: Car = _cars.get(_ride_uid)
 		if old != null and old.interior != null and is_instance_valid(old.interior):
 			old.interior.set_reading({})
 	_ride_uid = uid
-	_ride = reading.duplicate(true) if uid != 0 else {}
+	_ride = clean
 	var car: Car = _cars.get(uid)
 	if car != null and car.interior != null and is_instance_valid(car.interior):
 		car.interior.set_reading(_ride)
@@ -518,11 +519,16 @@ func interiors(delta: float, eye := Vector3.INF) -> void:
 func _check_interior(car: Car, snap: Snapshot, world: WorldView) -> void:
 	if car.interior == null:
 		return
-	if car.node == null or not is_instance_valid(car.interior) \
-			or car.interior.key != CarInterior.layout_key(car.veh, snap, world.tables, view_z_max):
+	if car.node == null or not is_instance_valid(car.interior):
 		_free_interior(car)
-	else:
-		car.interior.set_states(car.veh)
+		return
+	var seen := CarInterior.seen_key(car.veh, snap, world.tables, view_z_max)
+	if seen != car.interior.seen:   # the layout is only worked out again when what it is made from changed
+		if car.interior.key != CarInterior.layout_key(car.veh, snap, world.tables, view_z_max):
+			_free_interior(car)
+			return
+		car.interior.seen = CarInterior.seen_key(car.veh, snap, world.tables, view_z_max, true)
+	car.interior.set_states(car.veh)
 
 
 func _free_interior(car: Car) -> void:
