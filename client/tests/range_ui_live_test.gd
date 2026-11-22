@@ -228,6 +228,8 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 		if seen:
 			_vehicles_ok("a car spawned facing %d degrees" % facing)
 			_cells_ok("vehicle spawn: facing %d degrees" % facing, car)
+			await _frames(2)
+			_marks_ok("vehicle spawn: facing %d degrees, seen on foot" % facing, car)
 	var on_me := await _cheat(_spawn_vehicle("car", _main.world.snapshot.player_pos, 0))
 	var unknown := await _cheat(_spawn_vehicle("car_nope", start + Vector3i(0, 30, 0), 0))
 	_check(on_me.contains("in the way") and unknown == "No such vehicle.",
@@ -286,6 +288,7 @@ func _drive_live(start: Vector3i) -> void:
 		return
 	var car: Snapshot.Vehicle = car_of.call()
 	var uid := car.uid
+	_marks_ok("driving: the car parked facing east", car)
 	# the controls' square, the door beside it, and the floor outside that door
 	var seat := Vector3i.MAX
 	var doors := {}
@@ -445,6 +448,20 @@ func _drive_live(start: Vector3i) -> void:
 		if steered != null:
 			_vehicles_ok("the car steered to face %.0f degrees" % face)
 			_cells_ok("driving: facing %.0f degrees" % face, steered)
+			# lead-world's marks: shown for the player's own car in the chase view, never from its seat in first person
+			var dp := _main.key_menu.get("drive_pick") as OptionButton
+			await _frames(2)
+			_marks_ok("driving: facing %.0f degrees, in the %s view" % [face, _main.view_mode], steered, _main.view_mode != "first")
+			if dp != null and vv.has_method("off_squares"):
+				dp.select(0)
+				dp.item_selected.emit(0)
+				await _frames(3)
+				_marks_ok("driving: facing %.0f degrees, from the seat in first person" % face, steered, false)
+				dp.select(1)
+				dp.item_selected.emit(1)
+				await _frames(3)
+			await _top_drive_live()
+			await _recentre_live()
 		if steered != null and car0 is Transform3D and _main.has_method("_carry_look") and vv.has_method("seat_transform"):
 			# the look turns with the car, and the eyes and the body sit on the driver's cell as the car is drawn
 			await _frames(3)
@@ -633,6 +650,167 @@ func _bike_live(start: Vector3i) -> void:
 	_check(why == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"control key: the player steps off and is back at the arrival square (%s; teleport: %s)"
 			% [_main.world.snapshot.player_pos, why if not why.is_empty() else "done"])
+
+
+## The marks on a turned car's real squares (lead-world's VehicleView.off_squares; nothing checked on a client
+## without them). Off the axes: every square of `veh` whose own cell is drawn 0.25 m or more from it is marked, so
+## is every square of it that blocks walking unless its own cell is drawn on it, nothing is marked that isn't one
+## of its squares, a block stands on each marked square's middle, and the marks show (`shown`: whether they should,
+## e.g. not from the seat in first person). On the axes nothing is marked.
+func _marks_ok(what: String, veh: Snapshot.Vehicle, shown := true) -> void:
+	var vv: VehicleView = _main.vehicles_view
+	if not vv.has_method("off_squares") or not vv.has_method("frame_of"):
+		return
+	var car: Variant = (vv.get("_cars") as Dictionary).get(veh.uid)
+	if car == null:
+		_check(false, "%s: the car is drawn" % what)
+		return
+	var marked := {}
+	for sq: Vector3i in car.marked:
+		marked[sq] = true
+	var marks: Node3D = car.marks
+	var on_axes := absf(fposmod(veh.face_deg + 45.0, 90.0) - 45.0) < 0.01
+	if on_axes:
+		_check(marked.is_empty() and marks == null, "%s: a car on the axes has no marks (%d marked)" % [what, marked.size()])
+		return
+	var f: Transform3D = vv.call("pose_of", veh, _main.world)
+	var snap: Snapshot = _main.world.snapshot
+	var own := {}       # square -> metres its own cell is drawn from it (the nearest of its parts' cells)
+	var squares := {}   # every square of the vehicle
+	var cells := []     # every drawn cell's middle (x, z)
+	for i in veh.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		var sq := veh.square(i)
+		squares[sq] = true
+		if (veh.parts[k + 4] & Snapshot.VPART_FILLER) != 0:
+			continue
+		var cell: Vector3 = f * Vector3(veh.parts[k], 0.0, veh.parts[k + 1])
+		var c: Vector3 = _main.world.coords.ms_center_to_world(sq)
+		cells.append(Vector2(cell.x, cell.z))
+		own[sq] = minf(float(own.get(sq, INF)), Vector2(cell.x - c.x, cell.z - c.z).length())
+	var unmarked_off := []      # drawn off its square (a gap filler's square: no cell drawn on it), not marked
+	var unmarked_block := []    # ... and it blocks walking
+	for sq: Vector3i in squares:
+		var d := float(own.get(sq, INF))
+		if not own.has(sq):   # a gap filler's square: the nearest cell of any part
+			var c: Vector3 = _main.world.coords.ms_center_to_world(sq)
+			for p: Vector2 in cells:
+				d = minf(d, p.distance_to(Vector2(c.x, c.z)))
+		if d >= 0.25 and not marked.has(sq):
+			unmarked_off.append(sq)
+			if VehicleView.blocks(snap, _main.world.tables, sq):
+				unmarked_block.append(sq)
+	var strays := marked.keys().filter(func(sq: Vector3i) -> bool: return not squares.has(sq))
+	var blocks: MultiMesh = (marks.get_child(0) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 0 else null
+	var placed := blocks != null and blocks.instance_count == car.marked.size()
+	var worst := 0.0
+	if placed:
+		for i in car.marked.size():
+			var at: Vector3 = marks.global_transform * blocks.get_instance_transform(i).origin
+			var c: Vector3 = _main.world.coords.ms_center_to_world(car.marked[i])
+			worst = maxf(worst, Vector2(at.x - c.x, at.z - c.z).length())
+	var blocking := squares.keys().filter(func(sq: Vector3i) -> bool: return VehicleView.blocks(snap, _main.world.tables, sq)).size()
+	_check(not marked.is_empty() and unmarked_off.is_empty() and unmarked_block.is_empty() and strays.is_empty() and placed
+			and worst < 0.05 and marks.visible == shown,
+			"%s: the car's real squares are marked: %d of its %d squares (%d of them block walking), %d with a sign; none drawn off its square is left out (%s), none marked outside the car (%s); a block on each (%.2f m off at most); shown %s (wanted %s)"
+			% [what, marked.size(), squares.size(), blocking, (car.signed as Array).size(), unmarked_off.slice(0, 3),
+			strays.slice(0, 3), worst, marks.visible if marks != null else "no marks", shown])
+
+
+## The top view while driving (lead-world's; skipped on a client without it): picked in F1, it looks at the car's
+## middle and, once it has turned, along the car's heading; with F1's "north up" it settles looking north and still
+## at the car. Then both pickers are put back.
+func _top_drive_live() -> void:
+	var vc: ViewCamera = _main.view_cam
+	var km := _main.key_menu
+	var drive_pick := km.get("drive_pick") as OptionButton
+	var top_pick := km.get("top_pick") as OptionButton
+	if not "top_yaw" in vc or drive_pick == null or top_pick == null:
+		return
+	var target := func() -> Transform3D: return _main.vehicles_view.call("chase_target", _main.world.snapshot)
+	var aims_at := func() -> float:   # metres from the car's middle to where the camera's ray meets its floor
+		var t: Transform3D = target.call()
+		var o := vc.global_position
+		var d := -vc.global_basis.z
+		var hit := o + d * ((t.origin.y - o.y) / d.y) if absf(d.y) > 1e-3 else o
+		return Vector2(hit.x - t.origin.x, hit.z - t.origin.z).length()
+	drive_pick.select(2)
+	drive_pick.item_selected.emit(2)
+	await create_timer(2.5).timeout
+	var goal: float = vc.call("heading_yaw", target.call())
+	var turned := absf(wrapf(float(vc.get("top_yaw")) - goal, -PI, PI))
+	var centred: float = aims_at.call()
+	top_pick.select(1)
+	top_pick.item_selected.emit(1)
+	await create_timer(2.5).timeout
+	var north := absf(wrapf(float(vc.get("top_yaw")), -PI, PI))
+	var centred_north: float = aims_at.call()
+	var north_saved := _cfg_text(UserFiles.at(km.hud_path), "view", "top_up")
+	top_pick.select(0)
+	top_pick.item_selected.emit(0)
+	drive_pick.select(1)
+	drive_pick.item_selected.emit(1)
+	await _frames(3)
+	_check(_main.view_mode == "chase" and turned < 0.05 and centred < 1.5 and absf(wrapf(goal, -PI, PI)) > 0.3
+			and north < 0.05 and centred_north < 1.5 and north_saved == "north",
+			"top view while driving: it looks at the car's middle (%.1f m off) along the car's heading (%.0f degrees; %.1f off); with \"%s\" (saved %s) it looks north (%.1f degrees off) and still at the car (%.1f m off)"
+			% [centred, rad_to_deg(goal), rad_to_deg(turned), top_pick.get_item_text(1), north_saved, rad_to_deg(north), centred_north])
+
+
+## First person while driving (lead-world's recentre; skipped on a client without it): with the look turned off the
+## road it stays for the first second, then eases back toward the car's heading and level; while look input keeps
+## coming it isn't pulled; with F1's "Recentre while driving" off it isn't pulled either. Then the pickers and the
+## switch are put back.
+func _recentre_live() -> void:
+	var fp := _main.fp
+	var km := _main.key_menu
+	var drive_pick := km.get("drive_pick") as OptionButton
+	var box := km.get("recentre_check") as CheckBox
+	if not "look_idle" in fp or drive_pick == null or box == null or not _main.has_method("_recentre_goal"):
+		return
+	drive_pick.select(0)   # first person
+	drive_pick.item_selected.emit(0)
+	await _frames(3)
+	var g: Variant = _main.call("_recentre_goal")
+	if not (g is float or g is int):
+		_check(false, "recentre: driving in first person there is a heading to come back to (view %s, goal %s)" % [_main.view_mode, g])
+	else:
+		var goal := float(g)
+		var off := func() -> float: return absf(wrapf(fp.yaw - goal, -PI, PI))
+		fp.look(Vector2.ZERO)
+		fp.set_look(goal + 1.0, 0.4)
+		await create_timer(1.0).timeout
+		var held: float = off.call()          # before 1.5 s: where it was put
+		await create_timer(2.5).timeout
+		var eased: float = off.call()
+		var level := absf(fp.pitch)
+		fp.set_look(goal + 1.0, 0.4)
+		for n in 12:                         # look input every quarter second: no pull
+			fp.look(Vector2.ZERO)
+			await create_timer(0.25).timeout
+		var kept: float = off.call()
+		box.button_pressed = false           # as a click: saved, and no pull at rest
+		fp.look(Vector2.ZERO)
+		fp.set_look(goal + 1.0, 0.4)
+		await create_timer(3.0).timeout
+		var off_kept: float = off.call()
+		var off_saved := _cfg_flag(UserFiles.at(km.hud_path), "view", "recentre")
+		box.button_pressed = true
+		_check(absf(held - 1.0) < 0.02 and eased < 0.5 and level < 0.2 and absf(kept - 1.0) < 0.02
+				and absf(off_kept - 1.0) < 0.02 and off_saved == "false",
+				"recentre: driving in first person, a look turned 57 degrees off the road stays for a second (%.0f), then eases back (%.0f degrees off and %.0f up after 3.5 s); with look input coming it stays (%.0f); with \"%s\" off (saved %s) it stays (%.0f)"
+				% [rad_to_deg(held), rad_to_deg(eased), rad_to_deg(level), rad_to_deg(kept), box.text, off_saved, rad_to_deg(off_kept)])
+		fp.set_look(goal, 0.0)
+	drive_pick.select(1)
+	drive_pick.item_selected.emit(1)
+	await _frames(3)
+
+
+## The value saved under [section] key in the settings file at `path`, as text ("" when it isn't there).
+func _cfg_flag(path: String, section: String, key: String) -> String:
+	var cfg := ConfigFile.new()
+	var v: Variant = cfg.get_value(section, key, null) if cfg.load(path) == OK else null
+	return "" if v == null else str(v)
 
 
 ## lead-ui's driving HUD (RideHud), when this client has it and the bridge sends player.vehicle_state while the player
