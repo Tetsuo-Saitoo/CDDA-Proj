@@ -158,6 +158,10 @@ func _run() -> void:
 ## character again, standing where it was saved. With lead-ui's real-time switch: real time is turned on before the
 ## save, the loaded game runs in real time, and the key puts it back in turns. False when it can't go on.
 func _second_game() -> bool:
+	# (the newest snapshot first: on a busy machine the one shown can still be from before the F1 teleport)
+	var fresh := func() -> bool:
+		return _main.world.snapshot.seq == int(_live.sim().get_snapshot_seq()) and not _main.world.busy()
+	await _until(fresh, SHOW_TIMEOUT_MS)
 	var pos1: Vector3i = _main.world.snapshot.player_pos
 	var old_main: Node = _main
 	var old_live: Node = _live
