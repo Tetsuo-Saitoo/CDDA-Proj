@@ -71,6 +71,13 @@ const SHOTS := [
 	{"name": "drive_first_45", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0,
 		"yaw": -45.0, "pitch": -15.0},
 	{"name": "drive_top_45", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0},
+	# C5 interiors: the coupe's dash from the driver's seat, lit (day, night) and dark; its trunk lid opened
+	{"name": "dash_day", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0, "pitch": -24.0,
+		"dash": DASH_READING},
+	{"name": "dash_night", "env": CLEAR, "night": true, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0,
+		"pitch": -24.0, "dash": DASH_READING},
+	{"name": "dash_dark", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0, "pitch": -24.0},
+	{"name": "car_trunk_open", "env": CLEAR, "yaw": -40.0, "pitch": -22.0, "move": Vector3i(-18, 18, 0), "lids": true},
 	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
@@ -151,6 +158,8 @@ func _seconds(s: float) -> void:
 
 
 const COUPE := 8589934618   # the mock's coupe west of the start (pos 179, 398)
+const DASH_READING := {"lit": true, "speed": 42.0, "cruise": 50.0, "top": 120.0, "step": 20.0, "safe": 60.0,
+		"red": 95.0, "unit": "mph", "fuel": 0.62, "battery": 0.85, "lamps": 8, "steer": -15.0}
 const VehicleTests := preload("res://tests/vehicle_tests.gd")
 
 
@@ -210,6 +219,14 @@ func _shot(index: int, shot: Dictionary) -> void:
 	_main.view_cam.top_up = shot.get("top_up", "heading")
 	_main._frame_player()
 	_main.fp.set_look(deg_to_rad(shot.get("yaw", 0.0)), deg_to_rad(shot.get("pitch", 0.0)))
+	_main.vehicles_view.set_ride(COUPE if shot.has("dash") else 0, shot.get("dash", {}))
+	if shot.get("lids", false):   # once the coupe's interior is built (near the camera, next frame)
+		await process_frame
+		await process_frame
+		var a := _main.vehicles_view.interior(COUPE)
+		for k: String in a:
+			if k.begins_with("Cargo_"):
+				_main.vehicles_view.open_lid(COUPE, (a[k] as Node3D).get_meta("part"), true)
 	await _seconds(shot.get("settle", 1.5))
 	var gz: Dictionary = shot.get("gaze", {})
 	if not gz.is_empty():

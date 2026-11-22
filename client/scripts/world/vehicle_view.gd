@@ -15,9 +15,13 @@ extends Node3D
 ## part a ray meets at a height (part_at) and what items rest on (rest_at) stay per square, exactly CDDA's (shapes:
 ## the heights of each kind), for walking, LookRay and the item physics. CDDA's gap fillers
 ## (Snapshot.VPART_FILLER) only block. Real models and doors by hand are later slices.
+## Interiors (CarInterior): seats with a back and headrest, a dashboard across the front row (baked); for vehicles
+## near the camera the steering wheel, the instrument cluster (CarDash) and lids on the containers, lead-vr's anchors
+## (interior()); only the vehicle the player is in comes alive (set_ride).
 
+## DASH: not a part's kind; the dashboard in front of a seat beside the controls.
 enum Kind { NONE, FRAME, BOARD, HALF, DOOR, GLASS_DOOR, DOOR_OPEN, WINDOW, ROOF, WHEEL, SEAT, ENGINE, TANK, CARGO,
-		LIGHT, ROOF_LIGHT, TURRET, CONTROLS, OTHER }
+		LIGHT, ROOF_LIGHT, TURRET, CONTROLS, OTHER, DASH }
 enum Look { SOLID, GLASS, WHEEL }
 
 const DECK := 0.55     # metres above the square's floor: top of the frame, the floor inside
@@ -69,6 +73,10 @@ const GLASS := Color(0.62, 0.8, 0.9, 0.3)
 const RUST := Color(0.45, 0.26, 0.14)
 const CHAR := Color(0.12, 0.11, 0.1)
 const LIT := Color(1.0, 0.95, 0.75)
+const DASH_COLOR := Color(0.16, 0.16, 0.17)   # the dashboard (controls), whatever CDDA's colour
+const INTERIOR_NEAR := 20.0   # m: a vehicle this near the camera gets its interior (CarInterior)
+const INTERIOR_FAR := 30.0    # and loses it this far
+const INTERIOR_BUILDS := 2    # interiors built per frame at most
 const MAX_NAME := 60
 const LIGHT_FLAGS := ["CONE_LIGHT", "WIDE_CONE_LIGHT", "HALF_CIRCLE_LIGHT", "CIRCLE_LIGHT"]
 ## How high an item lies on a part of each kind that doesn't block (m above the floor); kinds not listed add nothing.
@@ -97,6 +105,8 @@ class Car:
 	var marked: Array = []   # off_squares at its pose (Vector3i)
 	var signed: Array = []   # those the drawn body leaves bare: a sign in each
 	var marks: Node3D        # their blocks and signs (two MultiMeshInstance3D); null while none
+	var paint := DEFAULT_COLOR   # its body's colour
+	var interior: CarInterior    # a child of node while near the camera (interiors()); null else
 
 
 var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
@@ -107,6 +117,9 @@ var max_verts := MAX_VERTS   # lowered by tests
 var _marks_hidden := {}   # uid -> true: vehicles whose marks are hidden (hide_marks)
 const MARK_HEAD_NEAR := 30.0   # m: hide_marks looks for the head in the models of vehicles this near it
 static var _mark_mats := []    # [block, sign] ShaderMaterial, made once
+var _snap: Snapshot = null     # the snapshot last applied
+var _ride_uid := 0             # the vehicle the player is in (set_ride), 0 none
+var _ride := {}                # its dash reading
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
 
@@ -234,6 +247,7 @@ func square_at(uid: int, p: Vector3) -> Variant:
 
 func apply(snap: Snapshot, world: WorldView) -> void:
 	_world = world
+	_snap = snap
 	var now := Time.get_ticks_msec()
 	var cars := {}
 	var total := 0   # vertices of the vehicles drawn so far
@@ -252,6 +266,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 				car.key = key
 				car.local = look[0]
 				car.small = look[1]
+				car.paint = look[2]
 				_mesh(car)
 				built += 1
 			total += car.verts if car.key == key else 0
@@ -267,6 +282,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			car.mid = _mid(veh)
 			cars[veh.uid] = car
 			_show_marks(car)
+			_check_interior(car, snap, world)
 	for uid: int in _cars:
 		if not cars.has(uid):
 			var gone: Car = _cars[uid]
@@ -282,6 +298,7 @@ func _drop(car: Car) -> void:
 	if car.node != null:
 		car.node.free()
 		car.node = null
+	car.interior = null   # freed with its node
 	car.key = []
 	car.local = {}
 	car.small = {}
@@ -417,6 +434,82 @@ static func signs_upright(on: bool) -> void:
 	(_mark_materials()[1] as ShaderMaterial).set_shader_parameter("upright", on)
 
 
+## lead-vr's anchors in vehicle `uid` (CarInterior.anchors: "Wheel", "Dash", "Cargo_<part>" -> Node3D, children of
+## its drawn model); {} while it has no interior (not drawn, or not near the camera).
+func interior(uid: int) -> Dictionary:
+	var car: Car = _cars.get(uid)
+	return car.interior.anchors() if car != null and car.interior != null and is_instance_valid(car.interior) else {}
+
+
+## The vehicle the player is in (0: none) and its dash reading (CarDash.reading_of; main.gd, each snapshot): only
+## its dash and wheel come alive. The one before goes dark, its wheel straight.
+func set_ride(uid: int, reading: Dictionary) -> void:
+	if uid == _ride_uid and reading == _ride:
+		return
+	if uid != _ride_uid:
+		var old: Car = _cars.get(_ride_uid)
+		if old != null and old.interior != null and is_instance_valid(old.interior):
+			old.interior.set_reading({})
+	_ride_uid = uid
+	_ride = reading.duplicate(true) if uid != 0 else {}
+	var car: Car = _cars.get(uid)
+	if car != null and car.interior != null and is_instance_valid(car.interior):
+		car.interior.set_reading(_ride)
+
+
+## Opens or closes the lid of part `part` of vehicle `uid` on the client (CarInterior.open_lid): false when it has
+## no lid drawn.
+func open_lid(uid: int, part: int, open: bool) -> bool:
+	var car: Car = _cars.get(uid)
+	return car != null and car.interior != null and is_instance_valid(car.interior) and car.interior.open_lid(part, open)
+
+
+## Each frame: vehicles within INTERIOR_NEAR of the camera (`eye`, default: the viewport's; and the one the player is
+## in) get their interior, INTERIOR_BUILDS a frame at most; past INTERIOR_FAR they lose it. Those with something on
+## its way move `delta` seconds on (no others: a parked car's dash is still).
+func interiors(delta: float, eye := Vector3.INF) -> void:
+	if not eye.is_finite() and is_inside_tree() and get_viewport().get_camera_3d() != null:
+		eye = get_viewport().get_camera_3d().global_position
+	var builds := 0
+	for car: Car in _cars.values():
+		if car.interior != null and not is_instance_valid(car.interior):
+			car.interior = null
+		if car.node == null or car.veh == null:
+			continue
+		if eye.is_finite():
+			var d := (car.node.transform * car.mid).distance_to(eye)
+			var ride := car.veh.uid == _ride_uid
+			if car.interior == null and (d < INTERIOR_NEAR or ride) and builds < INTERIOR_BUILDS and _snap != null \
+					and _world != null and is_instance_valid(_world):
+				car.interior = CarInterior.build(car.veh, _snap, _world.tables, view_z_max, car.mid, car.paint)
+				car.node.add_child(car.interior)
+				if ride:
+					car.interior.set_reading(_ride)
+				builds += 1
+			elif car.interior != null and d > INTERIOR_FAR and not ride:
+				_free_interior(car)
+		if car.interior != null and car.interior.moving:
+			car.interior.moving = car.interior.step(delta)
+
+
+## Keeps a vehicle's interior in step with its parts: dropped when they changed (built again by interiors()), else its
+## lids follow CDDA's states.
+func _check_interior(car: Car, snap: Snapshot, world: WorldView) -> void:
+	if car.interior == null:
+		return
+	if car.node == null or not is_instance_valid(car.interior) \
+			or car.interior.key != CarInterior.layout_key(car.veh, snap, world.tables, view_z_max):
+		_free_interior(car)
+	else:
+		car.interior.set_states(car.veh)
+
+
+func _free_interior(car: Car) -> void:
+	if car.interior != null and is_instance_valid(car.interior):
+		car.interior.free()
+	car.interior = null
+
+
 ## Sets a vehicle's new pose: at once when it is new or jumped far, else a glide from where it is drawn now over
 ## about the time since it last moved (GLIDE_MIN..GLIDE_MAX).
 func _move(car: Car, pose: Array, now: int, fresh: bool) -> void:
@@ -454,6 +547,7 @@ static func blend(a: Array, b: Array, t: float) -> Array:
 func _process(delta: float) -> void:
 	refresh()
 	glide(delta)
+	interiors(delta)
 
 
 ## Moves every gliding vehicle `delta` seconds on; one GLIDE_VIEW_M or more from the camera (`eye`, default: the
@@ -578,8 +672,8 @@ static func tilt_of(pts: Array) -> Transform3D:
 
 
 ## One vehicle's look in its mount grid (x ahead, y up, z right, a cell per square): [{Look -> body [vertices, normals,
-## colours]}, {Look -> [[transform, colour], ...]} of the small parts]. Parts above the cutaway and gap fillers are
-## left out.
+## colours]}, {Look -> [[transform, colour], ...]} of the small parts, the body's colour]. Parts above the cutaway and
+## gap fillers are left out. A seat in the controls' row (beside them) gets a dashboard in front of it.
 func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
 	var cells := {}   # Vector3i(mount x, mount y, 0) -> {floor, low, high, glass, roof: [hp_frac, state], then Color}
 	var small := []   # [kind, colour, cell, broken]
@@ -622,6 +716,15 @@ func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
 		for role: String in cells[c]:
 			var w: Array = cells[c][role]
 			cells[c][role] = GLASS if role == "glass" else damaged(body, w[0], w[1])
+	var front := {}   # the controls' rows (mount x) and cells
+	for e: Array in small:
+		if e[0] == Kind.CONTROLS:
+			front[(e[2] as Vector3i).x] = true
+			front[e[2]] = true
+	for e: Array in small.duplicate():
+		if e[0] == Kind.SEAT and front.has((e[2] as Vector3i).x) and not front.has(e[2]):
+			front[e[2]] = true   # one dashboard a cell
+			small.append([Kind.DASH, damaged(DASH_COLOR, 255, 0), e[2], false])
 	var by_look := {}
 	for e: Array in small:
 		var c: Vector3i = e[2]
@@ -630,7 +733,7 @@ func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
 			var side := 1.0 if not cells.has(c + Vector3i(0, 1, 0)) else (-1.0 if not cells.has(c - Vector3i(0, 1, 0)) else 0.0)
 			at += Vector3(0.0, 0.0, side * WHEEL_OUT)
 		place(by_look, e[0], e[1], at, Basis(), e[3])
-	return [hull_of(cells, Transform3D()), by_look]
+	return [hull_of(cells, Transform3D()), by_look, body]
 
 
 ## (Re)makes a vehicle's node and mesh from its body and small parts (baked in: one surface per look); no node while
@@ -670,6 +773,7 @@ func _mesh(car: Car) -> void:
 		if car.node != null:
 			car.node.free()
 			car.node = null
+		car.interior = null   # freed with its node
 		return
 	if car.node == null:
 		var mi := MeshInstance3D.new()
@@ -838,7 +942,8 @@ static func shapes(kind: int) -> Array:
 			Kind.ROOF: [[s, full.call(TOP, TOP + ROOF_T)]],
 			Kind.WHEEL: [[Look.WHEEL, AABB(Vector3(-0.4, 0.0, -0.15), Vector3(0.8, 0.8, 0.3))]],
 			Kind.SEAT: [[s, AABB(Vector3(-0.3, DECK, -0.35), Vector3(0.65, 0.45, 0.7))],
-					[s, AABB(Vector3(-0.42, DECK, -0.35), Vector3(0.14, 1.1, 0.7))]],
+					[s, AABB(Vector3(-0.42, DECK, -0.35), Vector3(0.14, 0.95, 0.7))],
+					[s, AABB(Vector3(-0.41, DECK + 0.98, -0.15), Vector3(0.11, 0.17, 0.3))]],   # headrest
 			Kind.ENGINE: [[s, AABB(Vector3(-0.4, DECK, -0.4), Vector3(0.8, 0.6, 0.8))]],
 			Kind.TANK: [[s, AABB(Vector3(-0.35, 0.05, -0.35), Vector3(0.7, 0.2, 0.7))]],
 			Kind.CARGO: [[s, AABB(Vector3(-0.4, DECK, -0.4), Vector3(0.8, 0.5, 0.8))]],
@@ -846,7 +951,11 @@ static func shapes(kind: int) -> Array:
 			Kind.ROOF_LIGHT: [[s, AABB(Vector3(-0.15, TOP + ROOF_T, -0.15), Vector3(0.3, 0.2, 0.3))]],
 			Kind.TURRET: [[s, AABB(Vector3(-0.25, TOP + ROOF_T, -0.25), Vector3(0.5, 0.3, 0.5))],
 					[s, AABB(Vector3(0.25, TOP + ROOF_T + 0.1, -0.05), Vector3(0.6, 0.1, 0.1))]],
-			Kind.CONTROLS: [[s, AABB(Vector3(0.1, 1.0, -0.2), Vector3(0.3, 0.25, 0.4))]],
+			# the dashboard's lower part across the cell's front, the steering column (the wheel and the cluster:
+			# CarInterior, near the camera)
+			Kind.CONTROLS: [[s, AABB(Vector3(0.38, 0.85, -0.5), Vector3(0.12, 0.45, 1.0))],
+					[s, AABB(Vector3(0.3, 1.13, -0.03), Vector3(0.1, 0.06, 0.06))]],
+			Kind.DASH: [[s, AABB(Vector3(0.38, 0.85, -0.5), Vector3(0.12, 0.45, 1.0))]],
 			Kind.OTHER: [[s, AABB(Vector3(-0.25, DECK, -0.25), Vector3(0.5, 0.5, 0.5))]],
 		}
 	return _shapes.get(kind, [])
@@ -900,6 +1009,8 @@ static func color_of(kind: int, def: IdTables.Def, hp: int, state: int) -> Color
 		return TYRE
 	elif kind == Kind.LIGHT or kind == Kind.ROOF_LIGHT:
 		c = LIT if (state & Snapshot.VPART_ENABLED) != 0 else DEFAULT_COLOR
+	elif kind == Kind.CONTROLS:
+		c = DASH_COLOR
 	return damaged(c, hp, state)
 
 
