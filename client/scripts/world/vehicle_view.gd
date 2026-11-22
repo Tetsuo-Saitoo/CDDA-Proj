@@ -104,7 +104,8 @@ var _world: WorldView = null   # the world last applied (refresh follows its cut
 var _cars := {}        # vehicle uid -> Car, the shown snapshot's vehicles in its order
 var built := 0         # meshes built (not kept from the last snapshot), counted for tests
 var max_verts := MAX_VERTS   # lowered by tests
-var hide_marks_of := 0   # the vehicle whose marks are hidden (the one the player sits in, in first person), 0 none
+var _marks_hidden := {}   # uid -> true: vehicles whose marks are hidden (hide_marks)
+const MARK_HEAD_NEAR := 30.0   # m: hide_marks looks for the head in the models of vehicles this near it
 static var _mark_mats := []    # [block, sign] ShaderMaterial, made once
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
@@ -389,18 +390,31 @@ static func _mark_materials() -> Array:
 	return _mark_mats
 
 
-## Hides the marks of vehicle `uid` (0: none hidden), showing the others' again.
-func hide_marks(uid: int) -> void:
-	if uid == hide_marks_of:
+## Hides the marks of vehicle `uid` (0: none) and of any vehicle whose drawn model holds point `head` (VR: the
+## head may be away from the player's square; square_at), showing the others' again.
+func hide_marks(uid: int, head := Vector3.INF) -> void:
+	var hidden := {}
+	if uid != 0:
+		hidden[uid] = true
+	if head.is_finite():
+		for car: Car in _cars.values():
+			if car.marks != null and car.node != null and car.veh != null 					and car.node.position.distance_to(head) < MARK_HEAD_NEAR and square_at(car.veh.uid, head) != null:
+				hidden[car.veh.uid] = true
+	if hidden == _marks_hidden:
 		return
-	hide_marks_of = uid
+	_marks_hidden = hidden
 	for car: Car in _cars.values():
 		_show_marks(car)
 
 
 func _show_marks(car: Car) -> void:
 	if car.marks != null:
-		car.marks.visible = car.node != null and car.veh != null and car.veh.uid != hide_marks_of
+		car.marks.visible = car.node != null and car.veh != null and not _marks_hidden.has(car.veh.uid)
+
+
+## VR: the marks' signs stand upright, turned by yaw only (flat: they also tilt toward the camera).
+static func signs_upright(on: bool) -> void:
+	(_mark_materials()[1] as ShaderMaterial).set_shader_parameter("upright", on)
 
 
 ## Sets a vehicle's new pose: at once when it is new or jumped far, else a glide from where it is drawn now over

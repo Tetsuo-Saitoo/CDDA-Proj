@@ -627,6 +627,11 @@ func _test_marks(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	var hidden := made and not c.marks.visible
 	view.hide_marks(0)
 	var back := made and c.marks.visible
+	var k0 := c.veh.parts.slice(0, 2)
+	view.hide_marks(0, c.node.transform * Vector3(k0[0], 1.5, k0[1]))   # VR: the head in its model, off its squares
+	var head_in := made and not c.marks.visible
+	view.hide_marks(0, c.node.transform * Vector3(k0[0] + 40, 1.5, k0[1]))
+	back = back and head_in and c.marks.visible
 	view.shift(Vector3(2, 0, 0))
 	var shifted := made and c.marks.position.is_equal_approx(first + Vector3(2, 0, 0))
 	view.shift(Vector3(-2, 0, 0))
@@ -635,7 +640,7 @@ func _test_marks(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	view.apply(snap, world)
 	_check.call(drawn and shown and hidden and back and shifted and is_equal_approx(at0.x, sq0.x) and is_equal_approx(at0.z, sq0.z)
 			and c.marks == null and view.get_child_count() == kids,
-			"vehicles: a turned car's marks are a block and a sign per marked square on it, hidden for the car the player sits in, moved by a map shift, gone on the axes")
+			"vehicles: a turned car's marks are a block and a sign per marked square on it, hidden for the car the player sits in or (VR) whose model the head is in, moved by a map shift, gone on the axes")
 
 
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:

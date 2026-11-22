@@ -569,15 +569,19 @@ func _carry_look() -> void:
 
 
 ## C5: the real-footprint marks of the vehicle the player is in aren't shown from its first-person seat (flat first
-## person, VR); every other view and vehicle shows them.
+## person, VR), nor in VR those of the vehicle whose model the head is in; every other view and vehicle shows them.
 func _hide_own_marks() -> void:
 	var s := world.snapshot
 	var uid := 0
 	if s != null and vehicles_view != null and (vr != null or view_mode == "first"):
 		var at := s.vehicle_at(s.player_pos)
 		uid = (at[0] as Snapshot.Vehicle).uid if not at.is_empty() else 0
+	var head := Vector3.INF
+	var cam := get_viewport().get_camera_3d() if vr != null else null
+	if cam != null:
+		head = cam.global_position
 	if vehicles_view != null:
-		vehicles_view.hide_marks(uid)
+		vehicles_view.hide_marks(uid, head)
 
 
 ## A vehicle's yaw as drawn (radians about up, as FirstPersonCamera.yaw turns: + to the left).
@@ -712,6 +716,7 @@ func _start_vr() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	VehicleView.signs_upright(true)   # C5 marks: no roll, no per-eye turn in the headset
 	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
