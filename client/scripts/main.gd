@@ -761,6 +761,13 @@ static func drawn_view(cam: Camera3D, fallback: Node3D) -> Node3D:
 	return cam if cam != null and is_instance_valid(cam) else fallback
 
 
+## Whether the driving HUD shows for `r` (player.vehicle_state): only on a vehicle, unless F1 turned it off; at the
+## controls in first person (`first_person_cam`: that camera draws) the car's own dashboard shows the speed, so
+## only with F1 > HUD > Gauge in first person (the user, 2026-11-21).
+static func ride_shown(r: RideInfo, settings: HudSettings, first_person_cam: bool) -> bool:
+	return r.ok and settings.ride_hud and (not (first_person_cam and r.driver) or settings.ride_hud_fp)
+
+
 func _start_live() -> void:
 	live = LiveSession.new()
 	live.name = "Live"
@@ -2271,7 +2278,8 @@ func _ride_step() -> void:
 				face = veh.face_deg
 				break
 	var r := RideInfo.read(raw, _itype_name, face)
-	ride_hud.visible = r.ok and vr == null and hud_settings.ride_hud and hud_view.visible and not _menu_open()
+	var fp_cam := vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
+	ride_hud.visible = vr == null and ride_shown(r, hud_settings, fp_cam) and hud_view.visible and not _menu_open()
 	if not ride_hud.visible:
 		return
 	ride_hud.show_ride(r)

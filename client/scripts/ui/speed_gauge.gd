@@ -75,8 +75,8 @@ func _draw() -> void:
 					-1, 11).x / 2.0, 4.0)
 			draw_string_outline(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, 3, Color.BLACK)
 			draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.9, 0.9, 0.9))
-	if info.driver:   # the speed it is set to reach (cruise_velocity): a wedge outside the dial
-		var c := angle_of(info.shown(info.cruise), top)
+	if info.driver:   # the speed it is set to reach (cruise_velocity; 0 with the engine off): a wedge outside the dial
+		var c := angle_of(info.shown(info.set_speed()), top)
 		var col := CRUISE_COLOR
 		var tip := CENTRE + Vector2.from_angle(c) * (RADIUS + ARC_W * 0.5)
 		var side := Vector2.from_angle(c + PI / 2.0) * 5.0

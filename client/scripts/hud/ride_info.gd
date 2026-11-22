@@ -112,6 +112,12 @@ static func read(v: Variant, item_name := Callable(), face := NAN) -> RideInfo:
 	return r
 
 
+## The speed the engine is set to reach (the gauge's marker); 0 with the engine off: its readings rest (the user,
+## 2026-11-21).
+func set_speed() -> int:
+	return cruise if engine_on else 0
+
+
 ## A speed (mph * 100) in the player's unit (CDDA's option).
 func shown(vmiph: int) -> float:
 	return vmiph * scale

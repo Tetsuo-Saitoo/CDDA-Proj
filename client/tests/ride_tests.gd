@@ -26,6 +26,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_check = check
 	_test_snapshot(data)
 	_test_compass_view()
+	_test_shown()
 	_test_read()
 	_test_junk()
 	_test_gauge_scale()
@@ -71,6 +72,24 @@ func _test_compass_view() -> void:
 	eyes.free()
 
 
+## The HUD shows on a vehicle; at the controls in first person only with F1's switch; a passenger always.
+func _test_shown() -> void:
+	var Main := load("res://scripts/main.gd")
+	var hs := HudSettings.new()
+	var drv := RideInfo.read(CAR)
+	var p := CAR.duplicate(true)
+	p["in_control"] = false
+	var pas := RideInfo.read(p)
+	var out: Array[bool] = [Main.ride_shown(drv, hs, false), Main.ride_shown(drv, hs, true),
+			Main.ride_shown(pas, hs, true), Main.ride_shown(RideInfo.read(null), hs, false)]
+	hs.ride_hud_fp = true
+	out.append(Main.ride_shown(drv, hs, true))
+	hs.ride_hud = false
+	out.append(Main.ride_shown(drv, hs, false))
+	_check.call(out == [true, false, true, false, true, false],
+			"ride: the HUD shows on a vehicle; at the controls in first person only when F1 says so; off is off (%s)" % [out])
+
+
 func _test_read() -> void:
 	var r := RideInfo.read(CAR, _fuel_name, FACE)
 	_check.call(r.ok and r.uid == 8589934864 and r.name == "Station Wagon" and r.driver and r.at_controls
@@ -81,8 +100,10 @@ func _test_read() -> void:
 			"ride: player.vehicle_state read (engines running and broken, fuel names from the item table)")
 	_check.call(is_equal_approx(r.shown(4000), 64.37376) and r.band(4000) == RideInfo.Band.SAFE
 			and r.band(-7000) == RideInfo.Band.WARN and r.band(9500) == RideInfo.Band.OVER and r.steer() == 15
-			and r.warning() == "" and r.health_word() == "dented",
-			"ride: km/h, the safe / strain / over bands (backwards too), steering right, CDDA's condition word")
+			and r.warning() == "" and r.health_word() == "dented" and r.set_speed() == 5000
+			and RideInfo.read({"cruise_velocity": 5000, "engine_on": false}).set_speed() == 0,
+			"ride: km/h, the safe / strain / over bands (backwards too), steering right, CDDA's condition word; "
+			+ "the set speed rests at 0 with the engine off")
 	var none := RideInfo.read(null)
 	var skid := RideInfo.read({"skidding": true, "turn_deg": 300.0, "health_pct": 0})
 	var left := RideInfo.read({"turn_deg": 300}, Callable(), 20.0)
@@ -141,17 +162,20 @@ func _test_settings() -> void:
 	var hs := HudSettings.new()
 	var menu := KeyMenu.new()
 	menu.add_hud_settings(hs, path)
-	var was_on := hs.ride_hud and menu.ride_check.button_pressed
+	var was_on := hs.ride_hud and menu.ride_check.button_pressed and not hs.ride_hud_fp \
+			and not menu.ride_fp_check.button_pressed
 	menu.ride_check.button_pressed = false
+	menu.ride_fp_check.button_pressed = true
 	var back := HudSettings.new()
 	back.load_file(path)
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string("[hud]\nride=2\n")
+	f.store_string("[hud]\nride=2\nride_first_person=\"yes\"\n")
 	f.close()
 	var junk := HudSettings.new()
 	junk.load_file(path)
-	_check.call(was_on and not hs.ride_hud and not back.ride_hud and junk.ride_hud,
-			"ride: F1 > HUD > Driving gauge is on by default, turns off and is saved; junk leaves it on")
+	_check.call(was_on and not hs.ride_hud and not back.ride_hud and junk.ride_hud and hs.ride_hud_fp
+			and back.ride_hud_fp and not junk.ride_hud_fp,
+			"ride: F1 > HUD > Driving gauge on and Gauge in first person off by default, both saved; junk: the defaults")
 	menu.free()
 
 

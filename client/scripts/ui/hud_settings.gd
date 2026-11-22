@@ -41,6 +41,9 @@ var key_help := true
 ## The driving HUD (RideHud: speed gauge and vehicle panel) while on a vehicle. On unless turned off. Saved as
 ## [hud] ride.
 var ride_hud := true
+## The driving HUD in first person at the controls, where the car's own dashboard (lead-world) shows the speed.
+## Off unless turned on (the user, 2026-11-21). Saved as [hud] ride_first_person.
+var ride_hud_fp := false
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
@@ -221,6 +224,8 @@ func load_file(path := FILE) -> String:
 	key_help = kh if kh is bool else true
 	var rh: Variant = cfg.get_value("hud", "ride", true)
 	ride_hud = rh if rh is bool else true
+	var rf: Variant = cfg.get_value("hud", "ride_first_person", false)
+	ride_hud_fp = rf if rf is bool else false
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
@@ -269,6 +274,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("hud", "key_help", key_help)
 	cfg.set_value("hud", "ride", ride_hud)
+	cfg.set_value("hud", "ride_first_person", ride_hud_fp)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
