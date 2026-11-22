@@ -936,7 +936,8 @@ func _cargo_trunk_live(uid: int) -> void:
 	var veh := _vehicle(uid)
 	if veh == null or not "cargo" in veh or not _main.has_method("_open_cargo"):
 		return
-	var trunk := Vector3i.MAX
+	var trunk := Vector3i.MAX    # a trunk square with open floor beside it
+	var trunks := []
 	var bare := Vector3i.MAX     # a square of the car with no cargo part
 	var cargo_sq := {}
 	for i in veh.part_count():
@@ -944,16 +945,21 @@ func _cargo_trunk_live(uid: int) -> void:
 		if def != null and (def.flags as Dictionary).has("CARGO"):
 			cargo_sq[veh.square(i)] = true
 			if str(def.id).contains("trunk"):
-				trunk = veh.square(i)
+				trunks.append(veh.square(i))
 	for i in veh.part_count():
 		if bare == Vector3i.MAX and not cargo_sq.has(veh.square(i)):
 			bare = veh.square(i)
 	var stand := Vector3i.MAX
 	var away := Vector3i.MAX
-	for d: Vector3i in [Vector3i(-1, 0, 0), Vector3i(1, 0, 0), Vector3i(0, -1, 0), Vector3i(0, 1, 0)]:
-		if trunk != Vector3i.MAX and stand == Vector3i.MAX and _floor_at(trunk + d) >= 0 and _floor_at(trunk + d * 3) >= 0:
-			stand = trunk + d
-			away = trunk + d * 3
+	for t: Vector3i in trunks:
+		for d: Vector3i in [Vector3i(-1, 0, 0), Vector3i(1, 0, 0), Vector3i(0, -1, 0), Vector3i(0, 1, 0)]:
+			if stand == Vector3i.MAX and _floor_at(t + d) >= 0 and _floor_at(t + d * 3) >= 0:
+				trunk = t
+				stand = t + d
+				away = t + d * 3
+	if stand == Vector3i.MAX:
+		print("  (no trunk square of this car has open floor beside it: car storage from outside not checked; trunk squares %s)" % [trunks])
+		return
 	var there := func() -> bool: return _main.world.snapshot.player_pos == stand and not _main.world.busy()
 	var by: bool = stand != Vector3i.MAX and await _cheat(_live.cheat_teleport(stand)) == "" and await _until(there, SHOW_TIMEOUT_MS)
 	var listed := func() -> bool: return not _cargo_row(uid, trunk).is_empty()
