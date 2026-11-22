@@ -448,20 +448,9 @@ func _drive_live(start: Vector3i) -> void:
 		if steered != null:
 			_vehicles_ok("the car steered to face %.0f degrees" % face)
 			_cells_ok("driving: facing %.0f degrees" % face, steered)
-			# lead-world's marks: shown for the player's own car in the chase view, never from its seat in first person
-			var dp := _main.key_menu.get("drive_pick") as OptionButton
+			# lead-world's marks: shown for the player's own car in the chase view
 			await _frames(2)
 			_marks_ok("driving: facing %.0f degrees, in the %s view" % [face, _main.view_mode], steered, _main.view_mode != "first")
-			if dp != null and vv.has_method("off_squares"):
-				dp.select(0)
-				dp.item_selected.emit(0)
-				await _frames(3)
-				_marks_ok("driving: facing %.0f degrees, from the seat in first person" % face, steered, false)
-				dp.select(1)
-				dp.item_selected.emit(1)
-				await _frames(3)
-			await _top_drive_live()
-			await _recentre_live()
 		if steered != null and car0 is Transform3D and _main.has_method("_carry_look") and vv.has_method("seat_transform"):
 			# the look turns with the car, and the eyes and the body sit on the driver's cell as the car is drawn
 			await _frames(3)
@@ -477,6 +466,19 @@ func _drive_live(start: Vector3i) -> void:
 			_check(absf(car_turn) > 0.4 and absf(look_turn - car_turn) < 0.03 and eyes_off < 0.3 and body_off < 0.3,
 					"driving: the look turns with the car (%.1f degrees for the car's %.1f), and the eyes and the body sit on the driver's cell as drawn (%.2f and %.2f m from it; that cell is %.2f m from its square's middle; view %s)"
 					% [rad_to_deg(look_turn), rad_to_deg(car_turn), eyes_off, body_off, seat_off, _main.view_mode])
+		if steered != null:
+			# (after the look check: first person while driving may ease the look back to the road)
+			var dp := _main.key_menu.get("drive_pick") as OptionButton
+			if dp != null and vv.has_method("off_squares"):   # the marks are never shown from the seat in first person
+				dp.select(0)
+				dp.item_selected.emit(0)
+				await _frames(3)
+				_marks_ok("driving: facing %.0f degrees, from the seat in first person" % face, steered, false)
+				dp.select(1)
+				dp.item_selected.emit(1)
+				await _frames(3)
+			await _top_drive_live()
+			await _recentre_live()
 		bad = []
 		for act: String in ["RIGHT", "RIGHT", "pause"]:
 			var r := await _drive_turn(act, uid, car_of)
@@ -702,19 +704,16 @@ func _marks_ok(what: String, veh: Snapshot.Vehicle, shown := true) -> void:
 				unmarked_block.append(sq)
 	var strays := marked.keys().filter(func(sq: Vector3i) -> bool: return not squares.has(sq))
 	var blocks: MultiMesh = (marks.get_child(0) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 0 else null
-	var placed: bool = blocks != null and blocks.instance_count == (car.marked as Array).size()
-	var worst := 0.0
-	if placed:
-		for i in car.marked.size():
-			var at: Vector3 = marks.global_transform * blocks.get_instance_transform(i).origin
-			var c: Vector3 = _main.world.coords.ms_center_to_world(car.marked[i])
-			worst = maxf(worst, Vector2(at.x - c.x, at.z - c.z).length())
+	var signs: MultiMesh = (marks.get_child(1) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 1 else null
+	# (how many are drawn; where each stands can't be read back in a headless run)
+	var placed: bool = blocks != null and signs != null and blocks.instance_count == (car.marked as Array).size() \
+			and signs.instance_count == (car.signed as Array).size()
 	var blocking := squares.keys().filter(func(sq: Vector3i) -> bool: return VehicleView.blocks(snap, _main.world.tables, sq)).size()
 	_check(not marked.is_empty() and unmarked_off.is_empty() and unmarked_block.is_empty() and strays.is_empty() and placed
-			and worst < 0.05 and marks.visible == shown,
-			"%s: the car's real squares are marked: %d of its %d squares (%d of them block walking), %d with a sign; none drawn off its square is left out (%s), none marked outside the car (%s); a block on each (%.2f m off at most); shown %s (wanted %s)"
+			and marks.visible == shown,
+			"%s: the car's real squares are marked: %d of its %d squares (%d of them block walking), %d with a sign; none drawn off its square is left out (%s), none marked outside the car (%s); a block and a sign drawn for each (%s); shown %s (wanted %s)"
 			% [what, marked.size(), squares.size(), blocking, (car.signed as Array).size(), unmarked_off.slice(0, 3),
-			strays.slice(0, 3), worst, marks.visible if marks != null else "no marks", shown])
+			strays.slice(0, 3), placed, marks.visible if marks != null else "no marks", shown])
 
 
 ## The top view while driving (lead-world's; skipped on a client without it): picked in F1, it looks at the car's
