@@ -7,7 +7,7 @@ extends RefCounted
 ## (~60 squares). Stairs and ramps are met on their slope (TerrainMesher.surface_heights), so pointing at a step
 ## picks that stair's square. Creatures the player perceives are hit as their placeholder figures
 ## (CreatureView), vehicle parts as VehicleView draws them (VehicleView.part_at: `what` names the vehicle and the
-## part, `vehicle` is its uid). CDDA's own look text isn't in here: the bridge has no "describe".
+## part, `vehicle` is its uid, `part` the part's index). CDDA's own look text isn't in here: the bridge has no "describe".
 
 const K := TerrainCatalog.Kind
 const SOLID := [K.WALL, K.WINDOW, K.FENCE, K.TREE, K.BOX]
@@ -64,6 +64,7 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true, skip
 		if not vp.is_empty():
 			var r := _hit(p, pt, VehicleView.part_name(world.snapshot, world.tables, vp[0], vp[1]))
 			r["vehicle"] = (vp[0] as Snapshot.Vehicle).uid
+			r["part"] = vp[1]   # its index in that vehicle's parts
 			return r
 		var style := world.catalog.style_for(c["ter"])
 		if style.kind in SOLID:
