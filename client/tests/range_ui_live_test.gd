@@ -958,7 +958,13 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 				% [what, _main.world.snapshot.player_pos, sq, met])
 	else:
 		var on_it: bool = _main.call("_open_cargo")
+		var at_once: bool = _main.grab.tray_open()
+		var listed_then: Variant = load("res://scripts/vr/item_tray.gd").call("list", _main.world.snapshot,
+				load("res://scripts/vr/item_tray.gd").call("source_for_cargo", _main.world.snapshot, sq), _main.world.tables)
 		await _frames(2)
+		if not empty:
+			print("    (E on %s: tray open at once %s, two frames later %s; the tray's list then: %s; mouse holds %s; a prompt shows %s)"
+					% [what, at_once, _main.grab.tray_open(), listed_then, _main.hands.holding("mouse"), _main.request_ui.visible])
 		var tray_open: bool = _main.grab.tray_open()
 		var src: Variant = _main.grab.tray.get("source") if tray_open else {}
 		var lid: Array = _main.get("_cargo_lid")
