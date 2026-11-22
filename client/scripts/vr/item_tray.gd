@@ -101,6 +101,32 @@ static func source_for(snap: Snapshot, it: ItemRef) -> Dictionary:
 	return {}
 
 
+## A vehicle's cargo space on square `sq` (Snapshot.Vehicle.cargo: the bridge lists those next to the player):
+## {kind: "cargo", vehicle, part, square}; {} when none is listed there. Car storage (lead-ui, with lead-vr's OK,
+## 2026-11-21): the flat screen's E and VR's hands; a lid is the client's own (VehicleView.open_lid / can_reach).
+static func source_for_cargo(snap: Snapshot, sq: Vector3i) -> Dictionary:
+	var at := snap.vehicle_at(sq) if snap != null else []
+	if at.is_empty():
+		return {}
+	var veh: Snapshot.Vehicle = at[0]
+	var row := veh.cargo_on(sq)
+	if row.is_empty():
+		return {}
+	return {"kind": "cargo", "vehicle": veh.uid, "part": row["part"], "square": sq}
+
+
+## The cargo row `src` (source_for_cargo) shows: that vehicle's row for that part, still on src's square; {} gone.
+static func cargo_row(snap: Snapshot, src: Dictionary) -> Dictionary:
+	var sq: Variant = src.get("square")
+	if snap == null or not sq is Vector3i:
+		return {}
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		if veh.uid == src.get("vehicle"):
+			var row := veh.cargo_on(sq)
+			return row if not row.is_empty() and row["part"] == src.get("part") else {}
+	return {}
+
+
 ## What `src` shows in `snap`: {rows: Array[ItemRef], more: int}; {} when it is gone (the container no longer lying
 ## there, the square no longer next to the player or not in the snapshot). With `tables` the rows are sorted
 ## (sort_rows), else they stay in the snapshot's order.
@@ -130,6 +156,16 @@ static func list(snap: Snapshot, src: Dictionary, tables: IdTables = null) -> Di
 			if h[i] == tile:
 				out.append(ItemRef.on_square(h[i + 1], h[i + 2], sq))
 		n = sm.more.get(tile, 0)
+	elif src.get("kind") == "cargo":   # in a vehicle's cargo space: taken by its square (contracts/bridge_api.md)
+		var row := cargo_row(snap, src)
+		if row.is_empty():
+			return {}
+		var its: PackedInt64Array = row["items"]
+		for i in range(0, mini(its.size(), 2 * Snapshot.MAX_CARGO_ITEMS) - 1, 2):
+			var it := ItemRef.on_square(its[i], its[i + 1], sq)
+			it.cargo = true
+			out.append(it)
+		n = row["more"]
 	else:
 		return {}
 	if tables != null:

@@ -498,6 +498,8 @@ func take(id: String, target: Dictionary, where := "pack") -> bool:
 	var now := picker.by_uid(it.uid)   # a stale target: carried or gone since
 	if it.parent != 0:   # L8: one inside a lying container (the tray) isn't the picker's; the snapshot still lists it there
 		now = it if ItemActions.listed_inside(world.snapshot, it) else null
+	elif it.cargo:   # car storage: one in a vehicle's cargo space (the tray), listed in that vehicle's cargo row
+		now = it if ItemActions.listed_in_cargo(world.snapshot, it) else null
 	if it.carried or now == null or now.carried or not _usable(it):
 		return false
 	_owner[it.uid] = id

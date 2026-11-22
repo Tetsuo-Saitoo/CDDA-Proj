@@ -64,6 +64,7 @@ var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var fields_view: FieldView       # fire, sparks, smoke and gas fields
 var vehicles_view: VehicleView   # CDDA's vehicles, part by part (C5)
+var _cargo_lid: Array = []       # [vehicle uid, part]: the lid E opened with the tray (_open_cargo); shut when it closes
 var gaze_fx: GazeEffects   # eyes adjust to light, peripheral unease (eye tracking; off until switched on)
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
@@ -256,6 +257,7 @@ func _ready() -> void:
 	tray.hands = hands
 	add_child(tray)
 	grab.tray = tray
+	tray.closed.connect(func(_why: String) -> void: _shut_cargo_lid())
 	# E2 item physics (slices 1-2, 5), desktop and VR alike, real time and turns: collision boxes and item bodies around
 	# the square the hands reach from; the hands point at, grab and let go of the bodies (Hands.bodies). Client-side
 	# poses only; nothing new is sent to CDDA. Bodies need WorldView's owner sets (set_hidden_items_for); without them
@@ -1714,6 +1716,36 @@ func _pour_target() -> Dictionary:
 	return {"square": world.snapshot.player_pos + Vector3i(s.x, s.y, 0)}
 
 
+## Car storage (the coordinator's rule, 2026-11-21): E on a vehicle's cargo space next to you (a trunk, a glovebox,
+## a truck bed; Snapshot.Vehicle.cargo lists those) opens its lid, if it has one (lead-world's VehicleView.open_lid,
+## the client's own: CDDA has none), and the tray lays out what CDDA lists in it, in one step; closing the tray
+## shuts the lid. Looking sends nothing; taking goes through Hands as from any tray. False when E isn't on one:
+## E goes on as before (CDDA's own use / examine).
+func _open_cargo() -> bool:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or world.snapshot == null or grab.tray_open() or grab.carrying():
+		return false
+	var hit := _cast_screen(_pointer(), false)
+	if not hit.get("hit", false) or not hit.get("square") is Vector3i or not hit.has("vehicle"):
+		return false
+	var src := ItemTray.source_for_cargo(world.snapshot, hit["square"])
+	if src.is_empty() or src["vehicle"] != hit["vehicle"]:
+		return false
+	var veh: Snapshot.Vehicle = world.snapshot.vehicle_at(hit["square"])[0]
+	var label := VehicleView.part_label(world.snapshot, world.tables, veh, src["part"])
+	if not grab.open_tray_src(src, cam.global_transform, "Nothing in the %s." % label):
+		return true   # E was on it: the note says it's empty
+	vehicles_view.open_lid(src["vehicle"], src["part"], true)
+	_cargo_lid = [src["vehicle"], src["part"]]
+	return true
+
+
+func _shut_cargo_lid() -> void:
+	if _cargo_lid.size() == 2:
+		vehicles_view.open_lid(_cargo_lid[0], _cargo_lid[1], false)
+	_cargo_lid = []
+
+
 ## E's tap with a liquid in hand: what E does otherwise (take the item under the pointer, else use / examine
 ## the square you face).
 func _use_tap() -> void:
@@ -2525,6 +2557,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return   # E with a liquid in hand: waits for the release (a tap goes on below as usual) or a hold pours
 	if vr == null and (live == null or _in_main_loop()) and grab.take_hovered(event):
 		return   # E on an item you look at takes it (else E uses / examines, below)
+	if vr == null and (live == null or _in_main_loop()) and InputActions.pressed(event, &"use_held") \
+			and _open_cargo():
+		return   # car storage: E on a trunk, glovebox or other cargo space next to you opens it and lays it out
 	if vr == null and grab.handle_event(event, get_viewport().get_camera_3d(), _pointer()):
 		return
 	var wheel := event as InputEventMouseButton

@@ -389,13 +389,21 @@ func tray_open() -> bool:
 ## Opens the tray on lying item `it` (ItemTray.source_for) in front of the camera pose `cam_xf` and frees the
 ## mouse. False, with a line under the pointer, when there is nothing to lay out.
 func open_tray_on(it: ItemRef, cam_xf: Transform3D) -> bool:
+	if world.snapshot == null:
+		return false
+	return open_tray_src(ItemTray.source_for(world.snapshot, it), cam_xf)
+
+
+## Opens the tray on `src` (an ItemTray source: a container, a pile, a vehicle's cargo space) in front of the
+## camera pose `cam_xf` and frees the mouse. False, with `empty_note` under the pointer, when there is nothing to
+## lay out.
+func open_tray_src(src: Dictionary, cam_xf: Transform3D, empty_note := "Nothing to lay out there.") -> bool:
 	if tray == null or not is_instance_valid(tray) or tray_open() or world.snapshot == null or carrying():
 		return false
 	tray.rest_m = TRAY_M
 	tray.rest_low = TRAY_LOW
-	var src := ItemTray.source_for(world.snapshot, it)
 	if src.is_empty() or not tray.open(src, cam_xf):
-		flash("Nothing to lay out there.")
+		flash(empty_note)
 		return false
 	_tray_mouse = Input.mouse_mode
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
