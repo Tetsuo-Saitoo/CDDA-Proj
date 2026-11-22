@@ -111,7 +111,6 @@ const MAX_VEHICLES := 256                 # vehicles: the contract's caps
 const MAX_VEHICLE_PARTS := 4096           # ... parts per vehicle
 const MAX_ALL_VEHICLE_PARTS := 65536      # parts kept in all (a town has ~1000); later vehicles are left out
 const MAX_VEHICLE_NAME := 60              # columns
-const MAX_VEHICLE_STATE_KEYS := 32        # player.vehicle_state: a bigger block isn't kept
 const MAX_MOUNT := 128                    # a part's mount, per axis; its square's offset from pos at most twice that
 const MAX_VEHICLE_DZ := 4                 # levels a part's square may be off the vehicle's (CDDA moves parts on ramps)
 const MAX_SPEED := 1000.0                 # m/s; anything else reads as 0
@@ -173,9 +172,10 @@ var player_pos := Vector3i.ZERO
 var player_peeking_from: Variant = null
 var player_driving := false                # player.driving: the player holds a vehicle's controls (junk: false)
 var player_vehicle := 0                    # player.vehicle: uid of the vehicle the player is boarded on, 0 none or junk
-## player.vehicle_state as sent (the driving HUD's block; lead-ui's RideInfo checks every field), {} on foot, when
-## not an object or over MAX_VEHICLE_STATE_KEYS keys (lead-ui, with lead-world's OK, 2026-11-21).
+## player.vehicle_state while boarded, as sent (lead-ui's RideInfo checks every field): an object of at most
+## MAX_VEHICLE_STATE_KEYS keys, else {}.
 var player_vehicle_state := {}
+const MAX_VEHICLE_STATE_KEYS := 32
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed; mods, fits,
                                            # slots only when sent}, {} for none
@@ -468,7 +468,8 @@ func _read_player(v: Variant) -> void:
 	var boarded: Variant = _whole((v as Dictionary).get("vehicle"), 1, MAX_UID - 1)
 	player_vehicle = boarded if boarded != null else 0
 	var vs: Variant = (v as Dictionary).get("vehicle_state")
-	player_vehicle_state = vs if vs is Dictionary and (vs as Dictionary).size() <= MAX_VEHICLE_STATE_KEYS else {}
+	if vs is Dictionary and (vs as Dictionary).size() <= MAX_VEHICLE_STATE_KEYS:
+		player_vehicle_state = vs
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
