@@ -172,10 +172,6 @@ var player_pos := Vector3i.ZERO
 var player_peeking_from: Variant = null
 var player_driving := false                # player.driving: the player holds a vehicle's controls (junk: false)
 var player_vehicle := 0                    # player.vehicle: uid of the vehicle the player is boarded on, 0 none or junk
-## player.vehicle_state while boarded, as sent (lead-ui's RideInfo checks every field): an object of at most
-## MAX_VEHICLE_STATE_KEYS keys, else {}.
-var player_vehicle_state := {}
-const MAX_VEHICLE_STATE_KEYS := 32
 var player_wielded := 0                    # itype index of what the player holds, 0 for nothing
 var player_gun := {}                       # player.wielded_gun: {type, dirt, faults, rounds, suppressed; mods, fits,
                                            # slots only when sent}, {} for none
@@ -454,7 +450,6 @@ func _read_player(v: Variant) -> void:
 	player_peeking_from = null
 	player_driving = false
 	player_vehicle = 0
-	player_vehicle_state = {}
 	if v == null or not is_valid():
 		return
 	if not v is Dictionary:
@@ -467,9 +462,6 @@ func _read_player(v: Variant) -> void:
 	player_driving = (v as Dictionary).get("driving") is bool and (v as Dictionary)["driving"]
 	var boarded: Variant = _whole((v as Dictionary).get("vehicle"), 1, MAX_UID - 1)
 	player_vehicle = boarded if boarded != null else 0
-	var vs: Variant = (v as Dictionary).get("vehicle_state")
-	if vs is Dictionary and (vs as Dictionary).size() <= MAX_VEHICLE_STATE_KEYS:
-		player_vehicle_state = vs
 	var w: Variant = (v as Dictionary).get("wielded")
 	if w != null:
 		player_wielded = _int(w, 0, MAX_ID, "player.wielded")
