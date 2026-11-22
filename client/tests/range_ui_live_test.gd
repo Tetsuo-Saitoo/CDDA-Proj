@@ -957,14 +957,21 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		print("    (car storage, %s: from %s the pointer meets no part on its square %s, so E on it is not checked; aimed at heights, it met: %s)"
 				% [what, _main.world.snapshot.player_pos, sq, met])
 	else:
+		var whys := []
+		var note_why := func(why: String) -> void: whys.append(why)
+		_main.grab.tray.closed.connect(note_why)
 		var on_it: bool = _main.call("_open_cargo")
 		var at_once: bool = _main.grab.tray_open()
 		var listed_then: Variant = load("res://scripts/vr/item_tray.gd").call("list", _main.world.snapshot,
 				load("res://scripts/vr/item_tray.gd").call("source_for_cargo", _main.world.snapshot, sq), _main.world.tables)
-		await _frames(2)
+		await process_frame
+		var one_frame: bool = _main.grab.tray_open()
+		await process_frame
+		_main.grab.tray.closed.disconnect(note_why)
 		if not empty:
-			print("    (E on %s: tray open at once %s, two frames later %s; the tray's list then: %s; mouse holds %s; a prompt shows %s)"
-					% [what, at_once, _main.grab.tray_open(), listed_then, _main.hands.holding("mouse"), _main.request_ui.visible])
+			print("    (E on %s: tray open at once %s, a frame later %s, two frames later %s, closed because %s; the tray's list then: %s; player %s, in the main loop %s, menu open %s)"
+					% [what, at_once, one_frame, _main.grab.tray_open(), whys, listed_then, _main.world.snapshot.player_pos,
+					_main._in_main_loop(), _main._menu_open()])
 		var tray_open: bool = _main.grab.tray_open()
 		var src: Variant = _main.grab.tray.get("source") if tray_open else {}
 		var lid: Array = _main.get("_cargo_lid")
