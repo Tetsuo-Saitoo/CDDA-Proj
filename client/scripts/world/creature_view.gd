@@ -31,6 +31,10 @@ var view_z_max := CddaCoords.Z_LIMIT:   # levels above are hidden; main.gd sets 
 		for f: CreatureFigure in _corpses.values():
 			f.visible = f.z_level <= z
 
+## (sq: Vector3i) -> Transform3D: what carries a creature on a vehicle's square to where that vehicle is drawn
+## (VehicleView.seat_transform, set by main.gd): passengers ride with a gliding, turning car. Unset: none.
+var seat := Callable()
+var _riders := {}      # uid -> [square, where the snapshot puts it]: creatures on a vehicle's square
 var _figs := {}        # uid -> CreatureFigure
 var _corpses := {}     # square -> CreatureFigure lying there (bodies in item piles, by monster type)
 var _gone := {}        # uid -> [CreatureFigure, seconds left]
@@ -51,6 +55,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 	var dur := clampf((now - _last_ms) / 1000.0, MIN_MOVE_S, MAX_MOVE_S) if _last_ms >= 0 else MAX_MOVE_S
 	_last_ms = now
 	var seen := {}
+	_riders = {}
 	for c in snap.creatures:
 		if c.kind == Snapshot.Creature.PLAYER and not show_player:
 			continue
@@ -71,6 +76,8 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 		else:
 			f.move_to(target, dur if smooth else 0.0, SNAP_DIST_M)
 		_figs[c.uid] = f
+		if not snap.vehicle_at(c.pos).is_empty():
+			_riders[c.uid] = [c.pos, target]
 		f.z_level = c.pos.z
 		f.visible = c.pos.z <= view_z_max
 		seen[c.uid] = true
@@ -164,6 +171,7 @@ func _process(delta: float) -> void:
 func tick(delta: float) -> void:
 	for f: CreatureFigure in _figs.values():
 		f.animate(delta)
+	ride()
 	for uid: int in _gone.keys():
 		var g: Array = _gone[uid]
 		(g[0] as CreatureFigure).animate(delta)
@@ -182,8 +190,21 @@ func tick(delta: float) -> void:
 		_apply_corpses(_snap, _world)
 
 
+## Seats the creatures on a vehicle's square where that vehicle is drawn now (seat).
+func ride() -> void:
+	if not seat.is_valid():
+		return
+	for uid: int in _riders:
+		var f: CreatureFigure = _figs.get(uid)
+		var r: Variant = seat.call(_riders[uid][0])
+		if f != null and r is Transform3D and (r as Transform3D).is_finite() and r != Transform3D():
+			f.position = (r as Transform3D) * (_riders[uid][1] as Vector3)
+
+
 ## The origin moved (map shift): keep every figure on its square.
 func shift(d: Vector3) -> void:
+	for e: Array in _riders.values():
+		e[1] = (e[1] as Vector3) + d
 	for f: CreatureFigure in _figs.values():
 		f.shift(d)
 	for g: Array in _gone.values():

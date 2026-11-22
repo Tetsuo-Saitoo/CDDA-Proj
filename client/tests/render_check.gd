@@ -54,6 +54,13 @@ const SHOTS := [
 	# The mock's coupe (C5): one rounded body with glass, wheels on its sides, seen from the south and from above.
 	{"name": "car_side", "env": CLEAR, "yaw": 0.0, "pitch": -12.0, "move": Vector3i(-13, 20, 0)},
 	{"name": "car_top", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0)},
+	# Driving the coupe: the chase camera behind and above it, then the coupe turned 30 degrees (one rigid model,
+	# the chase turned after it), and the turned coupe from above.
+	{"name": "drive_chase", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE},
+	{"name": "drive_chase_turned", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0, "settle": 3.0},
+	{"name": "drive_top_turned", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0},
 	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
@@ -133,6 +140,9 @@ func _seconds(s: float) -> void:
 	await create_timer(s).timeout
 
 
+const COUPE := 8589934618   # the mock's coupe west of the start (pos 179, 398)
+
+
 func _shot(index: int, shot: Dictionary) -> void:
 	var d := _data.duplicate(false)
 	var env: Dictionary = (_data["env"] as Dictionary).duplicate()
@@ -158,6 +168,18 @@ func _shot(index: int, shot: Dictionary) -> void:
 	var player: Dictionary = (_data["player"] as Dictionary).duplicate(true)
 	var move: Vector3i = shot.get("move", Vector3i.ZERO)
 	player["pos"] = [int(player["pos"][0]) + move.x, int(player["pos"][1]) + move.y, int(player["pos"][2]) + move.z]
+	if shot.has("drive"):
+		player["driving"] = true
+		player["vehicle"] = shot["drive"]
+		if shot.has("face"):
+			var vehicles := []
+			for v: Dictionary in _data["vehicles"]:
+				var copy := v.duplicate(false)
+				if copy["uid"] == shot["drive"]:
+					copy["face_deg"] = shot["face"]
+					copy["turn_deg"] = shot["face"]
+				vehicles.append(copy)
+			d["vehicles"] = vehicles
 	d["player"] = player
 	if shot.get("lamp", false):
 		_lamp(d, Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]))
