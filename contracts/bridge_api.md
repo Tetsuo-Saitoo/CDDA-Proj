@@ -169,6 +169,20 @@ A generated world with every weapon, item, vehicle, monster, terrain and furnitu
   strictly and shown in the snapshot) and the message says "put down"; picking it up forgets it. All take CDDA's
   move costs (obtain + move cost). A stack counted by charges (ammo, rocks) moves as a whole; put into a pocket it
   can merge with the same thing and take that stack's uid.
+- Vehicle cargo by hand (2026-11-21; the snapshot's `vehicles[].cargo` lists the spaces and their items).
+  `take`: unchanged call. `pos` is the cargo space's square; the item is found lying on `pos` or, failing that,
+  in the cargo space there, and comes out by CDDA's pickup rules and cost as from the ground (pack, main or off
+  hand; someone else's item is refused: "The X isn't yours."). Taking out of a bag that lies in a cargo space
+  (`container`) is not supported: take the bag out first.
+  `drop` with `cargo` (bool, drop only, optional): the carried item goes into the cargo space on `pos` instead
+  of onto the ground, by CDDA's own rule for what a space takes (its room and item count). Refused: "There's
+  nothing to put your X into there." (no cargo space on that square within reach), "Unable to fit X in the Y's
+  Z." (CDDA's text; the item stays in the hand, nothing spills), and what a drop refuses anyway (worn, can't be
+  dropped). `cargo` with a `spot`, pose or shelf, or on another op → `false`. A drop without `cargo` on a
+  vehicle's square is what it was: the item lies on the ground there.
+  The spaces: on the character's square or one next to it that a clear path leads to, CDDA's own "nearby" for
+  its item menus; one space a square. CDDA asks for no open lid, so the bridge refuses none: a client that
+  wants the trunk opened first makes that its own rule (a part row's state bit 0 is open).
 - Gun mods by hand (2026-11-17; `mod_add`, `mod_remove`, both with `tag`; the snapshot's `player.wielded_gun` has
   `mods`, `slots` and `fits`, the id tables `gunmod_location` and `mod_locations`). Only the wielded gun:
   `container` + `container_type` must name it, else the action is refused. `mod_add`: `item` + `type` a carried

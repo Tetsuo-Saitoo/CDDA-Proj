@@ -691,6 +691,12 @@ bool CddaSim::queue_item_action( const Dictionary &d )
         ( a.op != fp3d::item_op::mod_add || !ref( "vise", "vise_type", a.vise ) ) ) {
         return false;
     }
+    // drop, optional: into the vehicle's cargo space on the square (a bool); no other op has it. The sim refuses it
+    // together with a spot, a pose or a shelf, and checks there is such a space within reach.
+    if( !field( d, "cargo", Variant::BOOL, v ) || ( d.has( "cargo" ) && a.op != fp3d::item_op::drop ) ) {
+        return false;
+    }
+    a.cargo = d.has( "cargo" ) && static_cast<bool>( v );
     if( a.op == fp3d::item_op::put || ( a.op == fp3d::item_op::pour && d.has( "container" ) ) ) {
         if( !ref( "container", "container_type", a.container ) || !field( d, "pocket", Variant::INT, v ) ) {
             return false;
