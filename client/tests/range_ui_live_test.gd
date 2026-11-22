@@ -512,6 +512,7 @@ func _drive_live(start: Vector3i) -> void:
 		var walking := func() -> bool: return _main.view_mode == walk_view
 		_check(await _until(walking, SHOW_TIMEOUT_MS),
 				"driving views: with the controls let go the view is the walking view again (%s)" % _main.view_mode)
+	var trunk_sq := Vector3i.MAX
 	if keys and _main.world.snapshot.has_method("controls_at"):
 		# the seat beside the driver's has no controls: CDDA says nothing there, the client says why
 		var side: Vector3i = _main.world.snapshot.player_pos - (door - seat)   # (the car has rolled on; it faces east again)
@@ -530,6 +531,7 @@ func _drive_live(start: Vector3i) -> void:
 				% [InputActions.prompt_of(&"cdda_control_vehicle"), note.left(40), on_side, found, hinted])
 		await _ride_passenger()
 		await _cargo_seat_live(uid)
+		trunk_sq = await _cargo_trunk_live(uid)
 	var had_ride := _ride_hud() != null
 	var step_out := _step_name(out - door)
 	var here := _main.world.snapshot.player_pos
@@ -540,11 +542,11 @@ func _drive_live(start: Vector3i) -> void:
 	if had_ride:
 		var gone := func() -> bool: return not (_main.get("ride_hud") as Control).visible
 		_check(await _until(gone, SHOW_TIMEOUT_MS), "driving HUD: out of the car it is gone")
-	await _cargo_trunk_live(uid, start)
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
 	_check(_main.world.snapshot.player_pos != here and await _cheat(_live.cheat_teleport(start)) == ""
 			and await _until(back, SHOW_TIMEOUT_MS), "driving: the player walks out of the car (%s) and is back at the arrival square (%s)"
 			% [step_out, _main.world.snapshot.player_pos])
+	await _cargo_far_live(uid, trunk_sq)
 
 
 ## CDDA's control_vehicle key away from a car (lead-world's key; skipped, said so, on a client without it or a bridge
@@ -934,7 +936,8 @@ func _cargo_seat_live(uid: int) -> void:
 ## E on a cargo space (lead-ui's _open_cargo), in first person: the look is turned onto square `sq` at a few
 ## heights until the pointer's ray meets a part of vehicle `uid` there (printed, not failed, when it never does: the
 ## space can't be aimed at from here). Then E: `empty` true: it says the space is empty and opens nothing; else the
-## tray opens on that square's space and its lid is noted; Esc closes both. The look and the mouse are put back.
+## tray opens on that square's space and stays open, its lid noted; Esc closes both and brings up no menu. The look
+## and the mouse are put back.
 func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 	if not _main.has_method("_open_cargo") or not _main._fp_active() or _main.view_mode != "first":
 		return
@@ -957,53 +960,73 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		print("    (car storage, %s: from %s the pointer meets no part on its square %s, so E on it is not checked; aimed at heights, it met: %s)"
 				% [what, _main.world.snapshot.player_pos, sq, met])
 	else:
-		var whys := []
-		var note_why := func(why: String) -> void: whys.append(why)
-		_main.grab.tray.closed.connect(note_why)
 		var on_it: bool = _main.call("_open_cargo")
-		var at_once: bool = _main.grab.tray_open()
-		var listed_then: Variant = load("res://scripts/vr/item_tray.gd").call("list", _main.world.snapshot,
-				load("res://scripts/vr/item_tray.gd").call("source_for_cargo", _main.world.snapshot, sq), _main.world.tables)
-		await process_frame
-		var one_frame: bool = _main.grab.tray_open()
-		await process_frame
-		_main.grab.tray.closed.disconnect(note_why)
-		if not empty:
-			print("    (E on %s: tray open at once %s, a frame later %s, two frames later %s, closed because %s; the tray's list then: %s; player %s, in the main loop %s, menu open %s)"
-					% [what, at_once, one_frame, _main.grab.tray_open(), whys, listed_then, _main.world.snapshot.player_pos,
-					_main._in_main_loop(), [_main.key_menu.visible, _main.inspect.visible, _main.character.visible,
-					_main.request_ui.visible, _main.vise_bench.visible, _main.main_menu != null, _main.vr != null]])
-		var tray_open: bool = _main.grab.tray_open()
-		var src: Variant = _main.grab.tray.get("source") if tray_open else {}
-		var lid: Array = _main.get("_cargo_lid")
-		var note := str(_main.grab.get("_flash"))
-		var esc := InputEventKey.new()
-		esc.keycode = KEY_ESCAPE
-		esc.physical_keycode = KEY_ESCAPE
-		esc.pressed = true
-		root.push_input(esc)
 		await _frames(3)
-		var closed: bool = not _main.grab.tray_open() and (_main.get("_cargo_lid") as Array).is_empty()
-		if _main.grab.tray_open():
-			_main.grab.call("close_tray")
-		var right: bool = (not tray_open and note.contains("Nothing in the")) if empty \
-				else (tray_open and src is Dictionary and (src as Dictionary).get("square") == sq and lid.size() == 2 and lid[0] == uid)
-		_check(on_it and closed and right,
-				"car storage, %s: E with the pointer on it %s; Esc closes it (E on it %s, tray open %s, lid noted %s, note \"%s\", closed %s)"
-				% [what, "says it is empty" if empty else "opens the tray on it and notes its lid", on_it, tray_open, lid, note, closed])
+		var tray_open: bool = _main.grab.tray_open()
+		var note := str(_main.grab.get("_flash"))
+		if empty:
+			_check(on_it and not tray_open and note.contains("Nothing in the"),
+					"car storage, %s: E with the pointer on it says it is empty and opens nothing (E on it %s, tray open %s, note \"%s\")"
+					% [what, on_it, tray_open, note])
+		else:
+			var src: Variant = _main.grab.tray.get("source") if tray_open else {}
+			var lid: Array = _main.get("_cargo_lid")
+			var esc := InputEventKey.new()
+			esc.keycode = KEY_ESCAPE
+			esc.physical_keycode = KEY_ESCAPE
+			esc.pressed = true
+			root.push_input(esc)
+			await _frames(3)
+			var closed: bool = not _main.grab.tray_open() and (_main.get("_cargo_lid") as Array).is_empty()
+			var menu_up: bool = _main.key_menu.visible
+			if _main.grab.tray_open():
+				_main.grab.call("close_tray")
+			if menu_up:
+				_main.key_menu.close()
+			_check(on_it and tray_open and src is Dictionary and (src as Dictionary).get("square") == sq and lid.size() == 2
+					and lid[0] == uid and closed and not menu_up,
+					"car storage, %s: E with the pointer on it opens the tray on it, which stays open, and notes its lid; Esc closes both and brings up no menu (E on it %s, tray open %s, lid noted %s, closed %s, menu up %s)"
+					% [what, on_it, tray_open, lid, closed, menu_up])
 	_main.fp.set_look(yaw0, pitch0)
 	Input.mouse_mode = mouse
 
 
-## Car storage, the trunk (skipped as _cargo_seat_live; said so when the car has no trunk square with a square to
-## stand on beside it): the player is put beside a trunk square, on open floor if there is some, else on a square of
-## the car that doesn't block. An item goes in and comes out (_cargo_round, with E on it). Letting go over the trunk
-## is a cargo target; over a square of the car without storage, or with another vehicle's uid, it is not. From
-## `far` (the arrival square) no space of the car is listed and there is no target.
-func _cargo_trunk_live(uid: int, far: Vector3i) -> void:
+## The squares from `from` to the nearest square beside (along an axis) one of `goals`, stepping along the axes over
+## squares of vehicle `uid` that don't block and hold no creature, `from` first; [] when there is no such way.
+func _car_path(uid: int, from: Vector3i, goals: Array) -> Array:
+	var snap: Snapshot = _main.world.snapshot
+	var veh := _vehicle(uid)
+	var own := {}
+	for i in veh.part_count():
+		own[veh.square(i)] = true
+	var ways: Array[Vector3i] = [Vector3i(-1, 0, 0), Vector3i(1, 0, 0), Vector3i(0, -1, 0), Vector3i(0, 1, 0)]
+	var came := {from: from}
+	var queue: Array[Vector3i] = [from]
+	while not queue.is_empty():
+		var at: Vector3i = queue.pop_front()
+		if not goals.has(at) and ways.any(func(w: Vector3i) -> bool: return goals.has(at + w)):
+			var path: Array[Vector3i] = [at]
+			while path[0] != from:
+				path.push_front(came[path[0]])
+			return path
+		for d: Vector3i in ways:
+			var to: Vector3i = at + d
+			if not came.has(to) and own.has(to) and not goals.has(to) and not VehicleView.blocks(snap, _main.world.tables, to) \
+					and snap.creature_at(to) == null:
+				came[to] = at
+				queue.append(to)
+	return []
+
+
+## Car storage, the trunk (skipped as _cargo_seat_live; said so when no square of the car beside a trunk square can
+## be walked to): the teleport cheat never lands on a vehicle, so from the seat the player walks inside the car to a
+## square beside a trunk square. An item goes in and comes out (_cargo_round, with E on it). Letting go over the
+## trunk is a cargo target; over a square of the car without storage, or with another vehicle's uid, it is not. The
+## player walks back to the seat. Returns the trunk square (Vector3i.MAX when the trunk wasn't checked).
+func _cargo_trunk_live(uid: int) -> Vector3i:
 	var veh := _vehicle(uid)
 	if veh == null or not "cargo" in veh or not _main.has_method("_open_cargo"):
-		return
+		return Vector3i.MAX
 	var trunks := []
 	var bare := Vector3i.MAX     # a square of the car with no cargo part
 	var cargo_sq := {}
@@ -1016,47 +1039,59 @@ func _cargo_trunk_live(uid: int, far: Vector3i) -> void:
 	for i in veh.part_count():
 		if bare == Vector3i.MAX and not cargo_sq.has(veh.square(i)):
 			bare = veh.square(i)
+	var seat: Vector3i = _main.world.snapshot.player_pos
+	var path := _car_path(uid, seat, trunks)
+	if path.is_empty():
+		print("  (no square of this car beside a trunk square can be walked to from the seat %s: the trunk not checked; trunk squares %s)"
+				% [seat, trunks])
+		return Vector3i.MAX
+	for n in range(1, path.size()):
+		await _turn(_step_name(path[n] - path[n - 1]))
+	var stand: Vector3i = path[-1]
 	var trunk := Vector3i.MAX
-	var stand := Vector3i.MAX
-	var snap: Snapshot = _main.world.snapshot
-	for floor_only: bool in [true, false]:
-		for t: Vector3i in trunks:
-			for d: Vector3i in [Vector3i(-1, 0, 0), Vector3i(1, 0, 0), Vector3i(0, -1, 0), Vector3i(0, 1, 0)]:
-				var at: Vector3i = t + d
-				var free: bool = _floor_at(at) >= 0 if floor_only else (not snap.vehicle_at(at).is_empty() and not trunks.has(at)
-						and not VehicleView.blocks(snap, _main.world.tables, at) and snap.creature_at(at) == null)
-				if stand == Vector3i.MAX and free:
-					trunk = t
-					stand = at
-	if stand == Vector3i.MAX:
-		print("  (no trunk square of this car has a square to stand on beside it: the trunk not checked; trunk squares %s)" % [trunks])
-		return
-	var there := func() -> bool: return _main.world.snapshot.player_pos == stand and not _main.world.busy()
-	var by: bool = await _cheat(_live.cheat_teleport(stand)) == "" and await _until(there, SHOW_TIMEOUT_MS)
+	for t: Vector3i in trunks:
+		if trunk == Vector3i.MAX and absi(t.x - stand.x) + absi(t.y - stand.y) == 1:
+			trunk = t
 	var listed := func() -> bool: return not _cargo_row(uid, trunk).is_empty()
-	if not by or not await _until(listed, 5000):
-		_check(false, "car storage: the player stands beside the trunk and the snapshot lists it (trunk %s, to stand on %s, player %s)"
-				% [trunk, stand, _main.world.snapshot.player_pos])
+	if _main.world.snapshot.player_pos != stand or not await _until(listed, 5000):
+		_check(false, "car storage: the player walks inside the car to a square beside the trunk and the snapshot lists it (trunk %s, by %s, player %s)"
+				% [trunk, path, _main.world.snapshot.player_pos])
+	else:
+		print("  (car storage: from the seat %s the player walked inside the car to %s, beside the trunk square %s)" % [seat, stand, trunk])
+		await _cargo_round("the trunk", uid, trunk)
+		# cargo targets: the trunk yes; a square without storage or another vehicle: no
+		var hands: Script = load("res://scripts/interaction/hands.gd")
+		var yes := func(_u: int, _p: int) -> bool: return true
+		var snap: Snapshot = _main.world.snapshot
+		var on_trunk: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": trunk, "vehicle": uid}, yes)
+		var on_bare: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": bare, "vehicle": uid}, yes) \
+				if bare != Vector3i.MAX else {}
+		var other: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": trunk, "vehicle": uid + 1}, yes)
+		_check(on_trunk.get("kind") == "cargo" and on_trunk.get("square") == trunk and on_bare.is_empty() and other.is_empty(),
+				"car storage: letting go over the trunk is a cargo target (\"put it in the %s\"); over a square of the car without storage (%s) or with another vehicle's uid it is not (%s, %s)"
+				% [on_trunk.get("name", "?"), bare, on_bare, other])
+	for n in range(path.size() - 1, 0, -1):
+		if _main.world.snapshot.player_pos == path[n]:
+			await _turn(_step_name(path[n - 1] - path[n]))
+	if _main.world.snapshot.player_pos != seat:
+		_check(false, "car storage: the player walks back to the seat (%s; on %s)" % [seat, _main.world.snapshot.player_pos])
+	return trunk
+
+
+## Car storage from far off (`trunk` from _cargo_trunk_live; the player is back on the arrival square): no space of
+## the car is listed there and letting go over the trunk is no cargo target.
+func _cargo_far_live(uid: int, trunk: Vector3i) -> void:
+	if trunk == Vector3i.MAX:
 		return
-	await _cargo_round("the trunk", uid, trunk)
-	# cargo targets: the trunk yes; a square without storage, another vehicle, or from far off: no
 	var hands: Script = load("res://scripts/interaction/hands.gd")
 	var yes := func(_u: int, _p: int) -> bool: return true
-	snap = _main.world.snapshot
-	var on_trunk: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": trunk, "vehicle": uid}, yes)
-	var on_bare: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": bare, "vehicle": uid}, yes) \
-			if bare != Vector3i.MAX else {}
-	var other: Dictionary = hands.call("cargo_target", snap, _main.world.tables, {"hit": true, "square": trunk, "vehicle": uid + 1}, yes)
-	var away := func() -> bool: return _main.world.snapshot.player_pos == far and not _main.world.busy()
-	var gone: bool = await _cheat(_live.cheat_teleport(far)) == "" and await _until(away, SHOW_TIMEOUT_MS)
 	var unlisted := func() -> bool: return _vehicle(uid) != null and (_vehicle(uid).get("cargo") as Array).is_empty()
-	var off_list: bool = gone and await _until(unlisted, 5000)
+	var off_list: bool = await _until(unlisted, 5000)
 	var from_far: Dictionary = hands.call("cargo_target", _main.world.snapshot, _main.world.tables,
 			{"hit": true, "square": trunk, "vehicle": uid}, yes)
-	_check(on_trunk.get("kind") == "cargo" and on_trunk.get("square") == trunk and on_bare.is_empty() and other.is_empty()
-			and off_list and from_far.is_empty(),
-			"car storage: letting go over the trunk is a cargo target (\"put it in the %s\"); over a square of the car without storage (%s) or with another vehicle's uid it is not; from the arrival square no space of the car is listed and there is no target (%s, %s, there %s, unlisted %s, %s)"
-			% [on_trunk.get("name", "?"), bare, on_bare, other, gone, off_list, from_far])
+	_check(off_list and from_far.is_empty(),
+			"car storage: from the arrival square (%s) no space of the car is listed and letting go over the trunk is no cargo target (unlisted %s, %s)"
+			% [_main.world.snapshot.player_pos, off_list, from_far])
 
 
 ## lead-ui's driving HUD (RideHud), when this client has it and the bridge sends player.vehicle_state while the player
