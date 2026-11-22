@@ -314,6 +314,37 @@ func set_auto_pause(on: bool) -> bool:
 	return true
 
 
+## Real time (true: each turn lasts a second of wall time) or turns (false: the game waits for the player), the
+## bridge's set_real_time. False without a game or a bridge that has it.
+func set_real_time(on: bool) -> bool:
+	if not _can("set_real_time"):
+		return false
+	_sim.set_real_time(on)
+	return true
+
+
+## Pauses or resumes turns (the bridge's set_paused; real time and turn-based alike). False without a game or a
+## bridge that has it.
+func set_paused(on: bool) -> bool:
+	if not _can("set_paused"):
+		return false
+	_sim.set_paused(on)
+	return true
+
+
+## The sim's clock, checked: {real_time: bool, paused: bool, pause_reason: String (plain, capped)}; all false / ""
+## without a game.
+func clock() -> Dictionary:
+	var c: Variant = _sim.get_clock() if _can("get_clock") else {}
+	var d: Dictionary = c if c is Dictionary else {}
+	return {"real_time": _true(d.get("real_time")), "paused": _true(d.get("paused")),
+			"pause_reason": Snapshot.plain_text(d.get("pause_reason"), 64)}
+
+
+static func _true(v: Variant) -> bool:
+	return v is bool and v
+
+
 func auto_pause() -> bool:
 	if not _can("get_clock"):
 		return false

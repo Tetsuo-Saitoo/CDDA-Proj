@@ -77,6 +77,12 @@ func _run() -> void:
 	if not up:
 		_finish()
 		return
+	if _has_clock():   # lead-ui's real-time switch: a new game waits for the player
+		var turn0: int = _main.world.snapshot.turn
+		var t1 := Time.get_ticks_msec()
+		await _until(func() -> bool: return Time.get_ticks_msec() - t1 > 2500, 10000)
+		_check(_live.clock().get("real_time") == false and _main.world.snapshot.turn == turn0,
+				"a new game is in turns: nothing passes in 2.5 s with no input (%d turns)" % (_main.world.snapshot.turn - turn0))
 
 	_main.key_menu.cheats_forced = true
 	_main._sync_cheats_allowed()
@@ -149,7 +155,8 @@ func _run() -> void:
 
 ## Two games in a row in one process: F1's "Save and quit to menu" ends the game through CDDA's own save and quit, a
 ## fresh Main takes over showing the menu with nothing of the first game left, and its Load page starts the same
-## character again, standing where it was saved. False when it can't go on.
+## character again, standing where it was saved. With lead-ui's real-time switch: real time is turned on before the
+## save, the loaded game runs in real time, and the key puts it back in turns. False when it can't go on.
 func _second_game() -> bool:
 	var pos1: Vector3i = _main.world.snapshot.player_pos
 	var old_main: Node = _main
@@ -160,6 +167,10 @@ func _second_game() -> bool:
 	_check(qb != null and qb.visible, "F1 has \"Save and quit to menu\" in a live game")
 	if qb == null:
 		return false
+	var real := func() -> bool: return _live.clock().get("real_time") == true
+	if _has_clock():   # real time on before the save: the fresh Main must read it from this run's hud.cfg
+		_check(_press(&"real_time_toggle") and await _until(real, SHOW_TIMEOUT_MS),
+				"the real-time key turns real time on before the save")
 	_main.key_menu.open()
 	qb.pressed.emit()
 	_check(not _main.key_menu.visible, "the button closes F1")
@@ -205,6 +216,16 @@ func _second_game() -> bool:
 	_check(not _main.key_menu.cheats_forced and _live.cheats_allowed == _main.key_menu.cheats_allowed(),
 			"cheats as the settings say, not as game 1 forced them (%s)" % _live.cheats_allowed)
 	_check(replaced.size() == 1, "no second handover")
+	if _has_clock():   # the loaded game follows the saved setting: real time, turns passing by themselves
+		var turn1: int = _main.world.snapshot.turn
+		var runs := func() -> bool:   # (a hostile in view may pause it: that is real time too)
+			return real.call() and (_live.clock().get("paused") == true or _main.world.snapshot.turn >= turn1 + 2)
+		_check(_main.hud_settings.get("real_time") == true and await _until(runs, SHOW_TIMEOUT_MS),
+				"the loaded game is in real time, as this run's hud.cfg says: time runs by itself (%d turns; clock %s)"
+				% [_main.world.snapshot.turn - turn1, _live.clock()])
+		var turns := func() -> bool: return not real.call()
+		_check(_press(&"real_time_toggle") and await _until(turns, SHOW_TIMEOUT_MS) and _main.hud_settings.get("real_time") == false,
+				"the real-time key again: back in turns")
 	var t1 := Time.get_ticks_msec()   # a few seconds of play: nothing of game 1 may fire into game 2
 	await _until(func() -> bool: return Time.get_ticks_msec() - t1 > 3000, 10000)
 	_check(_live.state == "running" and _main.is_inside_tree() and replaced.size() == 1,
@@ -212,7 +233,8 @@ func _second_game() -> bool:
 	return true
 
 
-## Run 2: the Load page's Delete button and its confirm. No game is started.
+## Run 2: the Load page's Delete button and its confirm. Then character creation in a small window (_small_chargen),
+## stopped before a character is made.
 func _run_delete() -> void:
 	await _start_main()
 	var menu := _main.main_menu
@@ -242,9 +264,56 @@ func _run_delete() -> void:
 	_check(menu.message == "Deleted %s, and the world %s with them." % [MainMenu.shown(saves[0]), WORLD]
 			and not WORLD in LiveSession.list_worlds(_user_dir) and gone,
 			"Delete removes the character and its empty world (%s; folder gone %s)" % [menu.message, gone])
+	await _small_chargen(menu)
 	_main.queue_free()
 	await process_frame
 	_finish()
+
+
+## Character creation in a small window (lead-ui's layout; skipped, said so, on a client without it): with the
+## window at 800x450 the New game page starts a custom character in a fresh world; the creation screen's panel is
+## inside the window, its content is taller than the panel and scrolls, and scrolled to its end the Start button is
+## in sight. Then the game is stopped (no character is made) and the window is as it was.
+func _small_chargen(menu: MainMenu) -> void:
+	var fit := _main.request_ui.get("_fit_box") as ScrollContainer
+	if fit == null:
+		print("  (no small-window layout in this client: character creation in a small window not checked)")
+		return
+	var was: Vector2i = root.size
+	var s := Vector2i(800, 450)
+	root.size = s
+	menu.show_page("new")
+	menu._world_edit.text = WORLD + "Small"
+	menu._custom.button_pressed = true
+	menu._setup.button_pressed = false
+	_find_button(menu, "Start").pressed.emit()
+	var asked := func() -> bool: return _main.request_ui.is_showing() and _main.request_ui.widget is ChargenRequestWidget
+	var deadline := Time.get_ticks_msec() + BOOT_TIMEOUT_MS
+	while Time.get_ticks_msec() < deadline and not asked.call() and not _live.state in ["failed", "ended"]:
+		if _live.request.get("kind", "") != "chargen":   # anything asked on the way gets a player's answer
+			_answer_prompt()
+		await create_timer(0.05).timeout
+	for i in 4:
+		await process_frame
+	var shown: bool = asked.call() and Vector2i(_main.get_viewport().get_visible_rect().size) == s
+	_check(shown, "small window: character creation shows at 800x450 (state %s %s; the window is %s)"
+			% [_live.state, _live.error, _main.get_viewport().get_visible_rect().size])
+	if shown:
+		var w := _main.request_ui.widget as ChargenRequestWidget
+		var panel := fit.get_parent() as Control
+		var win := Rect2(Vector2.ZERO, Vector2(s))
+		var in_win := win.grow(1.0).encloses(panel.get_global_rect())
+		var taller := w.size.y > fit.size.y + 1.0
+		fit.scroll_vertical = int(w.size.y)
+		for i in 3:
+			await process_frame
+		var start_seen: bool = w.start_button != null and fit.get_global_rect().grow(1.0).encloses(w.start_button.get_global_rect())
+		_check(in_win and taller and start_seen,
+				"small window: the creation screen's panel is inside the window (%s), its content (%.0f px) scrolls in it (%.0f px), and at the end the Start button is in sight (%s)"
+				% [panel.get_global_rect(), w.size.y, fit.size.y, start_seen])
+	_live.stop()
+	await _until(func() -> bool: return not _live.state in ["booting", "running"], 30000, false)
+	root.size = was
 
 
 ## Waits for range_done of op `id` (0 = refused before sending).
@@ -285,6 +354,26 @@ func _answer_prompt() -> void:
 		a = {"id": id, "action": "YES" if "YES" in acts else acts[0]}
 	print("  answering %s %s %s: %s" % [req.get("kind", "?"), req.get("context", ""), acts, a])
 	_live.answer(a)
+
+
+## Whether this client has lead-ui's real-time switch (the key and LiveSession.set_real_time).
+func _has_clock() -> bool:
+	return InputMap.has_action(&"real_time_toggle") and _live.has_method("set_real_time")
+
+
+## Presses the first key bound to `action` (F1 defaults) in the window; false when it has none.
+func _press(action: StringName) -> bool:
+	for e in InputActions.slots(action):
+		if e is InputEventKey:
+			var k := (e as InputEventKey).duplicate() as InputEventKey
+			if k.keycode == KEY_NONE:
+				k.keycode = k.physical_keycode
+			if k.physical_keycode == KEY_NONE:
+				k.physical_keycode = k.keycode
+			k.pressed = true
+			root.push_input(k)
+			return true
+	return false
 
 
 func _stop() -> void:

@@ -156,6 +156,30 @@ the character is on, in `vehicles`; a moving vehicle's `velocity` is m/s (one sq
 The character's square is that vehicle's `pos` plus one part row's (dx, dy, dz), not a fixed offset from `pos`:
 CDDA moves a vehicle's `pos` to its turning point once it rolls.
 
+### Peek, for leaning (2026-11-19)
+
+CDDA's peek looks around a corner from the square next to the character. For a lean the client names the square
+with the action: `queue_action_at("peek", square)`, `square` = the character's square plus one step in one of the
+8 ways. CDDA's "Peek where?" prompt (a `direction` request) then does not come. (`queue_action("peek")` alone
+still asks it.)
+
+- CDDA charges two turns of moves when the peek starts, stands the character on that square for seeing only, and
+  asks a `target` request with `mode` "peek". The snapshot taken right before that request is the view from the
+  peeked square: `player.pos` is the peeked square and `player.peeking_from` is the square the body is on. Draw
+  the body at `peeking_from`.
+- The peek lasts as long as that request is open. The game stands still meanwhile: no turn passes and no queued
+  action is taken. `answer({id, cancel: true})` ends it: the character is on its own square again, the two turns
+  pass, and the next snapshot has no `peeking_from`.
+- The request offers `throw_blind` (and `throw_blind_wielded` with something in hand): CDDA's blind throws from
+  the peek. A lean never sends them.
+- Nothing happens, with no request and no cost, when CDDA doesn't peek there: a `message` event "You can't peek
+  around corners while you're in your shell." or "... while you're riding."; "Never mind." for a square that is
+  not next to the character; and no message at all for an impassable square (a wall, a closed door). A square
+  out of range is not queued (`queue_action_at` returns false). So a refusal shows as: the next request is a
+  timed one and no peek request came.
+- The character's own square while it crouches is CDDA's stand-up peek: it stands up to look over cover and
+  crouches again when the request is answered.
+
 ### Action queue (block B5: `fp3d::queue_action`, `clear_actions`, `queued_actions`)
 
 The client doesn't have to catch each `timed` request: it can queue main-loop actions (names as in a timed

@@ -21,6 +21,8 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_walk(world)
 	_test_invert_y(world)
 	_test_follow(world)
+	_test_view_offset(world)
+	_test_peeking_from(data)
 	_test_octants(world)
 	_test_compass()
 	_test_look_ray(world)
@@ -221,6 +223,92 @@ func _test_follow(world: WorldView) -> void:
 	_check.call(seated and off < (r * fp.target).distance_to(fp.target) and fp.position.is_finite(),
 			"fp: on a gliding vehicle the eyes ride with it, then glide on; a bad ride is ignored")
 	fp.free()
+
+
+## Eye tracking (lead-ui): the view offset (zoom, edge turn, lean) is clamped, eases in and back to exactly none,
+## ignores non-finite input, leaves yaw / pitch / target alone, and its side shift stops at a wall.
+func _test_view_offset(world: WorldView) -> void:
+	var fp := FirstPersonCamera.new(world)
+	var p := world.snapshot.player_pos
+	fp.go_to_square(p)
+	fp.set_look(0.3, -0.2)
+	fp.base_fov = 80.0
+	var eye := fp.position
+	fp.set_view_offset(90.0, -90.0, 90.0, -5.0, 0.0)   # all past the limits
+	fp.step(0.05, {})
+	var o := fp.view_offset()
+	var easing := o[0] > 0.0 and o[0] < deg_to_rad(10.0) and fp.fov < 80.0 and fp.fov > 24.0
+	for i in 100:
+		fp.step(0.05, {})
+	o = fp.view_offset()
+	var lim := [deg_to_rad(10.0), deg_to_rad(-10.0), deg_to_rad(15.0), -0.4, 0.3]
+	var clamped := true
+	for i in lim.size():
+		clamped = clamped and is_equal_approx(o[i], lim[i])
+	var side := fp.position - fp.base_position()
+	_check.call(easing and clamped and is_equal_approx(fp.yaw, 0.3) and is_equal_approx(fp.pitch, -0.2)
+			and fp.rotation.is_equal_approx(Vector3(-0.2 + lim[1], 0.3 + lim[0], lim[2])) and is_equal_approx(fp.fov, 24.0)
+			and fp.base_position().is_equal_approx(eye) and side.length() <= 0.4001 and absf(side.dot(fp.forward())) < 0.001
+			and side.dot(fp.right()) <= 0.0 and fp.walk.can_stand(fp.walk.square_at(fp.position, fp.z)),
+			"fp: the view offset eases in, clamped (10 deg turn, 15 deg roll, 0.4 m, zoom 0.3); the look itself stays")
+	fp.set_view_offset(NAN, INF, -INF, NAN, NAN)
+	var nan_none := fp.view_offset() == o   # nothing jumps
+	fp.base_fov = NAN
+	for i in 100:
+		fp.step(0.05, {})
+	_check.call(nan_none and fp.view_offset() == FirstPersonCamera.OFFSET_NONE and fp.position == eye
+			and fp.rotation == Vector3(fp.pitch, fp.yaw, 0.0) and fp.fov == 75.0 and fp.base_fov == 75.0,
+			"fp: non-finite offsets count as none, and none eases back to exactly no offset")
+	var K := TerrainCatalog.Kind
+	var wall: Variant = _find_west_free(world, fp.walk, K.WALL)
+	if wall != null:
+		fp.go_to_square(wall - Vector3i(1, 0, 0))
+		fp.set_look(0.0, 0.0)   # north: right is east, the wall
+		fp.set_view_offset(0.0, 0.0, 0.0, 0.4)
+		for i in 60:
+			fp.step(0.05, {})
+		var wall_x := world.coords.ms_to_world(wall).x
+		_check.call(fp.position.x <= wall_x - VrWalk.BODY_R + 0.001 and fp.position.x > fp.base_position().x,
+				"fp: leaning into a wall stops before it")
+	fp.go_to_square(p)
+	var fresh := fp.position
+	fp.set_view_offset(0.0, 0.0, 0.0, 0.3)
+	fp.follow_square(p)
+	var r := Transform3D(Basis(), Vector3(0.0, 0.0, 0.1))   # a car gliding 10 cm
+	fp.ride = func() -> Transform3D: return r
+	for i in 40:
+		fp.step(0.05, {})
+	var riding := fp.base_position().is_equal_approx(r * fp.target) and fp.position != fp.base_position()
+	var d := Vector3(16, 0, -8)
+	fp.shift(d)
+	fp.step(0.0, {})
+	_check.call(fresh.is_equal_approx(fp.target - d) and riding and fp.base_position().is_equal_approx(r * fp.target)
+			and fp.position.distance_to(fp.base_position()) <= 0.3001,
+			"fp: leaning while following or riding keeps the body's place; a map shift carries both")
+	fp.free()
+
+
+## Eye tracking 9 (lead-ui): while CDDA's peek is open, player.peeking_from is the body's square, next to pos (the
+## peeked square); anything else, junk included, is left out without failing the snapshot.
+func _test_peeking_from(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pos: Vector3i = Snapshot.from_data(d).player_pos
+	var pl: Dictionary = d["player"]
+	pl["peeking_from"] = [pos.x - 1, pos.y + 1, pos.z]
+	var near := Snapshot.from_data(d)
+	pl["peeking_from"] = [pos.x - 3, pos.y, pos.z]
+	var far := Snapshot.from_data(d)
+	pl["peeking_from"] = [pos.x, pos.y, pos.z + 1]
+	var above := Snapshot.from_data(d)
+	pl["peeking_from"] = "left"
+	var junk := Snapshot.from_data(d)
+	pl.erase("peeking_from")
+	var none := Snapshot.from_data(d)
+	_check.call(near.is_valid() and near.player_peeking_from == pos + Vector3i(-1, 1, 0) and far.is_valid()
+			and far.player_peeking_from == null and above.player_peeking_from == null and junk.is_valid()
+			and junk.player_peeking_from == null
+			and none.is_valid() and none.player_peeking_from == null,
+			"peek: player.peeking_from is the body's square next to pos; far or junk is left out, the snapshot stays")
 
 
 func _test_octants(world: WorldView) -> void:

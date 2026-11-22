@@ -13,6 +13,7 @@ extends RequestWidget
 const FILTER_MIN := 10
 const MAX_ROWS := 200      # rows built at once; the filter reaches the rest
 const PAGE := 10
+const LIST_MAX_H := 380.0
 const ROW_H := 32.0        # tall enough for a VR laser pointer (lead-vr)
 const MAX_COUNT := 1000000
 
@@ -27,12 +28,19 @@ var count_spin: SpinBox
 var _actions := PackedStringArray()
 var _list: VBoxContainer
 var _scroll: ScrollContainer
+var _list_h := 0.0   # the list's height for its rows (at most LIST_MAX_H); fit_height may lower it
 var _desc: RichTextLabel
 var _more: Label
 var _anchor := -1            # item_multi: the row last clicked (Shift+click sets the rows from it)
 var _paint := false          # item_multi: the left button is down after a press on a row
 var _paint_on := false       # what a drag sets the rows it passes to (ticked or not)
 var _paint_row := -1         # the row the drag is on
+
+
+## RequestUI: the list gets shorter first, so it scrolls on its own, not inside the panel (RequestWidget).
+func fit_height(h: float) -> void:
+	_fit_part(_scroll, _list_h, h)
+	super(h)
 
 
 func setup(req: Dictionary) -> void:
@@ -59,7 +67,8 @@ func setup(req: Dictionary) -> void:
 		add_child(filter_edit)
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_scroll.custom_minimum_size.y = clampf(items.size() * (ROW_H + 1.0), ROW_H, 380.0)
+	_list_h = clampf(items.size() * (ROW_H + 1.0), ROW_H, LIST_MAX_H)
+	_scroll.custom_minimum_size.y = _list_h
 	add_child(_scroll)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL

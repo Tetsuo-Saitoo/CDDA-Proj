@@ -21,6 +21,8 @@ var _world: WorldView
 var _actions: ItemActions
 var _hands: Hands
 var _rig: VrRig
+var _gz: Variant = null   # the stub eye tracker's throw square (a member: lambdas copy locals)
+var _asked := 0
 
 
 func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
@@ -37,6 +39,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_far_and_door()
 	_test_refused()
 	_test_throw()
+	_test_peek()
 	_rig.free()
 	_hands.free()
 	_actions.free()
@@ -438,6 +441,68 @@ func _test_throw() -> void:
 	_rig.hand_vel[1] = Vector3(0, 6, 0)
 	_check.call(slam == null and _rig.throw_square(_rig.right) == null,
 			"vr throw: a slam down or a toss straight up is no throw (less than %.1f m/s level)" % VrRig.THROW_FLAT_SPEED)
+	_test_gaze_throw()
 	_rig.hand_vel[0] = Vector3.ZERO
 	_rig.hand_vel[1] = Vector3.ZERO
 	_rig.assume_tracked = false
+
+
+## Throw where you look (eye tracking; lead-combat's AimController through main.gd, stubbed here): a throw motion
+## lands where the tracked eyes look; the main trigger with an item in hand throws it there, or answers CDDA's throw
+## request when one shows; no eyes (null), the player's own square or junk: as before (the motion's square, a buzz).
+func _test_gaze_throw() -> void:
+	_rig.gaze_throw_square = func() -> Variant: return _gz
+	_rig.gaze_throw_request = func() -> bool:
+		_asked += 1
+		return false
+	var hammer := _handle(E, _it["hammer"])
+	_rig.right.global_position = _mid(hammer)
+	_frame()
+	_rig.press(_rig.right, "grip_click")
+	var took: bool = _hands.holding("vr_r").get("item") != null
+	_gz = P + Vector3i(-3, 2, 0)
+	_rig.right.global_position = _world.coords.ms_center_to_world(P) + Vector3(0, 1.0, 0)
+	_rig.hand_vel[1] = Vector3(0, 2, -6)
+	_rig.release(_rig.right, "grip_click")
+	var motion := _handle(P + Vector3i(-3, 2, 0), _it["hammer"]) == hammer and _clean()
+	_rig.hand_vel[1] = Vector3.ZERO
+	var plank := _handle(E, _it["2x4"])
+	_rig.right.global_position = _mid(plank)
+	_frame()
+	_rig.press(_rig.right, "grip_click")
+	var holding: bool = _hands.holding("vr_r").get("item") != null
+	# over the player's square, pointing up: no stairs, pile or tray in the way
+	_rig.right.global_transform = Transform3D(Basis(Vector3.RIGHT, PI / 2.0),
+			_world.coords.ms_center_to_world(P) + Vector3(0, 1.0, 0))
+	_gz = null   # the eyes not tracked: the trigger does what it did, nothing thrown
+	_rig.press(_rig.right, "trigger_click")
+	var still: ItemRef = _hands.holding("vr_r").get("item")
+	var before := still != null and still.uid == plank and _handle(E, _it["2x4"]) != plank
+	_gz = P   # the player's own square: no
+	var own: Variant = _rig.gaze_square()
+	_gz = "north"
+	var junk: Variant = _rig.gaze_square()
+	_gz = P + Vector3i(2, -2, 0)
+	_rig.press(_rig.right, "trigger_click")
+	var thrown := _handle(P + Vector3i(2, -2, 0), _it["2x4"]) == plank and _hands.holding("vr_r").is_empty() and _clean()
+	_check.call(took and motion and holding and before and own == null and junk == null and thrown and _asked >= 1,
+			"vr throw: with tracked eyes a throw and the main trigger send the item where you look; no eyes: as before")
+	_rig.gaze_throw_square = Callable()
+	_rig.gaze_throw_request = Callable()
+	_gz = null
+
+
+## Leaning: during CDDA's peek (Snapshot.player_peeking_from, lead-ui's, the body's square next to the peeked
+## player_pos) the rig's body_square (Y, the frame key, a teleport's follow) is the body's square, not the peeked one.
+func _test_peek() -> void:
+	var snap := _world.snapshot
+	var keep_pos := snap.player_pos
+	var keep_from: Variant = snap.player_peeking_from
+	snap.player_peeking_from = keep_pos
+	snap.player_pos = keep_pos + Vector3i(1, 0, 0)
+	var body := _rig.body_square() == keep_pos
+	snap.player_peeking_from = null
+	var plain := _rig.body_square() == keep_pos + Vector3i(1, 0, 0)
+	snap.player_pos = keep_pos
+	snap.player_peeking_from = keep_from
+	_check.call(body and plain, "vr peek: during a peek the rig comes back to the body's square, not the peeked one")

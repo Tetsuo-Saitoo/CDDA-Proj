@@ -76,10 +76,9 @@ func _init() -> void:
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", WARN)
 	add_child(note)
-	var grid := GridContainer.new()
-	grid.columns = 2
+	var grid := HFlowContainer.new()   # the switches: as many to a line as fit (a narrow window: fewer)
 	add_child(grid)
-	var row := HBoxContainer.new()
+	var row := HFlowContainer.new()
 	for r: Dictionary in CheatModel.rows({}, false):
 		var key: String = r["key"]
 		if key == CheatModel.TEST_KIT:
@@ -204,7 +203,7 @@ func pick_square() -> void:
 
 
 func _build_weather() -> void:
-	var r := HBoxContainer.new()
+	var r := HFlowContainer.new()
 	r.name = "Weather"
 	weather_pick = OptionButton.new()
 	weather_pick.focus_mode = Control.FOCUS_NONE
@@ -376,7 +375,7 @@ func _build_range() -> void:
 	var title := Label.new()
 	title.text = "Test range"
 	range_box.add_child(title)
-	var r1 := HBoxContainer.new()
+	var r1 := HFlowContainer.new()
 	zone_pick = OptionButton.new()
 	zone_pick.focus_mode = Control.FOCUS_NONE
 	zone_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -386,7 +385,7 @@ func _build_range() -> void:
 	rb.tooltip_text = "Clears the zone and builds it again (not while you are in it)."
 	r1.add_child(rb)
 	range_box.add_child(r1)
-	var r2 := HBoxContainer.new()
+	var r2 := HFlowContainer.new()
 	freeze = CheckButton.new()
 	freeze.text = "Monsters frozen"
 	freeze.focus_mode = Control.FOCUS_NONE
@@ -395,7 +394,7 @@ func _build_range() -> void:
 	r2.add_child(_button("Heal", heal))
 	r2.add_child(_button("Wait 1 hour", wait_hour))
 	range_box.add_child(r2)
-	var r3 := HBoxContainer.new()
+	var r3 := HFlowContainer.new()
 	hour = SpinBox.new()
 	hour.min_value = 0
 	hour.max_value = 23
@@ -406,7 +405,7 @@ func _build_range() -> void:
 	r3.add_child(hour)
 	r3.add_child(_button("Set time", set_time))
 	range_box.add_child(r3)
-	var r4 := HBoxContainer.new()
+	var r4 := HFlowContainer.new()
 	item_id = LineEdit.new()
 	item_id.placeholder_text = "item name or id, e.g. glock"
 	item_id.max_length = SpawnSearch.MAX_QUERY
@@ -422,7 +421,7 @@ func _build_range() -> void:
 	r4.add_child(item_count)
 	r4.add_child(_button("Spawn at feet", spawn_item))
 	range_box.add_child(r4)
-	var r5 := HBoxContainer.new()
+	var r5 := HFlowContainer.new()
 	monster_id = LineEdit.new()
 	monster_id.placeholder_text = "monster name or id, e.g. zombie"
 	monster_id.max_length = SpawnSearch.MAX_QUERY

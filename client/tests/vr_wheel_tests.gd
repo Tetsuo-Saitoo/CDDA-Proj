@@ -50,9 +50,11 @@ func run(root: Node, check: Callable, tables: IdTables) -> void:
 	_w.live = true
 	_test_target(d)
 	_test_hold_pick()
+	_test_eyes()
 	_test_tap()
 	_test_click_and_cancel()
 	_test_list()
+	_test_label()
 	d.examine = was[0]
 	tables.has_examine = was[1]
 	_rig.free()
@@ -161,6 +163,48 @@ func _test_hold_pick() -> void:
 			"vr wheel: letting go of the trigger picks what it points at (%s)" % [_answers])
 
 
+
+## Eye tracking (VrRig.look): the tracked eyes on the wheel point while the hand rests in its middle; the stick and a
+## flick of the hand win; head gaze never points; looking only points, letting go of the trigger picks.
+func _test_eyes() -> void:
+	var p := _over(SINK_AT)
+	var opened := _open(p)
+	var w := _ui.widget as RadialRequestWidget
+	var cam := _rig.camera.global_transform
+	var gaze := func(to: Vector3, eyes: bool) -> Dictionary:
+		return {"from": cam.origin, "dir": (to - cam.origin).normalized(), "eyes": eyes}
+	var right := _w.wheel.global_basis.x * VrWheel.RADIUS_M * 0.7
+	var up := _w.wheel.global_basis.y * VrWheel.RADIUS_M * 0.7
+	var hands: Array[Vector3] = [p, p]
+	var sticks: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]
+	var free: Array[bool] = [true, true]
+	var seen := []
+	for g: Dictionary in [gaze.call(p + right, true), gaze.call(p - up, true), gaze.call(p + right, false),
+			gaze.call(p + right * 5.0, true), {"from": cam.origin, "dir": Vector3(NAN, 0, 0), "eyes": true}]:
+		_w.update(hands, sticks, free, cam, g)
+		seen.append(w.hovered)
+	sticks[1] = Vector2(0, 1)
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))
+	var stick := w.hovered
+	sticks[1] = Vector2.ZERO
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))   # the eyes still: the stick's pick stays
+	var stays := w.hovered
+	_w.update(hands, sticks, free, cam, gaze.call(p - up, true))   # the eyes moved: they point again
+	var moved := w.hovered
+	hands[1] = p - _w.wheel.global_basis.y * VrWheel.FLICK_M
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))   # a flick down: the hand wins
+	var flick := w.hovered
+	var none_yet := _answers.is_empty()
+	hands[1] = p
+	_w.update(hands, sticks, free, cam, gaze.call(p + right, true))
+	_rig.release(_rig.right, "trigger_click")
+	_frame(p)
+	_check.call(opened and seen == [2, 4, -1, -1, -1] and stick == 0 and stays == 0 and moved == 4 and flick == 4
+			and none_yet and _answers == [{"id": 41, "entry": 1}],   # slot 2: the second entry
+			"vr wheel: tracked eyes point (the head, far off or junk: not); the stick and a flick win; the trigger picks (%s %d %d %d %d %s)"
+			% [seen, stick, stays, moved, flick, _answers])
+
+
 func _test_tap() -> void:
 	var p := _over(SINK_AT)
 	_sent.clear()
@@ -217,3 +261,59 @@ func _test_list() -> void:
 	_w.live = true
 	_check.call(sent and list and refused and mock and _sent == ["fp3d_use_RIGHT", "fp3d_use_RIGHT"],
 			"vr wheel: the list option: CDDA's list on the panel; the queue refusing or no live game: nothing used")
+
+
+## Labels on look (LookLabel): the tracked eyes resting on the sink name it after DWELL_S; head gaze never does;
+## looking away it stays LINGER_S, then goes; off: nothing.
+func _test_label() -> void:
+	var l := _rig.label
+	l.clear()
+	var sm: Snapshot.Submap = _world.snapshot.submaps[SM]
+	sm.flags.resize(CddaCoords.SEEX * CddaCoords.SEEX)   # LookRay reads every square's flags
+	# a creature on the sink's square: LookRay meets creatures before the mock map's terrain (drawn as solid boxes)
+	var zed := Snapshot.Creature.new()
+	zed.uid = 77
+	zed.pos = SINK_AT
+	zed.hp_frac = 128
+	_world.snapshot.creatures.append(zed)
+	_world.snapshot.creatures_moved()
+	var cam := _over(SINK_AT + Vector3i(-1, 0, 0), 0.5)   # next door: the mock map's terrain is solid everywhere
+	var at := _over(SINK_AT, 0.5)
+	var eyes := {"from": cam, "dir": (at - cam).normalized(), "eyes": true}
+	l.update(0.1, _world, eyes, true)
+	var waits := not l.visible
+	for i in 3:
+		l.update(0.1, _world, eyes, true)
+	var shown := l.visible and l.text.ends_with("\nhealth 50%") and l.text.length() > 12 \
+			and l.global_position.distance_to(at) < 1.2
+	var named := l.text
+	var head := eyes.duplicate()
+	head["eyes"] = false
+	l.update(0.1, _world, head, true)
+	var head_none := not l.visible
+	for i in 4:
+		l.update(0.1, _world, eyes, true)
+	var sky := {"from": cam, "dir": Vector3(0, 1, 0), "eyes": true}
+	l.update(0.1, _world, sky, true)
+	l.update(0.1, _world, sky, true)
+	var lingers := l.visible
+	l.update(0.1, _world, sky, true)
+	l.update(0.1, _world, sky, true)
+	var gone := not l.visible
+	for i in 4:
+		l.update(0.1, _world, eyes, true)
+	l.enabled = false
+	l.update(0.1, _world, eyes, true)
+	var off := not l.visible
+	l.enabled = true
+	l.update(0.1, _world, eyes, false)
+	var menu := not l.visible
+	var junk := {"from": cam, "dir": Vector3(NAN, 0, 0), "eyes": true}
+	l.update(0.1, _world, junk, true)
+	l.update(0.1, _world, {"eyes": true}, true)
+	_check.call(waits and shown and head_none and lingers and gone and off and menu and not l.visible,
+			"vr label: the eyes on a creature name it after a moment (%s); the head never; looking away it lingers, then goes"
+			% [named.replace("\n", " / ")])
+	l.clear()
+	_world.snapshot.creatures.erase(zed)
+	_world.snapshot.creatures_moved()

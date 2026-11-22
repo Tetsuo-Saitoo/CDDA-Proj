@@ -36,7 +36,7 @@ const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", 
 const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open",
 		"character": "press to open", "wait": "press to wait (the game asks how long)",
 		"sleep": "press to sleep (the game asks first)",
-		"report": "press to save one"}
+		"report": "press to save one", "time": "press to pause / go on (real time)"}
 ## Action rows that open one of the game's own menus on the panel (VrRig.ui_asked): row key -> what is asked for.
 const UI_ROWS := {"keys": "keys", "inventory": "inventory", "character": "character"}
 ## Action rows that queue one of CDDA's own actions (VrRig.queue_cdda): row key -> the action; its questions show on
@@ -47,9 +47,10 @@ const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move sp
 		["snap_deg", "Snap angle"], ["turn_speed", "Smooth turn speed"], ["vignette", "Vignette"],
 		["blink", "Blink on jumps"], ["swap_sticks", "Move with right stick"], ["main_hand", "Main hand"],
 		["grip", "Grip"], ["layout", "Controllers"], ["hands", "Hands"], ["compass", "Compass"],
-		["wrist_hud", "Wrist HUD"], ["mood_cues", "Mood tint"], ["panel_text", "Menu text size"], ["height", "Height"],
+		["wrist_hud", "Wrist HUD"], ["mood_cues", "Mood tint"],
+		["panel_text", "Menu text size"], ["height", "Height"],
 		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["character", "Character"],
-		["wait", "Wait"], ["sleep", "Sleep"],
+		["wait", "Wait"], ["sleep", "Sleep"], ["time", "Time"],
 		["keys", "Keys and HUD settings"],
 		["report", "Report a bug"]]
 

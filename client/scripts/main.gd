@@ -22,6 +22,8 @@ extends Node3D
 
 ## Live first person: a held move key queues the next step once the sim took the last one, at most this often.
 const STEP_REPEAT_MS := 250
+const HUD_FIT_MS := 250   # the HUD text's room is measured no more often
+const PAUSE_NOTE_MS := 1500   # a held move key repeats the "time is paused" note no faster
 const LIVE_WORLD := "fp3d-live"
 const LOG_LINES := 6
 ## CDDA's prompts on the VR panel are drawn this much larger (1 px is ~1.1 mm at 1.2 m; text wants 20 px or more).
@@ -58,6 +60,7 @@ var _look_end := Vector3.ZERO    # the looked-at point; the line's start follows
 var gore: GoreView               # blood, gibs and bile fields on the ground
 var fields_view: FieldView       # fire, sparks, smoke and gas fields
 var vehicles_view: VehicleView   # CDDA's vehicles, part by part (C5)
+var gaze_fx: GazeEffects   # eyes adjust to light, peripheral unease (eye tracking; off until switched on)
 var explosions: ExplosionView    # blasts, flashbangs, shockwaves from explosion events
 var aim: AimController           # FPS aiming for target requests: crosshair, 3D picking, cursor marker
 var grab: GrabController         # doors dragged with the mouse (E6), hover outline, hand pointer
@@ -104,10 +107,24 @@ var snapshot_path := ""
 var status := ""
 var _teleport_ops := {}   # op id -> true: teleports asked for, until range_done
 var tele_pick := TeleportPick.new()   # the teleport cheat's look-at marker and click pick
+## Eye tracking (user, 2026-11-19): where the player looks on the flat screen. No device yet: the base source tracks
+## nothing, so every gaze feature is off and the game is as before (a desktop tracker's source replaces it later).
+var gaze: GazeSource = GazeSource.new()
+var eye_pause := EyePause.new()   # eye tracking 7: real time pauses while you look away
+var eye_menus: EyeMenus           # eye tracking 6: menus by eye
+var lean_peek := LeanPeek.new()   # 9: leaning to peek (flat keys here, VR's lean through lean / unlean)
+var eye_view := EyeView.new()     # 1, 2 and the lean's tilt: the first-person view offset
+var _lean_keys := 0               # the flat lean keys: -1 left, 1 right, 0 none
+var _clock_ms := -1               # the HUD's time line: last read (ClockControl.text)
+var _eye_check_ms := -1
 var _look_marker: MeshInstance3D      # drawn on tele_pick.marked while the look is open
 var back_out := BackOut.new()         # Esc / pad Start: one thing per press, then the game menu (_setup_back_out)
 var _args := {}
 var _log := PackedStringArray()
+var _pause_note_ms := -PAUSE_NOTE_MS   # the last "time is paused" note for a dropped action (_held_by_pause)
+var _hud_fit_ms := -HUD_FIT_MS   # the HUD text's fit (fit_index): when last measured, how many texts, the pick
+var _hud_fit_n := 0
+var _hud_pick := 0
 var _step_ms := -STEP_REPEAT_MS
 var _submit_ms := 0
 var _first_live_snapshot := true
@@ -193,6 +210,11 @@ func _ready() -> void:
 	add_child(vehicles_view)
 	world.coords.origin_shifted.connect(vehicles_view.shift)
 	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
+	gaze_fx = GazeEffects.new()   # eye tracking, visual only: gaze set in _start_vr, switches by the settings
+	gaze_fx.world = world
+	gaze_fx.lighting = world.lighting
+	gaze_fx.gaze = _flat_gaze   # the flat screen's eyes; _start_vr gives it the headset's
+	add_child(gaze_fx)
 	explosions = ExplosionView.new(world)
 	add_child(explosions)
 	world.coords.origin_shifted.connect(explosions.shift)
@@ -462,7 +484,7 @@ func _frame_player() -> void:
 	if world.snapshot == null:
 		return
 	if vr != null:
-		vr.go_to_player(world.snapshot.player_pos)
+		vr.go_to_player(vr.body_square())   # during a peek: the body's square, not the peeked one
 		print("VR: player square %s, rig at %s, head at %s, player at %s" % [world.snapshot.player_pos,
 				vr.global_position, vr.camera.global_position,
 				world.coords.ms_center_to_world(world.snapshot.player_pos)])
@@ -500,15 +522,18 @@ func _place_player_body() -> void:
 	if world.snapshot == null:
 		player_body.visible = false
 		return
-	var own := vr != null or (first_person and view_mode == "first")
+	var from: Variant = world.snapshot.player_peeking_from   # CDDA's peek: the eyes are on the peeked square
+	var own := vr != null or (first_person and view_mode == "first" and from == null)
 	player_body.show_head = not own
 	var at := world.coords.ms_center_to_world(world.snapshot.player_pos)
 	var yaw := fp.yaw
 	if vr != null:
 		at = Vector3(vr.camera.global_position.x, vr.floor_y(), vr.camera.global_position.z)
 		yaw = vr.camera.global_rotation.y
+	elif from is Vector3i:
+		at = world.coords.ms_center_to_world(from)   # the body stays on its own square
 	elif first_person:
-		at = fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0)
+		at = fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0)
 	elif vehicles_view != null:
 		var r := vehicles_view.ride_transform(world.snapshot)
 		at = r * at if r.is_finite() else at
@@ -585,7 +610,7 @@ func _toggle_view() -> void:
 		return
 	_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
 	if view_mode == "outside":
-		_frame_outside(fp.position - Vector3(0, FirstPersonCamera.EYE_H, 0))
+		_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
 	hud_settings.view = view_mode
 	var err := hud_settings.save_file()
 	if err != OK:
@@ -615,6 +640,12 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
+	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
+	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
+	vr.on_lean = lean   # VR leaning (VrLean): a sideways head tilt asks for CDDA's peek that way; held 250 ms here
+	vr.on_unlean = unlean
+	vr.time_pause = toggle_time_pause   # the VR menu's Time row: pause real time or go on (a hostile's auto-pause too)
+	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
@@ -678,6 +709,7 @@ func _start_vr() -> void:
 	if vr.has_signal("ui_asked"):   # the VR menu's rows for the F1 menu and the Tab view
 		vr.connect("ui_asked", open_ui)
 	print("VR on: %s" % vr.settings)
+	_apply_clock()   # VR always runs in real time (PLAN.md); a game already running switches now
 
 
 ## Moves the screen menus in `menus` (Controls; others skipped) under the VR panel's root, in order, each drawn
@@ -747,6 +779,9 @@ func _start_live() -> void:
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
+	live.state_changed.connect(func(s: String) -> void:   # real time or turns, auto-pause: each new or loaded game
+		if s == "running":
+			_apply_clock())
 	live.state_changed.connect(inspect.on_game_state)   # a Tab batch stops when the game does
 	live.state_changed.connect(_on_game_over)   # died, saved and quit, failed: back to the main menu
 	key_menu.quit_to_menu.connect(_quit_to_menu)
@@ -1063,6 +1098,13 @@ func _on_live_request(req: Dictionary) -> void:
 	var door := GrabController.answer_for(grab.ask, req, Time.get_ticks_msec())
 	if door.is_empty() and not grab.ask.is_empty() and not req.is_empty() and live.queued_actions() == 0:
 		grab.ask = {}   # the dragged door's open / close went by without this prompt: never answer a later one
+	lean_peek.request_seen(req)
+	var peek: Variant = lean_peek.on_request(req)   # 9: the lean's own peek: held with no UI, or closed
+	if peek != null:
+		request_ui.clear()
+		if not (peek as Dictionary).is_empty() and not live.answer(peek):
+			push_warning("live: bridge refused the peek's cancel")
+		return
 	if req.is_empty() or req.get("timed", false):
 		request_ui.clear()   # the main loop: walking keys queue actions
 		return
@@ -1131,7 +1173,21 @@ func _context_line() -> String:
 
 
 func _octant(dir: Vector2) -> int:
-	return octant_for(_view().global_basis, dir)
+	var v := _view()
+	# first person: the look itself, not the eye-tracking view offset (steps go where you face)
+	return octant_for(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)) if v == fp else v.global_basis, dir)
+
+
+## Octant of a step key's (right, forward) direction: where you look, or while driving CDDA's own driving keys
+## (forward UP speeds up, back DOWN slows down, left / right steer), whichever way the camera faces.
+func _step_octant(dir: Vector2) -> int:
+	if world.snapshot != null and world.snapshot.player_driving:
+		return octant_for(Basis.IDENTITY, dir)
+	return _octant(dir)
+
+
+## CDDA's control_vehicle on a vehicle square without controls does nothing and says nothing: say why.
+const NO_CONTROLS_NOTE := "There are no controls here: sit at the vehicle's controls to drive."
 
 
 ## Octant (index into OCT_ACTIONS) of a (right, forward) direction for a view with basis b.
@@ -1164,7 +1220,7 @@ func _live_action(event: InputEvent) -> bool:
 	var act := ""
 	for a: StringName in InputActions.STEPS:
 		if InputActions.pressed(event, a):
-			act = OCT_ACTIONS[_octant(InputActions.STEPS[a])]
+			act = OCT_ACTIONS[_step_octant(InputActions.STEPS[a])]
 	for a: StringName in InputActions.CDDA:
 		if InputActions.pressed(event, a):
 			act = InputActions.CDDA[a]
@@ -1194,6 +1250,9 @@ func _live_action(event: InputEvent) -> bool:
 			var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			act = aim.strike_action(hand, cam, aim.aim_point(cam, get_viewport().get_mouse_position(), captured),
 					captured, world.snapshot.player_pos, facing)
+	if act == "control_vehicle" and _in_main_loop() and world.snapshot != null and not world.snapshot.player_driving \
+			and world.snapshot.controls_at(world.snapshot.player_pos, world.tables) == Snapshot.NO_CONTROLS:
+		hud_data.on_events([MockItems.message_event(NO_CONTROLS_NOTE)])
 	if act == "eat" and _in_main_loop():
 		var food := _held_consumable()
 		if food != null and item_actions.consume(food):
@@ -1215,6 +1274,8 @@ func _live_action(event: InputEvent) -> bool:
 ## smash at the wall, door or furniture under the crosshair) goes by queue_action_at, and one whose square is gone
 ## isn't sent.
 func _queue_act(act: String) -> bool:
+	if _held_by_pause():
+		return false
 	if act == AimController.AT_ACTION or act == AimController.SMASH_AT:
 		var sq: Variant = aim.strike_square(act)
 		return sq is Vector3i and live.queue_action_at(AimController.cdda_action(act), sq)
@@ -1256,12 +1317,20 @@ func _look_at_screen(pos: Vector2) -> Dictionary:
 
 ## The LookRay hit under screen point `pos` (the screen centre while the mouse looks around), "dir" added: the
 ## ray's direction. {hit: false} without a snapshot or camera. `creatures` false: the ray passes through them.
+## In VR the gaze instead (VrRig.look: eyes or head), whatever `pos` says.
 func _cast_screen(pos: Vector2, creatures := true) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	if world.snapshot == null or cam == null:
 		return {"hit": false}
 	if look_ray == null:
 		look_ray = LookRay.new(world)
+	if vr != null:   # VR: where the player looks (the eyes when tracked, else the head: VrRig.look)
+		var g := vr.look()
+		if g.is_empty():
+			return {"hit": false}
+		var hit := look_ray.cast(g["from"], g["dir"], LookRay.MAX_M, creatures)
+		hit["dir"] = g["dir"]
+		return hit
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		pos = get_viewport().get_visible_rect().size / 2.0
 	var v := eyes_view()
@@ -1348,6 +1417,8 @@ func use_stair(s: Dictionary, from_vr := false) -> bool:
 		var acts := StairUse.live_actions(world.snapshot.player_pos, s)
 		if acts.is_empty():
 			status = "stairs: walk next to them first"
+			return false
+		if _held_by_pause():
 			return false
 		for a in acts:
 			live.queue_action(a)
@@ -1446,6 +1517,23 @@ func _update_aim() -> void:
 	viewmodel.set_mods(GunMods.mods_of(world.snapshot.player_gun if world.snapshot != null else null))
 
 
+## Eye tracking 7: a few times a second, EyePause decides from the gaze (looking at the screen or not) and the sim's
+## clock; only the pause or resume goes to the bridge. Nothing is asked of the bridge without a gaze that can tell.
+func _eye_away_pause(now_ms: int) -> void:
+	if live == null or live.state != "running" or (_eye_check_ms >= 0 and now_ms - _eye_check_ms < 250):
+		return
+	_eye_check_ms = now_ms
+	var look: Variant = gaze.on_screen() if vr == null else null
+	if not look is bool and not eye_pause.paused_by_eyes:
+		return
+	match eye_pause.step(hud_settings.eye_on("away_pause"), look, live.clock(), now_ms):
+		EyePause.PAUSE:
+			if live.set_paused(true):
+				status = "paused: you looked away"
+		EyePause.RESUME:
+			live.set_paused(false)
+
+
 func _in_main_loop() -> bool:
 	return live.request.is_empty() or live.request.get("timed", false)
 
@@ -1536,6 +1624,8 @@ func _pour_target() -> Dictionary:
 func _use_tap() -> void:
 	if grab.take_hover() or live == null or not _in_main_loop():
 		return
+	if _held_by_pause():
+		return
 	grab.ask = {}
 	live.queue_action("fp3d_use_" + OCT_ACTIONS[_octant(Vector2(0, 1))])
 
@@ -1568,14 +1658,14 @@ func _reach_square() -> Variant:
 		var at := world.coords.world_to_ms(vr.camera.global_position)
 		return Vector3i(at.x, at.y, vr.z)
 	if live == null and _fp_active():
-		var sq := world.coords.world_to_ms(fp.position)
+		var sq := world.coords.world_to_ms(fp.base_position())
 		return Vector3i(sq.x, sq.y, fp.z)
 	return world.snapshot.player_pos
 
 
 ## A door leaf crossed its threshold (live): queue CDDA's open / close; its "where?" prompt is answered for it.
 func _on_door_wants(square: Vector3i, open: bool) -> void:
-	if live == null or world.snapshot == null or not _in_main_loop():
+	if live == null or world.snapshot == null or not _in_main_loop() or _held_by_pause():
 		return
 	if live.can_act_at():   # CDDA takes exactly this square; one it refuses never falls back to its own pick
 		live.open_at(open, square, world.snapshot.player_pos)
@@ -1596,12 +1686,15 @@ func _pointer() -> Vector2:
 ## next step waits until the sim has taken the last one, so letting go leaves nothing queued.
 func _fp_live_step(now: bool) -> void:
 	var mv := Input.get_vector(&"move_left", &"move_right", &"move_back", &"move_forward")
-	if mv == Vector2.ZERO or not _in_main_loop() or Input.is_key_pressed(KEY_SHIFT):
+	if mv == Vector2.ZERO or not _in_main_loop() or Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_ALT):
 		return
 	var t := Time.get_ticks_msec()
 	if not now and (t - _step_ms < STEP_REPEAT_MS or live.queued_actions() > 0):
 		return
-	live.queue_action(OCT_ACTIONS[_octant(mv)])
+	if _held_by_pause():
+		_step_ms = t   # a held key asks again at the step rate, not every frame
+		return
+	live.queue_action(OCT_ACTIONS[_step_octant(mv)])
 	_step_ms = t
 
 
@@ -1641,9 +1734,17 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	_apply_clock()   # the F1 Time row
+	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
+		gaze_fx.adapt_on = o.eye_on("light_adapt")
+		gaze_fx.unease_on = o.eye_on("unease")
 	for c: Camera3D in [fp, view_cam, camera]:
 		if c != null:
-			c.fov = HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+			var f := HudSettings.clamp_to(o.fov, HudSettings.FOVS, HudSettings.DEFAULT_FOV)
+			if c is FirstPersonCamera:
+				(c as FirstPersonCamera).base_fov = f   # its zoom (eye tracking) goes on top
+			else:
+				c.fov = f
 	var speed := BASE_LOOK * HudSettings.clamp_to(o.look_speed, HudSettings.LOOK_SPEEDS, 1.0)
 	if fp != null:
 		fp.sensitivity = speed
@@ -1685,10 +1786,7 @@ func _setup_hud() -> void:
 	hurt_cue = HurtCue.new()   # over the mood's tint, under everything else
 	hurt_cue.world = world
 	layer.add_child(hurt_cue)
-	hud = Label.new()
-	hud.position = Vector2(10, 50)   # under the compass's hostile markers
-	hud.add_theme_color_override("font_outline_color", Color.BLACK)
-	hud.add_theme_constant_override("outline_size", 4)
+	hud = hud_label()
 	layer.add_child(hud)
 	compass = Compass.new()
 	compass.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -1780,9 +1878,141 @@ func _setup_hud() -> void:
 	text_dock = TextKeysDock.new()   # last: over the menus, and first to get the pad while it shows
 	layer.add_child(text_dock)
 	_setup_back_out()
+	_setup_eye_menus()
 
 
 ## What Esc / pad Start backs out of, one per press (BackOut.ORDER); the parts are read when the key comes.
+## Eye tracking 6: the pointer follows the eyes in a menu, `gaze_click` clicks there (EyeMenus). Added last, so it
+## sees that key before the menus do.
+func _setup_eye_menus() -> void:
+	eye_menus = EyeMenus.new()
+	eye_menus.gaze = gaze
+	eye_menus.allowed = func() -> bool: return vr == null and hud_settings.eye_on("menus") and _menu_open()
+	add_child(eye_menus)
+
+
+## A menu or prompt has the mouse: the F1 menu, the Tab view, the character screen, a prompt / list / wheel, the
+## tray, the vise panel, the main menu.
+## Leaning to peek (eye tracking 9, needs no tracker; the flat lean keys and lead-vr's physical lean): toward the
+## neighbouring square `d` (x east, y south). Held LeanPeek.HOLD_MS in a live game, CDDA's peek looks from there.
+## False when the lean switch is off or d isn't one of the 8 ways.
+func lean(d: Vector2i) -> bool:
+	return hud_settings.eye_on("lean") and lean_peek.lean(d, Time.get_ticks_msec())
+
+
+## Ends the lean; an open peek closes (its request is cancelled).
+func unlean() -> void:
+	var a := lean_peek.unlean()
+	if not a.is_empty() and live != null and not live.answer(a):
+		push_warning("live: bridge refused the peek's cancel")
+
+
+## Eye tracking on the flat screen: the lean keys and the peek they lead to (9), zoom where you look while
+## `zoom_look` is held (1) and seeing past a screen edge (2), as one view offset on the first-person camera. The eyes
+## only turn the view; the peek's square is all that reaches the game.
+func _eye_view_step(now_ms: int) -> void:
+	var shown := vr == null and _fp_active() and view_mode == "first"
+	if vr == null:   # VR leans through lean() / unlean() (lead-vr)
+		var side := 0
+		if shown and not _menu_open():
+			side = int(Input.is_action_pressed(&"lean_right", true)) - int(Input.is_action_pressed(&"lean_left", true))
+		if side != _lean_keys:
+			if _lean_keys != 0:
+				unlean()
+			_lean_keys = side if side != 0 and lean(LeanPeek.WAYS[_octant(Vector2(side, 0))]) else 0
+	if lean_peek.leaning() and not hud_settings.eye_on("lean"):
+		unlean()
+		_lean_keys = 0
+	if live != null and world.snapshot != null:
+		var sq: Variant = lean_peek.peek_square(now_ms, _in_main_loop(), world.snapshot.player_pos)
+		if sq != null:
+			lean_peek.sent(not _held_by_pause() and live.queue_action_at("peek", sq))
+	if fp == null:
+		return
+	var look: Variant = null
+	var edge: Variant = null
+	if shown and gaze.tracked() and not _menu_open():
+		var p: Variant = gaze.screen_point()
+		var size := get_viewport().get_visible_rect().size
+		if hud_settings.eye_on("zoom") and GazeSource.point_in(p, size) != null:
+			look = EyeView.angles(Basis.from_euler(Vector3(fp.pitch, fp.yaw, 0.0)), fp.project_ray_normal(p))
+		if hud_settings.eye_on("edge_turn"):
+			edge = EyeView.on_screen(p, size)
+	var zoom := shown and hud_settings.eye_on("zoom") and Input.is_action_pressed(&"zoom_look", true)
+	var o := eye_view.step(look, edge, zoom, _lean_keys if shown else 0, lean_peek.peeking())
+	fp.set_view_offset(o[0], o[1], o[2], o[3], o[4])
+
+
+## The flat screen's gaze for GazeEffects: {from, dir, eyes} through the first-person view; {} in other views, in a
+## menu or while the eyes aren't tracked (main's `gaze`).
+func _flat_gaze() -> Dictionary:
+	if vr != null or not _fp_active() or view_mode != "first" or _menu_open():
+		return {}
+	var r := gaze.ray(fp)
+	if not r.is_empty():
+		r["eyes"] = true
+	return r
+
+
+## Real time or turns and auto-pause on the running game (ClockControl): the flat screen's settings, VR always
+## real time. At each game start or load, VR start and any HUD setting change.
+func _apply_clock() -> void:
+	if live != null and live.state == "running" and not ClockControl.apply(live, hud_settings, vr != null):
+		push_warning("live: the game didn't take the clock settings")
+	_clock_ms = -1
+
+
+## The real-time key: flips the flat screen's setting (saved) and the running game; VR stays in real time.
+func _toggle_real_time() -> void:
+	if vr != null:
+		grab.flash("VR always runs in real time.")
+		return
+	hud_settings.real_time = not hud_settings.real_time
+	var err := hud_settings.save_file()
+	if err != OK:
+		push_warning("real time not saved: %s" % error_string(err))
+	key_menu.show_clock()
+	_apply_clock()
+	grab.flash(ClockControl.flip_note(hud_settings.real_time))
+
+
+## Pauses real time or lets it go on (also after a hostile's auto-pause): the flat pause key and VR's menu row
+## (lead-vr, vr.time_pause). Returns the note to show.
+func toggle_time_pause() -> String:
+	if live == null or live.state != "running":
+		return "No game is running."
+	eye_pause.forget()   # the pause (or going on) is the player's now
+	_clock_ms = -1
+	return ClockControl.toggle_pause(live)
+
+
+## Real time paused (the pause key, or a hostile's auto-pause): the game takes no actions, so one sent now would wait
+## and run the moment time goes on, toward whatever stopped it (lead-qa, 2026-11-20). The main loop's actions are
+## dropped instead and a note says how to go on. True while paused.
+func _held_by_pause() -> bool:
+	if live == null or live.state != "running" or not ClockControl.paused(live.clock()):
+		return false
+	var t := Time.get_ticks_msec()
+	if t - _pause_note_ms >= PAUSE_NOTE_MS:
+		_pause_note_ms = t
+		grab.flash(ClockControl.held_note())
+	return true
+
+
+## The HUD's time line, twice a second while a game runs.
+func _clock_tick(now_ms: int) -> void:
+	if _clock_ms >= 0 and now_ms - _clock_ms < 500:
+		return
+	_clock_ms = now_ms
+	var running := live != null and live.state == "running"
+	hud_data.set_clock(ClockControl.text(live.clock() if running else {}, running, vr != null))
+
+
+func _menu_open() -> bool:
+	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
+			or vise_bench.visible or main_menu != null
+
+
 func _setup_back_out() -> void:
 	back_out.add("keyboard", func() -> bool: return text_dock != null and text_dock.is_open(),
 			func() -> bool:
@@ -1919,6 +2149,9 @@ func _process(_delta: float) -> void:
 		_fp_live_step(false)
 	compass.visible = vr == null
 	busy_note.tick(Time.get_ticks_msec(), live != null and live.state == "running")   # VR draws it too (VrBusy)
+	_eye_away_pause(Time.get_ticks_msec())
+	_clock_tick(Time.get_ticks_msec())
+	_eye_view_step(Time.get_ticks_msec())
 	_update_aim()
 	var cam := get_viewport().get_camera_3d()
 	if cam != null and vr == null:   # no shaking in VR (comfort)
@@ -1951,23 +2184,87 @@ func _process(_delta: float) -> void:
 	var tile := world.coords.world_to_ms(_view().global_position)
 	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
-	var help := _help()
 	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
 		status = LiveSession.boot_text(live.boot_info())
-	var lines := PackedStringArray([status, "%s  camera square %s  %s  roofs %s  %d fps" % [
-			view, tile, world.level_text(), "on" if world.roofs_visible else "off",
-			Engine.get_frames_per_second()], help])
-	if vr != null:
-		lines.append("VR level %d  controllers %s  settings: left menu button  %s" % [vr.z, vr.current_layout(),
-				vr_perf.last_line])
-	if live != null:
-		lines.append(_act_help())
-		lines.append("in hands: " + _wielded_name())
+	var info := "%s  camera square %s  %s  roofs %s  %d fps" % [view, tile, world.level_text(),
+			"on" if world.roofs_visible else "off", Engine.get_frames_per_second()]
+	var vr_line := "" if vr == null else "VR level %d  controllers %s  settings: left menu button  %s" % [
+			vr.z, vr.current_layout(), vr_perf.last_line]
+	var hands := "" if live == null else "in hands: " + _wielded_name()
+	var on := hud_settings.key_help
+	var texts := hud_texts(on, status, info, _help() if on else "", vr_line,
+			_act_help() if on and live != null else "", hands)
+	var now := Time.get_ticks_msec()
+	if now - _hud_fit_ms >= HUD_FIT_MS or texts.size() != _hud_fit_n:   # measuring wraps the text: not every frame
+		_hud_fit_ms = now
+		_hud_fit_n = texts.size()
+		_hud_pick = fit_index(hud, texts, hud_view.text_limit() - hud.position.y)
 	# messages: hud_view's feed
-	hud.text = "\n".join(lines)
+	hud.text = texts[mini(_hud_pick, texts.size() - 1)]
 	hud.visible = not key_menu.visible
 	hud_view.visible = not key_menu.visible
-	hud_view.avoid(Rect2(hud.global_position, hud.get_combined_minimum_size()) if hud.visible else Rect2())
+	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
+	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
+
+
+## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
+## moves down under it, HudView.avoid): all the key help, then without CDDA's keys (`act`), then one short line
+## (the only one with F1 > HUD > Key help off), then the status alone.
+static func hud_texts(key_help: bool, status: String, info: String, help: String, vr_line: String, act: String,
+		hands: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	if key_help:
+		if not act.is_empty():
+			out.append(hud_lines([status, info, help, vr_line, act, hands]))
+		out.append(hud_lines([status, info, help, vr_line, hands]))
+	out.append(hud_lines([status, info, KEY_HELP_SHORT, vr_line, hands]))
+	out.append(hud_lines([status, KEY_HELP_SHORT]))
+	return out
+
+
+## `parts` that aren't empty, one to a line.
+static func hud_lines(parts: Array) -> String:
+	var out := PackedStringArray()
+	for p: String in parts:
+		if not p.is_empty():
+			out.append(p)
+	return "\n".join(out)
+
+
+## The first of `texts` whose height in `l` (its font and width, wrapped) is at most `max_h` px, else the last.
+static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
+	var font := l.get_theme_font(&"font")
+	var fs := l.get_theme_font_size(&"font_size")
+	var fh := font.get_height(fs)
+	if l.size.x <= 0.0 or fh <= 0.0:
+		return 0
+	var flags := TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE
+	for i in texts.size():
+		var h := font.get_multiline_string_size(texts[i], HORIZONTAL_ALIGNMENT_LEFT, l.size.x, fs, -1, flags).y
+		var lines := ceili(h / fh - 0.01)
+		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
+			return i
+	return texts.size() - 1
+
+
+## The key help when F1 > HUD > Key help is off, or there's no room for more.
+const KEY_HELP_SHORT := "Esc back / menu  F1 keys, HUD, key help"
+
+
+## The status and controls text along the top: as wide as the window, under the compass's hostile markers, wrapped
+## so a small window shows all of it (the user, 2026-11-20).
+static func hud_label() -> Label:
+	var l := Label.new()
+	l.name = "HudText"
+	l.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	l.offset_left = 10
+	l.offset_right = -12
+	l.offset_top = 50
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 4)
+	return l
 
 
 ## The view's key line, from the current bindings.
@@ -2068,6 +2365,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if InputActions.pressed(event, &"classic_view"):
 		classic.toggle()
+		return
+	if InputActions.pressed(event, ClockControl.TOGGLE):
+		_toggle_real_time()
+		return
+	if InputActions.pressed(event, ClockControl.PAUSE) and live != null and live.state == "running":
+		grab.flash(toggle_time_pause())
 		return
 	if vr == null and aim.handle_event(event, get_viewport().get_camera_3d()):
 		return
