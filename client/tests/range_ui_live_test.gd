@@ -542,6 +542,8 @@ func _drive_live(start: Vector3i) -> void:
 	if had_ride:
 		var gone := func() -> bool: return not (_main.get("ride_hud") as Control).visible
 		_check(await _until(gone, SHOW_TIMEOUT_MS), "driving HUD: out of the car it is gone")
+		var dark := func() -> bool: return _main.vehicles_view.get("_ride_uid") in [null, 0]
+		_check(await _until(dark, SHOW_TIMEOUT_MS), "3D dash: out of the car no dash is the live one")
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
 	_check(_main.world.snapshot.player_pos != here and await _cheat(_live.cheat_teleport(start)) == ""
 			and await _until(back, SHOW_TIMEOUT_MS), "driving: the player walks out of the car (%s) and is back at the arrival square (%s)"
@@ -1155,6 +1157,21 @@ func _ride_parked(car: Snapshot.Vehicle) -> void:
 			"driving HUD: parked at the controls it reads the car: \"%s\" (the snapshot's \"%s\"), engine on %s, speed %d, set speed %d, %s full %s, battery %d of %d, health %d%% (%s), %d kg; shown in first person before the controls are taken: %s"
 			% [i.name, car.name, i.engine_on, i.velocity, i.set_speed(), fuels.map(func(f: Dictionary) -> String: return str(f["name"])),
 			full, i.battery_left, i.battery_cap, i.health, i.health_word(), i.mass_kg, hud.visible])
+	# lead-world's 3D dash and wheel read the same numbers (CarDash.reading_from; said so on a client without it)
+	var dash_path := "res://scripts/world/car_dash.gd"
+	if not ResourceLoader.exists(dash_path) or not (load(dash_path) as Script).get_script_method_list().any(
+			func(m: Dictionary) -> bool: return m["name"] == "reading_from"):
+		print("  (this client's 3D dash doesn't read the driving HUD's data: not checked)")
+		return
+	await _frames(3)
+	var ride_uid: Variant = _main.vehicles_view.get("_ride_uid")
+	var ride: Variant = _main.vehicles_view.get("_ride")
+	var shows: Dictionary = ride if ride is Dictionary else {}
+	_check(ride_uid == car.uid and shows.get("lit") == true and is_zero_approx(float(shows.get("speed", -1.0)))
+			and is_equal_approx(float(shows.get("fuel", -1.0)), 1.0) and is_equal_approx(float(shows.get("battery", -1.0)), 1.0)
+			and shows.get("lamps") == 0,
+			"3D dash: parked at the controls the car's dash is the live one: lit (the battery holds charge), speed 0, fuel and battery full, no lamps (live uid %s, the car's %s; it shows %s)"
+			% [ride_uid, car.uid, shows])
 
 
 ## The driving HUD after the forward key: the set speed is there, in CDDA's unit, while the car still does less; the
