@@ -871,20 +871,27 @@ func _ride_sizes() -> void:
 		_check(false, "driving HUD: it shows while driving in the %s view" % _main.view_mode)
 		return
 	var was: Vector2i = root.size
-	for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
-		root.size = s
-		await _frames(4)
-		await create_timer(0.6).timeout
-		var r := _ride_rect(hud)
-		var keep := [_main.hud.get_global_rect(), _main.hud_view.call("column_rect")]
-		if _main.hands_panel.visible:
-			keep.append(_main.hands_panel.get_global_rect())
-		var over := keep.filter(func(k: Rect2) -> bool: return k.has_area() and k.intersects(r))
-		_check(hud.visible and r.has_area() and Rect2(Vector2.ZERO, Vector2(s)).grow(1.0).encloses(r) and over.is_empty(),
-				"driving HUD %dx%d: in the window and clear of the HUD's text, the left column and the hands panel (the HUD at %s; overlapping: %s)"
-				% [s.x, s.y, r, over])
+	for hands: String in ["empty hands", "something held"]:
+		if hands == "something held" and not await _hold_something():
+			print("  (nothing could be put into a hand: the driving HUD beside the hands panel not checked)")
+			break
+		for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
+			root.size = s
+			await _frames(4)
+			await create_timer(0.6).timeout
+			var r := _ride_rect(hud)
+			var keep := [_main.hud.get_global_rect(), _main.hud_view.call("column_rect")]
+			if _main.hands_panel.visible:
+				keep.append(_main.hands_panel.get_global_rect())
+			var over := keep.filter(func(k: Rect2) -> bool: return k.has_area() and k.intersects(r))
+			_check(hud.visible and r.has_area() and Rect2(Vector2.ZERO, Vector2(s)).grow(1.0).encloses(r) and over.is_empty()
+					and _main.hands_panel.visible == (hands == "something held"),
+					"driving HUD %dx%d, %s: in the window and clear of the HUD's text, the left column and the hands panel (the HUD at %s; the hands panel %s; the feed %s; overlapping: %s)"
+					% [s.x, s.y, hands, r, _main.hands_panel.get_global_rect() if _main.hands_panel.visible else "hidden",
+					_main.hud_view.call("feed_rect") if _main.hud_view.has_method("feed_rect") else "?", over])
 	root.size = was
 	await _frames(4)
+	_main.vehicles_view.call("glide", 10.0)   # (the kit's turn rolled the car on: its node up to date again)
 	var box := _main.key_menu.get("ride_check") as CheckBox
 	if box != null:
 		box.button_pressed = false
@@ -899,6 +906,25 @@ func _ride_sizes() -> void:
 		_check(absf(wrapf(_main.compass.heading_deg - want, -180.0, 180.0)) < 1.0,
 				"compass: it reads the camera on screen (%.0f degrees in the %s view; the eyes look %.0f)"
 				% [_main.compass.heading_deg, _main.view_mode, Compass.heading_of(_main.fp.global_basis)])
+
+
+## Puts a carried item into the off hand so the hands panel shows (the test kit is asked for first: a turn passes).
+## True once the panel shows.
+func _hold_something() -> bool:
+	if _main.hands_panel.visible:
+		return true
+	var kits := _live.kits_given()
+	if not _live.give_test_kit():
+		return false
+	_live.queue_action("pause")
+	var kit_in := func() -> bool: return _live.kits_given() > kits and not _main.hands.picker.carried().is_empty()
+	if not await _until(kit_in, OP_TIMEOUT_MS):
+		return false
+	var shows := func() -> bool: return _main.hands_panel.visible
+	for r: ItemRef in _main.hands.picker.carried().slice(0, 8):
+		if _main.item_actions.hold(r, "off") and await _until(shows, 8000):
+			return true
+	return false
 
 
 ## The driving HUD on a seat without controls: a passenger's (the name, no engine line), shown in first person.
