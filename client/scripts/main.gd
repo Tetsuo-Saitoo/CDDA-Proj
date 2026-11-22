@@ -56,6 +56,7 @@ var key_menu: KeyMenu
 var compass: Compass
 var hud_settings := HudSettings.new()   # compass opacity (F1 menu, user://hud.cfg)
 var look_panel: Label
+var ride_hud: RideHud           # the driving HUD: speed gauge and vehicle panel while on a vehicle (flat screen)
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
@@ -837,6 +838,19 @@ func _view() -> Node3D:
 	if vr != null:
 		return vr.camera
 	return fp if first_person else camera
+
+
+## What the flat screen's compass reads: the camera drawing it (lead-world's chase, shoulder and top views while
+## driving, first person, the usual camera), else `fallback`.
+static func drawn_view(cam: Camera3D, fallback: Node3D) -> Node3D:
+	return cam if cam != null and is_instance_valid(cam) else fallback
+
+
+## Whether the driving HUD shows for `r` (player.vehicle_state): only on a vehicle, unless F1 turned it off; at the
+## controls in first person (`first_person_cam`: that camera draws), driving or not, the car's own dashboard shows
+## the speed, so only with F1 > HUD > Gauge in first person (the user, 2026-11-21).
+static func ride_shown(r: RideInfo, settings: HudSettings, first_person_cam: bool) -> bool:
+	return r.ok and settings.ride_hud and (not (first_person_cam and (r.driver or r.at_controls)) or settings.ride_hud_fp)
 
 
 func _start_live() -> void:
@@ -1906,6 +1920,8 @@ func _setup_hud() -> void:
 	look_panel.add_theme_constant_override("outline_size", 4)
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
+	ride_hud = RideHud.new()   # under the hands panel and the menus
+	layer.add_child(ride_hud)
 	hands_panel = HandsPanel.new()
 	hands_panel.left_handed = hud_settings.left_handed()
 	hands_panel.tile_of = func(uid: int) -> Dictionary:   # live item tiles behind the held items
@@ -2261,12 +2277,14 @@ func _process(_delta: float) -> void:
 	_hide_own_marks()
 	_place_player_body()
 	_update_look_line()
-	compass.heading_deg = Compass.heading_of(_view().global_basis)
-	if not is_nan(_stir_heading):   # a turn: held liquids lean against it
-		ItemTileView.stir(wrapf(compass.heading_deg - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
-	_stir_heading = compass.heading_deg
-	if compass.visible:   # creatures the player perceives, by bearing from the view
-		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
+	var eyes := Compass.heading_of(_view().global_basis)
+	if not is_nan(_stir_heading):   # a turn: held liquids lean against it (the player's, not a chase camera's)
+		ItemTileView.stir(wrapf(eyes - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
+	_stir_heading = eyes
+	var drawn := drawn_view(get_viewport().get_camera_3d() if vr == null else null, _view())
+	compass.heading_deg = Compass.heading_of(drawn.global_basis)
+	if compass.visible:   # creatures the player perceives, by bearing from the camera on screen
+		compass.set_level_blips(Compass.level_blips(world.snapshot, drawn.global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
 		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
@@ -2298,6 +2316,7 @@ func _process(_delta: float) -> void:
 	hud_view.visible = not key_menu.visible
 	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
 	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
+	_ride_step()
 
 
 ## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
@@ -2338,6 +2357,40 @@ static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
 		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
 			return i
 	return texts.size() - 1
+
+
+## The driving HUD, each frame: player.vehicle_state while the player is on a vehicle (flat screen; F1 > HUD >
+## Driving gauge), kept off the hands panel, the look line, the HUD's text and its left column.
+func _ride_step() -> void:
+	var snap := world.snapshot
+	var raw: Variant = snap.player_vehicle_state if snap != null and not snap.player_vehicle_state.is_empty() else null
+	var face := NAN
+	if raw is Dictionary:
+		for veh: Snapshot.Vehicle in snap.vehicles:
+			if veh.uid == snap.player_vehicle:
+				face = veh.face_deg
+				break
+	var r := RideInfo.read(raw, _itype_name, face)
+	var fp_cam := vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
+	ride_hud.visible = vr == null and ride_shown(r, hud_settings, fp_cam) and hud_view.visible and not _menu_open()
+	if not ride_hud.visible:
+		hud_view.keep_feed_above(Rect2())
+		return
+	ride_hud.show_ride(r)
+	var keep: Array[Rect2] = [hud.get_global_rect(), hud_view.column_rect(true)]
+	for c: Control in [hands_panel, look_panel]:
+		if c.visible:
+			keep.append(c.get_global_rect())
+	ride_hud.place(keep, hands_panel.get_global_rect() if hands_panel.visible else Rect2())
+	hud_view.keep_feed_above(ride_hud.dash_rect())   # where no spot is free (small windows) the feed gives way
+
+
+## An item type's name (its id when nameless), "" for an unknown index.
+func _itype_name(type: int) -> String:
+	var d: IdTables.Def = world.tables.def_at("itype", type) if world.tables != null else null
+	if d == null:
+		return ""
+	return d.name if not d.name.is_empty() else d.id
 
 
 ## The key help when F1 > HUD > Key help is off, or there's no room for more.

@@ -103,6 +103,7 @@ struct vehicle_view {
     float velocity;               // m/s
     string name;                  // color tags and control characters removed, up to 60 columns (240 bytes)
     std::vector<vehicle_part_view> parts;   // cap 4096
+    std::vector<vehicle_cargo_view> cargo;  // JSON "cargo", only when the player is next to one of its cargo spaces (2026-11-21, below)
 };
 struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled, bit3 gap filler */
                            int8 dx, dy, dz; };
@@ -115,6 +116,20 @@ struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; ui
     // leave open, and the game blocks that square like the part. A filler row has the copied part's mount, vpart,
     // hp_frac and other state bits, and its own (dx, dy, dz), which is no square of the vehicle's own parts. The
     // tiles' vehicle flag is set on fillers' squares too. None when the vehicle stands straight.
+struct vehicle_cargo_view { uint16 part; int32 used_ml, capacity_ml; uint32 more; std::vector<cargo_item_view> items; };
+struct cargo_item_view { uint64 uid; uint32 type; };
+    // JSON "cargo": [[part, used_ml, capacity_ml, more, [[uid, type], ...]], ...] (2026-11-21). What the vehicle
+    // carries where the player can get at it: one row for each of its cargo spaces on the player's square or one
+    // of the eight around it that a clear path leads to, the squares CDDA's own item menus take as nearby. At most
+    // 9 rows; CDDA has one cargo space a square. The member is left out when there is none, so a vehicle away
+    // from the player sends nothing of its load.
+    // part: index into this vehicle's `parts` rows, the cargo part; that row's (dx, dy, dz) is the space's square.
+    // used_ml / capacity_ml: the volume of what is in it and the volume it holds, 0..2^31-1.
+    // [uid, type]: an item in it, in CDDA's stack order: the item handle and the itype index, as in the submaps'
+    // `handles` rows (no spot or pose: an item in a trunk has no place on a square). At most 32 a space; `more`
+    // counts the rest. Stackable items are one row (CDDA merges them). What an item shows of its state and its
+    // exact numbers are in `player.item_states` / `player.item_amounts`, as for items lying in reach. Names come
+    // from the id tables by `type`. A lid need not be open: CDDA lets the player take from a closed trunk.
 
 struct player_view {
     uint64 uid; ui_point pos; float facing_deg; int32 moves; uint32 move_mode;

@@ -38,6 +38,12 @@ var weather_flash := true
 ## The key help along the top of the screen (main.gd's HUD text). Off: one short line; F1 lists every key. On
 ## unless turned off. Saved as [hud] key_help.
 var key_help := true
+## The driving HUD (RideHud: speed gauge and vehicle panel) while on a vehicle. On unless turned off. Saved as
+## [hud] ride.
+var ride_hud := true
+## The driving HUD in first person at the controls, where the car's own dashboard (lead-world) shows the speed.
+## Off unless turned on (the user, 2026-11-21). Saved as [hud] ride_first_person.
+var ride_hud_fp := false
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
@@ -227,6 +233,10 @@ func load_file(path := FILE) -> String:
 	weather_flash = wf if wf is bool else true
 	var kh: Variant = cfg.get_value("hud", "key_help", true)
 	key_help = kh if kh is bool else true
+	var rh: Variant = cfg.get_value("hud", "ride", true)
+	ride_hud = rh if rh is bool else true
+	var rf: Variant = cfg.get_value("hud", "ride_first_person", false)
+	ride_hud_fp = rf if rf is bool else false
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
 	var dv: Variant = cfg.get_value("view", "drive", "chase")
@@ -280,6 +290,8 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("hud", "key_help", key_help)
+	cfg.set_value("hud", "ride", ride_hud)
+	cfg.set_value("hud", "ride_first_person", ride_hud_fp)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
 	cfg.set_value("view", "drive", drive if drive in DRIVE_VIEWS else "chase")
 	cfg.set_value("view", "top_up", top_up if top_up in TOP_UPS else "heading")
