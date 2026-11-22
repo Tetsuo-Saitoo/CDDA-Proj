@@ -54,6 +54,8 @@ var ui_slider: HSlider
 var weather_pick: OptionButton
 var menu_pick: OptionButton   # HudSettings.context_menu: how E shows an object's choices
 var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
+var drive_pick: OptionButton  # HudSettings.drive, in DRIVE_VIEWS' order
+const DRIVE_NAMES := ["Driving: first person", "Driving: chase", "Driving: top-down"]   # DRIVE_VIEWS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
 ## G6 (add_hints): the hints and their on / off box.
@@ -290,6 +292,17 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	menu_pick.select(clampi(settings.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 	menu_pick.item_selected.connect(func(i: int) -> void: set_option(&"context_menu", i))
 	opt_row.add_child(menu_pick)
+	drive_pick = OptionButton.new()
+	for n: String in DRIVE_NAMES:
+		drive_pick.add_item(n)
+	drive_pick.tooltip_text = ("The view while you drive: through your own eyes, a camera behind and above the "
+			+ "vehicle, or from above. V while driving picks the next.")
+	drive_pick.focus_mode = Control.FOCUS_NONE
+	drive_pick.select(maxi(HudSettings.DRIVE_VIEWS.find(settings.drive), 0))
+	drive_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.DRIVE_VIEWS.size():
+			set_option(&"drive", HudSettings.DRIVE_VIEWS[i]))
+	opt_row.add_child(drive_pick)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -448,9 +461,11 @@ func _option_check(row: Container, text: String, tip: String, key: StringName, o
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu", &"drive"]:
 		return
 	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
+		return
+	if key == &"drive" and not (v is String and v in HudSettings.DRIVE_VIEWS):
 		return
 	if key == &"context_menu" and not (v is int and v >= HudSettings.MENU_HOLD and v <= HudSettings.MENU_LIST):
 		return
@@ -648,6 +663,7 @@ func open() -> void:
 		look_slider.set_value_no_signal(hud.look_speed)
 		invert_check.set_pressed_no_signal(hud.invert_y)
 		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
+		drive_pick.select(maxi(HudSettings.DRIVE_VIEWS.find(hud.drive), 0))
 		menu_pick.select(clampi(hud.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)

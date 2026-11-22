@@ -42,6 +42,10 @@ var key_help := true
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
 var view := "first"
+## C5: the flat-screen view driving starts in (F1, or V while driving): first person, chase, or top-down. Saved as
+## [view] drive.
+const DRIVE_VIEWS := ["first", "chase", "top"]
+var drive := "chase"
 ## G1: the message feed's filter groups (HudData.message_group), in the F1 menu's order, with their labels.
 const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnings", "info": "Info", "other": "Other"}
 ## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
@@ -218,6 +222,8 @@ func load_file(path := FILE) -> String:
 	key_help = kh if kh is bool else true
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
+	var dv: Variant = cfg.get_value("view", "drive", "chase")
+	drive = dv if dv is String and dv in DRIVE_VIEWS else "chase"
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
 	var iy: Variant = cfg.get_value("look", "invert", false)
@@ -264,6 +270,7 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("hud", "key_help", key_help)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
+	cfg.set_value("view", "drive", drive if drive in DRIVE_VIEWS else "chase")
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
 	cfg.set_value("look", "invert", invert_y)
