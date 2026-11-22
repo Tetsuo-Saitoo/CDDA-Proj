@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-21 — Throw where you look is switched on: with "Use the eye tracker" and "Throw where you look" on in F1 > Eye tracking, a throw on the flat screen or in VR goes to the square your eyes look at, but only when you press the throw key or trigger. Off (the default), or without a tracker, throwing is as before. Not yet tried with a real tracker.
 - 2026-11-21 — Throw where you look, first part: with eye tracking, a throw will go to the square you look at (the trigger or throw key throws), while guns still aim with the sights. The game side is ready and tested with simulated eyes; it switches on once the eye-tracking setting and the VR and desktop gaze sources are in. Without a tracker nothing changes. Client tests pass.
 - 2026-11-21 — Tester AppImage test-2026-11-20b (private test repo, pre-release, not a release) from main a9b5759 + fork 5890e17, after the QA lead's GO (smoke, eight Linux live suites plus three clean reruns of menu_live_test, personal-strings check). Real time in VR rests on unit checks; no headset tried.
 - 2026-11-20 — VR can pause and go on (lead-vr): the VR menu has a Time row; when real time pauses (a hostile spotted) the headset says so and the menu opens on that row, so one trigger press goes on. VR auto-pauses again like the flat screen.

@@ -220,6 +220,7 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(explosions.shift)
 	request_ui.get_parent().add_child(explosions.flash_rect)
 	aim = AimController.new(world, request_ui)
+	aim.gaze = _flat_gaze   # eye tracking 5, throw where you look: the flat screen's eyes; _start_vr gives the headset's
 	aim.creature_view = creature_view
 	aim.wielded_gun = func() -> IdTables.Def:
 		var i := world.snapshot.player_wielded if world.snapshot != null else 0
@@ -646,6 +647,9 @@ func _start_vr() -> void:
 	vr.on_unlean = unlean
 	vr.time_pause = toggle_time_pause   # the VR menu's Time row: pause real time or go on (a hostile's auto-pause too)
 	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
+	aim.gaze = vr.look   # throw where you look: only the tracked eyes count (AimController refuses the head's gaze)
+	vr.gaze_throw_square = aim.gaze_square   # a thrown item or the main trigger's throw goes where the eyes look
+	vr.gaze_throw_request = aim.throw_at_gaze   # the main trigger answers a CDDA throw request there
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
@@ -1505,6 +1509,7 @@ func _wielded_name() -> String:
 
 func _update_aim() -> void:
 	aim.first_person = _fp_active()
+	aim.gaze_throw = hud_settings.eye_on("throw_look")   # F1 > Eye tracking; off with the tracker switch (opt-in)
 	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
