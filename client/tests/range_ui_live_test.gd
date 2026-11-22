@@ -702,7 +702,7 @@ func _marks_ok(what: String, veh: Snapshot.Vehicle, shown := true) -> void:
 				unmarked_block.append(sq)
 	var strays := marked.keys().filter(func(sq: Vector3i) -> bool: return not squares.has(sq))
 	var blocks: MultiMesh = (marks.get_child(0) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 0 else null
-	var placed := blocks != null and blocks.instance_count == car.marked.size()
+	var placed: bool = blocks != null and blocks.instance_count == (car.marked as Array).size()
 	var worst := 0.0
 	if placed:
 		for i in car.marked.size():
