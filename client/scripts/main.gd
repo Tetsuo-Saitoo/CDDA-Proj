@@ -755,6 +755,12 @@ func _view() -> Node3D:
 	return fp if first_person else camera
 
 
+## What the flat screen's compass reads: the camera drawing it (lead-world's chase, shoulder and top views while
+## driving, first person, the usual camera), else `fallback`.
+static func drawn_view(cam: Camera3D, fallback: Node3D) -> Node3D:
+	return cam if cam != null and is_instance_valid(cam) else fallback
+
+
 func _start_live() -> void:
 	live = LiveSession.new()
 	live.name = "Live"
@@ -2172,12 +2178,14 @@ func _process(_delta: float) -> void:
 	creature_view.view_z_max = world.things_z_max()
 	_place_player_body()
 	_update_look_line()
-	compass.heading_deg = Compass.heading_of(_view().global_basis)
-	if not is_nan(_stir_heading):   # a turn: held liquids lean against it
-		ItemTileView.stir(wrapf(compass.heading_deg - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
-	_stir_heading = compass.heading_deg
-	if compass.visible:   # creatures the player perceives, by bearing from the view
-		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
+	var eyes := Compass.heading_of(_view().global_basis)
+	if not is_nan(_stir_heading):   # a turn: held liquids lean against it (the player's, not a chase camera's)
+		ItemTileView.stir(wrapf(eyes - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
+	_stir_heading = eyes
+	var drawn := drawn_view(get_viewport().get_camera_3d() if vr == null else null, _view())
+	compass.heading_deg = Compass.heading_of(drawn.global_basis)
+	if compass.visible:   # creatures the player perceives, by bearing from the camera on screen
+		compass.set_level_blips(Compass.level_blips(world.snapshot, drawn.global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
 		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,

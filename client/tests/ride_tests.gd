@@ -25,6 +25,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_root = root
 	_check = check
 	_test_snapshot(data)
+	_test_compass_view()
 	_test_read()
 	_test_junk()
 	_test_gauge_scale()
@@ -53,6 +54,21 @@ func _test_snapshot(data: Variant) -> void:
 	_check.call(on.is_valid() and on.player_vehicle_state.get("name") == "Station Wagon" and junk_ok
 			and off.is_valid() and off.player_vehicle_state.is_empty(),
 			"ride: the snapshot keeps player.vehicle_state; on foot, junk or over 32 keys it's empty, the snapshot stays")
+
+
+## The flat compass reads the camera on screen (a chase camera while driving), else the player's view.
+func _test_compass_view() -> void:
+	var Main := load("res://scripts/main.gd")
+	var eyes := Node3D.new()
+	var cam := Camera3D.new()
+	cam.basis = Basis(Vector3.UP, deg_to_rad(-90.0))
+	var chosen: Node3D = Main.drawn_view(cam, eyes)
+	var heading := Compass.heading_of(chosen.basis)
+	_check.call(chosen == cam and not is_equal_approx(heading, Compass.heading_of(eyes.basis))
+			and Main.drawn_view(null, eyes) == eyes,
+			"ride: the compass follows the camera on screen; with none, the player's view")
+	cam.free()
+	eyes.free()
 
 
 func _test_read() -> void:
