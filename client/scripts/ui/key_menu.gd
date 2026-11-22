@@ -55,6 +55,9 @@ var weather_pick: OptionButton
 var menu_pick: OptionButton   # HudSettings.context_menu: how E shows an object's choices
 var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
 var drive_pick: OptionButton  # HudSettings.drive, in DRIVE_VIEWS' order
+var top_pick: OptionButton    # HudSettings.top_up, in TOP_UPS' order
+const TOP_NAMES := ["Top-down: turns with you", "Top-down: north up"]   # TOP_UPS' order
+var recentre_check: CheckBox  # HudSettings.recentre
 const DRIVE_NAMES := ["Driving: first person", "Driving: chase", "Driving: top-down"]   # DRIVE_VIEWS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
@@ -303,6 +306,20 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 		if i >= 0 and i < HudSettings.DRIVE_VIEWS.size():
 			set_option(&"drive", HudSettings.DRIVE_VIEWS[i]))
 	opt_row.add_child(drive_pick)
+	top_pick = OptionButton.new()
+	for n: String in TOP_NAMES:
+		top_pick.add_item(n)
+	top_pick.tooltip_text = ("The top-down view turns smoothly with the way you face (driving: the vehicle's), or "
+			+ "keeps north up.")
+	top_pick.focus_mode = Control.FOCUS_NONE
+	top_pick.select(maxi(HudSettings.TOP_UPS.find(settings.top_up), 0))
+	top_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.TOP_UPS.size():
+			set_option(&"top_up", HudSettings.TOP_UPS[i]))
+	opt_row.add_child(top_pick)
+	recentre_check = _option_check(opt_row, "Recentre while driving",
+			"Driving in first person, the view eases back to the road when the mouse rests for a moment.",
+			&"recentre", settings.recentre)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -461,7 +478,12 @@ func _option_check(row: Container, text: String, tip: String, key: StringName, o
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu", &"drive"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu", &"drive", &"top_up",
+			&"recentre"]:
+		return
+	if key == &"top_up" and not (v is String and v in HudSettings.TOP_UPS):
+		return
+	if key == &"recentre" and not v is bool:
 		return
 	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
 		return
@@ -664,6 +686,8 @@ func open() -> void:
 		invert_check.set_pressed_no_signal(hud.invert_y)
 		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
 		drive_pick.select(maxi(HudSettings.DRIVE_VIEWS.find(hud.drive), 0))
+		top_pick.select(maxi(HudSettings.TOP_UPS.find(hud.top_up), 0))
+		recentre_check.set_pressed_no_signal(hud.recentre)
 		menu_pick.select(clampi(hud.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)
