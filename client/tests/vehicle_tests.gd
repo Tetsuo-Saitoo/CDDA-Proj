@@ -8,6 +8,8 @@ extends RefCounted
 ## blocks walking (CDDA's obstacle rule, gap fillers too) and LookRay naming the vehicle and part. Walking into cars:
 ## vr_tests.gd; items on them: item_physics_tests.gd. Run by run_tests.gd.
 
+const Main := preload("res://scripts/main.gd")
+
 var _check: Callable
 
 const P := Vector3i(192, 384, 0)     # the mock town's player; the road east of it is open
@@ -287,7 +289,8 @@ func _test_driving(data: Variant) -> void:
 ## The test car's body (face 0: its cells on its squares): inside its cells and heights; walls above the deck only
 ## on the board, the closed door and the windshield (not on bare frame, the open door or the broken halfboard); glass
 ## in the closed door and the windshield; the roof over the windshield. A body's prism is closed, faces wound
-## clockwise seen from outside, outer corners cut; at 45 degrees the frame puts each cell near CDDA's own square.
+## clockwise seen from outside, outer corners cut; turned, the model stays rigid, turned by the facing, its cells'
+## middle on its squares' middle.
 func _test_hull(view: VehicleView, car: Snapshot.Vehicle, world: WorldView) -> void:
 	var inv := VehicleView.frame_of(car, world.coords).affine_inverse()
 	var solid := view.hull(VehicleView.Look.SOLID)
@@ -331,18 +334,23 @@ func _test_hull(view: VehicleView, car: Snapshot.Vehicle, world: WorldView) -> v
 			"parts": [[0, 0, 1, 255, 0, 0, 0, 0], [1, 0, 1, 255, 0, 1, 1, 0], [2, 0, 1, 255, 0, 2, 2, 0], [0, 1, 1, 255, 0, -1, 0, 0]]}], 0, 0)
 	var f45 := VehicleView.frame_of(l45[0], world.coords)
 	var worst := 0.0
+	var drift := Vector2.ZERO
 	for i in 4:
 		var k := i * Snapshot.VPART_STRIDE
 		var at := f45 * Vector3(l45[0].parts[k], 0.0, l45[0].parts[k + 1])
 		var sq := world.coords.ms_center_to_world(l45[0].square(i))
 		worst = maxf(worst, Vector2(at.x - sq.x, at.z - sq.z).length())
+		drift += Vector2(at.x - sq.x, at.z - sq.z)
 	var a45 := f45.basis * Vector3.RIGHT
-	_check.call(worst < 0.01 and is_equal_approx(a45.length(), sqrt(2.0)) and absf(a45.x - a45.z) < 1e-4,
-			"vehicles: at 45 degrees the body lies as CDDA lays it out, stretched and sheared, each cell on its square (%.2f off)" % worst)
+	_check.call(f45.basis.is_equal_approx(f45.basis.orthonormalized()) and is_equal_approx(f45.basis.determinant(), 1.0)
+			and a45.is_equal_approx(Vector3(1, 0, 1).normalized()) and drift.length() < 1e-3 and worst < 1.0,
+			"vehicles: at 45 degrees the body is one rigid model turned 45 degrees, its middle on its squares' middle (a cell %.2f off at most)" % worst)
 	# CDDA's own layout (vehicle::coord_translate about mount 0, 0) of a 4-wide car at each facing CDDA steers to: the
-	# body's cells within a square of their parts' squares (exact at right angles and 45; between, CDDA's line steps)
+	# rigid body turned by the facing, its cells on their squares at right angles; off them CDDA stretches and shears
+	# its layout (up to 1.41 along the heading at 45), so a cell is off by up to its share of that
 	var worst_all := 0.0
 	var worst_axes := 0.0
+	var rigid := true
 	for f in range(0, 360, 15):
 		var rows := []
 		for mx in range(-3, 3):
@@ -351,16 +359,20 @@ func _test_hull(view: VehicleView, car: Snapshot.Vehicle, world: WorldView) -> v
 				rows.append([mx, my, 1, 255, 0, sq.x, sq.y, 0])
 		var v := Snapshot.vehicles_from([{"uid": 2, "pos": [100, 100, 0], "face_deg": float(f), "parts": rows}], 0, 0)[0]
 		var fr := VehicleView.frame_of(v, world.coords)
+		var ah := fr.basis * Vector3.RIGHT
+		rigid = rigid and fr.basis.is_equal_approx(fr.basis.orthonormalized()) \
+				and absf(angle_difference(atan2(ah.z, ah.x), deg_to_rad(f))) < 1e-4
 		for i in v.part_count():
 			var k := i * Snapshot.VPART_STRIDE
 			var at := fr * Vector3(v.parts[k], 0.0, v.parts[k + 1])
 			var sq := world.coords.ms_center_to_world(v.square(i))
 			var off := Vector2(at.x - sq.x, at.z - sq.z).length()
 			worst_all = maxf(worst_all, off)
-			if f % 45 == 0:
+			if f % 90 == 0:
 				worst_axes = maxf(worst_axes, off)
-	_check.call(worst_axes < 0.01 and worst_all < 1.0,
-			"vehicles: a 4-wide car at every 15 degrees lies on CDDA's squares (%.2f off at most; %.2f at right angles and 45)" % [worst_all, worst_axes])
+	# 2.14 m: the corner cells at 45 degrees (CDDA's layout is a parallelogram 1.41 long per mount there)
+	_check.call(rigid and worst_axes < 0.01 and worst_all < 2.2,
+			"vehicles: a 6 by 4 car at every 15 degrees is one rigid model turned by its facing, on its squares at right angles (a corner cell %.2f m off CDDA's stretched, sheared layout at most)" % worst_all)
 
 
 ## CDDA's square for mount m of a vehicle facing `face_deg` turned about mount 0, 0 (vehicle::coord_translate with
@@ -442,7 +454,7 @@ func _test_glide(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	var e1 := world.coords.ms_center_to_world(car.square(0))
 	var seated := (view.ride_transform(snap) * e1).is_equal_approx(e0.lerp(e1, 0.5))
 	view.glide(c.dur)
-	var arrived := view.ride_transform(snap) == Transform3D() and (view.drawn(UID) as Transform3D).is_equal_approx(c.to_xf)
+	var arrived := view.ride_transform(snap).is_equal_approx(Transform3D()) and (view.drawn(UID) as Transform3D).is_equal_approx(c.to_xf)
 	snap.player_pos = player
 	_check.call(view.built == b0 and at0.is_equal_approx(start) and mid.origin.is_equal_approx(start.origin.lerp(c.to_xf.origin, 0.5))
 			and seated and arrived and c.dur >= VehicleView.GLIDE_MIN and c.dur <= VehicleView.GLIDE_MAX,
@@ -457,6 +469,7 @@ func _test_glide(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 	view.glide(10.0)
 	_check.call(far and (view.drawn(UID) as Transform3D).is_equal_approx(start),
 			"vehicles: a far jump (a teleport, the map loaded again) is shown at once")
+	_test_turn(view, snap, world)
 	var ramp := VehicleView.tilt_of([Vector3(0, 0, 0), Vector3(1, 0.5, 0), Vector3(2, 1.0, 0), Vector3(0, 0, 1),
 			Vector3(1, 0.5, 1), Vector3(2, 1.0, 1)])
 	var ahead := ramp.basis * Vector3.RIGHT
@@ -468,6 +481,166 @@ func _test_glide(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
 			and is_equal_approx((side.basis * Vector3.BACK).y / (side.basis * Vector3.BACK).z, 0.25)
 			and (flat.basis * Vector3.UP).is_equal_approx(Vector3.UP),
 			"vehicles: on a ramp a car leans with the ground under it (along and across, at most 45 degrees); flat ground, no lean")
+
+
+## Turning (lead-world, 2026-11-21): CDDA's facing 0 -> 30 glides the rigid model's heading over the glide, half way
+## at its middle; what stands on a square (seat_transform) is carried to its cell as drawn, mid-turn and once
+## arrived (a cell off its square at 30 degrees); square_at finds the square back from the drawn cell; the chase
+## camera's target is the middle of the cells; target_of is the pose once arrived; far from the camera a glide ends
+## at once.
+func _test_turn(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
+	var car := snap.vehicles[0]
+	var c: VehicleView.Car = view._cars[UID]
+	var player := snap.player_pos
+	car.face_deg = 30.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	var to: Transform3D = view.target_of(UID)
+	var y0 := Main.car_yaw(view.drawn(UID))
+	view.glide(c.dur * 0.5, to.origin)
+	var y_mid := Main.car_yaw(view.drawn(UID))
+	var cells_ok := true
+	var back_ok := true
+	var moved_off := 0.0
+	for i in car.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		if car.parts[k + 4] & Snapshot.VPART_FILLER != 0:
+			continue
+		var sq := car.square(i)
+		var drawn_cell := (view.drawn(UID) as Transform3D) * Vector3(car.parts[k], 0.0, car.parts[k + 1])
+		var seat := view.seat_transform(snap, sq)
+		cells_ok = cells_ok and (seat * world.coords.ms_center_to_world(sq)).is_equal_approx(drawn_cell)
+	view.glide(10.0, to.origin)
+	for i in car.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		if car.parts[k + 4] & Snapshot.VPART_FILLER != 0:
+			continue
+		var sq := car.square(i)
+		var cell := to * Vector3(car.parts[k], 0.0, car.parts[k + 1])
+		cells_ok = cells_ok and (view.seat_transform(snap, sq) * world.coords.ms_center_to_world(sq)).is_equal_approx(cell)
+		moved_off = maxf(moved_off, cell.distance_to(world.coords.ms_center_to_world(sq)))
+		back_ok = back_ok and view.square_at(UID, cell + Vector3(0.3, 1.0, -0.3)) == sq
+	snap.player_pos = car.square(0)
+	var chase: Variant = view.chase_target(snap)
+	snap.player_pos = player
+	var mid := to * VehicleView._mid(car)
+	_check.call(is_equal_approx(y0, 0.0) and absf(rad_to_deg(y_mid) + 15.0) < 0.5
+			and absf(rad_to_deg(Main.car_yaw(view.drawn(UID))) + 30.0) < 0.01 and cells_ok and back_ok
+			and moved_off > 0.05 and chase is Transform3D and (chase as Transform3D).origin.is_equal_approx(mid)
+			and view.seat_transform(snap, Vector3i(0, 0, 0)) == Transform3D() and view.square_at(UID, Vector3(NAN, 0, 0)) == null
+			and view.square_at(UID, to * Vector3(30, 0, 30)) == null,
+			"vehicles: a turn glides the model's heading (%.1f degrees half way); riders sit in their cells as drawn (%.2f m off their squares at most), square_at finds them back" % [rad_to_deg(y_mid), moved_off])
+	car.face_deg = 0.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	view.glide(0.01, to.origin + Vector3(VehicleView.GLIDE_VIEW_M + 1.0, 0, 0))
+	_check.call((view.drawn(UID) as Transform3D).is_equal_approx(c.to_xf),
+			"vehicles: a vehicle %.0f m or more from the camera doesn't glide (arrives at once)" % VehicleView.GLIDE_VIEW_M)
+	# Passengers: a creature on a vehicle's square is seated where the vehicle is drawn; elsewhere it stays.
+	var cv := CreatureView.new()
+	var rider := CreatureFigure.new()
+	var walker := CreatureFigure.new()
+	cv._figs = {5: rider, 6: walker}
+	cv._riders = {5: [Vector3i(1, 2, 0), Vector3(1.5, 0.0, 2.5)]}
+	walker.position = Vector3(9, 0, 9)
+	cv.seat = func(sq: Vector3i) -> Transform3D:
+		return Transform3D(Basis(), Vector3(0.3, 0.0, 0.0)) if sq == Vector3i(1, 2, 0) else Transform3D()
+	cv.ride()
+	var seated := rider.position.is_equal_approx(Vector3(1.8, 0.0, 2.5)) and walker.position == Vector3(9, 0, 9)
+	cv.shift(Vector3(-12, 0, 0))
+	cv.ride()
+	_check.call(seated and rider.position.is_equal_approx(Vector3(-10.2, 0.0, 2.5)),
+			"vehicles: a passenger rides where the vehicle is drawn, also after a map shift; others stay on their squares")
+	rider.free()
+	walker.free()
+	cv.free()
+
+
+## C5 marks: which squares of a turned car its rigid model doesn't line up with, and how they are shown.
+func _test_marks(view: VehicleView, snap: Snapshot, world: WorldView) -> void:
+	var counts := {}
+	var as_expected := true
+	var signs45 := 0
+	for f: int in [0, 15, 45, 90]:
+		var rows := []
+		for mx in range(-3, 3):
+			for my in range(-1, 3):
+				var sq := _cdda_square(Vector2i(mx, my), f)
+				rows.append([mx, my, 1, 255, 0, sq.x, sq.y, 0])
+		rows.append([0, 0, 1, 255, Snapshot.VPART_FILLER, 9, 9, 0])   # a gap filler no cell is drawn on
+		var v := Snapshot.vehicles_from([{"uid": 2, "pos": [100, 100, 0], "face_deg": float(f), "parts": rows}], 0, 0)[0]
+		var xf := VehicleView.frame_of(v, world.coords)
+		var body := {}
+		var marked := VehicleView.off_squares(v, xf, world.coords, body)
+		counts[f] = marked.size()
+		var bare := marked.filter(func(sq: Vector3i) -> bool: return not body.has(sq))
+		if f == 45:
+			signs45 = bare.size()
+		# the rule, worked out the long way: a square is marked when its own cell is drawn MARK_TOL or more off it,
+		# or no cell is drawn within MARK_TOL of it
+		var want := []
+		var want_bare := []
+		var seen := {}
+		for i in v.part_count():
+			var sq := v.square(i)
+			if seen.has(sq):
+				continue
+			seen[sq] = true
+			var c := world.coords.ms_center_to_world(sq)
+			var own_off := false
+			var covered := false
+			var under := false
+			for k in v.part_count():
+				var j := k * Snapshot.VPART_STRIDE
+				if v.parts[j + 4] & Snapshot.VPART_FILLER != 0:
+					continue
+				var cell := xf * Vector3(v.parts[j], 0.0, v.parts[j + 1])
+				var dist := Vector2(cell.x - c.x, cell.z - c.z).length()
+				covered = covered or dist < VehicleView.MARK_TOL
+				own_off = own_off or (v.square(k) == sq and dist >= VehicleView.MARK_TOL)
+				under = under or dist < VehicleView.MARK_BODY
+			if own_off or not covered:
+				want.append(sq)
+				if not under:
+					want_bare.append(sq)
+		var filler_sq := v.pos + Vector3i(9, 9, 0)
+		if f % 90 == 0:
+			as_expected = as_expected and marked.is_empty()
+		else:
+			as_expected = as_expected and marked == want and filler_sq in marked and bare == want_bare and filler_sq in bare
+	_check.call(as_expected and counts[15] > 1 and counts[45] > counts[15] and signs45 > 1 and signs45 < counts[45],
+			"vehicles: marks on a 6 by 4 car: none at 0 and 90 degrees, %d squares at 15, %d at 45 (a part's cell %.2f m or more off its square, or a square no cell covers: an uncovered gap filler too); signs only where the drawn body leaves the square bare (%d at 45)" % [counts[15] - 1, counts[45] - 1, VehicleView.MARK_TOL, signs45 - 1])
+	# shown: a block and a sign per marked square, hidden for the vehicle the player sits in, moved by a map shift
+	var car := snap.vehicles[0]
+	var c: VehicleView.Car = view._cars[UID]
+	var kids := view.get_child_count()
+	car.face_deg = 30.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	var made := c.marks != null and view.get_child_count() == kids + 1 and not c.marked.is_empty()
+	var drawn := made and (c.marks.get_child(0) as MultiMeshInstance3D).multimesh.instance_count == c.marked.size() 			and (c.marks.get_child(1) as MultiMeshInstance3D).multimesh.instance_count == c.signed.size()
+	var first := c.marks.position if made else Vector3.INF
+	var at0 := VehicleView.mark_base(world, c.marked[0]) if made else Vector3.INF
+	var sq0 := world.coords.ms_center_to_world(c.marked[0]) if made else Vector3.ZERO
+	var shown := made and c.marks.visible
+	view.hide_marks(UID)
+	var hidden := made and not c.marks.visible
+	view.hide_marks(0)
+	var back := made and c.marks.visible
+	var k0 := c.veh.parts.slice(0, 2)
+	view.hide_marks(0, c.node.transform * Vector3(k0[0], 1.5, k0[1]))   # VR: the head in its model, off its squares
+	var head_in := made and not c.marks.visible
+	view.hide_marks(0, c.node.transform * Vector3(k0[0] + 40, 1.5, k0[1]))
+	back = back and head_in and c.marks.visible
+	view.shift(Vector3(2, 0, 0))
+	var shifted := made and c.marks.position.is_equal_approx(first + Vector3(2, 0, 0))
+	view.shift(Vector3(-2, 0, 0))
+	car.face_deg = 0.0
+	snap.vehicles_moved()
+	view.apply(snap, world)
+	_check.call(drawn and shown and hidden and back and shifted and is_equal_approx(at0.x, sq0.x) and is_equal_approx(at0.z, sq0.z)
+			and c.marks == null and view.get_child_count() == kids,
+			"vehicles: a turned car's marks are a block and a sign per marked square on it, hidden for the car the player sits in or (VR) whose model the head is in, moved by a map shift, gone on the axes")
 
 
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
@@ -518,6 +691,7 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	view.glide(10.0)
 	_test_shift(root, view, snap, world)
 	_test_glide(view, snap, world)
+	_test_marks(view, snap, world)
 	# tint: the half-broken board is darker than intact, the broken halfboard charred, glass only where unbroken
 	var def := func(id: String) -> IdTables.Def: return tables.def_named("vpart", id)
 	var intact := VehicleView.color_of(VehicleView.Kind.BOARD, def.call("board"), 255, 0)

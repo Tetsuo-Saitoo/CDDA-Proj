@@ -158,6 +158,10 @@ func _run() -> void:
 ## character again, standing where it was saved. With lead-ui's real-time switch: real time is turned on before the
 ## save, the loaded game runs in real time, and the key puts it back in turns. False when it can't go on.
 func _second_game() -> bool:
+	# (the newest snapshot first: on a busy machine the one shown can still be from before the F1 teleport)
+	var fresh := func() -> bool:
+		return _main.world.snapshot.seq == int(_live.sim().get_snapshot_seq()) and not _main.world.busy()
+	await _until(fresh, SHOW_TIMEOUT_MS)
 	var pos1: Vector3i = _main.world.snapshot.player_pos
 	var old_main: Node = _main
 	var old_live: Node = _live
@@ -171,6 +175,12 @@ func _second_game() -> bool:
 	if _has_clock():   # real time on before the save: the fresh Main must read it from this run's hud.cfg
 		_check(_press(&"real_time_toggle") and await _until(real, SHOW_TIMEOUT_MS),
 				"the real-time key turns real time on before the save")
+	var pick := _main.key_menu.get("drive_pick") as OptionButton
+	var has_pick := pick != null   # lead-world's driving view: picked in F1, the fresh Main must remember it
+	if has_pick:
+		pick.select(2)
+		pick.item_selected.emit(2)
+		_check(_main.hud_settings.get("drive") == "top", "F1's driving view picker is set to \"%s\" before the save" % pick.get_item_text(2))
 	_main.key_menu.open()
 	qb.pressed.emit()
 	_check(not _main.key_menu.visible, "the button closes F1")
@@ -226,6 +236,13 @@ func _second_game() -> bool:
 		var turns := func() -> bool: return not real.call()
 		_check(_press(&"real_time_toggle") and await _until(turns, SHOW_TIMEOUT_MS) and _main.hud_settings.get("real_time") == false,
 				"the real-time key again: back in turns")
+	if has_pick:
+		var pick2 := _main.key_menu.get("drive_pick") as OptionButton
+		_check(_main.hud_settings.get("drive") == "top" and pick2 != null and pick2.selected == 2,
+				"the fresh Main remembers the driving view from this run's hud.cfg (%s)" % _main.hud_settings.get("drive"))
+		if pick2 != null:   # and back to the default
+			pick2.select(1)
+			pick2.item_selected.emit(1)
 	var t1 := Time.get_ticks_msec()   # a few seconds of play: nothing of game 1 may fire into game 2
 	await _until(func() -> bool: return Time.get_ticks_msec() - t1 > 3000, 10000)
 	_check(_live.state == "running" and _main.is_inside_tree() and replaced.size() == 1,

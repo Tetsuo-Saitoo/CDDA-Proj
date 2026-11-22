@@ -50,7 +50,7 @@ const ACTIONS := [
 	[&"look_left", "View", "look left", ["axis:2-"]],
 	[&"look_right", "View", "look right", ["axis:2+"]],
 	[&"look_at", "View", "look at what you point at (again: close it)", ["L", "mouse:3"]],
-	[&"view_toggle", "View", "first person / outside", ["V"]],
+	[&"view_toggle", "View", "next view (driving: first person / chase / top)", ["V"]],
 	[&"fly_up", "View", "fly up (outside)", ["Space"]],   # not E / Q: take / use and CDDA's wield
 	[&"fly_down", "View", "fly down (outside)", ["Ctrl"]],
 	[&"cutaway_up", "View", "show a level more", ["PageUp"]],

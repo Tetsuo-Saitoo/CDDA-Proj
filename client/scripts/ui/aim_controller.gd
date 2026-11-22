@@ -36,6 +36,10 @@ extends Node3D
 ## arms disarm), sent as the swing answer's `action`; CDDA uses one of that family only when it says one is valid.
 ## The technique CDDA then used shows as a short note over the crosshair, gold when it was the one called. A call
 ## lasts only until its own swing's attack event (hit or miss), so a later strike never shows as called.
+## Throw where you look (eye tracking, `gaze_throw`): while a throw-mode target request shows, the cursor follows
+## the square the eyes look at (gaze_square) and throw_at_gaze() throws there (the VR trigger, the throw or fire
+## key). Only an eyes ray counts; the head's gaze, no tracker or the setting off leave throwing as it was. Gun aim
+## never follows the eyes. The gaze is read per call and never kept, logged or sent: only the square goes on.
 
 signal fired
 ## A round went off (see above): recoil and muzzle flash.
@@ -58,6 +62,8 @@ const SMASH_AT := "smash_at"      # a strike key's smash: main sends CDDA's `sma
 const SMASH_WHAT: Array[String] = ["wall", "window", "fence", "object", "door", "furniture"]
 const CALL_FAMILY := {"down": 2, "stun": 3, "disarm": 4}   # a swing answer's `action` -> the technique family
 const CALL_KEEP_MS := 5000        # a called technique's hit event counts as called this long after the answer
+const GAZE_THROW_MODES: Array[String] = ["throw", "throw_blind"]   # target requests that follow the eyes
+const MIN_GAZE_LEN := 0.5         # a gaze direction shorter than this is junk
 const DIR_NAMES := {Vector2i(0, -1): "UP", Vector2i(1, -1): "RIGHTUP", Vector2i(1, 0): "RIGHT",
 		Vector2i(1, 1): "RIGHTDOWN", Vector2i(0, 1): "DOWN", Vector2i(-1, 1): "LEFTDOWN", Vector2i(-1, 0): "LEFT",
 		Vector2i(-1, -1): "LEFTUP"}
@@ -78,6 +84,10 @@ var live_aim := Callable()        # VR: -> {origin: Vector3, sight: Vector3} or 
 ## (ViewCamera.ray_start), bullets fly from the eyes to what the pick meets, and in the top view, where the
 ## screen centre is the player, mouse-look aiming follows the facing (no crosshair).
 var view := Callable()
+## () -> Dictionary: where the player looks now (VrRig.look: {from, dir, eyes}); main sets it in VR. Hostile input:
+## only a dictionary with `eyes` true and finite vectors counts.
+var gaze := Callable()
+var gaze_throw := false           # throw where you look (lead-ui's Eye tracking setting; main sets it each frame)
 var last_shot := {}               # the last client-flown shot (tests, debugging)
 var shot_aim := {}                # the last client-flown FIRE: {origin, sight (unturned), ammo, time msec}
 var melee_aim := {}               # the last aimed strike: {square, uid, part, quality, want, time msec} (melee_from)
@@ -179,11 +189,51 @@ func update(cam: Camera3D, captured: bool) -> void:
 	if t == null:
 		_marker.visible = false
 		return
-	if first_person and captured and TargetRequestWidget.is_attack_mode(t.mode):
+	var gs: Variant = gaze_square() if t.mode in GAZE_THROW_MODES else null
+	if gs != null:
+		if gs != t.cursor:
+			request_ui.set_target_cursor(gs)   # a throw follows the eyes
+	elif first_person and captured and TargetRequestWidget.is_attack_mode(t.mode):
 		var sq: Variant = pick(cam, aim_point(cam, Vector2.ZERO, true), true)
 		if sq != null and sq != t.cursor:
 			request_ui.set_target_cursor(sq)
 	_place_marker(t.cursor)
+
+
+## The square the eyes look at now (LookRay from the gaze: creature figures, walls, floors), on the player's level
+## and not their own square; null when gaze_throw is off, there is no gaze, it is the head's (no eyes), it isn't
+## believable, or it meets nothing.
+func gaze_square() -> Variant:
+	if not gaze_throw or not gaze.is_valid() or world == null or world.snapshot == null or look_ray == null:
+		return null
+	var g: Variant = gaze.call()
+	if not g is Dictionary:
+		return null
+	var eyes: Variant = (g as Dictionary).get("eyes")
+	var from: Variant = (g as Dictionary).get("from")
+	var dir: Variant = (g as Dictionary).get("dir")
+	if not (eyes is bool and eyes) or not from is Vector3 or not dir is Vector3 or not (from as Vector3).is_finite() \
+			or not (dir as Vector3).is_finite() or (dir as Vector3).length() < MIN_GAZE_LEN:
+		return null
+	var r := look_ray.cast(from, (dir as Vector3).normalized(), LookRay.MAX_M, true, true)
+	var sq: Variant = r.get("square")
+	var me := world.snapshot.player_pos
+	if not r.get("hit", false) or not sq is Vector3i or (sq as Vector3i).z != me.z or sq == me:
+		return null
+	return sq
+
+
+## Throws the showing throw-mode target request at gaze_square() (the VR trigger, the throw or fire key): true when
+## it went. False, nothing sent: no such request, or the eyes give no square now.
+func throw_at_gaze() -> bool:
+	var t := request_ui.target_widget() if request_ui != null else null
+	if t == null or not t.mode in GAZE_THROW_MODES:
+		return false
+	var sq: Variant = gaze_square()
+	if sq == null or not request_ui.set_target_cursor(sq):
+		return false
+	t.fire()
+	return true
 
 
 ## A fire input (`aim_fire`, `cdda_fire`, or `click` = LMB) while a target request shows; true if used.
@@ -192,6 +242,9 @@ func handle_event(event: InputEvent, cam: Camera3D) -> bool:
 	if request_ui.target_widget() == null:
 		return false
 	var captured := Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	if (InputActions.pressed(event, &"cdda_throw") or InputActions.pressed(event, &"aim_fire")
+			or InputActions.pressed(event, &"cdda_fire")) and throw_at_gaze():
+		return true   # a throw where the eyes look
 	if InputActions.pressed(event, &"click"):
 		var mb := event as InputEventMouseButton
 		return on_fire(cam, mb.position if mb != null else cam.get_viewport().get_mouse_position(), captured)

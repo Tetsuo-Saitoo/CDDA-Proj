@@ -48,6 +48,17 @@ var ride_hud_fp := false
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
 var view := "first"
+## C5: the flat-screen view driving starts in (F1, or V while driving): first person, chase, or top-down. Saved as
+## [view] drive.
+const DRIVE_VIEWS := ["first", "chase", "top"]
+var drive := "chase"
+## C5: the top-down view turns with you ("heading": your facing, driving the vehicle's) or keeps north up; saved as
+## [view] top_up.
+const TOP_UPS := ViewCamera.TOP_UPS
+var top_up := "heading"
+## C5: driving in first person, the look eases back to the road after 1.5 s without mouse look. Saved as [view]
+## recentre.
+var recentre := true
 ## G1: the message feed's filter groups (HudData.message_group), in the F1 menu's order, with their labels.
 const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnings", "info": "Info", "other": "Other"}
 ## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
@@ -228,6 +239,12 @@ func load_file(path := FILE) -> String:
 	ride_hud_fp = rf if rf is bool else false
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
+	var dv: Variant = cfg.get_value("view", "drive", "chase")
+	drive = dv if dv is String and dv in DRIVE_VIEWS else "chase"
+	var tu: Variant = cfg.get_value("view", "top_up", "heading")
+	top_up = tu if tu is String and tu in TOP_UPS else "heading"
+	var rc: Variant = cfg.get_value("view", "recentre", true)
+	recentre = rc if rc is bool else true
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
 	var iy: Variant = cfg.get_value("look", "invert", false)
@@ -276,6 +293,9 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("hud", "ride", ride_hud)
 	cfg.set_value("hud", "ride_first_person", ride_hud_fp)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
+	cfg.set_value("view", "drive", drive if drive in DRIVE_VIEWS else "chase")
+	cfg.set_value("view", "top_up", top_up if top_up in TOP_UPS else "heading")
+	cfg.set_value("view", "recentre", recentre)
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
 	cfg.set_value("look", "invert", invert_y)
