@@ -249,8 +249,24 @@ static func angle_of(f: float, sweep: Vector2) -> float:
 
 
 ## The plate, hood and cheeks, each gauge's housing (an outer wall, the bore it is set back in), bezel and centre
-## cap: one solid surface; the glass over each: another.
+## cap: one solid surface; the glass over each: another. One mesh, made once, for every dash.
 func _build_cluster() -> void:
+	if not _meshes.has("cluster"):
+		_meshes["cluster"] = _cluster_mesh()
+	cluster = MeshInstance3D.new()
+	cluster.name = "cluster"
+	cluster.mesh = _meshes["cluster"]
+	cluster.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(cluster)
+	faces = MeshInstance3D.new()
+	faces.name = "faces"
+	faces.material_override = _material("dial")
+	faces.layers = FACE_LAYER
+	faces.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(faces)
+
+
+static func _cluster_mesh() -> ArrayMesh:
 	var solid := []
 	var glass := []
 	var box := func(size: Vector3, at: Vector3, col: Color) -> void:
@@ -272,17 +288,7 @@ func _build_cluster() -> void:
 	var mesh := ArrayMesh.new()
 	CarInterior.surface(mesh, solid, VehicleView._material(VehicleView.Look.SOLID))
 	CarInterior.surface(mesh, glass, _material("glass"))
-	cluster = MeshInstance3D.new()
-	cluster.name = "cluster"
-	cluster.mesh = mesh
-	cluster.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(cluster)
-	faces = MeshInstance3D.new()
-	faces.name = "faces"
-	faces.material_override = _material("dial")
-	faces.layers = FACE_LAYER
-	faces.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(faces)
+	return mesh
 
 
 ## The dial faces for the reading's scale (built again only when it changed): each face, its bands and ticks, and

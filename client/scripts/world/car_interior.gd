@@ -44,6 +44,8 @@ var lids := {}                # part index -> "Cargo_<part>"
 var lid_at := {}              # Vector2i mount -> the part whose lid covers that square
 var moving := false           # something is on its way: VehicleView steps it
 var _lid_goal := {}           # part index -> degrees
+var _lid_set := {}            # part index -> degrees it was last put at here (else a hand moved it)
+var seen: Array = []          # the parts, z and tables last checked against key (VehicleView._check_interior)
 var _cdda_open := {}          # part index -> the state last seen (lids CDDA opens)
 var _spin_deg := 0.0          # where the wheel is turned (unwrapped)
 var _spin_goal := 0.0
@@ -119,12 +121,19 @@ static func layout_key(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, 
 	return key
 
 
+## All layout_key reads from (cheap to compare): while it is the same, so is layout_key. `own`: with a copy of the
+## parts (packed arrays are shared by reference), to keep.
+static func seen_key(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int, own := false) -> Array:
+	return [veh.parts.duplicate() if own else veh.parts, veh.pos.z, z_max, tables, snap.ids_generation if snap != null else -1]
+
+
 ## The interior of `veh` (in its mount grid; `mid` the middle of its cells, `paint` its body's colour), its lids
 ## where CDDA's states put them, dark.
 static func build(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int, mid: Vector3, paint: Color) -> CarInterior:
 	var it := CarInterior.new()
 	it.uid = veh.uid
 	it.key = layout_key(veh, snap, tables, z_max)
+	it.seen = seen_key(veh, snap, tables, z_max, true)
 	var p := parts_of(veh, snap, tables, z_max)
 	if p[0] >= 0:
 		it._add_controls(veh, p[0])
@@ -149,18 +158,22 @@ func anchors() -> Dictionary:
 	return out
 
 
-## Follows CDDA's states: each lid it opens goes to open or closed (`now`: at once).
+## Follows CDDA's states: each lid it opens goes to open or closed when its state changes (`now`: at once).
 func set_states(veh: Snapshot.Vehicle, now := false) -> void:
 	for part: int in lids:
 		var c: Node3D = lids[part]
 		if not c.get_meta("cdda_open", false) or part >= veh.part_count():
 			continue
 		var open := (veh.parts[part * Snapshot.VPART_STRIDE + 4] & Snapshot.VPART_OPEN) != 0
+		if not now and _cdda_open.get(part) == open:
+			continue   # unchanged: where a hand left it, it stays
 		_cdda_open[part] = open
 		_lid_goal[part] = c.get_meta("open_deg") if open else 0.0
+		_lid_set[part] = lid_deg(part)
 		var lid: Node3D = c.get_node("Lid")
 		if now:
 			lid.basis = Basis(c.get_meta("hinge_axis"), deg_to_rad(_lid_goal[part]))
+			_lid_set[part] = _lid_goal[part]
 		elif absf(lid_deg(part) - _lid_goal[part]) > 0.05 and not lid.get_meta("held", false):
 			moving = true
 
@@ -171,6 +184,7 @@ func open_lid(part: int, open: bool) -> bool:
 	if not lids.has(part):
 		return false
 	_lid_goal[part] = (lids[part] as Node3D).get_meta("open_deg") if open else 0.0
+	_lid_set[part] = lid_deg(part)
 	moving = true
 	return true
 
@@ -208,11 +222,14 @@ func step(delta: float) -> bool:
 		if lid.get_meta("held", false):
 			continue
 		var at := lid_deg(part)
+		if absf(at - _lid_set.get(part, at)) > 0.05:
+			_lid_goal[part] = at   # a hand moved it since: it stays there
 		var goal: float = _lid_goal.get(part, 0.0)
 		if absf(goal - at) > 0.05:
 			at = move_toward(at, goal, LID_RATE * delta)
 			lid.basis = Basis(c.get_meta("hinge_axis"), deg_to_rad(at))
 			busy = busy or absf(goal - at) > 0.05
+		_lid_set[part] = at
 	if spin != null:
 		if spin.get_meta("held", false):
 			_spin_deg += wrapf(rad_to_deg(spin.rotation.z) - _spin_deg, -180.0, 180.0)   # where the hand left it
@@ -302,6 +319,7 @@ func _add_lid(veh: Snapshot.Vehicle, part: int, kind: int, cdda_open: bool, mid:
 	lids[part] = c
 	lid_at[Vector2i(veh.parts[j], veh.parts[j + 1])] = part
 	_lid_goal[part] = 0.0
+	_lid_set[part] = 0.0
 
 
 static func _mesh_node(n: String, tris: Array) -> MeshInstance3D:
