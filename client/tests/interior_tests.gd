@@ -62,6 +62,24 @@ func _test_reading() -> void:
 			and r.unit == CarDash.unit_seen and long.top == CarDash.MAX_TOP and long.step == CarDash.MAX_TOP / CarDash.MAX_TICKS
 			and long.unit == CarDash.unit_seen and CarDash.reading_of("junk") == CarDash.reading_of({}),
 			"interiors: a dash reading is checked (types, NaN, ranges, ticks, unit text) (%s)" % [r])
+	# from the driving HUD's data: backing at 40 mph in km/h, a broken engine, tanks half and full, the battery low,
+	# skidding, battered, steering 10 degrees left
+	var ride := RideInfo.read({"uid": 5, "velocity": -4000, "cruise_velocity": 5000, "safe_velocity": 6000,
+			"max_velocity": 9000, "engine_on": true, "engines": [[1, 4]], "fuels": [[3, 50, 100], [4, 10, 10]],
+			"battery": [5, 100], "skidding": true, "turn_deg": 80, "health_pct": 50, "speed_unit": "km/h"}, Callable(), 90.0)
+	var d := CarDash.reading_from(ride)
+	var top := SpeedGauge.scale_top(ride)
+	var want := {"lit": true, "speed": ride.shown(-4000), "cruise": ride.shown(5000), "top": top,
+			"step": SpeedGauge.tick_step(top), "safe": ride.shown(6000), "red": ride.shown(9000), "unit": "km/h",
+			"fuel": 0.75, "battery": 0.05, "steer": -10,
+			"lamps": CarDash.Lamp.ENGINE | CarDash.Lamp.BATTERY | CarDash.Lamp.SKID | CarDash.Lamp.DAMAGE}
+	var off := CarDash.reading_from(RideInfo.read({"uid": 5, "engine_on": false, "battery": [0, 100], "cruise_velocity": 5000}))
+	var shown := CarDash.reading_of(d)
+	_check.call(d == want and not off.lit and off.cruise == 0.0 and off.fuel == -1.0 and off.lamps == CarDash.Lamp.BATTERY
+			and shown.lit and is_equal_approx(shown.speed, absf(ride.shown(-4000))) and shown.unit == "km/h"
+			and CarDash.reading_from(RideInfo.read(null)).is_empty() and CarDash.reading_from(null).is_empty(),
+			"interiors: the dash reads the driving HUD's data (scale and bands as its gauge, lamps, steering) (%s)" % [d])
+	CarDash.unit_seen = "mph"
 
 
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
