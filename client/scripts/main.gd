@@ -556,6 +556,18 @@ func _carry_look() -> void:
 	_ride_look = [uid, heading]
 
 
+## C5: the real-footprint marks of the vehicle the player is in aren't shown from its first-person seat (flat first
+## person, VR); every other view and vehicle shows them.
+func _hide_own_marks() -> void:
+	var s := world.snapshot
+	var uid := 0
+	if s != null and vehicles_view != null and (vr != null or view_mode == "first"):
+		var at := s.vehicle_at(s.player_pos)
+		uid = (at[0] as Snapshot.Vehicle).uid if not at.is_empty() else 0
+	if vehicles_view != null:
+		vehicles_view.hide_marks(uid)
+
+
 ## A vehicle's yaw as drawn (radians about up, as FirstPersonCamera.yaw turns: + to the left).
 static func car_yaw(xf: Transform3D) -> float:
 	var x := xf.basis.x
@@ -2221,6 +2233,7 @@ func _process(_delta: float) -> void:
 		grab.flash("You can't pour that there.", true)
 	creature_view.view_z_max = world.things_z_max()
 	_carry_look()
+	_hide_own_marks()
 	_place_player_body()
 	_update_look_line()
 	compass.heading_deg = Compass.heading_of(_view().global_basis)

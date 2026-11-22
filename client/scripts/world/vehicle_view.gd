@@ -36,6 +36,18 @@ const GLIDE_MAX := 1.0
 const GLIDE_FAR := 60.0 # m: a longer jump (a teleport, the map loaded again) is shown at once
 const GLIDE_VIEW_M := 150.0   # m: a vehicle this far from the camera or further skips its glide (out of view)
 const MAX_SLOPE := 1.0  # tan of the steepest tilt on a ramp (45 degrees)
+## Marks (off_squares): where CDDA really has a turned vehicle that its rigid model doesn't line up with, a
+## translucent yellow block per square, and a warning sign in those the drawn body leaves bare (shaders/vehicle_mark,
+## warning_sign), so its real footprint shows against walls. Hidden for the vehicle the player sits in, in first
+## person (hide_marks).
+const MARK_TOL := 0.25    # m: a cell drawn this far or further off its part's square marks that square
+const MARK_BODY := 0.5    # m: a square with a cell drawn closer to its middle is under the drawn body (no sign)
+const MARK_H := 1.6       # m: a block's height above the ground
+const MARK_SIGN := 0.45   # m across: the sign
+const MARK_SIGN_UP := 0.9   # m: the sign's middle above the ground (in a bare square: no body around it)
+const MAX_MARKS := 1024   # squares marked per vehicle
+const MARK_SHADER := preload("res://shaders/vehicle_mark.gdshader")
+const SIGN_SHADER := preload("res://shaders/warning_sign.gdshader")
 ## Kinds drawn as the body (hull), not as shapes of their own.
 const HULL_KINDS := [Kind.FRAME, Kind.BOARD, Kind.HALF, Kind.DOOR, Kind.GLASS_DOOR, Kind.WINDOW, Kind.ROOF]
 ## A cell's corners (x ahead, y right, cell units from its centre), counterclockwise; edge j runs from corner j to
@@ -82,6 +94,9 @@ class Car:
 	var dur := GLIDE_MIN
 	var moved_ms := 0
 	var verts := 0           # vertices in its mesh
+	var marked: Array = []   # off_squares at its pose (Vector3i)
+	var signed: Array = []   # those the drawn body leaves bare: a sign in each
+	var marks: Node3D        # their blocks and signs (two MultiMeshInstance3D); null while none
 
 
 var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
@@ -89,6 +104,8 @@ var _world: WorldView = null   # the world last applied (refresh follows its cut
 var _cars := {}        # vehicle uid -> Car, the shown snapshot's vehicles in its order
 var built := 0         # meshes built (not kept from the last snapshot), counted for tests
 var max_verts := MAX_VERTS   # lowered by tests
+var hide_marks_of := 0   # the vehicle whose marks are hidden (the one the player sits in, in first person), 0 none
+static var _mark_mats := []    # [block, sign] ShaderMaterial, made once
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
 
@@ -241,12 +258,21 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			if fresh or car.pose_key != pose_key:
 				car.pose_key = pose_key
 				_move(car, pose_parts(veh, world), now, fresh)
+				var body := {}
+				car.marked = off_squares(veh, car.to_xf, world.coords, body)
+				car.signed = car.marked.filter(func(sq: Vector3i) -> bool: return not body.has(sq))
+				_mark(car, world)
 			car.veh = veh
 			car.mid = _mid(veh)
 			cars[veh.uid] = car
+			_show_marks(car)
 	for uid: int in _cars:
-		if not cars.has(uid) and (_cars[uid] as Car).node != null:
-			(_cars[uid] as Car).node.free()
+		if not cars.has(uid):
+			var gone: Car = _cars[uid]
+			if gone.node != null:
+				gone.node.free()
+			if gone.marks != null:
+				gone.marks.free()
 	_cars = cars
 
 
@@ -259,6 +285,122 @@ func _drop(car: Car) -> void:
 	car.local = {}
 	car.small = {}
 	car.verts = 0
+
+
+## The squares of `veh` where its model posed by `xf` (mount -> world) doesn't line up with CDDA: a square its own
+## part's cell is drawn MARK_TOL or more off (level distance), or one no cell is drawn within MARK_TOL of (a gap
+## filler's). None at right angles, where the model is on its squares. In part order, each once, at most MAX_MARKS.
+## `body` gets the squares with a cell drawn within MARK_BODY of their middle (under the drawn body).
+static func off_squares(veh: Snapshot.Vehicle, xf: Transform3D, coords: CddaCoords, body := {}) -> Array:
+	var r := fposmod(veh.face_deg, 90.0) if is_finite(veh.face_deg) else 0.0
+	if r < 0.01 or r > 89.99:
+		return []
+	var near := {}   # squares a cell is drawn within MARK_TOL of
+	var off := {}    # squares whose own part's cell is drawn off them
+	for i in veh.part_count():
+		var j := i * Snapshot.VPART_STRIDE
+		if veh.parts[j + 4] & Snapshot.VPART_FILLER != 0:
+			continue
+		var sq := veh.square(i)
+		var cell := xf * Vector3(veh.parts[j], 0.0, veh.parts[j + 1])
+		if not cell.is_finite():
+			continue
+		var c := coords.ms_center_to_world(sq)
+		if Vector2(cell.x - c.x, cell.z - c.z).length() >= MARK_TOL:
+			off[sq] = true
+		var under := coords.world_to_ms(Vector3(cell.x, 0.0, cell.z))
+		under.z = sq.z
+		var uc := coords.ms_center_to_world(under)
+		var d := Vector2(cell.x - uc.x, cell.z - uc.z).length()
+		if d < MARK_TOL:
+			near[under] = true
+		if d < MARK_BODY:
+			body[under] = true
+	var out := []
+	var seen := {}
+	for i in veh.part_count():
+		var sq := veh.square(i)
+		if seen.has(sq):
+			continue
+		seen[sq] = true
+		if off.has(sq) or not near.has(sq):
+			out.append(sq)
+			if out.size() >= MAX_MARKS:
+				break
+	return out
+
+
+## Draws car.marked: a block per square on the ground there, a sign in each of car.signed (none: its marks freed).
+func _mark(car: Car, world: WorldView) -> void:
+	if car.marked.is_empty():
+		if car.marks != null:
+			car.marks.free()
+			car.marks = null
+		return
+	if car.marks == null:
+		car.marks = Node3D.new()
+		car.marks.name = "marks"
+		add_child(car.marks)
+		var box := BoxMesh.new()
+		box.size = Vector3(0.96 * CddaCoords.TILE_M, MARK_H, 0.96 * CddaCoords.TILE_M)
+		var quad := QuadMesh.new()
+		quad.size = Vector2(MARK_SIGN, MARK_SIGN)
+		var mats := _mark_materials()
+		for e: Array in [[box, mats[0]], [quad, mats[1]]]:
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = e[0]
+			var mi := MultiMeshInstance3D.new()
+			mi.multimesh = mm
+			mi.material_override = e[1]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+			mi.extra_cull_margin = MARK_SIGN
+			car.marks.add_child(mi)
+	car.marks.position = Vector3.ZERO
+	var blocks := (car.marks.get_child(0) as MultiMeshInstance3D).multimesh
+	var signs := (car.marks.get_child(1) as MultiMeshInstance3D).multimesh
+	blocks.instance_count = car.marked.size()
+	signs.instance_count = car.signed.size()
+	for i in car.marked.size():
+		var at := mark_base(world, car.marked[i])
+		blocks.set_instance_transform(i, Transform3D(Basis(), at + Vector3.UP * (0.02 + MARK_H * 0.5)))
+	for i in car.signed.size():
+		signs.set_instance_transform(i, Transform3D(Basis(), mark_base(world, car.signed[i]) + Vector3.UP * MARK_SIGN_UP))
+
+
+## Where a mark on square `sq` stands: its middle on the ground there (the level's floor where there's none).
+static func mark_base(world: WorldView, sq: Vector3i) -> Vector3:
+	var c := world.coords.ms_center_to_world(sq)
+	var g := world.ground_y(c, sq.z)
+	return Vector3(c.x, g if is_finite(g) else c.y, c.z)
+
+
+## The marks' materials (block, sign), made once; the sign drawn after the block.
+static func _mark_materials() -> Array:
+	if _mark_mats.is_empty():
+		var block := ShaderMaterial.new()
+		block.shader = MARK_SHADER
+		block.set_shader_parameter("height", MARK_H)
+		var sign := ShaderMaterial.new()
+		sign.shader = SIGN_SHADER
+		sign.render_priority = 1
+		_mark_mats = [block, sign]
+	return _mark_mats
+
+
+## Hides the marks of vehicle `uid` (0: none hidden), showing the others' again.
+func hide_marks(uid: int) -> void:
+	if uid == hide_marks_of:
+		return
+	hide_marks_of = uid
+	for car: Car in _cars.values():
+		_show_marks(car)
+
+
+func _show_marks(car: Car) -> void:
+	if car.marks != null:
+		car.marks.visible = car.node != null and car.veh != null and car.veh.uid != hide_marks_of
 
 
 ## Sets a vehicle's new pose: at once when it is new or jumped far, else a glide from where it is drawn now over
@@ -331,6 +473,8 @@ func shift(d: Vector3) -> void:
 		car.to_xf.origin += d
 		if car.node != null:
 			car.node.position += d
+		if car.marks != null:
+			car.marks.position += d
 
 
 ## How a vehicle's model lies flat in the world: mount (x ahead, z to the right, a cell per square; y metres up from

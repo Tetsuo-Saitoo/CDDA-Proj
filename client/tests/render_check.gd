@@ -61,6 +61,14 @@ const SHOTS := [
 		"face": 330.0, "settle": 3.0},
 	{"name": "drive_top_turned", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
 		"face": 330.0},
+	# The coupe at 45 degrees: yellow marks on CDDA's real squares the rigid model doesn't line up with, seen on foot,
+	# from the chase camera, and not at all from the driver's seat.
+	{"name": "car_marks_45", "env": CLEAR, "yaw": 0.0, "pitch": -22.0, "move": Vector3i(-13, 20, 0), "face": 45.0},
+	{"name": "drive_chase_45", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 45.0, "settle": 3.0},
+	{"name": "drive_first_45", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0,
+		"yaw": -45.0, "pitch": -15.0},
+	{"name": "drive_top_45", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0},
 	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
@@ -141,6 +149,7 @@ func _seconds(s: float) -> void:
 
 
 const COUPE := 8589934618   # the mock's coupe west of the start (pos 179, 398)
+const VehicleTests := preload("res://tests/vehicle_tests.gd")
 
 
 func _shot(index: int, shot: Dictionary) -> void:
@@ -171,15 +180,20 @@ func _shot(index: int, shot: Dictionary) -> void:
 	if shot.has("drive"):
 		player["driving"] = true
 		player["vehicle"] = shot["drive"]
-		if shot.has("face"):
-			var vehicles := []
-			for v: Dictionary in _data["vehicles"]:
-				var copy := v.duplicate(false)
-				if copy["uid"] == shot["drive"]:
-					copy["face_deg"] = shot["face"]
-					copy["turn_deg"] = shot["face"]
-				vehicles.append(copy)
-			d["vehicles"] = vehicles
+	if shot.has("face"):   # the coupe turned, its parts on the squares CDDA lays them on (stretched, sheared)
+		var vehicles := []
+		for v: Dictionary in _data["vehicles"]:
+			var copy := v.duplicate(false)
+			if copy["uid"] == COUPE:
+				copy["face_deg"] = shot["face"]
+				copy["turn_deg"] = shot["face"]
+				var rows := []
+				for r: Array in v["parts"]:
+					var sq: Vector2i = VehicleTests._cdda_square(Vector2i(r[0], r[1]), int(shot["face"]))
+					rows.append(r.slice(0, 5) + [sq.x, sq.y, 0])
+				copy["parts"] = rows
+			vehicles.append(copy)
+		d["vehicles"] = vehicles
 	d["player"] = player
 	if shot.get("lamp", false):
 		_lamp(d, Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]))
