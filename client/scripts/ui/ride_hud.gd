@@ -32,6 +32,7 @@ var battery_label: Label
 var battery_bar: ProgressBar
 var _fuel_rows: Array[Dictionary] = []   # {label, bar}, one per RideInfo.MAX_FUELS, the unused ones hidden
 var _avoid: Array[Rect2] = []
+var _hands := Rect2()
 
 
 func _init() -> void:
@@ -71,7 +72,7 @@ func _init() -> void:
 	battery_bar = _bar(box, BATTERY_COLOR)
 	health_label = _label(box, 12, TEXT_COLOR)
 	health_bar = _bar(box, Color.WHITE)
-	resized.connect(func() -> void: place(_avoid))
+	resized.connect(func() -> void: place(_avoid, _hands))
 	show_ride(info)
 
 
@@ -155,7 +156,12 @@ func show_ride(r: RideInfo) -> void:
 			fill.bg_color = SpeedGauge.BAND_COLORS[0] if info.health >= 60 else (SpeedGauge.BAND_COLORS[1]
 					if info.health >= 30 else SpeedGauge.BAND_COLORS[2])
 	dash.reset_size()
-	place(_avoid)
+	place(_avoid, _hands)
+
+
+## The dash on screen, as scaled.
+func dash_rect() -> Rect2:
+	return Rect2(dash.global_position, dash.size * dash.scale)
 
 
 ## "850 kg", or "1.5 t" from a tonne up.
@@ -169,24 +175,28 @@ static func scale_for(area: Vector2) -> float:
 
 
 ## Puts the dash at the bottom, as near the middle as it can without covering `avoid` (screen rects: the hands
-## panel, the look line, the HUD's text and left column): left of the hands panel, the middle, or above the hands
-## panel on the right; else wherever it covers least.
-func place(avoid: Array[Rect2]) -> void:
+## panel, the look line, the HUD's text and left column): the middle, beside a box (right of one on the left half,
+## left of one on the right), the right edge, nearest the middle first; then above the hands panel on the right;
+## else wherever it covers least (main then cuts the feed: HudView.keep_feed_above). `hands`: the hands panel's
+## screen rect (also in `avoid`), empty when hidden.
+func place(avoid: Array[Rect2], hands := Rect2()) -> void:
 	_avoid = avoid
+	_hands = hands
 	var k := scale_for(size)
 	dash.scale = Vector2(k, k)
 	dash.reset_size()
 	var dim := dash.size * k
 	var bottom := size.y - MARGIN - dim.y
 	var mid := (size.x - dim.x) / 2.0
-	var hands := Rect2()
-	for r in avoid:   # the lowest box on the right half: the hands panel
-		if r.has_area() and r.get_center().x > size.x / 2.0 and r.end.y > hands.end.y:
-			hands = r
+	var xs: Array[float] = [mid, size.x - MARGIN - dim.x]
+	for r in avoid:
+		if r.has_area():
+			var x := r.position.x - global_position.x
+			xs.append(x + r.size.x + MARGIN if r.get_center().x - global_position.x < size.x / 2.0 else x - MARGIN - dim.x)
+	xs.sort_custom(func(a: float, b: float) -> bool: return absf(a - mid) < absf(b - mid))
 	var spots: Array[Vector2] = []
-	if hands.has_area():
-		spots.append(Vector2(minf(mid, hands.position.x - MARGIN - dim.x), bottom))
-	spots.append(Vector2(mid, bottom))
+	for x in xs:
+		spots.append(Vector2(x, bottom))
 	if hands.has_area():
 		spots.append(Vector2(size.x - MARGIN - dim.x, hands.position.y - MARGIN - dim.y))
 	var best := Vector2(mid, bottom)

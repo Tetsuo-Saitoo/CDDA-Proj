@@ -762,10 +762,10 @@ static func drawn_view(cam: Camera3D, fallback: Node3D) -> Node3D:
 
 
 ## Whether the driving HUD shows for `r` (player.vehicle_state): only on a vehicle, unless F1 turned it off; at the
-## controls in first person (`first_person_cam`: that camera draws) the car's own dashboard shows the speed, so
-## only with F1 > HUD > Gauge in first person (the user, 2026-11-21).
+## controls in first person (`first_person_cam`: that camera draws), driving or not, the car's own dashboard shows
+## the speed, so only with F1 > HUD > Gauge in first person (the user, 2026-11-21).
 static func ride_shown(r: RideInfo, settings: HudSettings, first_person_cam: bool) -> bool:
-	return r.ok and settings.ride_hud and (not (first_person_cam and r.driver) or settings.ride_hud_fp)
+	return r.ok and settings.ride_hud and (not (first_person_cam and (r.driver or r.at_controls)) or settings.ride_hud_fp)
 
 
 func _start_live() -> void:
@@ -2281,13 +2281,15 @@ func _ride_step() -> void:
 	var fp_cam := vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
 	ride_hud.visible = vr == null and ride_shown(r, hud_settings, fp_cam) and hud_view.visible and not _menu_open()
 	if not ride_hud.visible:
+		hud_view.keep_feed_above(Rect2())
 		return
 	ride_hud.show_ride(r)
-	var keep: Array[Rect2] = [hud.get_global_rect(), hud_view.column_rect()]
+	var keep: Array[Rect2] = [hud.get_global_rect(), hud_view.column_rect(true)]
 	for c: Control in [hands_panel, look_panel]:
 		if c.visible:
 			keep.append(c.get_global_rect())
-	ride_hud.place(keep)
+	ride_hud.place(keep, hands_panel.get_global_rect() if hands_panel.visible else Rect2())
+	hud_view.keep_feed_above(ride_hud.dash_rect())   # where no spot is free (small windows) the feed gives way
 
 
 ## An item type's name (its id when nameless), "" for an unknown index.

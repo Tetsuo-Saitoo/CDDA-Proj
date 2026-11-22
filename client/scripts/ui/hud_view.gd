@@ -41,6 +41,9 @@ var clock_mark: Label   # HudData.clock: time runs, waits for you, or is paused
 var _body: Control
 var _shift := 0.0      # the left column's move down, under main's status text (avoid)
 var _column_h := 0.0   # the left column's height: body block, mood line, feed (_layout)
+var _feed_msgs := PackedStringArray()   # the newest FEED_LINES messages; the feed shows the last _feed_room
+var _feed_room := FEED_LINES
+var _feed_floor := INF   # keep_feed_above: the feed's text ends above this (px from this view's top)
 var _pulse := 0.0
 
 
@@ -180,6 +183,7 @@ static func cheat_text(names: PackedStringArray) -> String:
 
 func _on_changed(parts: PackedStringArray) -> void:
 	if data == null:
+		_feed_msgs = PackedStringArray()
 		feed.text = ""
 		mood.text = ""
 		warn.text = ""
@@ -188,10 +192,10 @@ func _on_changed(parts: PackedStringArray) -> void:
 		_body.queue_redraw()
 		return
 	if "messages" in parts:
-		var lines := PackedStringArray()
+		_feed_msgs = PackedStringArray()
 		for m: Dictionary in data.messages.slice(maxi(0, data.messages.size() - FEED_LINES)):
-			lines.append(m["text"])
-		feed.text = "\n".join(lines)
+			_feed_msgs.append(m["text"])
+		_show_feed()
 	if "warnings" in parts:
 		var lines := PackedStringArray()
 		for w: Dictionary in data.warnings.slice(0, WARN_LINES):
@@ -241,11 +245,54 @@ func marks_bottom() -> float:
 	return b
 
 
-## The left column (body, mood, feed) as drawn on screen; other panels keep off it (RideHud).
-func column_rect() -> Rect2:
+## The left column (body, mood, the feed's text) as drawn on screen; other panels keep off it (RideHud). `all`:
+## with every feed line, even those keep_feed_above holds back.
+func column_rect(all := false) -> Rect2:
 	var w := 330.0 + (EFFECT_W if data != null and not effect_lines().is_empty() else 0.0)
-	w = maxf(w, feed.get_combined_minimum_size().x)
-	return Rect2(global_position + Vector2(12.0, size.y / 2.0 + BODY_TOP + _shift), Vector2(w, _column_h))
+	var top := size.y / 2.0 + BODY_TOP + _shift
+	var r := Rect2(global_position + Vector2(12.0, top), Vector2(w, maxf(feed.offset_top - BODY_TOP - _shift, 0.0)))
+	var f := feed_rect(all)
+	return r.merge(f) if f.has_area() else r
+
+
+## The feed's text on screen: its lines shown (`all`: every one of the newest FEED_LINES), as wide as the widest.
+func feed_rect(all := false) -> Rect2:
+	var n := _feed_msgs.size() if all else mini(_feed_msgs.size(), _feed_room)
+	var at := global_position + Vector2(12.0, size.y / 2.0 + feed.offset_top)
+	if n == 0:
+		return Rect2(at, Vector2.ZERO)
+	var font := feed.get_theme_font("font")
+	var fs := feed.get_theme_font_size("font_size")
+	var w := 0.0
+	for line in _feed_msgs.slice(_feed_msgs.size() - n):
+		w = maxf(w, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	return Rect2(at, Vector2(w, n * _feed_pitch() - feed.get_theme_constant("line_spacing")))
+
+
+func _feed_pitch() -> float:
+	return feed.get_theme_font("font").get_height(feed.get_theme_font_size("font_size")) \
+			+ feed.get_theme_constant("line_spacing")
+
+
+## main, while the driving HUD shows (`box`, its screen rect; empty when hidden): where the feed's text would
+## reach under it, the feed shows only its newest lines that end above it (at least one). Small windows.
+func keep_feed_above(box: Rect2) -> void:
+	var fl := INF
+	if box.has_area() and feed_rect(true).intersects(box):
+		fl = box.position.y - global_position.y - 4.0
+	if fl != _feed_floor:
+		_feed_floor = fl
+		_show_feed()
+
+
+## The feed's text: the newest lines, as many as end above _feed_floor (at least one).
+func _show_feed() -> void:
+	_feed_room = FEED_LINES
+	if is_finite(_feed_floor):
+		var room := (_feed_floor - (size.y / 2.0 + feed.offset_top) + feed.get_theme_constant("line_spacing")) \
+				/ _feed_pitch()
+		_feed_room = clampi(floori(room), 1, FEED_LINES)
+	feed.text = "\n".join(_feed_msgs.slice(maxi(0, _feed_msgs.size() - _feed_room)))
 
 
 ## How far down (px from this view's top) main's status text may reach: the left column moves down under it

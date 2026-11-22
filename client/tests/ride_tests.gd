@@ -33,7 +33,9 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_settings()
 	await _test_hud()
 	for s in SIZES:
-		await _test_place(s)
+		await _test_place(s, true, false)
+		await _test_place(s, false, false)
+		await _test_place(s, false, true)
 
 
 ## Snapshot keeps player.vehicle_state as sent; on foot, not an object or over 32 keys it's {}, the snapshot stays.
@@ -79,15 +81,18 @@ func _test_shown() -> void:
 	var drv := RideInfo.read(CAR)
 	var p := CAR.duplicate(true)
 	p["in_control"] = false
+	var parked := RideInfo.read(p)   # at the controls, not driving
+	p["at_controls"] = false
 	var pas := RideInfo.read(p)
 	var out: Array[bool] = [Main.ride_shown(drv, hs, false), Main.ride_shown(drv, hs, true),
-			Main.ride_shown(pas, hs, true), Main.ride_shown(RideInfo.read(null), hs, false)]
+			Main.ride_shown(parked, hs, true), Main.ride_shown(pas, hs, true), Main.ride_shown(RideInfo.read(null), hs, false)]
 	hs.ride_hud_fp = true
 	out.append(Main.ride_shown(drv, hs, true))
 	hs.ride_hud = false
 	out.append(Main.ride_shown(drv, hs, false))
-	_check.call(out == [true, false, true, false, true, false],
-			"ride: the HUD shows on a vehicle; at the controls in first person only when F1 says so; off is off (%s)" % [out])
+	_check.call(out == [true, false, false, true, false, true, false],
+			"ride: the HUD shows on a vehicle; at the controls in first person (driving or not) only when F1 says so; "
+			+ "a passenger seat shows it; off is off (%s)" % [out])
 
 
 func _test_read() -> void:
@@ -210,25 +215,43 @@ func _test_hud() -> void:
 	f.free()
 
 
-## The dash in the window, off the hands panel (bottom right, 400 wide) and the HUD's left column.
-func _test_place(s: Vector2) -> void:
+## The dash in the window, off the hands panel (bottom right, 400 wide), the HUD's text and its left column moved
+## down under a status text: beside the feed's six messages, or with messages too wide for that the feed shows
+## fewer lines.
+func _test_place(s: Vector2, with_hands: bool, wide: bool) -> void:
 	var h := RideHud.new()
+	var hv := HudView.new()
+	var hd := HudData.new()
 	var f := Control.new()
 	f.size = s
 	_root.add_child(f)
+	f.add_child(hv)
 	f.add_child(h)
+	hv.data = hd
+	var ev: Array = []
+	for i in HudView.FEED_LINES:
+		ev.append({"kind": "message", "text": "A long line of the message feed, number %d, as wide as they come" % i
+				+ (" and wider still".repeat(6) if wide else "")})
+	hd.on_events(ev)
 	h.visible = true
 	h.show_ride(RideInfo.read(CAR, _fuel_name, FACE))
 	await _root.get_tree().process_frame
-	var hands := Rect2(s.x - 410.0, s.y - 96.0, 400.0, 86.0)
-	var column := Rect2(12.0, s.y / 2.0 - 140.0, 560.0, 230.0)
+	hv.avoid(Rect2(Vector2.ZERO, s * Vector2(1.0, 0.6)))   # a long status text: the left column moves down
+	var hands := Rect2(s.x - 410.0, s.y - 96.0, 400.0, 86.0) if with_hands else Rect2()
 	var text := Rect2(10.0, 50.0, s.x - 22.0, 52.0)
-	h.place([hands, column, text] as Array[Rect2])
-	var r := Rect2(h.dash.global_position, h.dash.size * h.dash.scale.x)
+	var full := hv.column_rect(true)
+	h.place([hands, full, text] as Array[Rect2], hands)
+	hv.keep_feed_above(h.dash_rect())
+	var r := h.dash_rect()
+	var lines := hv.feed.text.split("\n").size()
 	var inside := Rect2(Vector2.ZERO, s).grow(1.0).encloses(r)
-	var clear := not r.intersects(hands) and not r.intersects(text)
-	var off_column := not r.intersects(column) or s.x < 1000.0   # a small window may have to cover some of it
-	_check.call(inside and clear and off_column and h.dash.scale.x >= RideHud.MIN_SCALE - 0.001,
-			"ride HUD %dx%d: in the window, off the hands panel and the text%s (%s, scale %.2f)" % [s.x, s.y,
-			"" if s.x < 1000.0 else " and the left column", r, h.dash.scale.x])
+	var clear := not r.intersects(hands) and not r.intersects(text) and not r.intersects(hv.column_rect())
+	var cut := r.intersects(full) == (lines < HudView.FEED_LINES) and lines >= 1
+	cut = cut and (lines < HudView.FEED_LINES if wide and s.x <= 1280.0 else lines == HudView.FEED_LINES)
+	hv.keep_feed_above(Rect2())
+	var back := hv.feed.text.split("\n").size() == HudView.FEED_LINES
+	_check.call(inside and clear and cut and back and h.dash.scale.x >= RideHud.MIN_SCALE - 0.001,
+			"ride HUD %dx%d%s: in the window, off the hands panel, the text and the left column; the feed shows %d "
+			% [s.x, s.y, ("" if with_hands else " (hands empty)") + (" (wide feed)" if wide else ""), lines] + "lines under it, all again without it (%s, column %s, scale %.2f)" % [r,
+			hv.column_rect(), h.dash.scale.x])
 	f.free()
