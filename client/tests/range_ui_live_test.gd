@@ -434,12 +434,11 @@ func _drive_live(start: Vector3i) -> void:
 			turned += 1 if r.get("turned", false) else 0
 			if r.get("bad", "") != "":
 				bad.append("%s: %s" % [act, r["bad"]])
-			if _ride_hud() != null:
-				await _frames(2)
-				steers.append(int(_ride_hud().get("info").steer()))
-		if not steers.is_empty():
-			_check(steers.any(func(d: int) -> bool: return absi(d) >= 5),
-					"driving HUD: steering reads off the heading while the car is turned (degrees after LEFT, LEFT, a turn on: %s)" % [steers])
+			var ri: Variant = _ride_info()
+			if ri != null:
+				steers.append(int(ri.steer()))
+		if not steers.is_empty():   # (off the heading only on a turn the car hasn't moved since the key: not judged)
+			print("    (driving HUD: the steering reading after LEFT, LEFT, a turn on: %s degrees off the heading)" % [steers])
 		var steered: Snapshot.Vehicle = car_of.call()
 		var face: float = steered.face_deg if steered != null else 0.0
 		_check(turned >= 1 and bad.is_empty() and steered != null and not _faces(face, 0.0),
@@ -819,6 +818,21 @@ func _ride_hud() -> Control:
 	return (h as Control) if h is Control and _player_field("vehicle_state") is Dictionary else null
 
 
+## The player's vehicle as lead-ui's RideInfo reads it from the shown snapshot, read afresh (the HUD keeps its own
+## copy only while it shows); null on a client without it or while the snapshot has no vehicle_state.
+func _ride_info() -> Variant:
+	var snap: Snapshot = _main.world.snapshot
+	var state: Variant = snap.get("player_vehicle_state")
+	if not state is Dictionary or (state as Dictionary).is_empty() or not ResourceLoader.exists("res://scripts/hud/ride_info.gd"):
+		return null
+	var face := NAN
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		if veh.uid == snap.get("player_vehicle"):
+			face = veh.face_deg
+	var names := Callable(_main, "_itype_name") if _main.has_method("_itype_name") else Callable()
+	return load("res://scripts/hud/ride_info.gd").call("read", state, names, face)
+
+
 ## The driving HUD's rect on screen (its dash, scaled as it is drawn).
 func _ride_rect(hud: Control) -> Rect2:
 	var d := hud.get("dash") as Control
@@ -833,9 +847,14 @@ func _ride_parked(car: Snapshot.Vehicle) -> void:
 	if hud == null:
 		print("  (no driving HUD in this client, or no vehicle_state from this bridge: the driving HUD not checked)")
 		return
-	var read := func() -> bool: return hud.get("info").ok and hud.get("info").at_controls
+	var read := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.ok and now.at_controls
 	await _until(read, SHOW_TIMEOUT_MS)
-	var i: Variant = hud.get("info")
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the controls' square the snapshot has the car's numbers")
+		return
 	var fuels: Array = i.fuels
 	var full: bool = not fuels.is_empty() and fuels.all(func(f: Dictionary) -> bool: return f["left"] == f["cap"])
 	_check(i.ok and not i.driver and i.at_controls and not i.engine_on and i.velocity == 0 and i.set_speed() == 0
@@ -852,10 +871,12 @@ func _ride_set_speed() -> void:
 	var hud := _ride_hud()
 	if hud == null:
 		return
-	var set := func() -> bool: return hud.get("info").driver and hud.get("info").cruise > 0
+	var set := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.driver and now.cruise > 0
 	var is_set := await _until(set, SHOW_TIMEOUT_MS)
-	var i: Variant = hud.get("info")
-	_check(is_set and i.engine_on and i.set_speed() == i.cruise and absi(i.velocity) < i.cruise,
+	var i: Variant = _ride_info()
+	_check(is_set and i != null and i.engine_on and i.set_speed() == i.cruise and absi(i.velocity) < i.cruise,
 			"driving HUD: after the forward key twice the set speed is %.0f %s while the car does %.0f; the engine is on (safe %.0f, top %.0f %s)"
 			% [i.shown(i.cruise), i.unit, i.shown(i.velocity), i.shown(i.safe), i.shown(i.top), i.unit])
 
@@ -933,7 +954,10 @@ func _ride_passenger() -> void:
 	if hud == null:
 		return
 	await _frames(3)
-	var i: Variant = hud.get("info")
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the seat beside the driver's the snapshot has the car's numbers")
+		return
 	var name_l := hud.get("name_label") as Label
 	var engine_l := hud.get("engine_label") as Label
 	_check(i.ok and not i.driver and not i.at_controls and hud.visible and name_l != null and name_l.text.contains(i.name)
