@@ -21,9 +21,10 @@ var _check: Callable
 var _root: Node
 
 
-func run(root: Node, check: Callable) -> void:
+func run(root: Node, check: Callable, data: Variant) -> void:
 	_root = root
 	_check = check
+	_test_snapshot(data)
 	_test_read()
 	_test_junk()
 	_test_gauge_scale()
@@ -31,6 +32,27 @@ func run(root: Node, check: Callable) -> void:
 	await _test_hud()
 	for s in SIZES:
 		await _test_place(s)
+
+
+## Snapshot keeps player.vehicle_state as sent; on foot, not an object or over 32 keys it's {}, the snapshot stays.
+func _test_snapshot(data: Variant) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var pl: Dictionary = d["player"]
+	pl["vehicle_state"] = CAR.duplicate(true)
+	var on := Snapshot.from_data(d)
+	var big := {}
+	for i in 33:
+		big["k%d" % i] = i
+	var junk_ok := true
+	for bad: Variant in ["car", [1, 2], 5, big]:
+		pl["vehicle_state"] = bad
+		var j := Snapshot.from_data(d)
+		junk_ok = junk_ok and j.is_valid() and j.player_vehicle_state.is_empty()
+	pl.erase("vehicle_state")
+	var off := Snapshot.from_data(d)
+	_check.call(on.is_valid() and on.player_vehicle_state.get("name") == "Station Wagon" and junk_ok
+			and off.is_valid() and off.player_vehicle_state.is_empty(),
+			"ride: the snapshot keeps player.vehicle_state; on foot, junk or over 32 keys it's empty, the snapshot stays")
 
 
 func _test_read() -> void:

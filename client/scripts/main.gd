@@ -2255,7 +2255,7 @@ static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
 ## Driving gauge), kept off the hands panel, the look line, the HUD's text and its left column.
 func _ride_step() -> void:
 	var snap := world.snapshot
-	var raw: Variant = snap.get("player_vehicle_state") if snap != null else null
+	var raw: Variant = snap.player_vehicle_state if snap != null and not snap.player_vehicle_state.is_empty() else null
 	var face := NAN
 	if raw is Dictionary:
 		for veh: Snapshot.Vehicle in snap.vehicles:
