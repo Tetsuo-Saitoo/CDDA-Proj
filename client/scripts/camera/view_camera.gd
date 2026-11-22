@@ -5,7 +5,9 @@ extends Camera3D
 ## from an offset and is the one shown. VR ignores it.
 ## - shoulder: behind, right of and a little above the eyes, looking where they look; the boom shortens when a
 ##   wall or ceiling is in the way (`blocked`).
-## - top: high and back over the player, turning with the eyes' yaw, `top_dist` metres away (the wheel zooms).
+## - top: high and back over the player (driving: over the vehicle's middle), `top_dist` metres away (the wheel
+##   zooms); `top_up` "heading" turns it after the eyes' yaw (driving: the vehicle's heading), "north" keeps north up;
+##   it turns smoothly (TOP_TURN), never at once except when the view starts.
 ## - chase (driving): behind and above the vehicle the player is on (`car`), turning after its heading with a little
 ##   lag; the boom starts above the roof, so it never meets that vehicle, and pulls in (rising) when a wall or
 ##   anything else is in the way. Without a vehicle it follows the eyes the same way.
@@ -27,6 +29,9 @@ const TOP_DIST := 14.0
 const TOP_MIN := 5.0
 const TOP_MAX := 40.0
 const ZOOM_STEP := 1.15
+const TOP_UPS := ["heading", "north"]
+const TOP_TURN := 3.0          # 1/s: the top view's turn eases toward its goal
+const TOP_CAR_UP := 1.0        # driving: the top view looks at this height over the vehicle's middle
 
 var mode := "shoulder"
 var eyes: FirstPersonCamera
@@ -38,6 +43,9 @@ var blocked := Callable()
 ## or null (VehicleView.chase_target, set by main.gd).
 var car := Callable()
 var chase_heading := NAN       # the heading (radians, atan2 of x ahead in the level, z, x) the chase looks along
+var top_up := "heading"        # one of TOP_UPS (HudSettings.top_up)
+var driving := false           # the player drives (main.gd): top centres on the vehicle and turns with it
+var top_yaw := NAN             # the top view's turn now (as FirstPersonCamera.yaw); NaN: set at once
 
 
 func _init(fp: FirstPersonCamera) -> void:
@@ -125,6 +133,9 @@ func follow(delta := 0.0) -> void:
 	if mode == "chase":
 		_follow_chase(eye, delta)
 		return
+	if mode == "top":
+		_follow_top(eye, delta)
+		return
 	var boom := 1.0
 	if mode == "shoulder" and blocked.is_valid():
 		var full := pose(mode, eye, eyes.yaw, eyes.pitch)
@@ -142,6 +153,37 @@ func _put(t: Transform3D) -> void:
 		global_transform = t
 	else:
 		transform = t
+
+
+## The yaw (as FirstPersonCamera.yaw: 0 looks along -z, + to the left) that looks along `xf`'s x (a vehicle's
+## ahead), level; NaN when x is (nearly) straight up or not finite.
+static func heading_yaw(xf: Transform3D) -> float:
+	var x := xf.basis.x
+	if not x.is_finite() or Vector2(x.x, x.z).length() < 1e-4:
+		return NAN
+	return atan2(-x.x, -x.z)
+
+
+## The top view's turn after `dt` seconds from `now` toward `goal` (radians; NaN now or dt: at once).
+static func top_ease(now: float, goal: float, dt: float) -> float:
+	if not is_finite(now) or not is_finite(dt):
+		return goal
+	return lerp_angle(now, goal, 1.0 - exp(-TOP_TURN * clampf(dt, 0.0, 1.0)))
+
+
+func _follow_top(eye: Vector3, delta: float) -> void:
+	var centre := eye
+	var goal := eyes.yaw
+	var c: Variant = car.call() if driving and car.is_valid() else null
+	if c is Transform3D and (c as Transform3D).is_finite():
+		centre = (c as Transform3D).origin + Vector3.UP * (TOP_CAR_UP + FirstPersonCamera.EYE_H * 0.5)
+		var h := heading_yaw(c)
+		if is_finite(h):
+			goal = h
+	if top_up == "north":
+		goal = 0.0
+	top_yaw = top_ease(top_yaw, goal, delta) if delta > 0.0 else goal
+	_put(pose("top", centre, top_yaw, 0.0, top_dist))
 
 
 func _follow_chase(eye: Vector3, delta: float) -> void:

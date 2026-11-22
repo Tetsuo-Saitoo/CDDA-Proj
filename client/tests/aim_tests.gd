@@ -90,6 +90,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 			"aim: a corpse is drawn body-sized (%s %s)" % [corpse.shape, corpse.scale])
 
 	_test_views(world, me, zp, ui, aim, cam, req)
+	_test_gaze_throw(world, me, zp, ui, aim, cam, req)
 	_test_bullets(root, world, tables, me, zp, ui, aim, cam, req)
 	_test_hits(aim, ui, cam, tables)
 	_test_viewmodel(root, tables)
@@ -1839,6 +1840,57 @@ func _test_muzzle_flash(root: Node, tables: IdTables) -> void:
 	vm.kick()
 	_check.call(hushed and vm.flashing(), "muzzle flash: none from a suppressed gun (it still recoils), back without one")
 	vm.free()
+
+
+## Throw where you look (simulated gaze): a throw-mode request's cursor follows the eyes' square and the throw goes
+## there; the head's gaze, the setting off, junk gaze, the own square and gun aim leave everything as it was.
+func _test_gaze_throw(world: WorldView, me: Vector3i, zp: Vector3i, ui: RequestUI, aim: AimController, cam: Camera3D,
+		req: Dictionary) -> void:
+	var from := world.coords.ms_center_to_world(me) + Vector3(0, 1.5, 0)   # the eyes
+	var to_zombie := (world.coords.ms_center_to_world(zp) + Vector3(0, 1.0, 0) - from).normalized()
+	var g := [{"from": from, "dir": to_zombie, "eyes": true}]
+	aim.gaze = func() -> Variant: return g[0]
+	aim.gaze_throw = false
+	var off := aim.gaze_square() == null
+	aim.gaze_throw = true
+	var on: Variant = aim.gaze_square()
+	var junk_ok := true
+	for bad: Variant in [{"from": from, "dir": to_zombie, "eyes": false}, {"from": from, "dir": to_zombie},
+			{"from": from, "dir": to_zombie, "eyes": 1}, {"from": from, "dir": Vector3(NAN, 0, 0), "eyes": true},
+			{"from": Vector3(INF, 0, 0), "dir": to_zombie, "eyes": true}, {"from": from, "dir": Vector3.ZERO, "eyes": true},
+			{"from": "x", "dir": to_zombie, "eyes": true}, [], null, "eyes"]:
+		g[0] = bad
+		if aim.gaze_square() != null:
+			junk_ok = false
+			print("gaze junk taken: ", bad)
+	g[0] = {"from": from, "dir": Vector3.DOWN, "eyes": true}
+	var own := aim.gaze_square() == null
+	_check.call(off and on == zp and junk_ok and own,
+			"aim gaze: the eyes' square (%s), none when off, for the head, junk or the own square" % [on])
+	g[0] = {"from": from, "dir": to_zombie, "eyes": true}
+	var throw_req := req.duplicate()
+	throw_req["mode"] = "throw"
+	ui.show_request(throw_req)
+	aim.first_person = false
+	aim.update(cam, false)
+	var follows := ui.target_widget().cursor == zp
+	answers.clear()
+	var thrown: bool = aim.throw_at_gaze() and answers.back() == {"id": 9, "pos": zp, "action": "FIRE"}
+	ui.show_request(throw_req)
+	g[0] = {"from": from, "dir": to_zombie, "eyes": false}
+	aim.update(cam, false)
+	answers.clear()
+	var head_none := ui.target_widget().cursor == me and not aim.throw_at_gaze() and answers.is_empty()
+	ui.show_request(req)   # fire: gun aim stays on the crosshair / sights
+	g[0] = {"from": from, "dir": to_zombie, "eyes": true}
+	aim.update(cam, false)
+	var gun_kept := ui.target_widget().cursor == me and not aim.throw_at_gaze()
+	ui.clear()
+	aim.gaze = Callable()
+	aim.gaze_throw = false
+	_check.call(follows and thrown and head_none and gun_kept,
+			"aim gaze: a throw follows the eyes and goes there; the head's gaze and gun aim don't (%s %s %s %s)"
+			% [follows, thrown, head_none, gun_kept])
 
 
 ## Gunmods on the flat viewmodel: the held gun's installed mods as GunMods' boxes (junk entries dropped, the same
