@@ -740,7 +740,8 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var frame: Dictionary = look.call(3, 0.4)
 	var over: Dictionary = look.call(0, 2.5)
 	var desc := ray.describe(sq.call(0))
-	_check.call(board.get("what") == "Test Car: board" and board.get("vehicle") == UID and board.get("square") == sq.call(0)
+	_check.call(board.get("what") == "Test Car: board" and board.get("vehicle") == UID and board.get("part") == 1
+			and board.get("square") == sq.call(0)
 			and door.get("what") == "Test Car: door" and not open.get("hit", false) and frame.get("what") == "Test Car: frame"
 			and not over.get("hit", false) and "\n".join(desc).contains("vehicle: Test Car (2 parts here: frame, board)"),
 			"vehicles: look-at names the vehicle and the part met (%s, %s, %s; %s)" % [board.get("what"), door.get("what"),
