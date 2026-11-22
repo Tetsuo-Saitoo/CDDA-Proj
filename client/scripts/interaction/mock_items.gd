@@ -200,7 +200,9 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 
 
 ## Drop a carried item (with what is inside it) on `pos` (in reach); `spot` each 0..1 is kept in permille.
-func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1, cargo := false) -> bool:
+	if cargo:
+		return false   # the mock has no vehicles
 	var u := _uid(uid)
 	var t := _type(type)
 	if snap == null or u <= 0 or t <= 0 or not _pos_ok(pos) or is_nan(spot.x) or is_nan(spot.y) or shelf < -1 \

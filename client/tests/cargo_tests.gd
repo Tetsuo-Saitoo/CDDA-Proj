@@ -9,10 +9,29 @@ const ITEM_B := 902
 var _check: Callable
 
 
+## Records drop calls (the backend's drop_item with car storage's `cargo`).
+class DropRecorder:
+	var calls: Array = []
+
+	func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1, cargo := false) -> bool:
+		calls.append([uid, type, pos, spot, shelf, cargo])
+		return true
+
+
+## Stands in for CddaSim: keeps what LiveSession queues.
+class FakeSim:
+	var sent: Array = []
+
+	func queue_item_action(a: Dictionary) -> bool:
+		sent.append(a)
+		return true
+
+
 func run(_root: Node, check: Callable, data: Variant) -> void:
 	_check = check
 	_test_read(data)
 	_test_tray(data)
+	_test_put(data)
 
 
 ## The mock with a car one square east of the player: part 0 a frame and part 1 its trunk there, part 2 a frame
@@ -88,3 +107,45 @@ func _test_tray(data: Variant) -> void:
 	_check.call(ItemTray.list(taken, src)["rows"].size() == 1 and not ItemActions.listed_in_cargo(taken, rows[0])
 			and ItemTray.list(gone, src).is_empty() and ItemTray.list(moved, src).is_empty(),
 			"cargo tray: follows the snapshot: an item taken leaves it; no row, or the row for another part: gone")
+
+
+## Putting in: letting go over the trunk is a "cargo" drop while `reach` allows it; the drop goes out with cargo
+## true and no spot; a plain drop stays a plain drop.
+func _test_put(data: Variant) -> void:
+	var s := Snapshot.from_data(_with_car(data, [[1, 5000, 60000, 0, []]]))
+	var trunk := s.player_pos + Vector3i(1, 0, 0)
+	var hit := {"hit": true, "square": trunk, "point": Vector3.ZERO, "what": "Station Wagon: trunk", "vehicle": UID}
+	var yes := func(_u: int, _p: int) -> bool: return true
+	var no := func(_u: int, _p: int) -> bool: return false
+	var t := Hands.cargo_target(s, null, hit, yes)
+	var beside := hit.duplicate()
+	beside["square"] = trunk + Vector3i(0, -1, 0)
+	var other := hit.duplicate()
+	other["vehicle"] = UID + 1
+	var target_ok: bool = t.get("kind") == "cargo" and t["square"] == trunk and t["part"] == 1 and t["name"] == "part" \
+			and Hands.cargo_target(s, null, hit, no).is_empty() and Hands.cargo_target(s, null, hit, Callable()).is_empty() \
+			and Hands.cargo_target(s, null, beside, yes).is_empty() and Hands.cargo_target(s, null, other, yes).is_empty() \
+			and Hands.drop_hint(t, null) == "put it in the part"
+	var acts := ItemActions.new()
+	var rec := DropRecorder.new()
+	acts.backend = rec
+	var it := ItemRef.on_square(ITEM_A, 10, s.player_pos)
+	it.carried = true
+	var sent := acts.drop(it, trunk, Vector2(-1, -1), -1, true)
+	var it2 := ItemRef.on_square(ITEM_B, 11, s.player_pos)
+	it2.carried = true
+	var plain := acts.drop(it2, trunk)
+	var calls_ok: bool = sent and plain and rec.calls.size() == 2 \
+			and rec.calls[0] == [float(ITEM_A), 10.0, trunk, Vector2(-1, -1), -1, true] and rec.calls[1][5] == false
+	var ls := LiveSession.new()
+	var sim := FakeSim.new()
+	ls._sim = sim
+	var q: bool = ls.drop_item(float(ITEM_A), 10.0, trunk, Vector2(-1, -1), -1, true) and ls.drop_item(float(ITEM_A), 10.0, trunk) \
+			and not ls.drop_item(float(ITEM_A), 10.0, trunk, Vector2(0.5, 0.5), -1, true) \
+			and not ls.drop_item(float(ITEM_A), 10.0, trunk, Vector2(-1, -1), 2, true)
+	var sim_ok: bool = q and sim.sent.size() == 2 and sim.sent[0].get("cargo") == true and not sim.sent[1].has("cargo")
+	ls._sim = null
+	ls.free()
+	_check.call(target_ok and calls_ok and sim_ok,
+			"cargo put: over the trunk, while allowed, letting go puts it in (drop with cargo, no spot); a plain drop "
+			+ "stays plain (%s %s %s; %s)" % [target_ok, calls_ok, sim_ok, rec.calls])

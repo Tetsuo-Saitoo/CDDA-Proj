@@ -250,6 +250,9 @@ func _ready() -> void:
 		if vr == null and op in ["mod_add", "mod_remove"] and not why.is_empty() and not vise_bench.clamped():
 			grab.flash(why, true))   # (at the vise its panel says it: ViseBench.on_refused)
 	hands = Hands.new(world, item_actions)
+	# car storage: letting go over a cargo space puts the item in; on the flat screen always (no hand opens a lid),
+	# in VR only with its lid open (lead-world's VehicleView.can_reach; lead-vr's rule)
+	hands.cargo_reach = func(uid: int, part: int) -> bool: return vr == null or vehicles_view.can_reach(uid, part)
 	add_child(hands)
 	grab.hands = hands
 	var tray := ItemTray.new()   # L8: the mouse's tray (`loot_tray`); VR has its own (VrRig.tray)

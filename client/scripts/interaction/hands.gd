@@ -295,6 +295,27 @@ func proxy(id: String) -> Node3D:
 ## down onto a shown shelf puts it there (L8: WorldView.shelf_on_ray; a table top, an open drawer's floor), unless
 ## LookRay meets something nearer on another square (a wall, other furniture; it sees furniture as solid boxes, so
 ## the shelf's own square doesn't count).
+## Car storage: (vehicle uid, part) -> whether an item may go into that cargo space now. main sets it: the flat
+## screen always (letting go over a trunk puts it in), VR only with the lid open (VehicleView.can_reach). Unset:
+## no cargo targets.
+var cargo_reach := Callable()
+
+
+## The cargo space letting go puts an item into for ray hit `hit` (LookRay: a vehicle's part on a square): {kind:
+## "cargo", square, vehicle, part, name} when that square is a cargo space the snapshot lists next to the player
+## and `reach` allows it; {} otherwise.
+static func cargo_target(snap: Snapshot, tables: IdTables, hit: Dictionary, reach: Callable) -> Dictionary:
+	if hit.get("hit") != true or not hit.get("square") is Vector3i or not hit.has("vehicle") or not reach.is_valid():
+		return {}
+	var src := ItemTray.source_for_cargo(snap, hit["square"])
+	if src.is_empty() or src["vehicle"] != hit["vehicle"] or ItemTray.list(snap, src).is_empty() \
+			or reach.call(src["vehicle"], src["part"]) != true:
+		return {}
+	var veh: Snapshot.Vehicle = snap.vehicle_at(src["square"])[0]
+	return {"kind": "cargo", "square": src["square"], "vehicle": src["vehicle"], "part": src["part"],
+			"name": VehicleView.part_label(snap, tables, veh, src["part"])}
+
+
 func drop_on_ray(origin: Vector3, dir: Vector3, held: ItemRef, max_m := RAY_M) -> Dictionary:
 	var hit := look_ray.cast(origin, dir, max_m, false)
 	var under := picker.on_ray(origin, dir, max_m)
@@ -322,6 +343,10 @@ func drop_at(p: Vector3, held: ItemRef) -> Dictionary:
 ## DropTarget's answer plus `point`: where the ray met something (the carried item can rest there), or null.
 func _drop(hit: Dictionary, under: ItemRef, held: ItemRef, shelf := {}) -> Dictionary:
 	var d := DropTarget.resolve(world.coords, hit, under, held, world.tables, world.snapshot, picker.in_reach, shelf)
+	if d.get("kind") != "container" and held != null:   # over a vehicle's cargo space: into it
+		var c := cargo_target(world.snapshot, world.tables, hit, cargo_reach)
+		if not c.is_empty():
+			d = c
 	d["point"] = under.point if under != null and d.get("kind") == "container" else hit.get("point")
 	return d
 
@@ -355,7 +380,7 @@ func release(id: String, drop: Dictionary, velocity := Vector3.ZERO) -> String:
 	var body := false
 	if loose is Transform3D:   # before the drop goes out: a backend may answer inside the call (MockItems)
 		body = bs.let_go(it.uid, it.type, loose, velocity, drop["square"], it.size_m) != null
-	if kind in ["surface", "burner", "container"]:
+	if kind in ["surface", "burner", "container", "cargo"]:
 		op = _move(id, it, drop)
 	if bs != null:
 		if body and op == "":
@@ -531,6 +556,8 @@ static func drop_hint(drop: Dictionary, tables: IdTables) -> String:
 			return "put it on the heat (not lit)" if cold else "put it on the heat"
 		"surface":
 			return "put it here"
+		"cargo":
+			return "put it in the %s" % drop.get("name", "cargo space")
 	return "can't put it there"
 
 
@@ -549,6 +576,8 @@ func _move(id: String, it: ItemRef, drop: Dictionary) -> String:
 	var second := func(c: ItemRef) -> bool:
 		if kind == "container":
 			return actions.put(c, container, pocket)
+		if kind == "cargo":
+			return actions.drop(c, square, Vector2(-1, -1), -1, true)
 		return actions.drop(c, square, spot, shelf)
 	return _two_step(id, it, second, "put" if kind == "container" else "drop")
 

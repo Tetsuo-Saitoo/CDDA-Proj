@@ -112,10 +112,13 @@ func put(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 
 ## Drops a carried `item` on `square`; `spot` (each 0..1 across the square, x east, y south) places it there,
 ## (-1, -1) none. `shelf` (0..MAX_SHELF, -1 none; L8) is the furniture shelf it goes on, kept only with a spot.
-func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1, cargo := false) -> bool:
 	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y) \
 			or shelf < -1 or shelf > MAX_SHELF:
 		return false
+	if cargo:   # car storage: into the vehicle's cargo space on `square` (CDDA's room rule), never a spot or shelf
+		var none := Vector2(-1, -1)
+		return _send("drop", item, square, none, "drop_item", [float(item.uid), float(item.type), square, none, -1, true])
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		spot = Vector2(clampf(spot.x, 0.0, SPOT_MAX), clampf(spot.y, 0.0, SPOT_MAX))
 	else:
