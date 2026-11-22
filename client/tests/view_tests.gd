@@ -14,6 +14,8 @@ func run(check: Callable) -> void:
 	_test_poses()
 	_test_follow()
 	_test_chase()
+	_test_top()
+	_test_recentre()
 	_test_start_view()
 	_test_setting()
 	_test_reach_from_eyes()
@@ -131,6 +133,86 @@ func _test_chase() -> void:
 	w.free()
 
 
+## C5: the top view centres on the player (driving: the vehicle), turns smoothly with the facing (driving: the
+## heading) or keeps north up.
+func _test_top() -> void:
+	var w := WorldView.new()
+	var fp := FirstPersonCamera.new(w)
+	fp.position = Vector3(3, 1.6, 4)
+	fp.set_look(1.0, 0.0)
+	var vc := ViewCamera.new(fp)
+	vc.mode = "top"
+	vc.follow()
+	var on_foot := absf(vc.top_yaw - 1.0) < 1e-6 and vc.transform.is_equal_approx(ViewCamera.pose("top", fp.position, 1.0, 0.0))
+	fp.set_look(-1.0, 0.0)
+	vc.follow(0.1)
+	var smooth := vc.top_yaw < 1.0 and vc.top_yaw > 0.0
+	for i in 60:
+		vc.follow(0.1)
+	var caught := absf(vc.top_yaw + 1.0) < 0.01
+	vc.top_up = "north"
+	vc.follow(0.1)
+	var north_turning := vc.top_yaw > -1.0 and vc.top_yaw < 0.0
+	for i in 60:
+		vc.follow(0.1)
+	var north := absf(vc.top_yaw) < 0.01 and (-vc.transform.basis.z).z < -0.1 and absf((-vc.transform.basis.z).x) < 0.01
+	vc.top_up = "heading"
+	var mid := Vector3(20, 0, 10)
+	vc.car = func() -> Variant: return Transform3D(Basis(Vector3.UP, -PI / 2), mid)   # x ahead along +z (south)
+	vc.follow(0.0)
+	var walking_ignores_car := absf(vc.top_yaw + 1.0) < 1e-6
+	vc.driving = true
+	vc.top_yaw = NAN
+	vc.follow(0.1)
+	var at := mid + Vector3.UP * (ViewCamera.TOP_CAR_UP + FirstPersonCamera.EYE_H * 0.5)
+	var on_car := vc.transform.is_equal_approx(ViewCamera.pose("top", at, vc.top_yaw, 0.0, vc.top_dist)) \
+			and ViewCamera.facing(vc.top_yaw).is_equal_approx(Vector3(0, 0, 1))
+	vc.car = func() -> Variant: return "junk"
+	vc.follow(0.0)
+	var junk := vc.transform.origin.is_finite() and absf(vc.top_yaw - fp.yaw) < 1e-6
+	_check.call(on_foot and smooth and caught and north_turning and north and walking_ignores_car and on_car and junk
+			and is_nan(ViewCamera.heading_yaw(Transform3D(Basis(Vector3.RIGHT, PI / 2), Vector3.ZERO).rotated(Vector3.FORWARD, PI / 2))),
+			"views: top centres on the player, turns smoothly after the facing or keeps north up; driving it centres on the vehicle and turns with its heading")
+	vc.free()
+	fp.free()
+	w.free()
+
+
+## C5: driving in first person, the look eases back to the road only after 1.5 s without look input.
+func _test_recentre() -> void:
+	var still := FirstPersonCamera.recentred(1.0, 0.3, 0.0, 1.4, 0.1)
+	var pulled := FirstPersonCamera.recentred(1.0, 0.3, 0.0, 1.5, 0.1)
+	var none := FirstPersonCamera.recentred(1.0, 0.3, NAN, 9.0, 0.1)
+	var w := WorldView.new()
+	var fp := FirstPersonCamera.new(w)
+	fp.set_look(1.0, 0.2)
+	var goal: Array = [0.0]
+	fp.recentre = func() -> Variant: return goal[0]
+	for i in 14:   # 1.4 s still: no pull
+		fp._recentre(0.1)
+	var waited := is_equal_approx(fp.yaw, 1.0)
+	fp._recentre(0.2)   # 1.6 s: pulls
+	var eases := fp.yaw < 1.0 and fp.yaw > 0.5 and fp.pitch < 0.2
+	fp.look(Vector2(-10, 0))   # the mouse moves: the wait starts again
+	var y := fp.yaw
+	fp._recentre(0.5)
+	var reset := fp.look_idle < FirstPersonCamera.RECENTRE_AFTER and is_equal_approx(fp.yaw, y)
+	fp.look_idle = 5.0
+	fp.step(0.1, {"look": Vector2(0.5, 0.0)})   # the stick looks: the wait starts again
+	var stick := fp.look_idle < FirstPersonCamera.RECENTRE_AFTER
+	for i in 100:
+		fp._recentre(0.1)
+	var back := absf(fp.yaw) < 0.01 and absf(fp.pitch) < 0.01
+	goal[0] = null
+	fp.set_look(1.0, 0.0)
+	fp._recentre(1.0)
+	_check.call(still == Vector2(1.0, 0.3) and pulled.x < 1.0 and pulled.y < 0.3 and none == Vector2(1.0, 0.3)
+			and waited and eases and reset and stick and back and is_equal_approx(fp.yaw, 1.0),
+			"views: driving in first person the look eases back to the road after 1.5 s still; mouse or stick look starts the wait again; off: none")
+	fp.free()
+	w.free()
+
+
 func _test_start_view() -> void:
 	_check.call(Main.start_view({"view": "shoulder"}, "top") == "shoulder" and Main.start_view({}, "top") == "top"
 			and Main.start_view({"camera": "1,2,3,0,0"}, "top") == "outside" and Main.start_view({}, "sideways") == "first"
@@ -176,6 +258,22 @@ func _test_setting() -> void:
 	dk.load_file(path)
 	_check.call(HudSettings.new().drive == "chase" and dr.drive == "top" and dj.drive == "chase" and dk.drive == "chase",
 			"views: the driving view is saved and read back; chase by default and for anything else in the file")
+	var t := HudSettings.new()
+	t.top_up = "north"
+	t.recentre = false
+	t.save_file(path)
+	var tr := HudSettings.new()
+	tr.load_file(path)
+	var f5 := FileAccess.open(path, FileAccess.WRITE)
+	f5.store_string("[view]\ntop_up=\"south\"\nrecentre=\"no\"\n")
+	f5.close()
+	var tj := HudSettings.new()
+	tj.top_up = "north"
+	tj.recentre = false
+	tj.load_file(path)
+	_check.call(HudSettings.new().top_up == "heading" and HudSettings.new().recentre and tr.top_up == "north"
+			and not tr.recentre and tj.top_up == "heading" and tj.recentre,
+			"views: top-down north up and the driving recentre are saved and read back; turns-with-you and on by default and for junk")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 
 

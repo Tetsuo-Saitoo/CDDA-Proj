@@ -215,6 +215,7 @@ func _ready() -> void:
 	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
 	creature_view.seat = func(sq: Vector3i) -> Transform3D: return vehicles_view.seat_transform(world.snapshot, sq)
 	view_cam.car = func() -> Variant: return vehicles_view.chase_target(world.snapshot)
+	fp.recentre = _recentre_goal
 	gaze_fx = GazeEffects.new()   # eye tracking, visual only: gaze set in _start_vr, switches by the settings
 	gaze_fx.world = world
 	gaze_fx.lighting = world.lighting
@@ -533,8 +534,19 @@ func _driving_view(driving: bool) -> void:
 	if driving == _driving:
 		return
 	_driving = driving
+	view_cam.driving = driving and vr == null
 	if vr == null:
 		_set_view(hud_settings.drive if driving else hud_settings.view)
+
+
+## C5 recentre: driving in first person on the flat screen with the F1 switch on, the yaw of the vehicle's heading
+## as drawn (FirstPersonCamera eases the look back to it after a moment without look input); null otherwise.
+func _recentre_goal() -> Variant:
+	if vr != null or not _driving or view_mode != "first" or not hud_settings.recentre or vehicles_view == null:
+		return null
+	var c: Variant = vehicles_view.chase_target(world.snapshot)
+	var h := ViewCamera.heading_yaw(c) if c is Transform3D else NAN
+	return h if is_finite(h) else null
 
 
 ## C5, flat screen: the look turns with the vehicle the player is on as it is drawn turning (VR: VrRide turns the
@@ -652,6 +664,7 @@ func _set_view(m: String) -> void:
 	if m in ViewCamera.MODES:
 		view_cam.mode = m
 		view_cam.chase_heading = NAN   # a new chase starts behind the vehicle at once
+		view_cam.top_yaw = NAN         # and a new top view turned as it should be
 		view_cam.follow()
 		view_cam.make_current()
 	view_cam.set_process(m in ViewCamera.MODES)
@@ -1797,6 +1810,8 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	if view_cam != null:
+		view_cam.top_up = o.top_up if o.top_up in ViewCamera.TOP_UPS else "heading"
 	_apply_clock()   # the F1 Time row
 	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
 		gaze_fx.adapt_on = o.eye_on("light_adapt")

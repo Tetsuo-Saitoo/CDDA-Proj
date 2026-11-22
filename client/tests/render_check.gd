@@ -60,7 +60,9 @@ const SHOTS := [
 	{"name": "drive_chase_turned", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE,
 		"face": 330.0, "settle": 3.0},
 	{"name": "drive_top_turned", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
-		"face": 330.0},
+		"face": 330.0, "settle": 2.5},
+	{"name": "drive_top_north", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0, "top_up": "north", "settle": 2.5},
 	# The coupe at 45 degrees: yellow marks on CDDA's real squares the rigid model doesn't line up with, seen on foot,
 	# from the chase camera, and not at all from the driver's seat.
 	{"name": "car_marks_45", "env": CLEAR, "yaw": 0.0, "pitch": -22.0, "move": Vector3i(-13, 20, 0), "face": 45.0},
@@ -205,6 +207,7 @@ func _shot(index: int, shot: Dictionary) -> void:
 	_main._show(snap)
 	_main._set_view(shot.get("view", "first"))
 	_main.view_cam.top_dist = shot.get("zoom", ViewCamera.TOP_DIST)
+	_main.view_cam.top_up = shot.get("top_up", "heading")
 	_main._frame_player()
 	_main.fp.set_look(deg_to_rad(shot.get("yaw", 0.0)), deg_to_rad(shot.get("pitch", 0.0)))
 	await _seconds(shot.get("settle", 1.5))
