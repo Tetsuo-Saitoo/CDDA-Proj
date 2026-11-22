@@ -131,7 +131,13 @@ var body: PlayerBody      # the player's body (main.gd): its arms reach for thes
 ## C5: () -> Array: the vehicle the player is on, [uid, where VehicleView draws it now, where the snapshot puts it]
 ## (both Transform3D, world); [] when none (main.gd). Standing on it, the rig rides along (ride_along).
 var ride := Callable()
+## (uid, world point) -> Vector3i or null: the square of that vehicle whose cell, as drawn now, is under the point
+## (VehicleView.square_at, main.gd); unset: the head's spot is put where the snapshot has the vehicle (ride_along).
+var ride_square := Callable()
 var riding := VrRide.new()
+## Driving by hand (VrDrive): the wheel, the triggers and the turn stick as pedals, lids by their handles. main.gd
+## gives it the interiors (VehicleView.interior, open_lid) and CDDA's queue.
+var drive := VrDrive.new()
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -405,6 +411,8 @@ func _build() -> void:
 	busy = VrBusy.new()
 	busy.clock = func() -> String: return hud.data.clock if hud != null and hud.data != null else ""
 	camera.add_child(busy)
+	drive.flash = busy.flash
+	drive.paused = func() -> String: return vr_words(ClockControl.held_note()) if not busy.paused_line().is_empty() else ""
 	hint = VrHint.new()   # top level: placed in world space, following the head lazily
 	hint.rig = self
 	add_child(hint)
@@ -499,6 +507,7 @@ func _process(delta: float) -> void:
 	follow_ground(delta)
 	update_pointer()
 	track_hands(delta)
+	drive.update([left.global_position, right.global_position], world.snapshot)
 	update_hands(delta)
 	gun.update(delta)
 	swing.update(delta)   # L3: a fast hand whose striking line meets a creature strikes it (CDDA's aimed strike)
@@ -1031,12 +1040,18 @@ func release(c: XRController3D, n: String) -> void:
 		looking.held = false
 		looking.hide_look()
 		return
+	if n == "trigger_click" and drive.unpedal(0 if c == left else 1):
+		return   # a pedal let go
 	if n == "trigger_click" and wheel.release(0 if c == left else 1):
 		return   # the trigger that opened a wheel: letting go picks
 	if n != "grip_click":
 		panel_button(c, n, false)   # a release always reaches the panel (a no-op when nothing there is held)
 		return
 	_grip_down[0 if c == left else 1] = false
+	if drive.holds(0 if c == left else 1):
+		if settings["grip"] != "toggle":
+			drive.let_go(0 if c == left else 1)
+		return
 	if gun.release(c):
 		return   # the end of a rack (VrGun)
 	if settings["grip"] != "toggle":   # toggle: the next press lets go
@@ -1437,6 +1452,14 @@ func step(delta: float, inp: Dictionary) -> void:
 		panel.nav(inp.get("move", Vector2.ZERO), inp.get("turn", Vector2.ZERO), delta)
 	elif wheel.active():
 		pass   # a wheel around the hand: its stick points (update_wheel), no moving
+	elif VrDrive.driving_uid(world.snapshot) != 0:   # driving: no walking or teleport; the turn stick's y is a pedal
+		var tv: Vector2 = inp.get("turn", Vector2.ZERO)
+		drive.set_stick(tv.y if absf(tv.y) > absf(tv.x) else 0.0)
+		if aiming:
+			aiming = false
+			arc = {}
+		if _turn(Vector2(tv.x, 0.0), delta):
+			moving = true
 	elif world.snapshot != null:
 		var mv := _dead(inp.get("move", Vector2.ZERO))
 		if settings["move"] == "smooth" and mv != Vector2.ZERO:
@@ -1536,11 +1559,17 @@ func ride_along() -> void:
 	var drawn: Variant = null
 	if r is Array and (r as Array).size() == 3 and r[0] is int and r[1] is Transform3D and r[2] is Transform3D \
 			and (r[1] as Transform3D).is_finite() and (r[2] as Transform3D).is_finite():
-		var spot: Vector3 = (r[2] as Transform3D) * ((r[1] as Transform3D).affine_inverse() * camera.global_position)
-		var sq := world.coords.world_to_ms(spot)
-		sq.z = z
-		var on := world.snapshot.vehicle_at(sq)
-		if not on.is_empty() and (on[0] as Snapshot.Vehicle).uid == r[0]:
+		var on_it := false
+		if ride_square.is_valid():   # the cell under the head as the car is drawn: exact on a turned rigid car
+			var sq: Variant = ride_square.call(r[0], camera.global_position)
+			on_it = sq is Vector3i and (sq as Vector3i).z == z
+		else:
+			var spot: Vector3 = (r[2] as Transform3D) * ((r[1] as Transform3D).affine_inverse() * camera.global_position)
+			var sq := world.coords.world_to_ms(spot)
+			sq.z = z
+			var on := world.snapshot.vehicle_at(sq)
+			on_it = not on.is_empty() and (on[0] as Snapshot.Vehicle).uid == r[0]
+		if on_it:
 			uid = r[0]
 			drawn = r[1]
 	global_transform = riding.carry(global_transform, camera.global_position, uid, drawn)
@@ -1759,7 +1788,12 @@ func toggle_time() -> void:
 	if not note is String or (note as String).is_empty():
 		_feel(left)
 		return
-	busy.flash((note as String).replace(InputActions.prompt_of(ClockControl.PAUSE), "menu > Time"))
+	busy.flash(vr_words(note))
+
+
+## A flat-screen note in the headset's words: the pause key is the VR menu's Time row.
+static func vr_words(note: String) -> String:
+	return note.replace(InputActions.prompt_of(ClockControl.PAUSE), "menu > Time")
 
 
 ## Queues CDDA action `act` ("wait", "sleep"; the bridge's allow-list decides) through main's queue (VrGun's
@@ -2055,6 +2089,9 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click" and fire_press(c):
 		return   # L9: a hand low over a fire square lights or puts out that fire
+	if n == "trigger_click" and (hands == null or hands.holding(hand_id(c)).is_empty() or drive.holds_wheel(ci)) \
+			and drive.pedal(ci, c == main_ctrl(), world.snapshot):
+		return   # driving: an empty hand's trigger (or one on the wheel) is the throttle (main) or the brake (VrDrive)
 	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() \
 			and wheel.press(ci, c.global_position):
 		return   # radial menus: the furniture the hand is on, used in CDDA (a tap: its default; held: the wheel)
@@ -2068,11 +2105,15 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			_feel(c)
 		return
 	if n == "grip_click":
+		if drive.holds(ci):   # toggle grip: the next press lets go of the wheel or lid
+			if settings["grip"] == "toggle":
+				drive.let_go(ci)
+			return
 		var holds := hands != null and (not hands.holding(hand_id(c)).is_empty() or pack.hand == ci)
 		if holds and settings["grip"] == "toggle":
 			let_go(c)
-		elif not holds and not gun.grip(c):   # the off hand on the gun's magazine or slide first
-			grab_with(c)
+		elif not holds and not gun.grip(c) and not drive.grip(ci, c.global_position, world.snapshot):
+			grab_with(c)   # the off hand on the gun's magazine or slide first, then the wheel's rim or a lid's handle
 		return
 	if current_layout() == "vive":
 		if c == right and n == "menu_button":
