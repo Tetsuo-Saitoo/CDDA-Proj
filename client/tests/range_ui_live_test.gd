@@ -971,7 +971,8 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		if not empty:
 			print("    (E on %s: tray open at once %s, a frame later %s, two frames later %s, closed because %s; the tray's list then: %s; player %s, in the main loop %s, menu open %s)"
 					% [what, at_once, one_frame, _main.grab.tray_open(), whys, listed_then, _main.world.snapshot.player_pos,
-					_main._in_main_loop(), _main._menu_open()])
+					_main._in_main_loop(), [_main.key_menu.visible, _main.inspect.visible, _main.character.visible,
+					_main.request_ui.visible, _main.vise_bench.visible, _main.main_menu != null, _main.vr != null]])
 		var tray_open: bool = _main.grab.tray_open()
 		var src: Variant = _main.grab.tray.get("source") if tray_open else {}
 		var lid: Array = _main.get("_cargo_lid")
