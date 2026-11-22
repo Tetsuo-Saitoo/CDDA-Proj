@@ -42,6 +42,8 @@ var _compass_value: Label
 var debug_check: CheckBox
 var mood_check: CheckBox
 var hurt_check: CheckBox
+var ride_check: CheckBox   # HUD row: the driving HUD on a vehicle
+var ride_fp_check: CheckBox   # HUD row: the driving HUD in first person at the controls too
 var key_help_check: CheckBox   # HUD row: the key help along the top, or one short line
 var flash_check: CheckBox
 ## G1: the message feed's filter, one box per HudSettings.FEED_GROUPS group (checked = shown).
@@ -54,6 +56,11 @@ var ui_slider: HSlider
 var weather_pick: OptionButton
 var menu_pick: OptionButton   # HudSettings.context_menu: how E shows an object's choices
 var main_pick: OptionButton   # HudSettings.main_hand, in MAIN_HANDS' order
+var drive_pick: OptionButton  # HudSettings.drive, in DRIVE_VIEWS' order
+var top_pick: OptionButton    # HudSettings.top_up, in TOP_UPS' order
+const TOP_NAMES := ["Top-down: turns with you", "Top-down: north up"]   # TOP_UPS' order
+var recentre_check: CheckBox  # HudSettings.recentre
+const DRIVE_NAMES := ["Driving: first person", "Driving: chase", "Driving: top-down"]   # DRIVE_VIEWS' order
 var volume_slider: HSlider
 var ambience_slider: HSlider
 ## G6 (add_hints): the hints and their on / off box.
@@ -240,6 +247,20 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	key_help_check.button_pressed = settings.key_help
 	key_help_check.toggled.connect(_on_key_help)
 	row.add_child(key_help_check)
+	ride_check = CheckBox.new()
+	ride_check.text = "Driving gauge"
+	ride_check.tooltip_text = "The speed gauge and the vehicle's fuel, battery and health while you're on a vehicle."
+	ride_check.focus_mode = Control.FOCUS_NONE
+	ride_check.button_pressed = settings.ride_hud
+	ride_check.toggled.connect(_on_ride_hud)
+	row.add_child(ride_check)
+	ride_fp_check = CheckBox.new()
+	ride_fp_check.text = "Gauge in first person"
+	ride_fp_check.tooltip_text = "At a vehicle's controls in first person its own dashboard shows the speed. On: the driving gauge shows there too."
+	ride_fp_check.focus_mode = Control.FOCUS_NONE
+	ride_fp_check.button_pressed = settings.ride_hud_fp
+	ride_fp_check.toggled.connect(_on_ride_hud_fp)
+	row.add_child(ride_fp_check)
 	debug_check = CheckBox.new()
 	debug_check.text = "Debug: cheats page"
 	debug_check.tooltip_text = "Shows the Cheats button here (testing only; off by default)."
@@ -290,6 +311,31 @@ func add_hud_settings(settings: HudSettings, path := HudSettings.FILE) -> void:
 	menu_pick.select(clampi(settings.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 	menu_pick.item_selected.connect(func(i: int) -> void: set_option(&"context_menu", i))
 	opt_row.add_child(menu_pick)
+	drive_pick = OptionButton.new()
+	for n: String in DRIVE_NAMES:
+		drive_pick.add_item(n)
+	drive_pick.tooltip_text = ("The view while you drive: through your own eyes, a camera behind and above the "
+			+ "vehicle, or from above. V while driving picks the next.")
+	drive_pick.focus_mode = Control.FOCUS_NONE
+	drive_pick.select(maxi(HudSettings.DRIVE_VIEWS.find(settings.drive), 0))
+	drive_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.DRIVE_VIEWS.size():
+			set_option(&"drive", HudSettings.DRIVE_VIEWS[i]))
+	opt_row.add_child(drive_pick)
+	top_pick = OptionButton.new()
+	for n: String in TOP_NAMES:
+		top_pick.add_item(n)
+	top_pick.tooltip_text = ("The top-down view turns smoothly with the way you face (driving: the vehicle's), or "
+			+ "keeps north up.")
+	top_pick.focus_mode = Control.FOCUS_NONE
+	top_pick.select(maxi(HudSettings.TOP_UPS.find(settings.top_up), 0))
+	top_pick.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < HudSettings.TOP_UPS.size():
+			set_option(&"top_up", HudSettings.TOP_UPS[i]))
+	opt_row.add_child(top_pick)
+	recentre_check = _option_check(opt_row, "Recentre while driving",
+			"Driving in first person, the view eases back to the road when the mouse rests for a moment.",
+			&"recentre", settings.recentre)
 	var vl := Label.new()
 	vl.text = "Field of view"
 	opt_row.add_child(vl)
@@ -448,9 +494,16 @@ func _option_check(row: Container, text: String, tip: String, key: StringName, o
 ## G7: sets one of the options (a HudSettings field), saves it, shows it; main applies it on hud_changed.
 func set_option(key: StringName, v: Variant) -> void:
 	if not key in [&"look_speed", &"invert_y", &"fov", &"render_scale", &"ui_scale", &"fullscreen", &"vsync",
-			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu"]:
+			&"weather_quality", &"volume", &"ambience_volume", &"main_hand", &"context_menu", &"drive", &"top_up",
+			&"recentre"]:
+		return
+	if key == &"top_up" and not (v is String and v in HudSettings.TOP_UPS):
+		return
+	if key == &"recentre" and not v is bool:
 		return
 	if key == &"main_hand" and not (v is String and v in HudSettings.MAIN_HANDS):
+		return
+	if key == &"drive" and not (v is String and v in HudSettings.DRIVE_VIEWS):
 		return
 	if key == &"context_menu" and not (v is int and v >= HudSettings.MENU_HOLD and v <= HudSettings.MENU_LIST):
 		return
@@ -524,6 +577,22 @@ func _on_debug_cheats(on: bool) -> void:
 	if err != OK:
 		_status.text = "Debug setting not saved: %s" % error_string(err)
 	_update_cheats_button()
+	hud_changed.emit()
+
+
+func _on_ride_hud(on: bool) -> void:
+	hud.ride_hud = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Driving gauge setting not saved: %s" % error_string(err)
+	hud_changed.emit()
+
+
+func _on_ride_hud_fp(on: bool) -> void:
+	hud.ride_hud_fp = on
+	var err := hud.save_file(hud_path)
+	if err != OK:
+		_status.text = "Driving gauge setting not saved: %s" % error_string(err)
 	hud_changed.emit()
 
 
@@ -648,6 +717,9 @@ func open() -> void:
 		look_slider.set_value_no_signal(hud.look_speed)
 		invert_check.set_pressed_no_signal(hud.invert_y)
 		main_pick.select(maxi(HudSettings.MAIN_HANDS.find(hud.main_hand), 0))
+		drive_pick.select(maxi(HudSettings.DRIVE_VIEWS.find(hud.drive), 0))
+		top_pick.select(maxi(HudSettings.TOP_UPS.find(hud.top_up), 0))
+		recentre_check.set_pressed_no_signal(hud.recentre)
 		menu_pick.select(clampi(hud.context_menu, 0, HudSettings.MENU_NAMES.size() - 1))
 		fov_slider.set_value_no_signal(hud.fov)
 		scale_slider.set_value_no_signal(hud.render_scale)

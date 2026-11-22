@@ -186,6 +186,7 @@ func _stairs_live() -> void:
 	await _spawn_vehicle_live(start)
 	await _drive_live(start)
 	await _bike_live(start)
+	await _chase_wall_live(start)
 	await _rain_far_live()
 
 
@@ -227,6 +228,8 @@ func _spawn_vehicle_live(start: Vector3i) -> void:
 		if seen:
 			_vehicles_ok("a car spawned facing %d degrees" % facing)
 			_cells_ok("vehicle spawn: facing %d degrees" % facing, car)
+			await _frames(2)
+			_marks_ok("vehicle spawn: facing %d degrees, seen on foot" % facing, car)
 	var on_me := await _cheat(_spawn_vehicle("car", _main.world.snapshot.player_pos, 0))
 	var unknown := await _cheat(_spawn_vehicle("car_nope", start + Vector3i(0, 30, 0), 0))
 	_check(on_me.contains("in the way") and unknown == "No such vehicle.",
@@ -285,6 +288,7 @@ func _drive_live(start: Vector3i) -> void:
 		return
 	var car: Snapshot.Vehicle = car_of.call()
 	var uid := car.uid
+	_marks_ok("driving: the car parked facing east", car)
 	# the controls' square, the door beside it, and the floor outside that door
 	var seat := Vector3i.MAX
 	var doors := {}
@@ -324,6 +328,10 @@ func _drive_live(start: Vector3i) -> void:
 		return
 	# lead-world's driving keys (a client with them): CDDA's control key, and the step keys as CDDA's driving keys
 	var keys: bool = InputMap.has_action(&"cdda_control_vehicle") and _main.has_method("_step_octant")
+	# lead-world's driving views (a client with them): the chase view while driving, V goes round the driving views
+	var views: bool = ("drive_view" in _main or "drive" in _main.hud_settings) and InputMap.has_action(&"view_toggle")
+	await _ride_parked(car)
+	var walk_view: String = _main.view_mode
 	if keys:
 		root.push_input(_key_of(&"cdda_control_vehicle"))
 	else:
@@ -334,6 +342,53 @@ func _drive_live(start: Vector3i) -> void:
 			% [InputActions.prompt_of(&"cdda_control_vehicle") if keys else "control_vehicle", _player_field("vehicle")])
 	if not took:
 		return
+	if views:
+		var chase := func() -> bool: return _main.view_mode == "chase"
+		var started := await _until(chase, SHOW_TIMEOUT_MS)
+		var went_round := [_main.view_mode]
+		var cfg_path: String = UserFiles.at(_main.key_menu.hud_path)
+		var saved_top := ""
+		var ride := _ride_hud()   # lead-ui's driving HUD: in first person at the controls only with F1's switch
+		var fp_box := _main.key_menu.get("ride_fp_check") as CheckBox
+		var gauge := [ride.visible] if ride != null else []
+		var with_switch := false
+		for n in 3:
+			root.push_input(_key_of(&"view_toggle"))
+			await _frames(3)
+			went_round.append(_main.view_mode)
+			if n == 0:
+				saved_top = _cfg_text(cfg_path, "view", "drive")
+			if ride != null:
+				gauge.append(ride.visible)
+				if _main.view_mode == "first" and fp_box != null:
+					fp_box.button_pressed = true
+					await _frames(3)
+					with_switch = ride.visible
+					fp_box.button_pressed = false
+					await _frames(3)
+		_check(started and went_round == ["chase", "top", "first", "chase"] and _main.hud_settings.view == walk_view,
+				"driving views: taking the controls switches to the chase view and %s goes round %s; the walking view kept for later is still \"%s\""
+				% [InputActions.prompt_of(&"view_toggle"), went_round, _main.hud_settings.view])
+		if ride != null:
+			_check(gauge == [true, true, false, true] and with_switch,
+					"driving HUD: it shows in the chase and top views, not in first person at the controls (shown by view: %s), and there with F1's \"%s\" on (%s)"
+					% [gauge, fp_box.text if fp_box != null else "?", with_switch])
+		var pick := _main.key_menu.get("drive_pick") as OptionButton
+		if pick != null and "drive" in _main.hud_settings:
+			# the driving view is a setting: V saved its pick, and F1's picker switches the view while driving
+			var saved_round := _cfg_text(cfg_path, "view", "drive")
+			pick.select(2)
+			pick.item_selected.emit(2)
+			await _frames(3)
+			var picked := _main.view_mode
+			var saved_pick := _cfg_text(cfg_path, "view", "drive")
+			pick.select(1)
+			pick.item_selected.emit(1)
+			await _frames(3)
+			_check(saved_top == "top" and saved_round == "chase" and picked == "top" and saved_pick == "top"
+					and _main.view_mode == "chase" and _cfg_text(cfg_path, "view", "drive") == "chase",
+					"driving views: %s's pick is saved under [view] drive (%s after the first press, %s after the round); F1's picker on \"%s\" switches the view at once (%s, saved %s), and back to chase"
+					% [InputActions.prompt_of(&"view_toggle"), saved_top, saved_round, pick.get_item_text(2), picked, saved_pick])
 	var yaw0: float = _main.fp.yaw
 	var pitch0: float = _main.fp.pitch
 	var cam_way := ""   # what the forward step key would be by the camera alone
@@ -351,6 +406,7 @@ func _drive_live(start: Vector3i) -> void:
 	vv.set_process(false)   # its glide by hand from here on
 	for n in 2:
 		_send("UP")
+	await _ride_set_speed()
 	var rolled := 0
 	var bad := []
 	for n in 6:
@@ -365,15 +421,24 @@ func _drive_live(start: Vector3i) -> void:
 	_check(rolled >= 3 and went >= 5 and aboard and bad.is_empty(),
 			"driving: UP x2 and six turns roll the car %d squares east with the player on it; each of the %d turns it rolled, the node glides from where it was drawn onto the new pose and the eyes ride along (%s)"
 			% [went, rolled, bad])
+	await _ride_sizes()
+	var steers := []   # the driving HUD's steering reading after each key, degrees off the heading
 	if wide and last != null:
 		# off the axis and back: the turn glides as well, and the car lies on CDDA's squares at that angle
 		var turned := 0
 		bad = []
+		var look0: float = _main.fp.yaw
+		var car0: Variant = vv.call("drawn", uid)
 		for act: String in ["LEFT", "LEFT", "pause"]:
 			var r := await _drive_turn(act, uid, car_of)
 			turned += 1 if r.get("turned", false) else 0
 			if r.get("bad", "") != "":
 				bad.append("%s: %s" % [act, r["bad"]])
+			var ri: Variant = _ride_info()
+			if ri != null:
+				steers.append(int(ri.steer()))
+		if not steers.is_empty():   # (off the heading only on a turn the car hasn't moved since the key: not judged)
+			print("    (driving HUD: the steering reading after LEFT, LEFT, a turn on: %s degrees off the heading)" % [steers])
 		var steered: Snapshot.Vehicle = car_of.call()
 		var face: float = steered.face_deg if steered != null else 0.0
 		_check(turned >= 1 and bad.is_empty() and steered != null and not _faces(face, 0.0),
@@ -382,6 +447,37 @@ func _drive_live(start: Vector3i) -> void:
 		if steered != null:
 			_vehicles_ok("the car steered to face %.0f degrees" % face)
 			_cells_ok("driving: facing %.0f degrees" % face, steered)
+			# lead-world's marks: shown for the player's own car in the chase view
+			await _frames(2)
+			_marks_ok("driving: facing %.0f degrees, in the %s view" % [face, _main.view_mode], steered, _main.view_mode != "first")
+		if steered != null and car0 is Transform3D and _main.has_method("_carry_look") and vv.has_method("seat_transform"):
+			# the look turns with the car, and the eyes and the body sit on the driver's cell as the car is drawn
+			await _frames(3)
+			var car1: Transform3D = vv.call("drawn", uid)
+			var car_turn := wrapf(float(_main.call("car_yaw", car1)) - float(_main.call("car_yaw", car0)), -PI, PI)
+			var look_turn := wrapf(_main.fp.yaw - look0, -PI, PI)
+			var snap: Snapshot = _main.world.snapshot
+			var sq_w: Vector3 = _main.world.coords.ms_center_to_world(snap.player_pos)
+			var seat_w: Vector3 = (vv.call("seat_transform", snap, snap.player_pos) as Transform3D) * sq_w
+			var seat_off := Vector2(seat_w.x - sq_w.x, seat_w.z - sq_w.z).length()
+			var eyes_off := Vector2(_main.fp.global_position.x - seat_w.x, _main.fp.global_position.z - seat_w.z).length()
+			var body_off := Vector2(_main.player_body.position.x - seat_w.x, _main.player_body.position.z - seat_w.z).length()
+			_check(absf(car_turn) > 0.4 and absf(look_turn - car_turn) < 0.03 and eyes_off < 0.3 and body_off < 0.3,
+					"driving: the look turns with the car (%.1f degrees for the car's %.1f), and the eyes and the body sit on the driver's cell as drawn (%.2f and %.2f m from it; that cell is %.2f m from its square's middle; view %s)"
+					% [rad_to_deg(look_turn), rad_to_deg(car_turn), eyes_off, body_off, seat_off, _main.view_mode])
+		if steered != null:
+			# (after the look check: first person while driving may ease the look back to the road)
+			var dp := _main.key_menu.get("drive_pick") as OptionButton
+			if dp != null and vv.has_method("off_squares"):   # the marks are never shown from the seat in first person
+				dp.select(0)
+				dp.item_selected.emit(0)
+				await _frames(3)
+				_marks_ok("driving: facing %.0f degrees, from the seat in first person" % face, steered, false)
+				dp.select(1)
+				dp.item_selected.emit(1)
+				await _frames(3)
+			await _top_drive_live()
+			await _recentre_live()
 		bad = []
 		for act: String in ["RIGHT", "RIGHT", "pause"]:
 			var r := await _drive_turn(act, uid, car_of)
@@ -412,6 +508,10 @@ func _drive_live(start: Vector3i) -> void:
 	_check(stopped and stands != null and is_zero_approx(stands.velocity),
 			"driving: DOWN stops the car and \"Let go of controls\" from CDDA's menu ends the driving (velocity %s)"
 			% [stands.velocity if stands != null else "?"])
+	if views:
+		var walking := func() -> bool: return _main.view_mode == walk_view
+		_check(await _until(walking, SHOW_TIMEOUT_MS),
+				"driving views: with the controls let go the view is the walking view again (%s)" % _main.view_mode)
 	if keys and _main.world.snapshot.has_method("controls_at"):
 		# the seat beside the driver's has no controls: CDDA says nothing there, the client says why
 		var side: Vector3i = _main.world.snapshot.player_pos - (door - seat)   # (the car has rolled on; it faces east again)
@@ -428,12 +528,17 @@ func _drive_live(start: Vector3i) -> void:
 		_check(on_side and found == 1 and hinted and _player_field("driving") == null and _live.request.get("timed", false),
 				"driving: on the seat beside the driver's (no controls there) %s takes nothing and the feed says why (\"%s\"; on the seat %s, controls_at %d, said %s)"
 				% [InputActions.prompt_of(&"cdda_control_vehicle"), note.left(40), on_side, found, hinted])
+		await _ride_passenger()
+	var had_ride := _ride_hud() != null
 	var step_out := _step_name(out - door)
 	var here := _main.world.snapshot.player_pos
 	for n in 6:   # onto the door's square, then out
 		if _main.world.snapshot.vehicle_at(_main.world.snapshot.player_pos).is_empty():
 			break
 		await _turn(step_out)
+	if had_ride:
+		var gone := func() -> bool: return not (_main.get("ride_hud") as Control).visible
+		_check(await _until(gone, SHOW_TIMEOUT_MS), "driving HUD: out of the car it is gone")
 	var back := func() -> bool: return _main.world.snapshot.player_pos == start and not _main.world.busy()
 	_check(_main.world.snapshot.player_pos != here and await _cheat(_live.cheat_teleport(start)) == ""
 			and await _until(back, SHOW_TIMEOUT_MS), "driving: the player walks out of the car (%s) and is back at the arrival square (%s)"
@@ -546,6 +651,374 @@ func _bike_live(start: Vector3i) -> void:
 	_check(why == "" and await _until(back, SHOW_TIMEOUT_MS),
 			"control key: the player steps off and is back at the arrival square (%s; teleport: %s)"
 			% [_main.world.snapshot.player_pos, why if not why.is_empty() else "done"])
+
+
+## The marks on a turned car's real squares (lead-world's VehicleView.off_squares; nothing checked on a client
+## without them). Off the axes: every square of `veh` whose own cell is drawn 0.25 m or more from it is marked, so
+## is every square of it that blocks walking unless its own cell is drawn on it, nothing is marked that isn't one
+## of its squares, a block stands on each marked square's middle, and the marks show (`shown`: whether they should,
+## e.g. not from the seat in first person). On the axes nothing is marked.
+func _marks_ok(what: String, veh: Snapshot.Vehicle, shown := true) -> void:
+	var vv: VehicleView = _main.vehicles_view
+	if not vv.has_method("off_squares") or not vv.has_method("frame_of"):
+		return
+	var car: Variant = (vv.get("_cars") as Dictionary).get(veh.uid)
+	if car == null:
+		_check(false, "%s: the car is drawn" % what)
+		return
+	var marked := {}
+	for sq: Vector3i in car.marked:
+		marked[sq] = true
+	var marks: Node3D = car.marks
+	var on_axes := absf(fposmod(veh.face_deg + 45.0, 90.0) - 45.0) < 0.01
+	if on_axes:
+		_check(marked.is_empty() and marks == null, "%s: a car on the axes has no marks (%d marked)" % [what, marked.size()])
+		return
+	var f: Transform3D = vv.call("pose_of", veh, _main.world)
+	var snap: Snapshot = _main.world.snapshot
+	var own := {}       # square -> metres its own cell is drawn from it (the nearest of its parts' cells)
+	var squares := {}   # every square of the vehicle
+	var cells := []     # every drawn cell's middle (x, z)
+	for i in veh.part_count():
+		var k := i * Snapshot.VPART_STRIDE
+		var sq := veh.square(i)
+		squares[sq] = true
+		if (veh.parts[k + 4] & Snapshot.VPART_FILLER) != 0:
+			continue
+		var cell: Vector3 = f * Vector3(veh.parts[k], 0.0, veh.parts[k + 1])
+		var c: Vector3 = _main.world.coords.ms_center_to_world(sq)
+		cells.append(Vector2(cell.x, cell.z))
+		own[sq] = minf(float(own.get(sq, INF)), Vector2(cell.x - c.x, cell.z - c.z).length())
+	var unmarked_off := []      # drawn off its square (a gap filler's square: no cell drawn on it), not marked
+	var unmarked_block := []    # ... and it blocks walking
+	for sq: Vector3i in squares:
+		var d := float(own.get(sq, INF))
+		if not own.has(sq):   # a gap filler's square: the nearest cell of any part
+			var c: Vector3 = _main.world.coords.ms_center_to_world(sq)
+			for p: Vector2 in cells:
+				d = minf(d, p.distance_to(Vector2(c.x, c.z)))
+		if d >= 0.25 and not marked.has(sq):
+			unmarked_off.append(sq)
+			if VehicleView.blocks(snap, _main.world.tables, sq):
+				unmarked_block.append(sq)
+	var strays := marked.keys().filter(func(sq: Vector3i) -> bool: return not squares.has(sq))
+	var blocks: MultiMesh = (marks.get_child(0) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 0 else null
+	var signs: MultiMesh = (marks.get_child(1) as MultiMeshInstance3D).multimesh if marks != null and marks.get_child_count() > 1 else null
+	# (how many are drawn; where each stands can't be read back in a headless run)
+	var placed: bool = blocks != null and signs != null and blocks.instance_count == (car.marked as Array).size() \
+			and signs.instance_count == (car.signed as Array).size()
+	var blocking := squares.keys().filter(func(sq: Vector3i) -> bool: return VehicleView.blocks(snap, _main.world.tables, sq)).size()
+	_check(not marked.is_empty() and unmarked_off.is_empty() and unmarked_block.is_empty() and strays.is_empty() and placed
+			and marks.visible == shown,
+			"%s: the car's real squares are marked: %d of its %d squares (%d of them block walking), %d with a sign; none drawn off its square is left out (%s), none marked outside the car (%s); a block and a sign drawn for each (%s); shown %s (wanted %s)"
+			% [what, marked.size(), squares.size(), blocking, (car.signed as Array).size(), unmarked_off.slice(0, 3),
+			strays.slice(0, 3), placed, marks.visible if marks != null else "no marks", shown])
+
+
+## The top view while driving (lead-world's; skipped on a client without it): picked in F1, it looks at the car's
+## middle and, once it has turned, along the car's heading; with F1's "north up" it settles looking north and still
+## at the car. Then both pickers are put back.
+func _top_drive_live() -> void:
+	var vc: ViewCamera = _main.view_cam
+	var km := _main.key_menu
+	var drive_pick := km.get("drive_pick") as OptionButton
+	var top_pick := km.get("top_pick") as OptionButton
+	if not "top_yaw" in vc or drive_pick == null or top_pick == null:
+		return
+	var target := func() -> Transform3D: return _main.vehicles_view.call("chase_target", _main.world.snapshot)
+	var aims_at := func() -> float:   # metres from the car's middle to where the camera's ray meets its floor
+		var t: Transform3D = target.call()
+		var o := vc.global_position
+		var d := -vc.global_basis.z
+		var hit := o + d * ((t.origin.y - o.y) / d.y) if absf(d.y) > 1e-3 else o
+		return Vector2(hit.x - t.origin.x, hit.z - t.origin.z).length()
+	drive_pick.select(2)
+	drive_pick.item_selected.emit(2)
+	await create_timer(2.5).timeout
+	var goal: float = vc.call("heading_yaw", target.call())
+	var turned := absf(wrapf(float(vc.get("top_yaw")) - goal, -PI, PI))
+	var centred: float = aims_at.call()
+	top_pick.select(1)
+	top_pick.item_selected.emit(1)
+	await create_timer(2.5).timeout
+	var north := absf(wrapf(float(vc.get("top_yaw")), -PI, PI))
+	var centred_north: float = aims_at.call()
+	var north_saved := _cfg_text(UserFiles.at(km.hud_path), "view", "top_up")
+	top_pick.select(0)
+	top_pick.item_selected.emit(0)
+	drive_pick.select(1)
+	drive_pick.item_selected.emit(1)
+	await _frames(3)
+	_check(_main.view_mode == "chase" and turned < 0.05 and centred < 1.5 and absf(wrapf(goal, -PI, PI)) > 0.3
+			and north < 0.05 and centred_north < 1.5 and north_saved == "north",
+			"top view while driving: it looks at the car's middle (%.1f m off) along the car's heading (%.0f degrees; %.1f off); with \"%s\" (saved %s) it looks north (%.1f degrees off) and still at the car (%.1f m off)"
+			% [centred, rad_to_deg(goal), rad_to_deg(turned), top_pick.get_item_text(1), north_saved, rad_to_deg(north), centred_north])
+
+
+## First person while driving (lead-world's recentre; skipped on a client without it): with the look turned off the
+## road it stays for the first second, then eases back toward the car's heading and level; while look input keeps
+## coming it isn't pulled; with F1's "Recentre while driving" off it isn't pulled either. Then the pickers and the
+## switch are put back.
+func _recentre_live() -> void:
+	var fp := _main.fp
+	var km := _main.key_menu
+	var drive_pick := km.get("drive_pick") as OptionButton
+	var box := km.get("recentre_check") as CheckBox
+	if not "look_idle" in fp or drive_pick == null or box == null or not _main.has_method("_recentre_goal"):
+		return
+	drive_pick.select(0)   # first person
+	drive_pick.item_selected.emit(0)
+	await _frames(3)
+	var g: Variant = _main.call("_recentre_goal")
+	if not (g is float or g is int):
+		_check(false, "recentre: driving in first person there is a heading to come back to (view %s, goal %s)" % [_main.view_mode, g])
+	else:
+		var goal := float(g)
+		var off := func() -> float: return absf(wrapf(fp.yaw - goal, -PI, PI))
+		fp.look(Vector2.ZERO)
+		fp.set_look(goal + 1.0, 0.4)
+		await create_timer(1.0).timeout
+		var held: float = off.call()          # before 1.5 s: where it was put
+		await create_timer(2.5).timeout
+		var eased: float = off.call()
+		var level := absf(fp.pitch)
+		fp.set_look(goal + 1.0, 0.4)
+		for n in 12:                         # look input every quarter second: no pull
+			fp.look(Vector2.ZERO)
+			await create_timer(0.25).timeout
+		var kept: float = off.call()
+		box.button_pressed = false           # as a click: saved, and no pull at rest
+		fp.look(Vector2.ZERO)
+		fp.set_look(goal + 1.0, 0.4)
+		await create_timer(3.0).timeout
+		var off_kept: float = off.call()
+		var off_saved := _cfg_flag(UserFiles.at(km.hud_path), "view", "recentre")
+		box.button_pressed = true
+		_check(absf(held - 1.0) < 0.02 and eased < 0.5 and level < 0.2 and absf(kept - 1.0) < 0.02
+				and absf(off_kept - 1.0) < 0.02 and off_saved == "false",
+				"recentre: driving in first person, a look turned 57 degrees off the road stays for a second (%.0f), then eases back (%.0f degrees off and %.0f up after 3.5 s); with look input coming it stays (%.0f); with \"%s\" off (saved %s) it stays (%.0f)"
+				% [rad_to_deg(held), rad_to_deg(eased), rad_to_deg(level), rad_to_deg(kept), box.text, off_saved, rad_to_deg(off_kept)])
+		fp.set_look(goal, 0.0)
+	drive_pick.select(1)
+	drive_pick.item_selected.emit(1)
+	await _frames(3)
+
+
+## The value saved under [section] key in the settings file at `path`, as text ("" when it isn't there).
+func _cfg_flag(path: String, section: String, key: String) -> String:
+	var cfg := ConfigFile.new()
+	var v: Variant = cfg.get_value(section, key, null) if cfg.load(path) == OK else null
+	return "" if v == null else str(v)
+
+
+## lead-ui's driving HUD (RideHud), when this client has it and the bridge sends player.vehicle_state while the player
+## is on a vehicle; null otherwise.
+func _ride_hud() -> Control:
+	var h: Variant = _main.get("ride_hud")
+	return (h as Control) if h is Control and _player_field("vehicle_state") is Dictionary else null
+
+
+## The player's vehicle as lead-ui's RideInfo reads it from the shown snapshot, read afresh (the HUD keeps its own
+## copy only while it shows); null on a client without it or while the snapshot has no vehicle_state.
+func _ride_info() -> Variant:
+	var snap: Snapshot = _main.world.snapshot
+	var state: Variant = snap.get("player_vehicle_state")
+	if not state is Dictionary or (state as Dictionary).is_empty() or not ResourceLoader.exists("res://scripts/hud/ride_info.gd"):
+		return null
+	var face := NAN
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		if veh.uid == snap.get("player_vehicle"):
+			face = veh.face_deg
+	var names := Callable(_main, "_itype_name") if _main.has_method("_itype_name") else Callable()
+	return load("res://scripts/hud/ride_info.gd").call("read", state, names, face)
+
+
+## The driving HUD's rect on screen (its dash, scaled as it is drawn).
+func _ride_rect(hud: Control) -> Rect2:
+	var d := hud.get("dash") as Control
+	return d.get_global_transform() * Rect2(Vector2.ZERO, d.size) if d != null else Rect2()
+
+
+## The driving HUD, parked: on the controls' square before the controls are taken it reads the car as CDDA has it
+## (its name, engine off, standing, the set speed at rest, every fuel full, the battery full, health 100 "like new",
+## a car's mass). Whether it shows there in first person is printed with it.
+func _ride_parked(car: Snapshot.Vehicle) -> void:
+	var hud := _ride_hud()
+	if hud == null:
+		print("  (no driving HUD in this client, or no vehicle_state from this bridge: the driving HUD not checked)")
+		return
+	var read := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.ok and now.at_controls
+	await _until(read, SHOW_TIMEOUT_MS)
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the controls' square the snapshot has the car's numbers")
+		return
+	var fuels: Array = i.fuels
+	var full: bool = not fuels.is_empty() and fuels.all(func(f: Dictionary) -> bool: return f["left"] == f["cap"])
+	_check(i.ok and not i.driver and i.at_controls and not i.engine_on and i.velocity == 0 and i.set_speed() == 0
+			and i.name == car.name and full and i.battery_cap > 0 and i.battery_left == i.battery_cap and i.health == 100
+			and i.health_word() == "like new" and i.mass_kg > 500 and i.mass_kg < 3000,
+			"driving HUD: parked at the controls it reads the car: \"%s\" (the snapshot's \"%s\"), engine on %s, speed %d, set speed %d, %s full %s, battery %d of %d, health %d%% (%s), %d kg; shown in first person before the controls are taken: %s"
+			% [i.name, car.name, i.engine_on, i.velocity, i.set_speed(), fuels.map(func(f: Dictionary) -> String: return str(f["name"])),
+			full, i.battery_left, i.battery_cap, i.health, i.health_word(), i.mass_kg, hud.visible])
+
+
+## The driving HUD after the forward key: the set speed is there, in CDDA's unit, while the car still does less; the
+## engine is on.
+func _ride_set_speed() -> void:
+	var hud := _ride_hud()
+	if hud == null:
+		return
+	var set := func() -> bool:
+		var now: Variant = _ride_info()
+		return now != null and now.driver and now.cruise > 0
+	var is_set := await _until(set, SHOW_TIMEOUT_MS)
+	var i: Variant = _ride_info()
+	_check(is_set and i != null and i.engine_on and i.set_speed() == i.cruise and absi(i.velocity) < i.cruise,
+			"driving HUD: after the forward key twice the set speed is %.0f %s while the car does %.0f; the engine is on (safe %.0f, top %.0f %s)"
+			% [i.shown(i.cruise), i.unit, i.shown(i.velocity), i.shown(i.safe), i.shown(i.top), i.unit])
+
+
+## The driving HUD at 1280x720 and 800x450, while driving: in the window and clear of the HUD's text, the left
+## column and the hands panel; F1's "Driving gauge" box hides it and shows it again. The compass reads the camera
+## that draws the screen. Then the window is as it was.
+func _ride_sizes() -> void:
+	var hud := _ride_hud()
+	if hud == null:
+		return
+	if not hud.visible:
+		_check(false, "driving HUD: it shows while driving in the %s view" % _main.view_mode)
+		return
+	var was: Vector2i = root.size
+	for hands: String in ["empty hands", "something held"]:
+		if hands == "something held" and not await _hold_something():
+			print("  (nothing could be put into a hand: the driving HUD beside the hands panel not checked)")
+			break
+		for s: Vector2i in [Vector2i(1280, 720), Vector2i(800, 450)]:
+			root.size = s
+			await _frames(4)
+			await create_timer(0.6).timeout
+			var r := _ride_rect(hud)
+			var keep := [_main.hud.get_global_rect(), _main.hud_view.call("column_rect")]
+			if _main.hands_panel.visible:
+				keep.append(_main.hands_panel.get_global_rect())
+			var over := keep.filter(func(k: Rect2) -> bool: return k.has_area() and k.intersects(r))
+			_check(hud.visible and r.has_area() and Rect2(Vector2.ZERO, Vector2(s)).grow(1.0).encloses(r) and over.is_empty()
+					and _main.hands_panel.visible == (hands == "something held"),
+					"driving HUD %dx%d, %s: in the window and clear of the HUD's text, the left column and the hands panel (the HUD at %s; the hands panel %s; the feed %s; overlapping: %s)"
+					% [s.x, s.y, hands, r, _main.hands_panel.get_global_rect() if _main.hands_panel.visible else "hidden",
+					_main.hud_view.call("feed_rect") if _main.hud_view.has_method("feed_rect") else "?", over])
+	root.size = was
+	await _frames(4)
+	_main.vehicles_view.call("glide", 10.0)   # (the kit's turn rolled the car on: its node up to date again)
+	var box := _main.key_menu.get("ride_check") as CheckBox
+	if box != null:
+		box.button_pressed = false
+		await _frames(2)
+		var hidden := not hud.visible
+		box.button_pressed = true
+		await _frames(2)
+		_check(hidden and hud.visible, "driving HUD: F1's \"%s\" off hides it, on shows it again" % box.text)
+	var cam := _main.get_viewport().get_camera_3d()
+	if cam != null and _main.has_method("drawn_view"):
+		var want := Compass.heading_of(cam.global_basis)
+		_check(absf(wrapf(_main.compass.heading_deg - want, -180.0, 180.0)) < 1.0,
+				"compass: it reads the camera on screen (%.0f degrees in the %s view; the eyes look %.0f)"
+				% [_main.compass.heading_deg, _main.view_mode, Compass.heading_of(_main.fp.global_basis)])
+
+
+## Puts a carried item into the off hand so the hands panel shows (the test kit is asked for first: a turn passes).
+## True once the panel shows.
+func _hold_something() -> bool:
+	if _main.hands_panel.visible:
+		return true
+	var kits := _live.kits_given()
+	if not _live.give_test_kit():
+		return false
+	_live.queue_action("pause")
+	var kit_in := func() -> bool: return _live.kits_given() > kits and not _main.hands.picker.carried().is_empty()
+	if not await _until(kit_in, OP_TIMEOUT_MS):
+		return false
+	var shows := func() -> bool: return _main.hands_panel.visible
+	for r: ItemRef in _main.hands.picker.carried().slice(0, 8):
+		if _main.item_actions.hold(r, "off") and await _until(shows, 8000):
+			return true
+	return false
+
+
+## The driving HUD on a seat without controls: a passenger's (the name, no engine line), shown in first person.
+func _ride_passenger() -> void:
+	var hud := _ride_hud()
+	if hud == null:
+		return
+	await _frames(3)
+	var i: Variant = _ride_info()
+	if i == null:
+		_check(false, "driving HUD: on the seat beside the driver's the snapshot has the car's numbers")
+		return
+	var name_l := hud.get("name_label") as Label
+	var engine_l := hud.get("engine_label") as Label
+	_check(i.ok and not i.driver and not i.at_controls and hud.visible and name_l != null and name_l.text.contains(i.name)
+			and (engine_l == null or not engine_l.is_visible_in_tree()),
+			"driving HUD: on the seat beside the driver's it is a passenger's: the name (\"%s\") and no engine line (in control %s, at controls %s, shown %s, engine line %s)"
+			% [name_l.text if name_l != null else "?", i.driver, i.at_controls, hud.visible,
+			engine_l.is_visible_in_tree() if engine_l != null else "none"])
+
+
+## The text saved under [section] key in the settings file at `path`; "" when it isn't a string there.
+func _cfg_text(path: String, section: String, key: String) -> String:
+	var cfg := ConfigFile.new()
+	var v: Variant = cfg.get_value(section, key, "") if cfg.load(path) == OK else ""
+	return v if v is String else ""
+
+
+## The chase camera at something solid (lead-world's driving views; skipped, said so, on a client without them).
+## The camera's own free-way probe looks along the four axes from the arrival square, at the boom's height, for
+## something solid 10 to 40 m away. A car's pose is then given to the camera by hand (no car is there): 3 m in front
+## of that wall heading away from it, and at the arrival square with the same heading. At the wall the boom is
+## pulled in and the camera stays on this side of it; at the arrival square it is out further.
+func _chase_wall_live(start: Vector3i) -> void:
+	var vc: ViewCamera = _main.view_cam
+	if not "chase_heading" in vc or not vc.blocked.is_valid():
+		print("  (no chase view in this client: the chase camera at a wall not checked)")
+		return
+	var k: Dictionary = (vc.get_script() as Script).get_script_constant_map()
+	var pivot_up := Vector3.UP * float(k.get("CHASE_PIVOT_UP", 2.4))
+	var back := float(k.get("CHASE_BACK", 7.0))
+	var floor_w: Vector3 = _main.world.coords.ms_center_to_world(start)
+	var wall_dir := Vector3.ZERO
+	var free_m := INF
+	for dir: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.BACK, Vector3.FORWARD]:
+		var f: Variant = vc.blocked.call(floor_w + pivot_up, floor_w + pivot_up + dir * 40.0)
+		if (f is float or f is int) and float(f) > back + 3.0 and float(f) < 40.0 and float(f) < free_m:
+			free_m = float(f)
+			wall_dir = dir
+	if wall_dir == Vector3.ZERO:
+		print("  (the camera's probe meets nothing solid 10 to 40 m from the arrival square at the boom's height: the chase camera at a wall not checked)")
+		return
+	var was_mode: String = vc.mode
+	var was_car: Variant = vc.get("car")
+	var ahead := -wall_dir
+	var cam_for := func(mid: Vector3) -> Vector3:   # where the chase camera goes for a car at `mid` heading `ahead`
+		vc.set("car", func() -> Variant: return Transform3D(Basis(ahead, Vector3.UP, ahead.cross(Vector3.UP)), mid))
+		vc.set("chase_heading", NAN)
+		vc.mode = "chase"
+		vc.call("follow", 0.0)
+		return vc.global_position
+	var near_mid := floor_w + wall_dir * (free_m - 3.0)
+	var cam_wall: Vector3 = cam_for.call(near_mid)
+	var cam_open: Vector3 = cam_for.call(floor_w)
+	vc.mode = was_mode
+	vc.set("car", was_car)
+	_main._set_view(_main.view_mode)
+	var boom_wall := (near_mid + pivot_up).distance_to(cam_wall)
+	var boom_open := (floor_w + pivot_up).distance_to(cam_open)
+	var this_side := (cam_wall - floor_w).dot(wall_dir) < free_m
+	_check(boom_wall < boom_open - 1.5 and this_side and cam_wall.is_finite() and cam_open.is_finite(),
+			"chase camera: with something solid 3 m behind the car the boom is pulled in to %.1f m and the camera stays on this side of it; with %.0f m free behind it is out %.1f m"
+			% [boom_wall, free_m, boom_open])
 
 
 ## Rain seen from afar (lead-world's far layer; skipped, said so, on a client without it or without the weather
@@ -693,8 +1166,13 @@ func _drive_turn(act: String, uid: int, car_of: Callable) -> Dictionary:
 	vv.call("glide", 10.0)
 	var end: Transform3D = vv.call("drawn", uid)
 	var ride1: Transform3D = vv.call("ride_transform", _main.world.snapshot)
+	# the ride at the end: none left; with one rigid model it seats the eyes on the driver's cell as drawn (off the
+	# axes not the square's middle), with no turn left, and the model never stretches or shears on the way
+	var rigid := vv.has_method("seat_transform")
+	var arrived: bool = ride1.is_equal_approx(Transform3D()) if not rigid else (ride1.basis.is_equal_approx(Basis())
+			and not ride0.is_equal_approx(ride1) and _rigid(a1.basis) and _rigid(end.basis))
 	var ok := d0 > 0.5 and d1 < d0 and d1 > 0.0 and not ride0.is_equal_approx(Transform3D()) \
-			and end.is_equal_approx(pose) and ride1.is_equal_approx(Transform3D()) \
+			and end.is_equal_approx(pose) and arrived \
 			and (not turned or (g0 > 0.02 and g1 < g0 and g1 > 0.0))
 	return {"moved": true, "turned": turned, "bad": "" if ok else
 			"%.2f m off, then %.2f; turned %s (%.3f rad off, then %.3f); ride %s, at the end %s; on the pose %s" % [d0, d1,
@@ -724,6 +1202,19 @@ func _lanes(start: Vector3i, feet: int, ahead: int, left: int) -> Array:
 func _cells_ok(what: String, veh: Snapshot.Vehicle) -> void:
 	var worst := _cells_off(veh)
 	if worst.is_empty():
+		return
+	var vv: VehicleView = _main.vehicles_view
+	if vv.has_method("seat_transform"):
+		# one rigid model (lead-world, C5 slice 4): turned by CDDA's facing, not laid out on CDDA's stepped squares
+		var f: Transform3D = vv.call("frame_of", veh, _main.world.coords)
+		var on_axes := absf(fposmod(veh.face_deg + 45.0, 90.0) - 45.0) < 0.01
+		var far := float(worst[0][2])
+		var half := worst.filter(func(r: Array) -> bool: return float(r[2]) > 0.5).size()
+		var whole := worst.filter(func(r: Array) -> bool: return float(r[2]) > 1.0).size()
+		_check(_rigid(f.basis) and far <= (0.05 if on_axes else 2.6),
+				"%s: the car is one rigid model, %s (%d of its %d cells over 0.5 m off, %d over 1 m; the farthest, as [mount, square, m]: %s)"
+				% [what, "every cell on its square" if on_axes else "its cells up to %.2f m from CDDA's squares" % far,
+				half, worst.size(), whole, worst.slice(0, 2)])
 		return
 	_check(float(worst[0][2]) <= 0.75, "%s: every cell of the car's drawn grid lies within 0.75 m of its square (the farthest, as [mount, square, m]: %s)"
 			% [what, worst.slice(0, 2)])
@@ -793,8 +1284,9 @@ func _until_slow(cond: Callable, timeout_ms: int) -> bool:
 	return false
 
 
-## For a report: the four cells of `veh` whose place in its drawn grid (VehicleView.frame_of) is farthest from the
-## square CDDA has the part on: [[mount, the square's offset from the vehicle's position, metres apart], ...].
+## For a report: the cells of `veh` by how far their place in its drawn grid (VehicleView.frame_of) is from the
+## square CDDA has the part on, farthest first: [[mount, the square's offset from the vehicle's position, metres
+## apart], ...].
 func _cells_off(veh: Snapshot.Vehicle) -> Array:
 	var vv: VehicleView = _main.vehicles_view
 	if not vv.has_method("frame_of"):
@@ -812,7 +1304,12 @@ func _cells_off(veh: Snapshot.Vehicle) -> Array:
 		var sq: Vector3 = _main.world.coords.ms_center_to_world(veh.square(i))
 		rows.append([m, Vector2i(veh.parts[k + 5], veh.parts[k + 6]), snappedf(Vector2(cell.x - sq.x, cell.z - sq.z).length(), 0.01)])
 	rows.sort_custom(func(a: Array, b: Array) -> bool: return a[2] > b[2])
-	return rows.slice(0, 4)
+	return rows
+
+
+## Whether basis b turns without stretching or shearing (its level axes at right angles and of one length).
+func _rigid(b: Basis) -> bool:
+	return absf(b.x.normalized().dot(b.z.normalized())) < 1e-3 and absf(b.x.length() - b.z.length()) < 1e-3
 
 
 ## Asks the game for vehicle `id` on `pos` facing `facing` degrees: the op id, 0 when not sent (LiveSession's own

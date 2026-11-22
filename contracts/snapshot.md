@@ -103,6 +103,7 @@ struct vehicle_view {
     float velocity;               // m/s
     string name;                  // color tags and control characters removed, up to 60 columns (240 bytes)
     std::vector<vehicle_part_view> parts;   // cap 4096
+    std::vector<vehicle_cargo_view> cargo;  // JSON "cargo", only when the player is next to one of its cargo spaces (2026-11-21, below)
 };
 struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; uint8 state; /* bit0 open, bit1 broken, bit2 enabled, bit3 gap filler */
                            int8 dx, dy, dz; };
@@ -115,6 +116,20 @@ struct vehicle_part_view { int mount_x, mount_y; uint32 vpart; uint8 hp_frac; ui
     // leave open, and the game blocks that square like the part. A filler row has the copied part's mount, vpart,
     // hp_frac and other state bits, and its own (dx, dy, dz), which is no square of the vehicle's own parts. The
     // tiles' vehicle flag is set on fillers' squares too. None when the vehicle stands straight.
+struct vehicle_cargo_view { uint16 part; int32 used_ml, capacity_ml; uint32 more; std::vector<cargo_item_view> items; };
+struct cargo_item_view { uint64 uid; uint32 type; };
+    // JSON "cargo": [[part, used_ml, capacity_ml, more, [[uid, type], ...]], ...] (2026-11-21). What the vehicle
+    // carries where the player can get at it: one row for each of its cargo spaces on the player's square or one
+    // of the eight around it that a clear path leads to, the squares CDDA's own item menus take as nearby. At most
+    // 9 rows; CDDA has one cargo space a square. The member is left out when there is none, so a vehicle away
+    // from the player sends nothing of its load.
+    // part: index into this vehicle's `parts` rows, the cargo part; that row's (dx, dy, dz) is the space's square.
+    // used_ml / capacity_ml: the volume of what is in it and the volume it holds, 0..2^31-1.
+    // [uid, type]: an item in it, in CDDA's stack order: the item handle and the itype index, as in the submaps'
+    // `handles` rows (no spot or pose: an item in a trunk has no place on a square). At most 32 a space; `more`
+    // counts the rest. Stackable items are one row (CDDA merges them). What an item shows of its state and its
+    // exact numbers are in `player.item_states` / `player.item_amounts`, as for items lying in reach. Names come
+    // from the id tables by `type`. A lid need not be open: CDDA lets the player take from a closed trunk.
 
 struct player_view {
     uint64 uid; ui_point pos; float facing_deg; int32 moves; uint32 move_mode;
@@ -136,6 +151,7 @@ struct player_view {
     bool driving;                            // JSON "driving": true, only while the player holds a vehicle's controls (2026-11-19)
     uint64 vehicle;                          // JSON "vehicle": uid of the vehicle the player is boarded on (`vehicles[].uid`); left out when none (2026-11-19)
     bool peeking; ui_point peeking_from;     // JSON "peeking_from": [x, y, z], only while CDDA's peek is open: the square the body is on; `pos` is then the peeked square, which everything is seen from (2026-11-19, ui_requests.md "Peek")
+    optional<player_vehicle_view> vehicle_state;   // JSON "vehicle_state", only while the player is boarded on a vehicle (2026-11-21, below)
 };
 struct mood_view {
     int16 level;                             // CDDA's morale level, the same number as `morale`
@@ -264,6 +280,46 @@ struct environment_view {
   [id_tables.md](id_tables.md)) pre-fill them sorted and define every id; `ids_generation` in each snapshot names
   the tables its indices belong to.
 - `seq` and creature uids keep counting across `reset_snapshots` (a reload), so they are never reused in a session.
+
+## The player's vehicle (`player.vehicle_state`, 2026-11-21)
+
+For a driving HUD: the numbers of the vehicle the player is boarded on, each one CDDA's own (what its sidebar
+and vehicle screen show). The member is there only while the player is on a vehicle, driving or as a passenger;
+on foot it is left out, so those snapshots don't grow. Older bridges never send it.
+
+```
+"vehicle_state": {
+  "uid": 8589934864,            // the vehicle's uid in `vehicles` (= player.vehicle)
+  "name": "Station Wagon",      // plain text, color tags and control characters removed, up to 60 columns (240 bytes).
+                                // A name comes from saves, mods and the player: show it, never parse it.
+  "in_control": true,           // CDDA's player_in_control: holds the controls on a square that has some
+  "at_controls": true,          // the player's square has controls (true for a driver; a passenger seat: false)
+  "velocity": 1600,             // speeds in CDDA's units, mph * 100, whole numbers; negative = backwards
+  "cruise_velocity": 1600,      // the speed it is set to reach (UP / DOWN change it by 400)
+  "safe_velocity": 9000,        // the top speed that doesn't strain the engines
+  "max_velocity": 14000,        // its top speed
+  "speed_unit": "mph",          // the player's CDDA speed option: "mph", "km/h" or "t/t" (squares a turn)
+  "speed_scale": 0.01,          // multiply a speed above by this to show it in that unit (CDDA's own conversion:
+                                // 0.01 for mph, 0.01609 for km/h, 0.0025 for t/t)
+  "engine_on": true,
+  "engines": [[vpart, state, hp_frac, fuel], ...],   // cap 16. vpart: id table index. state: 1 switched on in the
+                                // vehicle's engine list, 2 running, 4 broken. hp_frac 0..255. fuel: itype index of
+                                // what it burns now, 0 = none (muscle, wind).
+  "fuels": [[type, left, capacity], ...],            // cap 16: every fuel an engine burns or a tank holds, except
+                                // battery charge. type: itype index; left and capacity in CDDA's charges of it.
+  "battery": [left, capacity],  // kJ in the vehicle's batteries and what they hold; [0, 0] = no battery
+  "turn_deg": 15.0,             // the facing it is steering to (as `vehicles[].turn_deg`)
+  "skidding": false,
+  "mass_kg": 1432,
+  "health_pct": 100             // CDDA's overall condition, 0..100: 100 minus the share of all parts' damage.
+                                // CDDA's words for it: above 95 "like new", above 67 "dented", above 34
+                                // "battered", above 0 "wrecked", 0 "destroyed".
+}
+```
+
+All numbers are bounded by the bridge (speeds to +-10,000,000, amounts to 0..2^31-1), the lists capped; a client
+still checks what it reads. Not in it: the direction the vehicle moves in a skid, per-wheel or per-part state
+(the part rows in `vehicles` have each part's health).
 
 ## Deltas
 

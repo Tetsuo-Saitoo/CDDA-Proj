@@ -39,6 +39,9 @@ var fp: FirstPersonCamera      # the first-person view (C9): the player's eyes i
 var first_person := true       # the eyes drive (first, shoulder, top); false = the outside fly camera
 var view_cam: ViewCamera       # C9: shoulder and top views, following the eyes
 var view_mode := "first"       # one of VIEW_MODES; saved in hud.cfg
+var _ride_look := [0, 0.0]     # [the vehicle the look turns with, its drawn yaw last frame] (_carry_look)
+const DRIVE_VIEWS := HudSettings.DRIVE_VIEWS   # V while driving (flat screen); hud_settings.drive starts it
+var _driving := false          # the last snapshot's player.driving
 const VIEW_MODES := HudSettings.VIEWS
 var _top_z := 0                # top view: the level cut at (follows the player's level)
 var _stir_heading := NAN       # live item tiles: the view's heading last frame (a turn sloshes held liquids)
@@ -53,6 +56,7 @@ var key_menu: KeyMenu
 var compass: Compass
 var hud_settings := HudSettings.new()   # compass opacity (F1 menu, user://hud.cfg)
 var look_panel: Label
+var ride_hud: RideHud           # the driving HUD: speed gauge and vehicle panel while on a vehicle (flat screen)
 var hands_panel: HandsPanel
 var look_ray: LookRay
 var _look_line: MeshInstance3D   # player -> what was clicked
@@ -210,6 +214,9 @@ func _ready() -> void:
 	add_child(vehicles_view)
 	world.coords.origin_shifted.connect(vehicles_view.shift)
 	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
+	creature_view.seat = func(sq: Vector3i) -> Transform3D: return vehicles_view.seat_transform(world.snapshot, sq)
+	view_cam.car = func() -> Variant: return vehicles_view.chase_target(world.snapshot)
+	fp.recentre = _recentre_goal
 	gaze_fx = GazeEffects.new()   # eye tracking, visual only: gaze set in _start_vr, switches by the settings
 	gaze_fx.world = world
 	gaze_fx.lighting = world.lighting
@@ -220,6 +227,7 @@ func _ready() -> void:
 	world.coords.origin_shifted.connect(explosions.shift)
 	request_ui.get_parent().add_child(explosions.flash_rect)
 	aim = AimController.new(world, request_ui)
+	aim.gaze = _flat_gaze   # eye tracking 5, throw where you look: the flat screen's eyes; _start_vr gives the headset's
 	aim.creature_view = creature_view
 	aim.wielded_gun = func() -> IdTables.Def:
 		var i := world.snapshot.player_wielded if world.snapshot != null else 0
@@ -445,6 +453,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	fields_view.apply(snap, world)
 	vehicles_view.view_z_max = world.things_z_max()
 	vehicles_view.apply(snap, world)
+	_driving_view(snap.player_driving)
 	player_body.apply(snap, world.tables)
 	inspect.refresh()
 	hud_data.update(snap, world.tables)
@@ -503,7 +512,7 @@ func _frame_outside(target: Vector3) -> void:
 
 
 ## C5, VrRig.ride: the vehicle the player is on, [uid, where VehicleView draws it now, where the snapshot puts it
-## (its drawn pose without the glide still to go: ride_transform)]; [] when none or not drawn.
+## (its pose once the glide has arrived: VehicleView.target_of)]; [] when none or not drawn.
 func _vr_ride() -> Array:
 	var s := world.snapshot
 	var at := s.vehicle_at(s.player_pos) if s != null and vehicles_view != null else []
@@ -511,9 +520,76 @@ func _vr_ride() -> Array:
 		return []
 	var uid := (at[0] as Snapshot.Vehicle).uid
 	var d: Variant = vehicles_view.drawn(uid)
-	if not d is Transform3D:
+	var to: Variant = vehicles_view.target_of(uid)
+	if not d is Transform3D or not to is Transform3D:
 		return []
-	return [uid, d, vehicles_view.ride_transform(s).affine_inverse() * (d as Transform3D)]
+	return [uid, d, to]
+
+
+## The driving view after `m` (V while driving): first person -> chase -> top-down -> first person; any other: first.
+static func next_drive_view(m: String) -> String:
+	return DRIVE_VIEWS[(DRIVE_VIEWS.find(m) + 1) % DRIVE_VIEWS.size()]
+
+
+## Driving starts (player.driving): the driving view; it ends: back to the walking view (flat screen only).
+func _driving_view(driving: bool) -> void:
+	if driving == _driving:
+		return
+	_driving = driving
+	view_cam.driving = driving and vr == null
+	if vr == null:
+		_set_view(hud_settings.drive if driving else hud_settings.view)
+
+
+## C5 recentre: driving in first person on the flat screen with the F1 switch on, the yaw of the vehicle's heading
+## as drawn (FirstPersonCamera eases the look back to it after a moment without look input); null otherwise.
+func _recentre_goal() -> Variant:
+	if vr != null or not _driving or view_mode != "first" or not hud_settings.recentre or vehicles_view == null:
+		return null
+	var c: Variant = vehicles_view.chase_target(world.snapshot)
+	var h := ViewCamera.heading_yaw(c) if c is Transform3D else NAN
+	return h if is_finite(h) else null
+
+
+## C5, flat screen: the look turns with the vehicle the player is on as it is drawn turning (VR: VrRide turns the
+## rig instead).
+func _carry_look() -> void:
+	var uid := 0
+	var heading := 0.0
+	var s := world.snapshot
+	if vr == null and s != null and vehicles_view != null:
+		var at := s.vehicle_at(s.player_pos)
+		var d: Variant = vehicles_view.drawn((at[0] as Snapshot.Vehicle).uid) if not at.is_empty() else null
+		if d is Transform3D:
+			uid = (at[0] as Snapshot.Vehicle).uid
+			heading = car_yaw(d)
+	if uid != 0 and uid == _ride_look[0] and is_finite(heading):
+		var turn := wrapf(heading - float(_ride_look[1]), -PI, PI)
+		if absf(turn) > 1e-6:
+			fp.set_look(fp.yaw + turn, fp.pitch)
+	_ride_look = [uid, heading]
+
+
+## C5: the real-footprint marks of the vehicle the player is in aren't shown from its first-person seat (flat first
+## person, VR), nor in VR those of the vehicle whose model the head is in; every other view and vehicle shows them.
+func _hide_own_marks() -> void:
+	var s := world.snapshot
+	var uid := 0
+	if s != null and vehicles_view != null and (vr != null or view_mode == "first"):
+		var at := s.vehicle_at(s.player_pos)
+		uid = (at[0] as Snapshot.Vehicle).uid if not at.is_empty() else 0
+	var head := Vector3.INF
+	var cam := get_viewport().get_camera_3d() if vr != null else null
+	if cam != null:
+		head = cam.global_position
+	if vehicles_view != null:
+		vehicles_view.hide_marks(uid, head)
+
+
+## A vehicle's yaw as drawn (radians about up, as FirstPersonCamera.yaw turns: + to the left).
+static func car_yaw(xf: Transform3D) -> float:
+	var x := xf.basis.x
+	return atan2(-x.z, x.x) if Vector2(x.x, x.z).length() > 1e-4 else 0.0
 
 
 ## First person and VR: the body stands under the eyes and turns with them, head hidden. Outside: on the
@@ -586,13 +662,15 @@ static func start_view(args: Dictionary, saved: String) -> String:
 
 ## C9: "first" (the eyes), "shoulder" / "top" (ViewCamera follows the eyes) or "outside" (the fly camera).
 func _set_view(m: String) -> void:
-	if not m in VIEW_MODES:
+	if not m in VIEW_MODES and m != "chase":   # chase: only while driving (_driving_view, _toggle_view)
 		m = "first"
 	var was_top := view_mode == "top"
 	view_mode = m
 	_set_first_person(m != "outside")
 	if m in ViewCamera.MODES:
 		view_cam.mode = m
+		view_cam.chase_heading = NAN   # a new chase starts behind the vehicle at once
+		view_cam.top_yaw = NAN         # and a new top view turned as it should be
 		view_cam.follow()
 		view_cam.make_current()
 	view_cam.set_process(m in ViewCamera.MODES)
@@ -608,10 +686,14 @@ func _set_view(m: String) -> void:
 func _toggle_view() -> void:
 	if vr != null:
 		return
-	_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
-	if view_mode == "outside":
-		_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
-	hud_settings.view = view_mode
+	if _driving:   # driving: first person -> chase -> top-down
+		_set_view(next_drive_view(view_mode))
+		hud_settings.drive = view_mode
+	else:
+		_set_view(VIEW_MODES[(VIEW_MODES.find(view_mode) + 1) % VIEW_MODES.size()])
+		if view_mode == "outside":
+			_frame_outside(fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0))
+		hud_settings.view = view_mode
 	var err := hud_settings.save_file()
 	if err != OK:
 		push_warning("view not saved: %s" % error_string(err))
@@ -636,6 +718,7 @@ func _start_vr() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)   # the headset paces the frames
 	get_viewport().use_xr = true
 	vr = VrRig.new(world, VrSettings.from_args(_args, VrSettings.load_file()))
+	VehicleView.signs_upright(true)   # C5 marks: no roll, no per-eye turn in the headset
 	weather.flash_scale = WeatherView.FLASH_VR   # a full-view flash is harsher in a headset
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
@@ -646,6 +729,9 @@ func _start_vr() -> void:
 	vr.on_unlean = unlean
 	vr.time_pause = toggle_time_pause   # the VR menu's Time row: pause real time or go on (a hostile's auto-pause too)
 	gaze_fx.gaze = vr.look   # the eyes when tracked (VrRig.look); head gaze or no tracker: the effects stay off
+	aim.gaze = vr.look   # throw where you look: only the tracked eyes count (AimController refuses the head's gaze)
+	vr.gaze_throw_square = aim.gaze_square   # a thrown item or the main trigger's throw goes where the eyes look
+	vr.gaze_throw_request = aim.throw_at_gaze   # the main trigger answers a CDDA throw request there
 	vr.compass.opacity = hud_settings.compass_opacity
 	vr.hud.data = hud_data   # body, needs, warnings, messages inside the off forearm
 	vr.hands = hands   # the controllers are hands "vr_l" / "vr_r"; reach is the picker's (grab.reach)
@@ -752,6 +838,19 @@ func _view() -> Node3D:
 	if vr != null:
 		return vr.camera
 	return fp if first_person else camera
+
+
+## What the flat screen's compass reads: the camera drawing it (lead-world's chase, shoulder and top views while
+## driving, first person, the usual camera), else `fallback`.
+static func drawn_view(cam: Camera3D, fallback: Node3D) -> Node3D:
+	return cam if cam != null and is_instance_valid(cam) else fallback
+
+
+## Whether the driving HUD shows for `r` (player.vehicle_state): only on a vehicle, unless F1 turned it off; at the
+## controls in first person (`first_person_cam`: that camera draws), driving or not, the car's own dashboard shows
+## the speed, so only with F1 > HUD > Gauge in first person (the user, 2026-11-21).
+static func ride_shown(r: RideInfo, settings: HudSettings, first_person_cam: bool) -> bool:
+	return r.ok and settings.ride_hud and (not (first_person_cam and (r.driver or r.at_controls)) or settings.ride_hud_fp)
 
 
 func _start_live() -> void:
@@ -1505,6 +1604,7 @@ func _wielded_name() -> String:
 
 func _update_aim() -> void:
 	aim.first_person = _fp_active()
+	aim.gaze_throw = hud_settings.eye_on("throw_look")   # F1 > Eye tracking; off with the tracker switch (opt-in)
 	aim.update(get_viewport().get_camera_3d(), Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	var t := request_ui.target_widget()
 	viewmodel.aimed = t != null and TargetRequestWidget.is_attack_mode(t.mode)
@@ -1734,6 +1834,8 @@ const WHEEL_WAIT_MS := 1500   # E on an object: CDDA's menu arriving this soon a
 ## fullscreen on the window (not with the headset, which sets its own, nor for a screenshot or headless).
 func _apply_options() -> void:
 	var o := hud_settings
+	if view_cam != null:
+		view_cam.top_up = o.top_up if o.top_up in ViewCamera.TOP_UPS else "heading"
 	_apply_clock()   # the F1 Time row
 	if gaze_fx != null:   # eye tracking 4 and 8 (lead-world's GazeEffects): their switches
 		gaze_fx.adapt_on = o.eye_on("light_adapt")
@@ -1818,6 +1920,8 @@ func _setup_hud() -> void:
 	look_panel.add_theme_constant_override("outline_size", 4)
 	look_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(look_panel)
+	ride_hud = RideHud.new()   # under the hands panel and the menus
+	layer.add_child(ride_hud)
 	hands_panel = HandsPanel.new()
 	hands_panel.left_handed = hud_settings.left_handed()
 	hands_panel.tile_of = func(uid: int) -> Dictionary:   # live item tiles behind the held items
@@ -1872,6 +1976,8 @@ func _setup_hud() -> void:
 			viewmodel.left_handed = hud_settings.left_handed()
 		if hands_panel != null:
 			hands_panel.left_handed = hud_settings.left_handed()
+		if _driving and vr == null and view_mode != hud_settings.drive:   # F1's driving view, picked while driving
+			_set_view(hud_settings.drive)
 		_apply_options())
 	key_menu.hud_changed.connect(_sync_cheats_allowed)   # the debug cheats switch
 	layer.add_child(key_menu)
@@ -2167,14 +2273,18 @@ func _process(_delta: float) -> void:
 	elif pour.update(Time.get_ticks_msec()) == "refused":
 		grab.flash("You can't pour that there.", true)
 	creature_view.view_z_max = world.things_z_max()
+	_carry_look()
+	_hide_own_marks()
 	_place_player_body()
 	_update_look_line()
-	compass.heading_deg = Compass.heading_of(_view().global_basis)
-	if not is_nan(_stir_heading):   # a turn: held liquids lean against it
-		ItemTileView.stir(wrapf(compass.heading_deg - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
-	_stir_heading = compass.heading_deg
-	if compass.visible:   # creatures the player perceives, by bearing from the view
-		compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
+	var eyes := Compass.heading_of(_view().global_basis)
+	if not is_nan(_stir_heading):   # a turn: held liquids lean against it (the player's, not a chase camera's)
+		ItemTileView.stir(wrapf(eyes - _stir_heading, -180.0, 180.0) * ItemTileView.TURN_STIR)
+	_stir_heading = eyes
+	var drawn := drawn_view(get_viewport().get_camera_3d() if vr == null else null, _view())
+	compass.heading_deg = Compass.heading_of(drawn.global_basis)
+	if compass.visible:   # creatures the player perceives, by bearing from the camera on screen
+		compass.set_level_blips(Compass.level_blips(world.snapshot, drawn.global_position,
 				world.coords.ms_center_to_world))
 	elif vr != null:   # the same blips on the VR wrist / belt compass (from the head)
 		vr.compass.set_level_blips(Compass.level_blips(world.snapshot, _view().global_position,
@@ -2182,7 +2292,8 @@ func _process(_delta: float) -> void:
 	if vr != null:   # the VR Cheats page follows the F1 menu's gate (debug switch, --test / --cheats, test range)
 		vr.cheats_allowed = key_menu != null and key_menu.cheats_allowed()
 	var tile := world.coords.world_to_ms(_view().global_position)
-	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down"}.get(view_mode,
+	var view: String = {"first": "first person", "shoulder": "over the shoulder", "top": "top-down",
+			"chase": "chase"}.get(view_mode,
 			"outside, speed %.0f" % camera.speed)
 	if live != null and live.state == "booting":   # the bridge's load phase, each frame (cheap)
 		status = LiveSession.boot_text(live.boot_info())
@@ -2205,6 +2316,7 @@ func _process(_delta: float) -> void:
 	hud_view.visible = not key_menu.visible
 	hud_view.avoid(Rect2(hud.global_position, hud.size) if hud.visible else Rect2())
 	hints.offset_top = maxf(Hints.TOP, hud_view.marks_bottom() + 6.0)   # under the time line and the cheats
+	_ride_step()
 
 
 ## The HUD's text along the top, longest first; main shows the longest that fits above the left column (which
@@ -2245,6 +2357,40 @@ static func fit_index(l: Label, texts: PackedStringArray, max_h: float) -> int:
 		if lines * (fh + l.get_theme_constant(&"line_spacing")) <= max_h:
 			return i
 	return texts.size() - 1
+
+
+## The driving HUD, each frame: player.vehicle_state while the player is on a vehicle (flat screen; F1 > HUD >
+## Driving gauge), kept off the hands panel, the look line, the HUD's text and its left column.
+func _ride_step() -> void:
+	var snap := world.snapshot
+	var raw: Variant = snap.player_vehicle_state if snap != null and not snap.player_vehicle_state.is_empty() else null
+	var face := NAN
+	if raw is Dictionary:
+		for veh: Snapshot.Vehicle in snap.vehicles:
+			if veh.uid == snap.player_vehicle:
+				face = veh.face_deg
+				break
+	var r := RideInfo.read(raw, _itype_name, face)
+	var fp_cam := vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
+	ride_hud.visible = vr == null and ride_shown(r, hud_settings, fp_cam) and hud_view.visible and not _menu_open()
+	if not ride_hud.visible:
+		hud_view.keep_feed_above(Rect2())
+		return
+	ride_hud.show_ride(r)
+	var keep: Array[Rect2] = [hud.get_global_rect(), hud_view.column_rect(true)]
+	for c: Control in [hands_panel, look_panel]:
+		if c.visible:
+			keep.append(c.get_global_rect())
+	ride_hud.place(keep, hands_panel.get_global_rect() if hands_panel.visible else Rect2())
+	hud_view.keep_feed_above(ride_hud.dash_rect())   # where no spot is free (small windows) the feed gives way
+
+
+## An item type's name (its id when nameless), "" for an unknown index.
+func _itype_name(type: int) -> String:
+	var d: IdTables.Def = world.tables.def_at("itype", type) if world.tables != null else null
+	if d == null:
+		return ""
+	return d.name if not d.name.is_empty() else d.id
 
 
 ## The key help when F1 > HUD > Key help is off, or there's no room for more.

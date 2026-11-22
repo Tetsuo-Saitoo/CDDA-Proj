@@ -34,6 +34,13 @@ var target := Vector3.ZERO   # follow: where the eyes are headed
 ## () -> Transform3D: while the player is on a vehicle still gliding to where the snapshot puts it, the eyes ride
 ## with it (VehicleView.ride_transform, set by main.gd); identity otherwise.
 var ride := Callable()
+## C5 recentre (flat screen, driving in first person): () -> Variant, the yaw to ease the look back to (the
+## vehicle's heading, as `yaw`) or null for none (main.gd: driving, first person, the F1 switch). It pulls only
+## after RECENTRE_AFTER seconds without look input (mouse or stick); any look input starts the wait again.
+var recentre := Callable()
+const RECENTRE_AFTER := 1.5   # s without look input
+const RECENTRE_RATE := 1.5    # 1/s: how fast the look eases back
+var look_idle := 0.0          # seconds since the last look input
 var _has_target := false
 ## The view offset (eye tracking, lead-ui 2026-11-19; flat screen only: VR has its own camera): a small turn, tilt,
 ## side shift and zoom on top of the look, for zooming where you look (1), seeing past a screen edge (2) and leaning
@@ -127,7 +134,17 @@ func base_position() -> Vector3:
 
 ## Mouse motion in pixels.
 func look(rel: Vector2) -> void:
+	look_idle = 0.0
 	set_look(yaw - rel.x * sensitivity, pitch - rel.y * sensitivity * (-1.0 if invert_y else 1.0))
+
+
+## The look [yaw, pitch] eased `dt` seconds toward yaw `goal` and level, once `idle` seconds passed without look
+## input (RECENTRE_AFTER); unchanged before, or when goal isn't finite.
+static func recentred(y: float, p: float, goal: float, idle: float, dt: float) -> Vector2:
+	if idle < RECENTRE_AFTER or not is_finite(goal) or not is_finite(dt):
+		return Vector2(y, p)
+	var k := 1.0 - exp(-RECENTRE_RATE * clampf(dt, 0.0, 1.0))
+	return Vector2(lerp_angle(y, goal, k), lerpf(p, 0.0, k))
 
 
 ## Forward and right along the ground for the current yaw.
@@ -211,12 +228,22 @@ func step(delta: float, inp: Dictionary) -> void:
 	position = base_position()
 	_side = Vector3.ZERO
 	_move(delta, inp)
+	_recentre(delta)
 	_ease_offset(delta)
+
+
+func _recentre(delta: float) -> void:
+	look_idle += delta
+	var g: Variant = recentre.call() if recentre.is_valid() else null
+	if (g is float or g is int) and look_idle >= RECENTRE_AFTER:
+		var to := recentred(yaw, pitch, float(g), look_idle, delta)
+		set_look(to.x, to.y)
 
 
 func _move(delta: float, inp: Dictionary) -> void:
 	var lk: Vector2 = inp.get("look", Vector2.ZERO)
 	if lk != Vector2.ZERO:
+		look_idle = 0.0
 		set_look(yaw - lk.x * STICK_LOOK * delta, pitch - lk.y * STICK_LOOK * delta)
 	if follow:
 		var r := _ride()

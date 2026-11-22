@@ -54,6 +54,30 @@ const SHOTS := [
 	# The mock's coupe (C5): one rounded body with glass, wheels on its sides, seen from the south and from above.
 	{"name": "car_side", "env": CLEAR, "yaw": 0.0, "pitch": -12.0, "move": Vector3i(-13, 20, 0)},
 	{"name": "car_top", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0)},
+	# Driving the coupe: the chase camera behind and above it, then the coupe turned 30 degrees (one rigid model,
+	# the chase turned after it), and the turned coupe from above.
+	{"name": "drive_chase", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE},
+	{"name": "drive_chase_turned", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0, "settle": 3.0},
+	{"name": "drive_top_turned", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0, "settle": 2.5},
+	{"name": "drive_top_north", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 330.0, "top_up": "north", "settle": 2.5},
+	# The coupe at 45 degrees: yellow marks on CDDA's real squares the rigid model doesn't line up with, seen on foot,
+	# from the chase camera, and not at all from the driver's seat.
+	{"name": "car_marks_45", "env": CLEAR, "yaw": 0.0, "pitch": -22.0, "move": Vector3i(-13, 20, 0), "face": 45.0},
+	{"name": "drive_chase_45", "env": CLEAR, "view": "chase", "move": Vector3i(-13, 14, 0), "drive": COUPE,
+		"face": 45.0, "settle": 3.0},
+	{"name": "drive_first_45", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0,
+		"yaw": -45.0, "pitch": -15.0},
+	{"name": "drive_top_45", "env": CLEAR, "view": "top", "move": Vector3i(-13, 14, 0), "drive": COUPE, "face": 45.0},
+	# C5 interiors: the coupe's dash from the driver's seat, lit (day, night) and dark; its trunk lid opened
+	{"name": "dash_day", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0, "pitch": -24.0,
+		"dash": DASH_READING},
+	{"name": "dash_night", "env": CLEAR, "night": true, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0,
+		"pitch": -24.0, "dash": DASH_READING},
+	{"name": "dash_dark", "env": CLEAR, "move": Vector3i(-13, 14, 0), "drive": COUPE, "yaw": -90.0, "pitch": -24.0},
+	{"name": "car_trunk_open", "env": CLEAR, "yaw": -40.0, "pitch": -22.0, "move": Vector3i(-18, 18, 0), "lids": true},
 	# Snow lying on the open ground and roofs: in patches after 15 minutes of heavy snow, covered after an hour.
 	{"name": "snow_patchy", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 900},
 	{"name": "snow_lying", "env": SNOW, "yaw": 45.0, "pitch": -25.0, "turn": 3600},
@@ -133,6 +157,12 @@ func _seconds(s: float) -> void:
 	await create_timer(s).timeout
 
 
+const COUPE := 8589934618   # the mock's coupe west of the start (pos 179, 398)
+const DASH_READING := {"lit": true, "speed": 42.0, "cruise": 50.0, "top": 120.0, "step": 20.0, "safe": 60.0,
+		"red": 95.0, "unit": "mph", "fuel": 0.62, "battery": 0.85, "lamps": 8, "steer": -15.0}
+const VehicleTests := preload("res://tests/vehicle_tests.gd")
+
+
 func _shot(index: int, shot: Dictionary) -> void:
 	var d := _data.duplicate(false)
 	var env: Dictionary = (_data["env"] as Dictionary).duplicate()
@@ -158,6 +188,23 @@ func _shot(index: int, shot: Dictionary) -> void:
 	var player: Dictionary = (_data["player"] as Dictionary).duplicate(true)
 	var move: Vector3i = shot.get("move", Vector3i.ZERO)
 	player["pos"] = [int(player["pos"][0]) + move.x, int(player["pos"][1]) + move.y, int(player["pos"][2]) + move.z]
+	if shot.has("drive"):
+		player["driving"] = true
+		player["vehicle"] = shot["drive"]
+	if shot.has("face"):   # the coupe turned, its parts on the squares CDDA lays them on (stretched, sheared)
+		var vehicles := []
+		for v: Dictionary in _data["vehicles"]:
+			var copy := v.duplicate(false)
+			if copy["uid"] == COUPE:
+				copy["face_deg"] = shot["face"]
+				copy["turn_deg"] = shot["face"]
+				var rows := []
+				for r: Array in v["parts"]:
+					var sq: Vector2i = VehicleTests._cdda_square(Vector2i(r[0], r[1]), int(shot["face"]))
+					rows.append(r.slice(0, 5) + [sq.x, sq.y, 0])
+				copy["parts"] = rows
+			vehicles.append(copy)
+		d["vehicles"] = vehicles
 	d["player"] = player
 	if shot.get("lamp", false):
 		_lamp(d, Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]))
@@ -169,8 +216,17 @@ func _shot(index: int, shot: Dictionary) -> void:
 	_main._show(snap)
 	_main._set_view(shot.get("view", "first"))
 	_main.view_cam.top_dist = shot.get("zoom", ViewCamera.TOP_DIST)
+	_main.view_cam.top_up = shot.get("top_up", "heading")
 	_main._frame_player()
 	_main.fp.set_look(deg_to_rad(shot.get("yaw", 0.0)), deg_to_rad(shot.get("pitch", 0.0)))
+	_main.vehicles_view.set_ride(COUPE if shot.has("dash") else 0, shot.get("dash", {}))
+	if shot.get("lids", false):   # once the coupe's interior is built (near the camera, next frame)
+		await process_frame
+		await process_frame
+		var a := _main.vehicles_view.interior(COUPE)
+		for k: String in a:
+			if k.begins_with("Cargo_"):
+				_main.vehicles_view.open_lid(COUPE, (a[k] as Node3D).get_meta("part"), true)
 	await _seconds(shot.get("settle", 1.5))
 	var gz: Dictionary = shot.get("gaze", {})
 	if not gz.is_empty():

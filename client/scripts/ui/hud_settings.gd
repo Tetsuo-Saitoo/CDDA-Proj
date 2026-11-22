@@ -38,10 +38,27 @@ var weather_flash := true
 ## The key help along the top of the screen (main.gd's HUD text). Off: one short line; F1 lists every key. On
 ## unless turned off. Saved as [hud] key_help.
 var key_help := true
+## The driving HUD (RideHud: speed gauge and vehicle panel) while on a vehicle. On unless turned off. Saved as
+## [hud] ride.
+var ride_hud := true
+## The driving HUD in first person at the controls, where the car's own dashboard (lead-world) shows the speed.
+## Off unless turned on (the user, 2026-11-21). Saved as [hud] ride_first_person.
+var ride_hud_fp := false
 ## C9: the flat-screen view V last picked (main.gd): first person, over the shoulder, top-down, or the outside
 ## fly camera.
 const VIEWS := FirstPersonCamera.VIEWS
 var view := "first"
+## C5: the flat-screen view driving starts in (F1, or V while driving): first person, chase, or top-down. Saved as
+## [view] drive.
+const DRIVE_VIEWS := ["first", "chase", "top"]
+var drive := "chase"
+## C5: the top-down view turns with you ("heading": your facing, driving the vehicle's) or keeps north up; saved as
+## [view] top_up.
+const TOP_UPS := ViewCamera.TOP_UPS
+var top_up := "heading"
+## C5: driving in first person, the look eases back to the road after 1.5 s without mouse look. Saved as [view]
+## recentre.
+var recentre := true
 ## G1: the message feed's filter groups (HudData.message_group), in the F1 menu's order, with their labels.
 const FEED_GROUPS := {"good": "Good news", "bad": "Bad news", "warning": "Warnings", "info": "Info", "other": "Other"}
 ## The groups left out of the feed (HudData.set_feed_hidden). None unless turned off; saved as [feed] hide, a list
@@ -216,8 +233,18 @@ func load_file(path := FILE) -> String:
 	weather_flash = wf if wf is bool else true
 	var kh: Variant = cfg.get_value("hud", "key_help", true)
 	key_help = kh if kh is bool else true
+	var rh: Variant = cfg.get_value("hud", "ride", true)
+	ride_hud = rh if rh is bool else true
+	var rf: Variant = cfg.get_value("hud", "ride_first_person", false)
+	ride_hud_fp = rf if rf is bool else false
 	var vw: Variant = cfg.get_value("view", "mode", "first")
 	view = vw if vw is String and vw in VIEWS else "first"
+	var dv: Variant = cfg.get_value("view", "drive", "chase")
+	drive = dv if dv is String and dv in DRIVE_VIEWS else "chase"
+	var tu: Variant = cfg.get_value("view", "top_up", "heading")
+	top_up = tu if tu is String and tu in TOP_UPS else "heading"
+	var rc: Variant = cfg.get_value("view", "recentre", true)
+	recentre = rc if rc is bool else true
 	feed_hidden = feed_groups_from(cfg.get_value("feed", "hide", []))
 	look_speed = clamp_to(cfg.get_value("look", "speed", 1.0), LOOK_SPEEDS, 1.0)
 	var iy: Variant = cfg.get_value("look", "invert", false)
@@ -263,7 +290,12 @@ func save_file(path := FILE) -> Error:
 	cfg.set_value("hurt", "cues", hurt_cues)
 	cfg.set_value("weather", "flash", weather_flash)
 	cfg.set_value("hud", "key_help", key_help)
+	cfg.set_value("hud", "ride", ride_hud)
+	cfg.set_value("hud", "ride_first_person", ride_hud_fp)
 	cfg.set_value("view", "mode", view if view in VIEWS else "first")
+	cfg.set_value("view", "drive", drive if drive in DRIVE_VIEWS else "chase")
+	cfg.set_value("view", "top_up", top_up if top_up in TOP_UPS else "heading")
+	cfg.set_value("view", "recentre", recentre)
 	cfg.set_value("feed", "hide", Array(feed_groups_from(feed_hidden)))
 	cfg.set_value("look", "speed", snappedf(clamp_to(look_speed, LOOK_SPEEDS, 1.0), 0.01))
 	cfg.set_value("look", "invert", invert_y)
