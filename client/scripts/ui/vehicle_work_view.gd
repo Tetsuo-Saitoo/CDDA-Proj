@@ -167,7 +167,8 @@ func set_result(r: Dictionary) -> bool:
 		if e in ["no such vehicle", "too far", "an appliance"]:
 			close()
 			return false
-		_flash = "The game couldn't answer (%s)." % e
+		var said: String = r.get("text", "")   # CDDA's own sentence ("... while mounted.")
+		_flash = said if not said.is_empty() else "The game couldn't answer (%s)." % e
 		_show_part()
 		return true
 	var old: Array = result.get("parts", [])

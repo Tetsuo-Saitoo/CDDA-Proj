@@ -43,7 +43,7 @@ const COMMAND_NAMES := {"r": "Repair", "o": "Remove", "m": "Mend", "f": "Refill"
 const REASONS: PackedStringArray = ["", "Nothing to do on this part.", "Missing tools.", "Something is attached to it.",
 		"Not enough skill.", "The vehicle is moving.", "Your morale is too low.", "It's too dark to see."]
 const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part", "internal", "too large",
-		"an appliance"]
+		"an appliance", "mounted", "in shell"]
 ## The commands the vehicle_work action takes so far (contracts/vehicle_work.md "The action").
 const ACTION_CMDS: PackedStringArray = ["r", "o"]
 const MAX_TAG := (1 << 31) - 1
@@ -56,8 +56,8 @@ const MAX_EVENT_TEXT := 200
 
 
 ## A vehicle-work result's text (CddaSim.take_query_result) for query `id`: {ok: true, vehicle, name, turn, parts,
-## parts_more, selected, truncated} or {ok: false, vehicle, error}, cleaned; {} when it isn't one (too big, not
-## JSON, another id or kind).
+## parts_more, selected, truncated} or {ok: false, vehicle, error, text (CDDA's sentence, only when it gave one)},
+## cleaned; {} when it isn't one (too big, not JSON, another id or kind).
 static func parse_result(text: Variant, id: int) -> Dictionary:
 	if not text is String or (text as String).is_empty() or (text as String).length() > MAX_RESULT_BYTES:
 		return {}
@@ -75,7 +75,12 @@ static func clean(d: Dictionary) -> Dictionary:
 	var uid: Variant = _int(d.get("vehicle"), 1, MAX_UID)
 	if d.get("ok") != true:
 		var e: Variant = d.get("error")
-		return {"ok": false, "vehicle": uid if uid != null else 0, "error": e if e is String and e in ERRORS else "internal"}
+		var out := {"ok": false, "vehicle": uid if uid != null else 0,
+				"error": e if e is String and e in ERRORS else "internal"}
+		var said := Snapshot.plain_text(d.get("text"), MAX_TEXT)
+		if not said.is_empty():
+			out["text"] = said
+		return out
 	if uid == null:
 		return {"ok": false, "vehicle": 0, "error": "internal"}
 	var parts: Array[Dictionary] = []

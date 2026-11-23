@@ -270,15 +270,25 @@ func _test_action(root: Node) -> void:
 	var said := "Repair started." in v.detail_text()
 	v.forget_selection()
 	var forgot := v.selected == -1
+	var mounted := VehicleWorkData.parse_result(JSON.stringify({"id": 3, "ok": false, "kind": "vehicle_work",
+			"vehicle": UID, "error": "mounted", "text": "You cannot interact with a vehicle while <color_red>mounted</color>."}), 3)
+	v.set_result(mounted)
+	var shell := VehicleWorkData.parse_result(JSON.stringify({"id": 3, "ok": false, "kind": "vehicle_work",
+			"vehicle": UID, "error": "in shell"}), 3)
+	var told: bool = v.visible and "You cannot interact with a vehicle while mounted." in v.detail_text() \
+			and mounted == {"ok": false, "vehicle": UID, "error": "mounted",
+				"text": "You cannot interact with a vehicle while mounted."} \
+			and shell == {"ok": false, "vehicle": UID, "error": "in shell"}
 	app["vehicle"] = UID
 	v.set_result(app)
 	var shut := not v.visible
 	root.remove_child(v)
 	v.free()
 	_check.call(sent_ok and ev_ok and r["owned"] == false and mine["owned"] == true and app["error"] == "an appliance"
-			and note.begins_with("Not your vehicle") and said and forgot and shut,
+			and note.begins_with("Not your vehicle") and said and forgot and shut and told,
 			"vehicle work action: r and o queued with a tag, others refused; work_result read for its tag only; "
-			+ "someone else's vehicle noted; an appliance closes the view (%s; %s; %s)" % [sim.queued, no, note])
+			+ "someone else's vehicle noted; CDDA's sentence for mounted shown; an appliance closes the view "
+			+ "(%s; %s; %s; %s)" % [sim.queued, no, note, mounted])
 
 
 ## The hold on r and o (VehicleWorkData.Gate): after a parts change or started work, until a read asked after it,
