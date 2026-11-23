@@ -2416,7 +2416,7 @@ func _ride_step() -> void:
 				break
 	var r := RideInfo.read(raw, _itype_name, face)
 	vehicles_view.set_ride(r.uid if r.ok else 0, CarDash.reading_from(r))   # the 3D dash and wheel (C5 interiors)
-	var fp_cam :=vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
+	var fp_cam := vr == null and drawn_view(get_viewport().get_camera_3d(), _view()) == fp
 	ride_hud.visible = vr == null and ride_shown(r, hud_settings, fp_cam) and hud_view.visible and not _menu_open()
 	if not ride_hud.visible:
 		hud_view.keep_feed_above(Rect2())
