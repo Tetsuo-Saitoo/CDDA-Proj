@@ -1175,6 +1175,41 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 	await _until(in_loop, SHOW_TIMEOUT_MS)
 
 
+## lead-world's work camera (C6) under lead-ui's work view, open on vehicle `uid` with part `row` selected: it is
+## the view's camera and looks at the selected part, which is tinted; 1, 2 and 3 take it around the car, over its
+## engine and low beside it; the view stays open on the same part and no turn passes (`turn0`: the turn before).
+func _work_camera_live(wv: Variant, wc: Variant, uid: int, row: int, turn0: int) -> void:
+	var vv: Variant = _main.vehicles_view
+	await create_timer(1.2).timeout   # (it glides: within a few cm of its place after a second)
+	var cam := root.get_camera_3d()
+	var a: Dictionary = vv.call("part_anchor", uid, row)
+	var size := root.get_visible_rect().size
+	var point: Vector3 = a.get("point", Vector3.ZERO)
+	var on_screen := Vector2(-1.0, -1.0)
+	var seen := false
+	if cam != null and not a.is_empty():
+		on_screen = cam.unproject_position(point)
+		seen = not cam.is_position_behind(point) and Rect2(size * 0.2, size * 0.6).has_point(on_screen)
+	var off: float = cam.global_position.distance_to(point) if cam != null else -1.0
+	var tint: Variant = vv.get("_lit")
+	_check(cam == wc and wc.active == true and seen and off > 0.8 and off < 9.0 and vv.get("_highlight") == [uid, row]
+			and tint is Node3D and is_instance_valid(tint),
+			"work camera: with a part selected it is the view's camera and looks at that part (%.1f m off, the part at %s on a %s screen), and the part is tinted (%s)"
+			% [off, on_screen, size, vv.get("_highlight")])
+	var ground: float = _main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos).y
+	var eyes: Array[Vector3] = []
+	for code: Key in [KEY_1, KEY_2, KEY_3]:
+		await _tap(code)
+		await create_timer(1.2).timeout
+		var now := root.get_camera_3d()
+		eyes.append(now.global_position if now != null else Vector3.ZERO)
+	var apart: bool = eyes[0].distance_to(eyes[1]) > 0.5 and eyes[1].distance_to(eyes[2]) > 0.5 and eyes[0].distance_to(eyes[2]) > 0.5
+	_check(apart and eyes[0].y - ground > 1.8 and eyes[2].y - ground < 0.6 and root.get_camera_3d() == wc and wv.visible
+			and wv.selected == row and _main.world.snapshot.turn == turn0,
+			"work camera: 1, 2 and 3 take it around the car (%.1f m up), over its engine (%.1f m up) and low beside it (%.1f m up); the view stays open on the same part and no turn passes"
+			% [eyes[0].y - ground, eyes[1].y - ground, eyes[2].y - ground])
+
+
 ## lead-ui's vehicle work view (C6; said so on a client without it). The player stands on `by`, next to
 ## `car`; `far` is the arrival square. Shift+V opens it docked right on that car, its parts listed by square from
 ## the front with their condition; Down / Up move the selection; a command the read doesn't allow says why; one it
@@ -1190,6 +1225,8 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var read := func() -> bool: return wv.visible and not wv.waiting and not (wv.result as Dictionary).is_empty()
 	var shut := func() -> bool: return not wv.visible
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	var eye_cam := root.get_camera_3d()   # the camera the work camera takes over from
+	var eye_xf := eye_cam.global_transform if eye_cam != null else Transform3D()
 	var was: Vector2i = root.size   # (headless the window starts tiny)
 	root.size = Vector2i(1280, 720)
 	await _frames(4)
@@ -1269,18 +1306,19 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 		_check(got and wv.visible,
 				"vehicle work: an error answer from the game reaches the view (asked for a part row the car hasn't: \"%s\"; asked %s, view open %s)"
 				% [why.text, asked > 0, wv.visible])
-	# 1 2 3: nothing yet (a work camera, once it lands, is not judged here)
-	var cam := root.get_camera_3d()
-	var cam0 := cam.global_transform if cam != null else Transform3D()
+	# 1 2 3: lead-world's work camera when the client has one, else nothing yet
 	var turn0: int = _main.world.snapshot.turn
-	for code: Key in [KEY_1, KEY_2, KEY_3]:
-		await _tap(code)
-	await _frames(6)
-	var still: bool = wv.visible and wv.selected == first and cam != null and cam.global_position.distance_to(cam0.origin) < 0.01 \
-			and cam.global_basis.z.angle_to(cam0.basis.z) < 0.01
-	if _main.get("work_cam") != null:
-		print("  (vehicle work: this client has a work camera: 1 2 3 not judged; the view open %s)" % wv.visible)
+	var wc: Variant = _main.get("work_cam")
+	if wc != null:
+		await _work_camera_live(wv, wc, car.uid, first, turn0)
 	else:
+		var cam := root.get_camera_3d()
+		var cam0 := cam.global_transform if cam != null else Transform3D()
+		for code: Key in [KEY_1, KEY_2, KEY_3]:
+			await _tap(code)
+		await _frames(6)
+		var still: bool = wv.visible and wv.selected == first and cam != null and cam.global_position.distance_to(cam0.origin) < 0.01 \
+				and cam.global_basis.z.angle_to(cam0.basis.z) < 0.01
 		_check(still and _main.world.snapshot.turn == turn0,
 				"vehicle work: 1, 2 and 3 change nothing yet: the view stays open on the same part, the camera stays and no turn passes")
 	# the game's own keys are off while it is open
@@ -1328,6 +1366,14 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 		await _work_remove_live(wv, car.uid)   # the game's own work: a small part removed through the view
 	await _tap(KEY_ESCAPE)
 	var esc_closes: bool = not wv.visible
+	if wc != null:
+		await _frames(3)
+		var now_cam := root.get_camera_3d()
+		var tinted: Variant = _main.vehicles_view.get("_highlight")
+		_check(wc.active == false and eye_cam != null and now_cam == eye_cam and now_cam.global_position.distance_to(eye_xf.origin) < 0.05
+				and tinted is Array and (tinted as Array).is_empty() and _main.vehicles_view.get("_lit") == null,
+				"work camera: closing the view gives the view back to the camera it took over from, where it was, and the tint goes (still active %s, the same camera %s, tinted %s)"
+				% [wc.active, now_cam == eye_cam, tinted])
 	root.push_input(key)
 	var again: bool = await _until(read, SHOW_TIMEOUT_MS)
 	root.push_input(key)
