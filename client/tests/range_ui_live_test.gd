@@ -1171,8 +1171,66 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		else:
 			print("  (vehicle work: no second %s to try an old list on: o %s, the list old %s)"
 					% [picked, str(wv.call("detail_text")).get_slice(" | ", 1), gate2.get("stale")])
+	if done:
+		await _work_install_live(wv, uid, old, picked, rows0, listed0)   # the removed part installed back
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
+
+
+## lead-bridge's install through lead-ui's install mode (said so, not failed, on a client or bridge without it, or
+## when the game doesn't allow it): the part `picked` that was just removed (`old`: its entry in the read before it
+## came off) is installed back on its square. Install mode on that square lists the types the game allows there, the
+## removed part's type among them; picked, i starts CDDA's own work; when the activity is over the car has `rows0`
+## part rows again, the view lists `listed0` parts and a part of that name is on that square.
+func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, rows0: int, listed0: int) -> void:
+	if not wv.has_method("begin_install") or not old.get("mount") is Vector2i or int(old.get("vpart", -1)) < 1:
+		return
+	var why := wv.get("_why") as Label
+	wv.call("begin_install", old["mount"])
+	var listed := func() -> bool: return wv.waiting != true and not (wv.get("_inst") as Dictionary).is_empty()
+	if wv.get("installing") != true or not await _until(listed, SHOW_TIMEOUT_MS):
+		print("  (vehicle work: this game sends no install list (the view says \"%s\"): installing not tried)" % why.text)
+		wv.call("end_install")
+		return
+	var shown: int = (wv.get("_type_order") as Array).size()
+	wv.call("toggle_all")
+	var all_types: int = (wv.get("_type_order") as Array).size()
+	wv.call("toggle_all")
+	var row: Dictionary = (wv.get("_type_rows") as Dictionary).get(old["vpart"], {})
+	if row.is_empty() or row.get("have") != true or row.get("fits") != true:
+		print("  (vehicle work: install mode on square %s lists %d types that fit (%d in all); the removed %s is %s: installing it back not tried)"
+				% [old["mount"], shown, all_types, picked, row if not row.is_empty() else "not among them"])
+		wv.call("end_install")
+		return
+	wv.call("pick_type", old["vpart"])
+	var button := (wv.get("_buttons") as Dictionary)["i"] as Button
+	var lines_in := func() -> bool: return wv.waiting != true
+	await _until(lines_in, SHOW_TIMEOUT_MS)
+	await _frames(2)
+	if button.disabled:
+		print("  (vehicle work: install mode lists the removed %s for square %s, but the game doesn't allow it now: \"%s\"; lines: %s)"
+				% [picked, old["mount"], button.tooltip_text, str(wv.call("detail_text")).get_slice(" | ", 3).left(300)])
+		wv.call("end_install")
+		return
+	var turn0: int = _main.world.snapshot.turn
+	await _tap(KEY_I)
+	var started := func() -> bool: return why.text.ends_with("started.")
+	var began: bool = await _until(started, SHOW_TIMEOUT_MS)
+	var said := why.text
+	var whole := func() -> bool:
+		var v := _vehicle(uid)
+		return v != null and v.part_count() == rows0 and _live.request.get("timed", false) and not _main.world.busy()
+	var done: bool = began and await _until_slow(whole, 180000)
+	var relisted := func() -> bool: return wv.waiting != true and (wv.get("_order") as Array).size() == listed0
+	var again: bool = done and await _until(relisted, SHOW_TIMEOUT_MS)
+	var back_on := false
+	for q: Dictionary in (wv.result as Dictionary).get("parts", []):
+		back_on = back_on or (str(q["name"]) == picked and q["mount"] == old["mount"])
+	var veh := _vehicle(uid)
+	_check(began and said == "Install started." and done and again and back_on and wv.visible and wv.get("installing") != true,
+			"vehicle work: install mode on the removed %s's square %s lists %d types that fit (%d in all), that type among them; picked, i starts CDDA's own work (\"%s\"); %d turns later the car has %d part rows again (%d), the view lists %d parts and a %s is on that square (%s)"
+			% [picked, old["mount"], shown, all_types, said, _main.world.snapshot.turn - turn0, veh.part_count() if veh != null else -1,
+			rows0, (wv.get("_order") as Array).size(), picked, back_on])
 
 
 ## lead-world's work camera (C6) under lead-ui's work view, open on vehicle `uid` with part `row` selected: it is
