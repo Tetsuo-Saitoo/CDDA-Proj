@@ -989,7 +989,71 @@ func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
 			str(hit.get("what", "")).left(40)])
 
 
-## lead-ui's vehicle work view (C6, read only; said so on a client without it). The player stands on `by`, next to
+## lead-bridge's vehicle_work action through lead-ui's view (the view open on vehicle `uid`, on the game's own read).
+## With the test kit's tools, a small part the read allows removing (a seatbelt, a headlight, ...) is removed: o
+## pressed twice at once sends one action and the second says so; CDDA starts the work; when the activity is over the
+## car has fewer part rows, the view lists one part fewer and is still open. Said, not failed, when the read allows
+## removing none of them.
+func _work_remove_live(wv: Variant, uid: int) -> void:
+	if _main.hands.picker.carried().is_empty():   # the kit: a screwdriver set, a multitool
+		var kits := _live.kits_given()
+		_live.give_test_kit()
+		_live.queue_action("pause")
+		var kit_in := func() -> bool: return _live.kits_given() > kits and not _main.hands.picker.carried().is_empty()
+		await _until(kit_in, OP_TIMEOUT_MS)
+	var parts: Array = (wv.result as Dictionary).get("parts", [])
+	var pick := -1
+	var picked := ""
+	var tried := []
+	for want: String in ["seatbelt", "mirror", "headlight", "horn", "stereo", "clock", "wiper"]:
+		for p: Dictionary in parts:
+			if pick >= 0 or tried.size() >= 8 or not str(p["name"]).contains(want):
+				continue
+			var row: int = p["row"]
+			tried.append(p["name"])
+			wv.call("select", row)
+			var answered := func() -> bool:
+				return not wv.waiting and ((wv.result as Dictionary).get("selected", {}) as Dictionary).get("row", -1) == row
+			await _until(answered, SHOW_TIMEOUT_MS)
+			await _frames(2)
+			if wv.selected == row and str(wv.call("detail_text")).contains("o:on"):
+				pick = row
+				picked = p["name"]
+	if pick < 0:
+		print("  (vehicle work: with the kit the game allows removing none of %s: the work not tried; the last one says: %s)"
+				% [tried, str(wv.call("detail_text")).left(300)])
+		return
+	var veh0 := _vehicle(uid)
+	var rows0: int = veh0.part_count() if veh0 != null else -1
+	var listed0: int = (wv.get("_order") as Array).size()
+	var why := wv.get("_why") as Label
+	var o := InputEventKey.new()
+	o.keycode = KEY_O
+	o.physical_keycode = KEY_O
+	o.pressed = true
+	root.push_input(o)
+	root.push_input(o.duplicate())   # at once: the second must not start a second removal
+	var twice := why.text
+	var started := func() -> bool: return why.text.ends_with("started.")
+	var began: bool = await _until(started, SHOW_TIMEOUT_MS)
+	var said := why.text
+	var turn0: int = _main.world.snapshot.turn
+	var fewer := func() -> bool:
+		var v := _vehicle(uid)
+		return v != null and v.part_count() < rows0 and _live.request.get("timed", false) and not _main.world.busy()
+	var done: bool = began and await _until_slow(fewer, 180000)
+	var relisted := func() -> bool: return not wv.waiting and (wv.get("_order") as Array).size() == listed0 - 1
+	var listed: bool = done and await _until(relisted, SHOW_TIMEOUT_MS)
+	var veh1 := _vehicle(uid)
+	_check(twice == "Still starting the last one." and began and said == "Remove started." and done and listed and wv.visible,
+			"vehicle work: with the kit's tools, o on \"%s\" starts CDDA's own work (pressed twice at once, the second says \"%s\"; then \"%s\"); %d turns later the car has %d part rows (had %d), the view lists %d parts (listed %d) and is still open (%s)"
+			% [picked, twice, said, _main.world.snapshot.turn - turn0, veh1.part_count() if veh1 != null else -1, rows0,
+			(wv.get("_order") as Array).size(), listed0, wv.visible])
+	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	await _until(in_loop, SHOW_TIMEOUT_MS)
+
+
+## lead-ui's vehicle work view (C6; said so on a client without it). The player stands on `by`, next to
 ## `car`; `far` is the arrival square. Shift+V opens it docked right on that car, its parts listed by square from
 ## the front with their condition; Down / Up move the selection; a command the read doesn't allow says why; one it
 ## allows says it isn't connected yet (pressed only on a stand-in read); 1 2 3 change nothing; while it is open the
@@ -1058,7 +1122,7 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 			allowed = c
 	if stand_in and allowed != "":   # (the game's own read may one day do the work: not pressed then)
 		await _tap(OS.find_keycode_from_string(allowed.to_upper()))
-		said = str(_main.grab.get("_flash"))
+		said = why.text if why.text.contains("isn't connected") else str(_main.grab.get("_flash"))
 	_check(first == order[0] and second == order[1] and wv.selected == first and detail.contains("i:off")
 			and why_i.contains("Installing") and (not detail.contains("m:off") or not why_m.is_empty())
 			and (said == "" or said.contains("isn't connected")),
@@ -1129,6 +1193,8 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	if not wv.visible:
 		root.push_input(key)
 		await _until(read, SHOW_TIMEOUT_MS)
+	if not stand_in and _live.has_method("can_vehicle_work") and _live.call("can_vehicle_work") == true:
+		await _work_remove_live(wv, car.uid)   # the game's own work: a small part removed through the view
 	await _tap(KEY_ESCAPE)
 	var esc_closes: bool = not wv.visible
 	root.push_input(key)
