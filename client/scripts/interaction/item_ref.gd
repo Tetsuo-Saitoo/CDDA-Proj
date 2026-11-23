@@ -11,6 +11,7 @@ var square := Vector3i.ZERO         # where it lies; carried: the player's squar
 var carried := false
 var flags := 0                      # Snapshot.CARRIED_* bits (carried only)
 var parent := 0                     # carried: the container's uid, 0 on the body
+var cargo := false                  # in the cargo space of a vehicle on `square` (car storage: ItemTray's cargo)
 var pocket := -1                    # carried: index into the parent's container pockets, -1 on the body
 var spot := Vector2(-1, -1)         # where it was placed on its square, each 0..1 (x east, y south); -1 none
 var point := Vector3.INF            # world point where it is drawn (INF: not drawn, e.g. carried)
@@ -118,6 +119,7 @@ func duplicate_ref() -> ItemRef:
 	r.carried = carried
 	r.flags = flags
 	r.parent = parent
+	r.cargo = cargo
 	r.pocket = pocket
 	r.spot = spot
 	r.point = point

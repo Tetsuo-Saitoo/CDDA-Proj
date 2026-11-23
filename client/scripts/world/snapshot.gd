@@ -120,6 +120,9 @@ const VPART_OPEN := 1                     # part state bits
 const VPART_BROKEN := 2
 const VPART_ENABLED := 4
 const VPART_FILLER := 8                   # one of the parts CDDA adds to fill a turned vehicle's diagonal gaps
+const MAX_CARGO_ROWS := 9                 # vehicles[].cargo: the spaces next to the player, one a square
+const MAX_CARGO_ITEMS := 32               # items listed a space; `more` counts the rest
+const MAX_CARGO_ML := (1 << 31) - 1       # volumes and counts
 
 
 class Submap:
@@ -302,9 +305,20 @@ class Vehicle:
 	## mounts turned by face_deg (turn_mount), which can be a square off where CDDA turns about a pivot.
 	var exact := true
 	var parts := PackedInt32Array()   # VPART_STRIDE ints per part, the bridge's order (several share a square)
+	## vehicles[].cargo (lead-bridge; read by lead-ui with lead-world's OK, 2026-11-21): its cargo spaces next to
+	## the player, {part, used_ml, capacity_ml, more, items: PackedInt64Array [uid, type, ...]}; a bad row, one on
+	## a gap filler or a part listed twice is left out (_vehicle_cargo).
+	var cargo: Array[Dictionary] = []
 
 	func part_count() -> int:
 		return parts.size() / Snapshot.VPART_STRIDE
+
+	## The cargo row of the space on square `sq`, {} when none is listed there.
+	func cargo_on(sq: Vector3i) -> Dictionary:
+		for r: Dictionary in cargo:
+			if square(r["part"]) == sq:
+				return r
+		return {}
 
 	## The absolute square of part i.
 	func square(i: int) -> Vector3i:
@@ -849,9 +863,45 @@ static func vehicles_from(v: Variant, z_lo: int, z_hi: int) -> Array[Vehicle]:
 		veh.parts = _vehicle_parts(d.get("parts"), veh, mini(left, MAX_VEHICLE_PARTS), z_lo, z_hi)
 		if veh.parts.is_empty():
 			continue
+		veh.cargo = _vehicle_cargo(d.get("cargo"), veh)
 		left -= veh.part_count()
 		seen[uid] = true
 		out.append(veh)
+	return out
+
+
+## A vehicle's cargo rows ([part, used_ml, capacity_ml, more, [[uid, type], ...]], contracts/snapshot.md): the
+## first MAX_CARGO_ROWS looked at; a row is left out when anything in it is junk, its part isn't one of this
+## vehicle's or is a gap filler, or its part came already. Items past MAX_CARGO_ITEMS count in `more`.
+static func _vehicle_cargo(v: Variant, veh: Vehicle) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not v is Array:
+		return out
+	var seen := {}
+	for e: Variant in (v as Array).slice(0, MAX_CARGO_ROWS):
+		if not e is Array or (e as Array).size() != 5 or not e[4] is Array:
+			continue
+		var part: Variant = _whole(e[0], 0, veh.part_count() - 1)
+		var used: Variant = _whole(e[1], 0, MAX_CARGO_ML)
+		var cap: Variant = _whole(e[2], 0, MAX_CARGO_ML)
+		var more: Variant = _whole(e[3], 0, MAX_CARGO_ML)
+		if part == null or used == null or cap == null or more == null or seen.has(part) \
+				or veh.parts[part * VPART_STRIDE + 4] & VPART_FILLER:
+			continue
+		var list: Array = e[4]
+		var items := PackedInt64Array()
+		for it: Variant in list.slice(0, MAX_CARGO_ITEMS):
+			var u: Variant = _whole(it[0], 1, MAX_UID - 1) if it is Array and (it as Array).size() == 2 else null
+			var t: Variant = _whole(it[1], 0, MAX_ID) if u != null else null
+			if t == null:
+				items.clear()
+				break
+			items.append_array(PackedInt64Array([u, t]))
+		if items.size() != 2 * mini(list.size(), MAX_CARGO_ITEMS):
+			continue
+		seen[part] = true
+		out.append({"part": part, "used_ml": used, "capacity_ml": cap,
+				"more": mini(more + maxi(list.size() - MAX_CARGO_ITEMS, 0), MAX_CARGO_ML), "items": items})
 	return out
 
 

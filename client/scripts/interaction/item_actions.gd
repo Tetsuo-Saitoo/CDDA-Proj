@@ -112,10 +112,13 @@ func put(item: ItemRef, container: ItemRef, pocket := -1) -> bool:
 
 ## Drops a carried `item` on `square`; `spot` (each 0..1 across the square, x east, y south) places it there,
 ## (-1, -1) none. `shelf` (0..MAX_SHELF, -1 none; L8) is the furniture shelf it goes on, kept only with a spot.
-func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
+func drop(item: ItemRef, square: Vector3i, spot := Vector2(-1, -1), shelf := -1, cargo := false) -> bool:
 	if not _ok_ref(item) or not item.carried or not ok_square(square) or is_nan(spot.x) or is_nan(spot.y) \
 			or shelf < -1 or shelf > MAX_SHELF:
 		return false
+	if cargo:   # car storage: into the vehicle's cargo space on `square` (CDDA's room rule), never a spot or shelf
+		var none := Vector2(-1, -1)
+		return _send("drop", item, square, none, "drop_item", [float(item.uid), float(item.type), square, none, -1, true])
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		spot = Vector2(clampf(spot.x, 0.0, SPOT_MAX), clampf(spot.y, 0.0, SPOT_MAX))
 	else:
@@ -541,6 +544,8 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 		"take":
 			if row >= 0:
 				return Where.MOVED
+			if item.cargo:
+				return _in_cargo(snap, item)
 			return _in_container(snap, item) if item.parent != 0 else _on_square(snap, item)
 		"drop":
 			if row >= 0:
@@ -593,6 +598,32 @@ func _where(e: Dictionary, snap: Snapshot) -> Where:
 			var other: ItemRef = e["target"] if e["target"] is ItemRef else null
 			return Where.MOVED if contents_sig(snap, item, other) != e["before"] else Where.STILL
 	return Where.UNKNOWN
+
+
+## Car storage: STILL while the vehicle's cargo row on item.square still lists it, UNKNOWN when no row is there
+## any more or it was cut short (`more`), else MOVED (it left the space).
+func _in_cargo(snap: Snapshot, item: ItemRef) -> Where:
+	var at := snap.vehicle_at(item.square)
+	var row: Dictionary = (at[0] as Snapshot.Vehicle).cargo_on(item.square) if not at.is_empty() else {}
+	if row.is_empty():
+		return Where.UNKNOWN
+	if listed_in_cargo(snap, item):
+		return Where.STILL
+	return Where.UNKNOWN if row["more"] > 0 else Where.MOVED
+
+
+## Car storage: whether the cargo row of the vehicle on item.square lists `item` (uid and type).
+static func listed_in_cargo(snap: Snapshot, it: ItemRef) -> bool:
+	if snap == null or it == null or not it.cargo:
+		return false
+	var at := snap.vehicle_at(it.square)
+	if at.is_empty():
+		return false
+	var its: PackedInt64Array = (at[0] as Snapshot.Vehicle).cargo_on(it.square).get("items", PackedInt64Array())
+	for i in range(0, its.size() - 1, 2):
+		if its[i] == it.uid and its[i + 1] == it.type:
+			return true
+	return false
 
 
 ## STILL when its handle is still on its square, MOVED when not, UNKNOWN when the square isn't seen (no handles).
