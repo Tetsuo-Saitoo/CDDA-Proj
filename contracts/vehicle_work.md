@@ -106,6 +106,7 @@ A part:
 | `damage` | CDDA's damage level of the part's item (0 undamaged; higher is worse). |
 | `flags` | Bits: 1 broken, 2 can be repaired (damaged, not broken), 4 has faults, 8 can be refilled (a tank or fuel store with room), 16 carried on a rack. |
 | `faults` | Only when it has any: the faults' names (at most 8, each ≤ 60 columns). |
+| `fill` | Only for a tank, a battery or another fuel store (a reactor, a coal bunker; not a turret's ammunition): `{"what", "now", "max", "unit"}`, as CDDA's vehicle overview shows them. `what`: the name of what is in it, `""` when empty (≤ 60 columns). `unit` `"ml"` for a tank (`now` the volume in it, `max` what it holds), `"charges"` for the others (CDDA's charge counts). `max` is 0 when CDDA can't tell (an empty fuel store that takes several kinds). Added 2026-11-22; older results lack it. |
 
 `selected`:
 
@@ -130,7 +131,9 @@ All text is game data: color tags, line breaks and control characters removed.
 
 ### Errors
 
-`{"id": 7, "ok": false, "kind": "vehicle_work", "error": "..."}` with `error` one of:
+`{"id": 7, "ok": false, "kind": "vehicle_work", "vehicle": 123, "error": "..."}`: `vehicle` is the uid the
+query named (added 2026-11-22; left out for `internal` and `too large` answers of older bridges). `error` is one
+of:
 
 | `error` | |
 |---|---|
