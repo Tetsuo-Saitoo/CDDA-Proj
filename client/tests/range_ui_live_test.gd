@@ -1279,6 +1279,16 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var why_m := why.text
 	await _tap(KEY_I)
 	var why_i := why.text
+	var mode := ""   # a client with install mode: i opens it on the part's square; what it shows is said, Esc leaves it
+	if wv.get("installing") == true:
+		var listed := func() -> bool: return wv.waiting != true
+		var answered: bool = await _until(listed, 3000)
+		mode = "i opens install mode on square %s (answered %s, %d types listed, it says \"%s\")" \
+				% [wv.get("install_at"), answered, (wv.get("_type_order") as Array).size(), why.text]
+		await _tap(KEY_ESCAPE)
+		mode += "; Esc goes back to the parts"
+		await _until(read, SHOW_TIMEOUT_MS)
+	var back_in_parts: bool = wv.visible and wv.get("installing") != true
 	var why_o := ""
 	if detail.contains("o:off"):   # (a refused command only says why: nothing is sent)
 		await _tap(KEY_O)
@@ -1291,11 +1301,12 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	if stand_in and allowed != "":   # (the game's own read may one day do the work: not pressed then)
 		await _tap(OS.find_keycode_from_string(allowed.to_upper()))
 		said = why.text if why.text.contains("isn't connected") else str(_main.grab.get("_flash"))
-	_check(first == order[0] and second == order[1] and wv.selected == first and detail.contains("i:off")
-			and why_i.contains("Installing") and (not detail.contains("m:off") or not why_m.is_empty())
+	_check(first == order[0] and second == order[1] and wv.selected == first and back_in_parts
+			and (why_i.contains("Installing") or mode != "") and (not detail.contains("m:off") or not why_m.is_empty())
 			and (said == "" or said.contains("isn't connected")),
-			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\", a refused o says \"%s\"; the lines shown: %s; %s"
-			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i, why_o,
+			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\"%s, a refused o says \"%s\"; the lines shown: %s; %s"
+			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i,
+			(" (" + mode + ")") if mode != "" else "", why_o,
 			detail.get_slice(" | ", 3).left(240),
 			("the allowed %s says \"%s\"" % [allowed, said]) if said != "" else "no allowed command pressed"])
 	# the game's own read: an error answer reaches the view (asked for a part row the car hasn't)
