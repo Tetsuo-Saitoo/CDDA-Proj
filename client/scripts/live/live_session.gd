@@ -24,6 +24,9 @@ signal recipes_matched(container_uid: int, result: Dictionary)
 ## G4: a character query (query_character) came back: CharacterData.parse_result's Dictionary, still game data
 ## (`ok` false: {error}; CharacterData.set_sheet reads it).
 signal character_sheet(sheet: Dictionary)
+## C6: a vehicle-work read (query_vehicle_work) came back: VehicleWorkData.clean's Dictionary (`ok` false: {vehicle,
+## error}).
+signal vehicle_work(result: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
@@ -62,6 +65,10 @@ var _recipe_results := {}
 ## The character query waiting for its result (0 none) and when it was asked (msec).
 var _char_query := 0
 var _char_asked := 0
+var _work_query := 0
+var _work_asked := 0
+var _work_uid := 0   # the vehicle _work_query asked about
+var _work_tag := 0   # the last vehicle_work action's tag (1..2^31-1, wraps)
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
@@ -553,6 +560,81 @@ func query_character() -> int:
 	return id
 
 
+## C6: what can be done on vehicle `uid` (the snapshot's uid), and on its part row `part` (-1: none), by CDDA's own
+## checks (contracts/vehicle_work.md; read-only, answered at the sim's next request). Returns the query id, 0
+## when refused (no game, an older DLL, one still waiting: the bridge takes one at a time). vehicle_work follows.
+func query_vehicle_work(uid: int, part := -1) -> int:
+	if not _can("query_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < -1 \
+			or part > VehicleWorkData.MAX_ROW \
+			or (_work_query > 0 and Time.get_ticks_msec() - _work_asked < QUERY_TIMEOUT_MS):
+		return 0
+	var d := {"vehicle": uid}
+	if part >= 0:
+		d["part"] = part
+	var v: Variant = _sim.query_vehicle_work(d)
+	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
+	if id < 1 or id > VehicleWorkData.MAX_QUERY_ID:
+		return 0
+	_work_query = id
+	_work_asked = Time.get_ticks_msec()
+	_work_uid = uid
+	return id
+
+
+## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`,
+## which holds part `vpart` at `mount` (the read's part entry: the sim refuses a row that moved, with
+## VehicleWorkData.MOVED). contracts/vehicle_work.md "The action"; the sim checks it all again. Returns the
+## action's tag, answered by one `work_result` event (VehicleWorkData.work_result), or 0 when refused before it
+## was queued.
+func queue_vehicle_work(uid: int, part: int, vpart: int, mount: Vector2i, cmd: String) -> int:
+	if not _can("queue_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < 0 \
+			or part > VehicleWorkData.MAX_ROW or not cmd in VehicleWorkData.ACTION_CMDS \
+			or vpart < 1 or vpart > VehicleWorkData.MAX_ACTION_VPART \
+			or absi(mount.x) > VehicleWorkData.MAX_ACTION_MOUNT or absi(mount.y) > VehicleWorkData.MAX_ACTION_MOUNT:
+		return 0
+	_work_tag = _work_tag % VehicleWorkData.MAX_TAG + 1
+	if _sim.queue_vehicle_work({"vehicle": uid, "part": part, "vpart": vpart, "mount": [mount.x, mount.y],
+			"cmd": cmd, "tag": _work_tag}) != true:
+		return 0
+	return _work_tag
+
+
+## Whether the bridge takes the vehicle_work action (an older DLL doesn't: the view says it isn't connected).
+func can_vehicle_work() -> bool:
+	return _can("queue_vehicle_work")
+
+
+## Whether the bridge answers the vehicle-work read (an older DLL doesn't: the view uses its stand-in).
+func has_vehicle_work() -> bool:
+	return _can("query_vehicle_work")
+
+
+func vehicle_work_pending() -> bool:
+	return _work_query > 0
+
+
+func _poll_vehicle_work() -> void:
+	if _work_query < 1:
+		return
+	if state != "running" or not _sim.has_method("take_query_result"):
+		_work_query = 0
+		return
+	var text: Variant = _sim.take_query_result(_work_query)
+	if not text is String or (text as String).is_empty():
+		if Time.get_ticks_msec() - _work_asked > QUERY_TIMEOUT_MS:
+			_work_query = 0
+		return
+	var id := _work_query
+	_work_query = 0
+	var d := VehicleWorkData.parse_result(text, id)
+	if not d.is_empty() and d["ok"] != true and d["vehicle"] == 0:
+		d["vehicle"] = _work_uid   # the contract's error carries no vehicle: it is the one this query asked about
+	if d.is_empty() or d["vehicle"] != _work_uid:
+		push_warning("vehicle work query %d: unreadable result" % id)
+		return
+	vehicle_work.emit(d)
+
+
 func character_pending() -> bool:
 	return _char_query > 0
 
@@ -960,6 +1042,7 @@ func _poll(delta: float) -> void:
 	_poll_cheats()
 	_poll_queries()
 	_poll_character()
+	_poll_vehicle_work()
 	_poll_range(delta)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():

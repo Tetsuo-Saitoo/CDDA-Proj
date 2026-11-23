@@ -85,6 +85,20 @@ var hud_view: HudView             # the screen view of hud_data
 var classic: ClassicView          # F3: CDDA's own ASCII view of the snapshot around the player (G8, dev)
 var character_data := CharacterData.new()   # the character screen's cards (G4), for screen and VR
 var character: CharacterView      # P: the character screen
+var work_view: VehicleWorkView    # Shift+V: C6 vehicle work beside a car (flat screen)
+## C6: lead-world's work camera (camera/) once it lands: focus(uid, part), view(uid, name), leave(). Until then
+## null and its calls do nothing (as VehicleView.highlight / open_hood until they exist).
+var work_cam: Object = null
+var _work_uid := 0                       # the vehicle the work view was opened on (kept for its close)
+var _work_parts := PackedInt32Array()    # its parts and what the player carried when last asked
+var _work_carried := PackedInt64Array()
+var _work_again := false                 # a read was refused while one was out: ask again when it comes
+var _work_tag := 0                       # the vehicle_work action waiting for its work_result (0 none)
+var _work_sent := 0                      # ... sent at (msec)
+var _work_cmd := ""                       # ... its command
+var _work_for := 0                       # ... the vehicle it was sent for
+var _work_starting := false              # work started since the last snapshot: the player counts as busy
+var _work_gate := VehicleWorkData.Gate.new()   # holds r and o while the rows on screen may name other parts
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -467,6 +481,9 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	# the same sheet.
 	if character.visible or inspect.visible:
 		_ask_character()
+	_work_starting = false   # this snapshot shows the started work's activity while it runs
+	if work_view.visible:
+		_work_follow(snap)
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
 	if hands_panel != null:
@@ -886,6 +903,8 @@ func _start_live() -> void:
 	live.held_changed.connect(hands_panel.show_held)
 	live.held_changed.connect(hud_data.set_held)
 	live.character_sheet.connect(character_data.set_sheet)   # G4: the character screen's stats, skills ...
+	live.vehicle_work.connect(_on_vehicle_work)   # C6: the work view's read
+	live.events_arrived.connect(_on_work_events)   # C6: its action's work_result
 	live.state_changed.connect(func(s: String) -> void:
 		if s != "running":
 			character_data.set_sheet(null))   # another game, another character
@@ -1738,6 +1757,169 @@ func _pour_target() -> Dictionary:
 ## the client's own: CDDA has none), and the tray lays out what CDDA lists in it, in one step; closing the tray
 ## shuts the lid. Looking sends nothing; taking goes through Hands as from any tray. False when E isn't on one:
 ## E goes on as before (CDDA's own use / examine).
+## C6: Shift+V opens the work view on the vehicle next to the player (the one pointed at first). Flat screen.
+func _open_work() -> void:
+	if world.snapshot == null or (live != null and not _in_main_loop()):
+		return
+	var hit := _cast_screen(_pointer(), false) if get_viewport().get_camera_3d() != null else {}
+	var at: Variant = hit.get("square") if hit.get("hit", false) else null
+	var veh := VehicleWorkData.vehicle_near(world.snapshot, at if at is Vector3i else Vector3i.MAX)
+	if veh == null:
+		grab.flash("No vehicle next to you.")
+		return
+	_work_uid = veh.uid
+	_work_parts = veh.parts
+	_work_carried = world.snapshot.carried
+	_work_again = false
+	_work_gate = VehicleWorkData.Gate.new()
+	if _work_busy():
+		_work_gate.changed()   # work runs: the list read now may be old when it ends
+	work_view.fit()
+	work_view.open(veh.uid, veh.name)
+	_ask_work()
+
+
+## The work view's read: from the game (CDDA's checks) when its bridge answers it, else the snapshot's stand-in.
+func _ask_work() -> void:
+	if not work_view.visible:
+		return
+	if live != null and live.has_vehicle_work():
+		# refused (one still out, or the bridge busy): asked again when that one comes, else at the next snapshot
+		var id := live.query_vehicle_work(work_view.uid, work_view.selected)
+		_work_again = id == 0
+		if id > 0:
+			_work_gate.asked(_work_busy())
+		return
+	_work_gate.asked(_work_busy())
+	_work_gate.answered(true)   # the stand-in is read from this snapshot
+	_show_work(VehicleWorkData.stand_in(world.snapshot, world.tables, work_view.uid, work_view.selected))
+
+
+func _on_vehicle_work(r: Dictionary) -> void:
+	if not work_view.visible or r.get("vehicle") != work_view.uid:
+		return
+	_work_gate.answered(r.get("ok") == true)
+	_show_work(r)
+	if _work_again:
+		_work_again = false
+		_ask_work()
+
+
+func _show_work(r: Dictionary) -> void:
+	if not work_view.set_result(r) and r.get("ok") != true and not work_view.visible:
+		var e: Variant = r.get("error")
+		grab.flash("The vehicle is out of reach." if e == "too far" else ("That's an appliance: examine it instead."
+				if e == "an appliance" else "The vehicle is gone."))
+
+
+## A new snapshot while the view is open: closed when the vehicle went or is out of reach, asked again when its
+## parts or what the player carries changed (CDDA's checks depend on both).
+func _work_follow(snap: Snapshot) -> void:
+	var veh: Snapshot.Vehicle = null
+	for v in snap.vehicles:
+		if v.uid == work_view.uid:
+			veh = v
+			break
+	if veh == null or not VehicleWorkData.in_reach(snap, veh):
+		work_view.close()
+		grab.flash("The vehicle is out of reach." if veh != null else "The vehicle is gone.")
+		return
+	var moved := veh.parts != _work_parts
+	if moved:
+		_work_gate.changed()   # the rows may have moved: r and o wait for a read after this
+	if moved or snap.carried != _work_carried or (live != null and not live.vehicle_work_pending()
+			and (_work_again or _work_gate.wants_read(_work_busy()))):
+		_work_parts = veh.parts
+		_work_carried = snap.carried
+		_ask_work()
+
+
+func _on_work_part(row: int) -> void:
+	call_if(vehicles_view, "highlight", [work_view.uid, row])
+	if row >= 0:
+		call_if(work_cam, "focus", [work_view.uid, row])
+	_ask_work()
+
+
+func _on_work_view(view: String) -> void:
+	call_if(vehicles_view, "open_hood", [work_view.uid, view == "hood"])
+	call_if(work_cam, "view", [work_view.uid, view])
+
+
+## A command the read allows: sent as the vehicle_work action (repair and remove so far; the sim checks it all
+## again), one at a time. Its work_result says whether CDDA's activity started.
+func _on_work_command(cmd: String, row: int) -> void:
+	if live == null or not live.can_vehicle_work() or not cmd in VehicleWorkData.ACTION_CMDS:
+		work_view.say("%s isn't connected to the game yet." % VehicleWorkData.COMMAND_NAMES.get(cmd, "That"))
+		return
+	var why := _work_gate.held(_work_busy(), world.snapshot.activity_verb if world.snapshot != null else "")
+	if not why.is_empty():
+		work_view.say(why)   # the action names its part by row: not while the rows may be old
+		if _work_gate.wants_read(_work_busy()) and not live.vehicle_work_pending():
+			_ask_work()   # no snapshot may come while the view waits: ask now
+		return
+	if _work_tag > 0 and Time.get_ticks_msec() - _work_sent < LiveSession.QUERY_TIMEOUT_MS:
+		work_view.say("Still starting the last one.")
+		return
+	var p := VehicleWorkData.part_of(work_view.result, row)
+	if p.is_empty():
+		work_view.say("Checking the parts again...")
+		_ask_work()
+		return
+	_work_tag = live.queue_vehicle_work(work_view.uid, row, p["vpart"], p["mount"], cmd)
+	_work_sent = Time.get_ticks_msec()
+	_work_for = work_view.uid
+	_work_cmd = cmd
+	work_view.say("Starting..." if _work_tag > 0 else "The game didn't take that now.")
+
+
+## The work_result for the action in flight: started (CDDA's activity runs; the next snapshot and read show what it
+## did) or refused with CDDA's reason ("" when the player said no to its question).
+func _on_work_events(events: Array) -> void:
+	if _work_tag < 1:
+		return
+	for i in mini(events.size(), 4096):
+		var r := VehicleWorkData.work_result(events[i], _work_tag)
+		if r.is_empty():
+			continue
+		_work_tag = 0
+		if r["started"]:
+			_work_starting = true   # the snapshot on screen is older than its activity
+		if not work_view.visible or _work_for != work_view.uid:
+			return   # closed, or open on another vehicle: what it did shows in the next snapshot and read
+		var moved: bool = not r["started"] and r["text"] == VehicleWorkData.MOVED
+		if r["started"] or moved:
+			_work_gate.changed()   # its activity changes the parts; or they changed under the list on screen
+		if r["started"]:
+			work_view.say("%s started." % VehicleWorkData.COMMAND_NAMES.get(_work_cmd, "Work"))
+			if _work_cmd == "o":
+				work_view.forget_selection()   # the rows after a removed part move up
+		else:
+			work_view.say(r["text"] if not (r["text"] as String).is_empty() else "Not started.")
+			if moved:
+				work_view.forget_selection()
+				_ask_work()   # read again
+		return
+
+
+## Whether the player's CDDA activity (a repair, a removal, a long wait) still runs.
+func _work_busy() -> bool:
+	return _work_starting or (world.snapshot != null and not (world.snapshot.activity_id.is_empty()
+			and world.snapshot.activity_verb.is_empty()))
+
+
+func _on_work_closed() -> void:
+	call_if(vehicles_view, "highlight", [_work_uid, -1])
+	call_if(vehicles_view, "open_hood", [_work_uid, false])
+	call_if(work_cam, "leave", [])
+
+
+## Calls `method` on `o` when it has one (another lead's call that may not have landed yet); nothing otherwise.
+static func call_if(o: Object, method: String, args: Array) -> void:
+	if o != null and is_instance_valid(o) and o.has_method(method):
+		o.callv(method, args)
+
+
 func _open_cargo() -> bool:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or world.snapshot == null or grab.tray_open() or grab.carrying():
@@ -1980,6 +2162,13 @@ func _setup_hud() -> void:
 	character.data = character_data
 	character.opened.connect(_ask_character)
 	layer.add_child(character)
+	work_view = VehicleWorkView.new()
+	work_view.blocked = func() -> bool: return request_ui != null and request_ui.visible   # CDDA's prompts first
+	work_view.part_selected.connect(_on_work_part)
+	work_view.command_chosen.connect(_on_work_command)
+	work_view.view_chosen.connect(_on_work_view)
+	work_view.closed.connect(_on_work_closed)
+	layer.add_child(work_view)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
 	request_ui.world_state = func() -> Array: return [world.snapshot, world.tables]
@@ -2159,7 +2348,8 @@ func _clock_tick(now_ms: int) -> void:
 
 
 func _menu_open() -> bool:
-	return key_menu.visible or inspect.visible or character.visible or request_ui.visible or grab.tray_open() \
+	return key_menu.visible or inspect.visible or character.visible or work_view.visible or request_ui.visible \
+			or grab.tray_open() \
 			or vise_bench.visible or main_menu != null
 
 
@@ -2175,6 +2365,8 @@ func _setup_back_out() -> void:
 				tele_pick.picking = false
 				status = "teleport: cancelled"
 				return true)
+	back_out.add("vehicle work", func() -> bool: return work_view != null and work_view.visible,
+			func() -> bool: return work_view.handle_key(BackOut.esc()))
 	back_out.add("character", func() -> bool: return character != null and character.visible,
 			func() -> bool: return character.handle_key(BackOut.esc()))
 	back_out.add("inventory", func() -> bool: return inspect != null and inspect.visible,
@@ -2311,7 +2503,7 @@ func _process(_delta: float) -> void:
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	grab.update_tray(get_viewport().get_camera_3d(), _pointer(), vr != null or key_menu.visible or inspect.visible
-			or character.visible or request_ui.visible or main_menu != null)
+			or character.visible or work_view.visible or request_ui.visible or main_menu != null)
 	if typing or vr != null or (live != null and not _in_main_loop()):
 		pour.cancel()   # a menu or prompt took the keys: its release won't come here
 	elif pour.update(Time.get_ticks_msec()) == "refused":
@@ -2516,7 +2708,7 @@ func _input(event: InputEvent) -> void:
 	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
 	if not BackOut.is_back(event):   # (Esc / Start while E's wheel is on its way: back_out's "wheel" step)
 		request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
-	if key_menu.visible or inspect.visible or character.visible:
+	if key_menu.visible or inspect.visible or character.visible or work_view.visible:
 		tele_pick.picking = false   # a menu came up meanwhile (main's _input sees its clicks before its buttons do)
 	var pick := tele_pick.pick_event(event)   # the cheat's "pick a square": this click is the square
 	if pick == TeleportPick.PICK:
@@ -2542,8 +2734,8 @@ func start_teleport_pick() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible or inspect.visible or character.visible:
-		return   # the inspect view and the character screen take their keys themselves (their _input)
+	if key_menu.visible or inspect.visible or character.visible or work_view.visible:
+		return   # the inspect view, the character screen and the work view take their keys themselves (their _input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
 		_open_key_menu()
@@ -2553,6 +2745,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if inspect.handle_key(event, _can_inspect()):
 		return
 	if character.handle_key(event, _can_open_character()):
+		return
+	if vr == null and InputActions.pressed(event, &"vehicle_work"):
+		_open_work()
 		return
 	if InputActions.pressed(event, &"classic_view"):
 		classic.toggle()

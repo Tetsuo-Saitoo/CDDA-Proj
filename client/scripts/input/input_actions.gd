@@ -101,6 +101,7 @@ const ACTIONS := [
 	[&"cdda_grab", "Act", "grab", ["Shift+G"]],
 	[&"cdda_safemode", "Act", "safe mode on / off", ["Shift+1"]],
 	[&"cdda_control_vehicle", "Act", "drive: take a vehicle's controls (driving: its menu)", ["Shift+6"]],
+	[&"vehicle_work", "Act", "work on the vehicle next to you: its parts, repair, remove, mend, refill (again or Esc: close)", ["Shift+V"]],
 	# G2 hotbar (ui/hotbar.gd): 1 and 2 are the hand strikes, so the slots start at 3
 	[&"hotbar_1", "Hotbar", "slot 1: into the main hand (Tab view: put the selected item here)", ["3"]],
 	[&"hotbar_2", "Hotbar", "slot 2", ["4"]],
