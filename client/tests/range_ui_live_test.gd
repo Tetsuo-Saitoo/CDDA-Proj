@@ -1171,8 +1171,101 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		else:
 			print("  (vehicle work: no second %s to try an old list on: o %s, the list old %s)"
 					% [picked, str(wv.call("detail_text")).get_slice(" | ", 1), gate2.get("stale")])
+	if done:
+		await _work_install_live(wv, uid, old, picked, rows0, listed0)   # the removed part installed back
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
+
+
+## lead-bridge's install through lead-ui's install mode (said so, not failed, on a client or bridge without it, or
+## when the game doesn't allow it): the part `picked` that was just removed (`old`: its entry in the read before it
+## came off) is installed back on its square. Install mode on that square lists the types the game allows there, the
+## removed part's type among them; picked, i starts CDDA's own work; when the activity is over the car has `rows0`
+## part rows again, the view lists `listed0` parts and a part of that name is on that square.
+func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, rows0: int, listed0: int) -> void:
+	if not wv.has_method("begin_install") or not old.get("mount") is Vector2i or int(old.get("vpart", -1)) < 1:
+		return
+	var why := wv.get("_why") as Label
+	wv.call("begin_install", old["mount"])
+	var listed := func() -> bool: return wv.waiting != true and not (wv.get("_inst") as Dictionary).is_empty()
+	if wv.get("installing") != true or not await _until(listed, SHOW_TIMEOUT_MS):
+		print("  (vehicle work: this game sends no install list (the view says \"%s\"): installing not tried)" % why.text)
+		wv.call("end_install")
+		return
+	var shown: int = (wv.get("_type_order") as Array).size()
+	wv.call("toggle_all")
+	var all_types: int = (wv.get("_type_order") as Array).size()
+	wv.call("toggle_all")
+	var row: Dictionary = (wv.get("_type_rows") as Dictionary).get(old["vpart"], {})
+	if row.is_empty() or row.get("have") != true or row.get("fits") != true:
+		print("  (vehicle work: install mode on square %s lists %d types that fit (%d in all); the removed %s is %s: installing it back not tried)"
+				% [old["mount"], shown, all_types, picked, row if not row.is_empty() else "not among them"])
+		wv.call("end_install")
+		return
+	wv.call("pick_type", old["vpart"])
+	var button := (wv.get("_buttons") as Dictionary)["i"] as Button
+	var lines_in := func() -> bool: return wv.waiting != true
+	await _until(lines_in, SHOW_TIMEOUT_MS)
+	await _frames(2)
+	if button.disabled:
+		print("  (vehicle work: install mode lists the removed %s for square %s, but the game doesn't allow it now: \"%s\"; lines: %s)"
+				% [picked, old["mount"], button.tooltip_text, str(wv.call("detail_text")).get_slice(" | ", 3).left(300)])
+		wv.call("end_install")
+		return
+	var turn0: int = _main.world.snapshot.turn
+	await _tap(KEY_I)
+	var started := func() -> bool: return why.text.ends_with("started.")
+	var began: bool = await _until(started, SHOW_TIMEOUT_MS)
+	var said := why.text
+	var whole := func() -> bool:
+		var v := _vehicle(uid)
+		return v != null and v.part_count() == rows0 and _live.request.get("timed", false) and not _main.world.busy()
+	var done: bool = began and await _until_slow(whole, 180000)
+	var relisted := func() -> bool: return wv.waiting != true and (wv.get("_order") as Array).size() == listed0
+	var again: bool = done and await _until(relisted, SHOW_TIMEOUT_MS)
+	var back_on := false
+	for q: Dictionary in (wv.result as Dictionary).get("parts", []):
+		back_on = back_on or (str(q["name"]) == picked and q["mount"] == old["mount"])
+	var veh := _vehicle(uid)
+	_check(began and said == "Install started." and done and again and back_on and wv.visible and wv.get("installing") != true,
+			"vehicle work: install mode on the removed %s's square %s lists %d types that fit (%d in all), that type among them; picked, i starts CDDA's own work (\"%s\"); %d turns later the car has %d part rows again (%d), the view lists %d parts and a %s is on that square (%s)"
+			% [picked, old["mount"], shown, all_types, said, _main.world.snapshot.turn - turn0, veh.part_count() if veh != null else -1,
+			rows0, (wv.get("_order") as Array).size(), picked, back_on])
+
+
+## lead-world's work camera (C6) under lead-ui's work view, open on vehicle `uid` with part `row` selected: it is
+## the view's camera and looks at the selected part, which is tinted; 1, 2 and 3 take it around the car, over its
+## engine and low beside it; the view stays open on the same part and no turn passes (`turn0`: the turn before).
+func _work_camera_live(wv: Variant, wc: Variant, uid: int, row: int, turn0: int) -> void:
+	var vv: Variant = _main.vehicles_view
+	await create_timer(1.2).timeout   # (it glides: within a few cm of its place after a second)
+	var cam := root.get_camera_3d()
+	var a: Dictionary = vv.call("part_anchor", uid, row)
+	var size := root.get_visible_rect().size
+	var point: Vector3 = a.get("point", Vector3.ZERO)
+	var on_screen := Vector2(-1.0, -1.0)
+	var seen := false
+	if cam != null and not a.is_empty():
+		on_screen = cam.unproject_position(point)
+		seen = not cam.is_position_behind(point) and Rect2(size * 0.2, size * 0.6).has_point(on_screen)
+	var off: float = cam.global_position.distance_to(point) if cam != null else -1.0
+	var tint: Variant = vv.get("_lit")
+	_check(cam == wc and wc.active == true and seen and off > 0.8 and off < 9.0 and vv.get("_highlight") == [uid, row]
+			and tint is Node3D and is_instance_valid(tint),
+			"work camera: with a part selected it is the view's camera and looks at that part (%.1f m off, the part at %s on a %s screen), and the part is tinted (%s)"
+			% [off, on_screen, size, vv.get("_highlight")])
+	var ground: float = _main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos).y
+	var eyes: Array[Vector3] = []
+	for code: Key in [KEY_1, KEY_2, KEY_3]:
+		await _tap(code)
+		await create_timer(1.2).timeout
+		var now := root.get_camera_3d()
+		eyes.append(now.global_position if now != null else Vector3.ZERO)
+	var apart: bool = eyes[0].distance_to(eyes[1]) > 0.5 and eyes[1].distance_to(eyes[2]) > 0.5 and eyes[0].distance_to(eyes[2]) > 0.5
+	_check(apart and eyes[0].y - ground > 1.8 and eyes[2].y - ground < 0.6 and root.get_camera_3d() == wc and wv.visible
+			and wv.selected == row and _main.world.snapshot.turn == turn0,
+			"work camera: 1, 2 and 3 take it around the car (%.1f m up), over its engine (%.1f m up) and low beside it (%.1f m up); the view stays open on the same part and no turn passes"
+			% [eyes[0].y - ground, eyes[1].y - ground, eyes[2].y - ground])
 
 
 ## lead-ui's vehicle work view (C6; said so on a client without it). The player stands on `by`, next to
@@ -1190,6 +1283,8 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var read := func() -> bool: return wv.visible and not wv.waiting and not (wv.result as Dictionary).is_empty()
 	var shut := func() -> bool: return not wv.visible
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	var eye_cam := root.get_camera_3d()   # the camera the work camera takes over from
+	var eye_xf := eye_cam.global_transform if eye_cam != null else Transform3D()
 	var was: Vector2i = root.size   # (headless the window starts tiny)
 	root.size = Vector2i(1280, 720)
 	await _frames(4)
@@ -1242,6 +1337,16 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var why_m := why.text
 	await _tap(KEY_I)
 	var why_i := why.text
+	var mode := ""   # a client with install mode: i opens it on the part's square; what it shows is said, Esc leaves it
+	if wv.get("installing") == true:
+		var listed := func() -> bool: return wv.waiting != true
+		var answered: bool = await _until(listed, 3000)
+		mode = "i opens install mode on square %s (answered %s, %d types listed, it says \"%s\")" \
+				% [wv.get("install_at"), answered, (wv.get("_type_order") as Array).size(), why.text]
+		await _tap(KEY_ESCAPE)
+		mode += "; Esc goes back to the parts"
+		await _until(read, SHOW_TIMEOUT_MS)
+	var back_in_parts: bool = wv.visible and wv.get("installing") != true
 	var why_o := ""
 	if detail.contains("o:off"):   # (a refused command only says why: nothing is sent)
 		await _tap(KEY_O)
@@ -1254,11 +1359,12 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	if stand_in and allowed != "":   # (the game's own read may one day do the work: not pressed then)
 		await _tap(OS.find_keycode_from_string(allowed.to_upper()))
 		said = why.text if why.text.contains("isn't connected") else str(_main.grab.get("_flash"))
-	_check(first == order[0] and second == order[1] and wv.selected == first and detail.contains("i:off")
-			and why_i.contains("Installing") and (not detail.contains("m:off") or not why_m.is_empty())
+	_check(first == order[0] and second == order[1] and wv.selected == first and back_in_parts
+			and (why_i.contains("Installing") or mode != "") and (not detail.contains("m:off") or not why_m.is_empty())
 			and (said == "" or said.contains("isn't connected")),
-			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\", a refused o says \"%s\"; the lines shown: %s; %s"
-			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i, why_o,
+			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\"%s, a refused o says \"%s\"; the lines shown: %s; %s"
+			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i,
+			(" (" + mode + ")") if mode != "" else "", why_o,
 			detail.get_slice(" | ", 3).left(240),
 			("the allowed %s says \"%s\"" % [allowed, said]) if said != "" else "no allowed command pressed"])
 	# the game's own read: an error answer reaches the view (asked for a part row the car hasn't)
@@ -1269,18 +1375,19 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 		_check(got and wv.visible,
 				"vehicle work: an error answer from the game reaches the view (asked for a part row the car hasn't: \"%s\"; asked %s, view open %s)"
 				% [why.text, asked > 0, wv.visible])
-	# 1 2 3: nothing yet (a work camera, once it lands, is not judged here)
-	var cam := root.get_camera_3d()
-	var cam0 := cam.global_transform if cam != null else Transform3D()
+	# 1 2 3: lead-world's work camera when the client has one, else nothing yet
 	var turn0: int = _main.world.snapshot.turn
-	for code: Key in [KEY_1, KEY_2, KEY_3]:
-		await _tap(code)
-	await _frames(6)
-	var still: bool = wv.visible and wv.selected == first and cam != null and cam.global_position.distance_to(cam0.origin) < 0.01 \
-			and cam.global_basis.z.angle_to(cam0.basis.z) < 0.01
-	if _main.get("work_cam") != null:
-		print("  (vehicle work: this client has a work camera: 1 2 3 not judged; the view open %s)" % wv.visible)
+	var wc: Variant = _main.get("work_cam")
+	if wc != null:
+		await _work_camera_live(wv, wc, car.uid, first, turn0)
 	else:
+		var cam := root.get_camera_3d()
+		var cam0 := cam.global_transform if cam != null else Transform3D()
+		for code: Key in [KEY_1, KEY_2, KEY_3]:
+			await _tap(code)
+		await _frames(6)
+		var still: bool = wv.visible and wv.selected == first and cam != null and cam.global_position.distance_to(cam0.origin) < 0.01 \
+				and cam.global_basis.z.angle_to(cam0.basis.z) < 0.01
 		_check(still and _main.world.snapshot.turn == turn0,
 				"vehicle work: 1, 2 and 3 change nothing yet: the view stays open on the same part, the camera stays and no turn passes")
 	# the game's own keys are off while it is open
@@ -1328,6 +1435,14 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 		await _work_remove_live(wv, car.uid)   # the game's own work: a small part removed through the view
 	await _tap(KEY_ESCAPE)
 	var esc_closes: bool = not wv.visible
+	if wc != null:
+		await _frames(3)
+		var now_cam := root.get_camera_3d()
+		var tinted: Variant = _main.vehicles_view.get("_highlight")
+		_check(wc.active == false and eye_cam != null and now_cam == eye_cam and now_cam.global_position.distance_to(eye_xf.origin) < 0.05
+				and tinted is Array and (tinted as Array).is_empty() and _main.vehicles_view.get("_lit") == null,
+				"work camera: closing the view gives the view back to the camera it took over from, where it was, and the tint goes (still active %s, the same camera %s, tinted %s)"
+				% [wc.active, now_cam == eye_cam, tinted])
 	root.push_input(key)
 	var again: bool = await _until(read, SHOW_TIMEOUT_MS)
 	root.push_input(key)
