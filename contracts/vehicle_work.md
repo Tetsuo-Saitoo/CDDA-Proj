@@ -5,8 +5,8 @@ is a curses loop the client can't answer, so the client shows its own view and a
 be done (the read), and to do it (the action). CDDA decides both: the checks, texts and times come from
 `veh_interact`'s own code, run off-screen.
 
-Status (2026-11-22): the **read** is built and frozen as written here. The **action** is built for repair and
-remove. Install, mend and refill are planned and not frozen; see the end.
+Status (2026-11-23): the **read** and the **action** are built and frozen as written here for repair, remove
+and install. Mend and refill are planned and not frozen; see the end.
 
 ## The read
 
@@ -20,6 +20,7 @@ while paused; read-only; never a prompt; ≤ 64 KB).
 |---|---|---|
 | `vehicle` | int, required | The snapshot's `vehicles[].uid` (1..2^53−1). |
 | `part` | int, optional | A row of that vehicle's `parts` in the snapshot (0..4095): the part the player has selected. Left out or -1: no part, the result has no `selected`. |
+| `install`, `vpart` | | The install list for a square instead of a part's commands: see "Install". |
 
 Refused (0, nothing queued): a missing `vehicle`, a wrong type, anything out of range, a vehicle-work query still
 pending (one at a time), 8 queries pending already, no game running.
@@ -153,10 +154,10 @@ queue with the other queued actions (`ui_requests.md`) and runs at the main loop
 | Key | Type | |
 |---|---|---|
 | `vehicle` | int, required | The snapshot's `vehicles[].uid`. |
-| `part` | int, required | A row of that vehicle's `parts` (0..4095), as the read's `row`. |
+| `part` | int, required for `r` and `o` | A row of that vehicle's `parts` (0..4095), as the read's `row`. Left out for `i`. |
 | `vpart` | int, required | That part's type as the read (or the snapshot row) gave it: the `vpart` id-table index (1..2^20). |
 | `mount` | Array, required | That part's mount as the read gave it: `[x, y]`, two ints (each −1023..1023). |
-| `cmd` | String, required | `"r"` repair (replaces a broken part) or `"o"` remove. |
+| `cmd` | String, required | `"r"` repair (replaces a broken part), `"o"` remove, or `"i"` install (see "Install": `vpart` and `mount` are then the type and the square). |
 | `tag` | int, optional | 1..2^31−1: the client's number for this action, answered by one `work_result` event (`events.md`) when the action has run. |
 
 `vpart` and `mount` name the part a second time. Rows move up when a part comes off, so a `part` taken from a
@@ -201,11 +202,68 @@ moving up by one. What a removal yields goes where CDDA puts it: into a cargo sp
 square, else at their feet. CDDA uses up the components and tools when the work finishes, and checks them again
 then: if they are gone by then it says so and nothing is repaired or removed.
 
-## Planned, not frozen
+## Install
 
-- **Install**: the read gets an `install` section for a square of the vehicle: the part types CDDA would list
-  there (`can_mount`), which of them the player could install now, and the requirement lines for one of them.
-  The action gets `cmd` `"i"` with the part type. Its questions: a `menu` for a new part's shape, and `popup` +
-  `target` (look) for the facing of a new light, both when the work finishes.
+Frozen 2026-11-23. Installing is asked about a **square** of the vehicle and a **part type**, not a part.
+
+### The read
+
+Two more keys for `query_vehicle_work(d)`:
+
+| Key | Type | |
+|---|---|---|
+| `install` | Array, optional | `[x, y]`, two ints (each −1023..1023): a square of the vehicle by its mount, as the parts' `mount`. It may hold no part yet (next to the vehicle, for a new frame). With it, leave `part` out. |
+| `vpart` | int, optional, only with `install` | The type the player has picked in the list: the `vpart` id-table index (1..2^20). |
+
+The result is the usual one (`parts` and the rest) with `install` in place of `selected`:
+
+```json
+"install": {
+  "mount": [1, 0], "reason": 0, "text": "",
+  "types": [[212, 3], [57, 1], [12, 0]], "types_more": 0,
+  "selected": {"cmd": "i", "vpart": 212, "ok": true, "reason": 0, "text": "", "time_s": 300,
+               "lines": [{"text": "Time required:", "met": 0}]}
+}
+```
+
+| Field | |
+|---|---|
+| `mount` | The square asked about. |
+| `reason`, `text` | CDDA's check for installing anything on that square, with its sentence: 0 nothing against it; 1 "Cannot install any part here." (terrain, furniture or another vehicle is in the way; `types` is then empty); 5 "You can't install parts while driving."; 6 "Your morale is too low to construct…"; 7 "It's too dark to see what you are doing…". |
+| `types` | `[vpart, bits]` for every part type CDDA's screen lists for the square, in its order: first the types whose components and tools the player has, by name, then the others, by name. It is every installable type, a few hundred. `bits`: 1 the player has its components and tools (skills are not counted, as in CDDA's list); 2 it can go on this square as the vehicle is now (CDDA's mount rules; CDDA's list doesn't show this). Name, location and flags: the `vpart` id table. At most 1024. |
+| `types_more` | Types left out beyond that, or to stay within the byte limit (they go last, after the parts and the lines). |
+| `selected` | Only with `vpart`: like a command (`cmd` `"i"`, `ok`, `reason`, `text`, `time_s`, `lines`), with `vpart`. `text` is CDDA's sentence when it refuses outright: the square's sentences above, "Unracking is required before installing any parts here.", "Only one … powered engine can be installed.", "This vehicle cannot be modified in this way.", "This part cannot be installed.", "Funnels need to be installed over a tank.", "Can't install turret on another turret.". A type CDDA doesn't list for the square (no such index, a hidden type, an appliance): `ok` false, `reason` 1, "That can't be installed here.". `lines`: time, skills, components, tools, additional requirements (skill for a further engine or steering axle, lifting or jacking), "Cannot install due to:" with CDDA's reason when the square doesn't take it, then the description. |
+
+Refused (0): `install` together with `part`, `vpart` without `install`, an `install` that isn't two ints, anything
+out of range. Errors are the read's.
+
+### The action
+
+`queue_vehicle_work(d)` with `cmd` `"i"`: `vehicle`, `vpart` (the type to install), `mount` (the square) and
+optionally `tag`; **no `part`** (with one, nothing is queued). The sim checks everything again. Refused with the
+sentence as a `message` and as the event's text: the vehicle-level sentences of repair and remove, CDDA's own
+sentence (the read's `text`), "That can't be installed here.", or "You don't meet the requirements to install the
+X." (a line is not met).
+
+Otherwise CDDA's vehicle activity starts and takes the read's `time_s`; `work_result` says it was started. CDDA's
+questions on the way are real requests:
+
+- Before anything else, the yes / no `popup` when the vehicle belongs to someone else, as for repair and remove.
+- Before the start, a yes / no `popup` when the part would make an aircraft unfit to fly ("Installing this part
+  will mean that this vehicle is no longer flightworthy. Continue?"), and one when it would keep a folding vehicle
+  from folding ("Installing this part will make the vehicle unfoldable. Continue?"). No: nothing starts, and the
+  event's text is "".
+- When the work finishes, a `menu` when more than one component or tool could be used up for it.
+- Then, for a type with more than one shape, a `menu` "Choose cosmetic variant:": the entries are the shapes'
+  labels ("Default" for one without a label). Cancelling keeps CDDA's default shape.
+- Then, for a light with a cone (flags `CONE_LIGHT`, `WIDE_CONE_LIGHT` or `HALF_CIRCLE_LIGHT` in the id table), a
+  `popup` ("Press space, choose a facing direction for the new X and confirm with enter.") followed by a `target`
+  request for a square: the light faces from its own square toward the one picked. CDDA asks both again until a
+  square other than the light's own is picked; there is no way out of it.
+
+The new part is the vehicle's last part row. CDDA uses up the components and tools when the work finishes and
+checks them again then ("You don't meet the requirements to install the X." as a message, nothing installed).
+
+## Planned, not frozen
 - **Mend and refill**: `cmd` `"m"` (CDDA's mend `menu`, then its own activity) and `"f"` (`item_select` for what
   to refill from).
