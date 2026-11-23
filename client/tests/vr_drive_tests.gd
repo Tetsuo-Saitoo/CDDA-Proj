@@ -250,6 +250,20 @@ func _test_cargo(d: VrDrive, veh: Snapshot.Vehicle) -> void:
 	_reach = true
 	var opening: bool = d.cargo_at(inside, snap) == want and d.cargo_at(deep, snap).is_empty() \
 			and d.cargo_at(beside, snap).is_empty()
+	c.set_meta("opening", AABB(Vector3(-0.3, 0.1, -0.3), Vector3(0.6, 0.4, 0.6)))   # lead-world's: where a hand is in it
+	var boxed: bool = d.cargo_at(c.global_transform * Vector3(0.0, 0.3, 0.0), snap) == want \
+			and d.cargo_at(inside, snap).is_empty()
+	var front := c.global_transform * Vector3(-0.5, 0.3, 0.0)   # 20 cm out of the box's -x face
+	var shut_side: bool = d.cargo_at(front, snap).is_empty()
+	c.set_meta("opening_out", Vector3(-1.0, 0.0, 0.0))   # it opens that way (the glovebox: toward the seat)
+	var out_face: bool = d.cargo_at(front, snap) == want and d.cargo_at(inside, snap).is_empty()
+	c.set_meta("opening_out", Vector3(-2.0, 0.0, 0.0))   # not a unit normal: no reach out
+	var bad_out: bool = d.cargo_at(front, snap).is_empty()
+	c.remove_meta("opening_out")
+	c.set_meta("opening", AABB(Vector3.ZERO, Vector3(INF, 1.0, 1.0)))   # junk: the lid's rule instead
+	var junk: bool = d.cargo_at(inside, snap) == want
+	c.remove_meta("opening")
+	opening = opening and boxed and shut_side and out_face and bad_out and junk
 	_cell = trunk
 	var cell: bool = d.cargo_at(beside, snap, true) == want
 	_cell = trunk + Vector3i(0, 1, 0)
