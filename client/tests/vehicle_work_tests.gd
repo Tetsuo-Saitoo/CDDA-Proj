@@ -80,7 +80,9 @@ func _test_parse() -> void:
 			and VehicleWorkData.command_of(r, "o")["ok"] and not VehicleWorkData.command_of(r, "m")["ok"] \
 			and VehicleWorkData.refusal(rep) == "Missing: 1 tool with wrenching quality of 1 or more" \
 			and VehicleWorkData.refusal(VehicleWorkData.command_of(r, "f")) == "It's too dark." \
-			and rep["lines"][2]["met"] == VehicleWorkData.NOT_MET
+			and rep["lines"][2]["met"] == VehicleWorkData.NOT_MET \
+			and VehicleWorkData.refusal({"ok": false, "reason": 0, "text": "", "lines": [
+				{"text": "This part cannot be repaired.", "met": VehicleWorkData.NOT_MET}]}) == "This part cannot be repaired."
 	var err := VehicleWorkData.parse_result(JSON.stringify({"id": 8, "ok": false, "kind": "vehicle_work", "vehicle": UID,
 			"error": "too far"}), 8)
 	var odd := VehicleWorkData.parse_result(JSON.stringify({"id": 8, "ok": false, "kind": "vehicle_work", "error": "boom"}), 8)
@@ -179,12 +181,21 @@ func _test_live() -> void:
 	sim.results[id2] = JSON.stringify(_sample(id1))   # another query's id: junk, dropped
 	ls._poll_vehicle_work()
 	var bad := ls.query_vehicle_work(0) == 0 and ls.query_vehicle_work(UID, 5000) == 0
+	var id3 := ls.query_vehicle_work(UID, 9)   # lead-qa: the contract's exact error object has no vehicle
+	sim.results[id3] = JSON.stringify({"id": id3, "ok": false, "kind": "vehicle_work", "error": "no such part"})
+	ls._poll_vehicle_work()
+	var id4 := ls.query_vehicle_work(UID)
+	var wrong := _sample(id4)
+	wrong["vehicle"] = UID + 1   # an answer about another vehicle than asked: dropped
+	sim.results[id4] = JSON.stringify(wrong)
+	ls._poll_vehicle_work()
 	ls._sim = null
 	ls.free()
-	_check.call(id1 > 0 and refused == 0 and id2 > id1 and bad and got.size() == 1 and got[0]["ok"]
-			and got[0]["selected"]["row"] == 9 and sim.asked == [{"vehicle": UID, "part": 9}, {"vehicle": UID}],
-			"vehicle work query: one at a time, the result handed on cleaned, another id dropped, out-of-range refused (%s)"
-			% [sim.asked])
+	_check.call(id1 > 0 and refused == 0 and id2 > id1 and bad and got.size() == 2 and got[0]["ok"]
+			and got[0]["selected"]["row"] == 9 and got[1] == {"ok": false, "vehicle": UID, "error": "no such part"}
+			and sim.asked == [{"vehicle": UID, "part": 9}, {"vehicle": UID}, {"vehicle": UID, "part": 9}, {"vehicle": UID}],
+			"vehicle work query: one at a time, the result handed on cleaned, an error as the contract writes it given "
+			+ "the vehicle asked about, another id or vehicle dropped, out-of-range refused (%s; %s)" % [sim.asked, got.slice(1)])
 
 
 static func _key(code: Key) -> InputEventKey:

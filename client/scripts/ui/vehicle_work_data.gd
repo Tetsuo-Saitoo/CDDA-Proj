@@ -114,8 +114,9 @@ static func refusal(c: Dictionary) -> String:
 	if c["reason"] > 0:
 		return REASONS[c["reason"]]
 	for l: Dictionary in c["lines"]:
-		if l["met"] == NOT_MET:
-			return "Missing: %s" % (l["text"] as String).trim_prefix("> ")
+		if l["met"] == NOT_MET:   # a requirement ("> ...") is missing; CDDA's own red sentence is said as it is
+			var t: String = l["text"]
+			return "Missing: %s" % t.trim_prefix("> ") if t.begins_with("> ") else t
 	return "Not possible now."
 
 

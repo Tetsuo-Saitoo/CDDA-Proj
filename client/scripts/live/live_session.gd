@@ -67,6 +67,7 @@ var _char_query := 0
 var _char_asked := 0
 var _work_query := 0
 var _work_asked := 0
+var _work_uid := 0   # the vehicle _work_query asked about
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
@@ -575,6 +576,7 @@ func query_vehicle_work(uid: int, part := -1) -> int:
 		return 0
 	_work_query = id
 	_work_asked = Time.get_ticks_msec()
+	_work_uid = uid
 	return id
 
 
@@ -601,7 +603,9 @@ func _poll_vehicle_work() -> void:
 	var id := _work_query
 	_work_query = 0
 	var d := VehicleWorkData.parse_result(text, id)
-	if d.is_empty():
+	if not d.is_empty() and d["ok"] != true and d["vehicle"] == 0:
+		d["vehicle"] = _work_uid   # the contract's error carries no vehicle: it is the one this query asked about
+	if d.is_empty() or d["vehicle"] != _work_uid:
 		push_warning("vehicle work query %d: unreadable result" % id)
 		return
 	vehicle_work.emit(d)
