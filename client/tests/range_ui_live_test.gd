@@ -1060,17 +1060,38 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 	var began: bool = await _until(started, SHOW_TIMEOUT_MS)
 	var said := why.text
 	var turn0: int = _main.world.snapshot.turn
+	root.push_input(o.duplicate())   # while the work runs
+	await _frames(2)
+	var during := why.text
 	var fewer := func() -> bool:
 		var v := _vehicle(uid)
 		return v != null and v.part_count() < rows0 and _live.request.get("timed", false) and not _main.world.busy()
-	var done: bool = began and await _until_slow(fewer, 180000)
+	var deadline := Time.get_ticks_msec() + 180000
+	while began and not fewer.call() and Time.get_ticks_msec() < deadline:   # every frame: the press below comes at once
+		_answer_prompt()
+		await process_frame
+	var done: bool = began and fewer.call()
+	var gate: Variant = _main.get("_work_gate")
+	var old_then: Variant = gate.get("stale") if gate != null else null
+	root.push_input(o.duplicate())   # right after the work ended: the list on screen may still be the old one
+	await _frames(2)
+	var right_after := why.text
 	var relisted := func() -> bool: return not wv.waiting and (wv.get("_order") as Array).size() == listed0 - 1
 	var listed: bool = done and await _until(relisted, SHOW_TIMEOUT_MS)
 	var veh1 := _vehicle(uid)
+	var rows1: int = veh1.part_count() if veh1 != null else -1
+	var turn1: int = _main.world.snapshot.turn
 	_check(twice == "Still starting the last one." and began and said == "Remove started." and done and listed and wv.visible,
 			"vehicle work: with the kit's tools, o on \"%s\" starts CDDA's own work (pressed twice at once, the second says \"%s\"; then \"%s\"); %d turns later the car has %d part rows (had %d), the view lists %d parts (listed %d) and is still open (%s)"
-			% [picked, twice, said, _main.world.snapshot.turn - turn0, veh1.part_count() if veh1 != null else -1, rows0,
-			(wv.get("_order") as Array).size(), listed0, wv.visible])
+			% [picked, twice, said, turn1 - turn0, rows1, rows0, (wv.get("_order") as Array).size(), listed0, wv.visible])
+	# the two extra presses (while it ran, right after it ended) started nothing more
+	await _frames(45)
+	var veh2 := _vehicle(uid)
+	var act: Variant = _main.world.snapshot.get("activity_id")
+	_check(done and veh2 != null and veh2.part_count() == rows1 and rows1 == rows0 - 1 and _main.world.snapshot.turn - turn1 <= 2
+			and (act == null or str(act) == ""),
+			"vehicle work: o pressed while the work ran (the view: \"%s\") and right after it ended (\"%s\"; the list marked old then: %s) starts nothing more: still %d part rows, %d turns on, activity \"%s\""
+			% [during, right_after, old_then, veh2.part_count() if veh2 != null else -1, _main.world.snapshot.turn - turn1, act])
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
 
