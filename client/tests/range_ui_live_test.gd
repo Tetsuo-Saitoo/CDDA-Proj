@@ -987,6 +987,16 @@ func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
 			"glovebox door: from the seat behind it a look at the door as drawn (%.2f m from the eye, %.2f m up) meets the glovebox: its square %s, its vehicle and part %d (met: square %s, part %s, \"%s\")"
 			% [at.distance_to(_main.fp.global_position), at.y, sq, part, hit.get("square"), hit.get("part"),
 			str(hit.get("what", "")).left(40)])
+	if hit.get("part") != part:   # the facts: where the door is drawn, and where the look's own box for it is
+		var veh := _vehicle(uid)
+		var k := part * Snapshot.VPART_STRIDE
+		var mount := Vector2i(veh.parts[k], veh.parts[k + 1])
+		var frame: Transform3D = VehicleView.frame_of(veh, _main.world.coords)
+		var box: AABB = load("res://scripts/world/car_interior.gd").call("glove_box", mount)
+		print("    (glovebox door: the eye at %s on %s; the door drawn at %s, its Cargo node %s; the look's box for it %s (middle %s) in the car's frame at %s facing %s; mount %s; the car's node at %s; met \"%s\")"
+				% [_main.fp.global_position, _main.world.snapshot.player_pos, at, (door.get_parent() as Node3D).global_position,
+				box, frame * box.get_center(), frame.origin, veh.face_deg, mount,
+				((door.get_parent() as Node3D).get_parent().get_parent() as Node3D).global_position, hit.get("what", "")])
 
 
 ## lead-bridge's vehicle_work action through lead-ui's view (the view open on vehicle `uid`, on the game's own read).
