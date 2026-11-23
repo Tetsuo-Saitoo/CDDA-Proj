@@ -561,16 +561,26 @@ func query_character() -> int:
 
 
 ## C6: what can be done on vehicle `uid` (the snapshot's uid), and on its part row `part` (-1: none), by CDDA's own
-## checks (contracts/vehicle_work.md; read-only, answered at the sim's next request). Returns the query id, 0
-## when refused (no game, an older DLL, one still waiting: the bridge takes one at a time). vehicle_work follows.
-func query_vehicle_work(uid: int, part := -1) -> int:
+## checks (contracts/vehicle_work.md; read-only, answered at the sim's next request). With `install` (a square of
+## the vehicle by mount; `part` -1) the read lists what could be installed there instead, and `vpart` (> 0) the
+## requirements for that type. Returns the query id, 0 when refused (no game, an older DLL, one still waiting:
+## the bridge takes one at a time). vehicle_work follows.
+func query_vehicle_work(uid: int, part := -1, install := Vector2i.MAX, vpart := 0) -> int:
+	var at := install != Vector2i.MAX
 	if not _can("query_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < -1 \
-			or part > VehicleWorkData.MAX_ROW \
+			or part > VehicleWorkData.MAX_ROW or (at and part >= 0) or vpart < 0 \
+			or vpart > VehicleWorkData.MAX_ACTION_VPART or (vpart > 0 and not at) \
+			or (at and (absi(install.x) > VehicleWorkData.MAX_ACTION_MOUNT
+				or absi(install.y) > VehicleWorkData.MAX_ACTION_MOUNT)) \
 			or (_work_query > 0 and Time.get_ticks_msec() - _work_asked < QUERY_TIMEOUT_MS):
 		return 0
 	var d := {"vehicle": uid}
 	if part >= 0:
 		d["part"] = part
+	if at:
+		d["install"] = [install.x, install.y]
+		if vpart > 0:
+			d["vpart"] = vpart
 	var v: Variant = _sim.query_vehicle_work(d)
 	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
 	if id < 1 or id > VehicleWorkData.MAX_QUERY_ID:
@@ -583,18 +593,22 @@ func query_vehicle_work(uid: int, part := -1) -> int:
 
 ## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`,
 ## which holds part `vpart` at `mount` (the read's part entry: the sim refuses a row that moved, with
-## VehicleWorkData.MOVED). contracts/vehicle_work.md "The action"; the sim checks it all again. Returns the
+## VehicleWorkData.MOVED); or "i": install a part of type `vpart` on square `mount` (`part` -1, not sent). contracts/vehicle_work.md "The action"; the sim checks it all again. Returns the
 ## action's tag, answered by one `work_result` event (VehicleWorkData.work_result), or 0 when refused before it
 ## was queued.
 func queue_vehicle_work(uid: int, part: int, vpart: int, mount: Vector2i, cmd: String) -> int:
-	if not _can("queue_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < 0 \
-			or part > VehicleWorkData.MAX_ROW or not cmd in VehicleWorkData.ACTION_CMDS \
+	var install := cmd == "i"
+	if not _can("queue_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID \
+			or (part != -1 if install else (part < 0 or part > VehicleWorkData.MAX_ROW)) \
+			or not cmd in VehicleWorkData.ACTION_CMDS \
 			or vpart < 1 or vpart > VehicleWorkData.MAX_ACTION_VPART \
 			or absi(mount.x) > VehicleWorkData.MAX_ACTION_MOUNT or absi(mount.y) > VehicleWorkData.MAX_ACTION_MOUNT:
 		return 0
 	_work_tag = _work_tag % VehicleWorkData.MAX_TAG + 1
-	if _sim.queue_vehicle_work({"vehicle": uid, "part": part, "vpart": vpart, "mount": [mount.x, mount.y],
-			"cmd": cmd, "tag": _work_tag}) != true:
+	var d := {"vehicle": uid, "vpart": vpart, "mount": [mount.x, mount.y], "cmd": cmd, "tag": _work_tag}
+	if not install:
+		d["part"] = part
+	if _sim.queue_vehicle_work(d) != true:
 		return 0
 	return _work_tag
 
