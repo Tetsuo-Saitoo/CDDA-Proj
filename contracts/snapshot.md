@@ -130,6 +130,13 @@ struct cargo_item_view { uint64 uid; uint32 type; };
     // counts the rest. Stackable items are one row (CDDA merges them). What an item shows of its state and its
     // exact numbers are in `player.item_states` / `player.item_amounts`, as for items lying in reach. Names come
     // from the id tables by `type`. A lid need not be open: CDDA lets the player take from a closed trunk.
+    // The glovebox (2026-11-21): CDDA 0.I has none, so the fork adds vehicle part `fp3d_glovebox` (named
+    // "glovebox": a covered 5 L cargo space with no location, flags CARGO and COVERED) to the cars, trucks and
+    // vans it spawns: wheeled vehicles whose controls are on a seat under a roof. It is an ordinary `parts` row
+    // with that vpart id. CDDA allows one cargo space a tile and every seat is one, so it is not on a seat's
+    // tile but on the windshield tile ahead of the front passenger seat (the seat beside the driver's, up to two
+    // tiles to either side), or ahead of the driver's seat when there is no such seat. Its cargo row shows from
+    // both front seats. A vehicle from a save made before it has none.
 
 struct player_view {
     uint64 uid; ui_point pos; float facing_deg; int32 moves; uint32 move_mode;
