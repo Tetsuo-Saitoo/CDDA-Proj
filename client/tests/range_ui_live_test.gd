@@ -1010,7 +1010,6 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 			if pick >= 0 or tried.size() >= 8 or not str(p["name"]).contains(want):
 				continue
 			var row: int = p["row"]
-			tried.append(p["name"])
 			wv.call("select", row)
 			var answered := func() -> bool:
 				return not wv.waiting and ((wv.result as Dictionary).get("selected", {}) as Dictionary).get("row", -1) == row
@@ -1019,6 +1018,8 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 			if wv.selected == row and str(wv.call("detail_text")).contains("o:on"):
 				pick = row
 				picked = p["name"]
+			else:   # what the game says against it
+				tried.append("%s: %s" % [p["name"], ((wv.get("_buttons") as Dictionary)["o"] as Button).tooltip_text])
 	if pick < 0:
 		print("  (vehicle work: with the kit the game allows removing none of %s: the work not tried; the last one says: %s)"
 				% [tried, str(wv.call("detail_text")).left(300)])
