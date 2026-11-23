@@ -7,7 +7,9 @@ extends RefCounted
 ## (~60 squares). Stairs and ramps are met on their slope (TerrainMesher.surface_heights), so pointing at a step
 ## picks that stair's square. Creatures the player perceives are hit as their placeholder figures
 ## (CreatureView), vehicle parts as VehicleView draws them (VehicleView.part_at: `what` names the vehicle and the
-## part, `vehicle` is its uid, `part` the part's index). CDDA's own look text isn't in here: the bridge has no "describe".
+## part, `vehicle` is its uid, `part` the part's index); a glovebox's door where it is drawn in the dashboard
+## (_glovebox; `square` the glovebox's own, the windshield's). CDDA's own look text isn't in here: the bridge has no
+## "describe".
 
 const K := TerrainCatalog.Kind
 const SOLID := [K.WALL, K.WINDOW, K.FENCE, K.TREE, K.BOX]
@@ -43,7 +45,15 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true, skip
 	_low_at = TerrainMesher.low_lookup(world.snapshot, world.catalog)
 	var start := world.coords.world_to_ms(origin)
 	var prev := start
+	var glove := _glovebox(origin, dir, start, max_m)
 	for i in range(1, int(max_m / STEP_M) + 1):
+		if not glove.is_empty() and i * STEP_M >= glove[0]:
+			var veh: Snapshot.Vehicle = glove[1]
+			var g := _hit(veh.square(glove[2]), origin + dir * glove[0],
+					VehicleView.part_name(world.snapshot, world.tables, veh, glove[2]))
+			g["vehicle"] = veh.uid
+			g["part"] = glove[2]
+			return g
 		var pt := origin + dir * (i * STEP_M)
 		var p := world.coords.world_to_ms(pt)
 		if p.z < prev.z and _has_floor(Vector3i(p.x, p.y, prev.z)):
@@ -79,6 +89,51 @@ func cast(origin: Vector3, dir: Vector3, max_m := MAX_M, creatures := true, skip
 		if c["furn"] != 0 and pt.y - floor_y < FURN_H:
 			return _hit(p, pt, "furniture")
 	return {"hit": false}
+
+
+## The nearest glovebox door the ray meets as drawn (CarInterior.glove_box, in the vehicle's frame_of): [distance,
+## Vehicle, part], [] for none. Only vehicles on the eye's square or one around it: the door is seen from the front
+## seats (its square is the windshield's, ahead of the seat the eye is in); from further the body is met first.
+func _glovebox(origin: Vector3, dir: Vector3, start: Vector3i, max_m: float) -> Array:
+	var best := []
+	var done := {}
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var at := world.snapshot.vehicle_at(start + Vector3i(dx, dy, 0))
+			if at.is_empty() or done.has((at[0] as Snapshot.Vehicle).uid):
+				continue
+			var veh: Snapshot.Vehicle = at[0]
+			done[veh.uid] = true
+			var doors := CarInterior.glove_doors(veh, world.snapshot, world.tables, CddaCoords.Z_LIMIT)
+			if doors.is_empty():
+				continue
+			var inv := VehicleView.frame_of(veh, world.coords).affine_inverse()
+			var o := inv * origin
+			var d := inv.basis * dir
+			for e: Array in doors:
+				var t := box_t(CarInterior.glove_box(e[1]), o, d, max_m)
+				if t >= 0.0 and (best.is_empty() or t < best[0]):
+					best = [t, veh, e[0]]
+	return best
+
+
+## How far along a ray from `o` (direction `d`, the distance's units) it first meets box `b`, within 0..max_m; -1
+## when it doesn't.
+static func box_t(b: AABB, o: Vector3, d: Vector3, max_m: float) -> float:
+	var t0 := 0.0
+	var t1 := max_m
+	for a in 3:
+		if absf(d[a]) < 1e-9:
+			if o[a] < b.position[a] or o[a] > b.end[a]:
+				return -1.0
+			continue
+		var ta := (b.position[a] - o[a]) / d[a]
+		var tb := (b.end[a] - o[a]) / d[a]
+		t0 = maxf(t0, minf(ta, tb))
+		t1 = minf(t1, maxf(ta, tb))
+		if t0 > t1:
+			return -1.0
+	return t0
 
 
 ## Lines about square p: terrain, furniture, trap, items, and how the player sees it.

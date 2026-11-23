@@ -4,7 +4,7 @@ extends RefCounted
 ## (or for the vehicle the player is in) and dropped far off or when the parts change, lids opening on the client and
 ## hinged toward the middle, held nodes left alone, the wheel turning with CDDA's steering, a dash alive only for the
 ## player's vehicle (lit, its needles, numerals and lamps; dark again after), hostile readings checked, the baked
-## dashboard in front of the passenger seat. Run by run_tests.gd.
+## dashboard in front of the passenger seat, the glovebox's door in it. Run by run_tests.gd.
 
 const CAR := Vector3i(195, 385, 0)
 const UID := 78
@@ -19,6 +19,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_lids(tables)
 	_test_reading()
 	_test_view(root, data, tables)
+	_test_glovebox(root, data)
 
 
 ## The mock town with two test cars (UID here, OTHER three squares south), facing east: in rows of mount x, (1, 0)
@@ -267,5 +268,95 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	view.apply(snap, world)
 	_check.call(view.interior(UID).is_empty(), "interiors: gone with the vehicle's model")
 	CarDash.unit_seen = "mph"
+	view.free()
+	world.free()
+
+
+## The glovebox (lead-bridge's fp3d_glovebox; the mock tables get it here): the box ahead of the passenger seat
+## becomes one, a second at (2, 0) has no dashboard behind it. Its door in the dashboard in front of the seat with
+## lead-vr's meta, opening on the client, the hands' rule, a look from the seat at the door giving its square.
+func _test_glovebox(root: Node, data: Variant) -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+			ProjectSettings.globalize_path("res://").path_join("../contracts/mock/id_tables.json").simplify_path()))
+	if not raw is Dictionary or not (raw as Dictionary).get("vpart") is Array:
+		_check.call(false, "interiors: the mock id tables load for the glovebox")
+		return
+	(raw["vpart"] as Array).append({"id": CarInterior.GLOVEBOX, "name": "glovebox", "color": "c_light_gray",
+			"flags": ["CARGO", "COVERED"]})
+	var tables := IdTables.from_data(raw)
+	var glove_id := tables.index_of("vpart", CarInterior.GLOVEBOX)
+	var snap := Snapshot.from_data(_data(data, tables, func(car: Dictionary) -> void:
+		for p: Array in car["parts"]:
+			if p[0] == 1 and p[1] == 1 and p[2] == tables.index_of("vpart", "box"):
+				p[2] = glove_id
+		car["parts"].append([2, 0, tables.index_of("vpart", "frame"), 255, 0, 2, 0, 0])
+		car["parts"].append([2, 0, glove_id, 255, 0, 2, 0, 0])))
+	if glove_id < 0 or not snap.is_valid():
+		_check.call(false, "interiors: the glovebox car loads " + snap.error)
+		return
+	var car := snap.vehicles[0]
+	var find := func(m: Vector2i) -> int:
+		for i in car.part_count():
+			var j := i * Snapshot.VPART_STRIDE
+			if car.parts[j] == m.x and car.parts[j + 1] == m.y and car.parts[j + 2] == glove_id:
+				return i
+		return -1
+	var glove: int = find.call(Vector2i(1, 1))
+	var bare: int = find.call(Vector2i(2, 0))
+	var doors := CarInterior.glove_doors(car, snap, tables, CddaCoords.Z_LIMIT)
+	var in_dash := (CarInterior.parts_of(car, snap, tables, CddaCoords.Z_LIMIT)[1] as Array).filter(func(e: Array) -> bool:
+		return e[1] == VehicleView.Kind.DASH)
+	_check.call(glove >= 0 and bare >= 0 and doors == [[glove, Vector2i(1, 1)]] and in_dash == [[glove, VehicleView.Kind.DASH]],
+			"interiors: a glovebox gets a door where a dashboard is behind its square, not elsewhere (%s)" % [doors])
+	var world := WorldView.new()
+	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	world.set_id_tables(tables)
+	root.add_child(world)
+	world.apply_snapshot(snap)
+	var view := VehicleView.new()
+	root.add_child(view)
+	view.apply(snap, world)
+	var eye: Vector3 = world.coords.ms_center_to_world(CAR + Vector3i(0, 1, 0)) + Vector3.UP * 1.5   # the passenger's
+	view.interiors(0.0, eye)
+	var a := view.interior(UID)
+	var c: Node3D = a.get("Cargo_%d" % glove)
+	if c == null:
+		_check.call(false, "interiors: the glovebox's door is built (%s)" % [a.keys()])
+		view.free()
+		world.free()
+		return
+	var lid: Node3D = c.get_node("Lid")
+	var it: CarInterior = c.get_parent()
+	var meta_ok: bool = c.get_meta("part") == glove and c.get_meta("square") == car.square(glove) \
+			and c.get_meta("hinge_axis") == Vector3(0, 0, 1) and c.get_meta("open_deg") == CarInterior.GLOVE_OPEN \
+			and c.get_meta("cdda_open") == false and lid.get_meta("held") == false and not a.has("Cargo_%d" % bare)
+	_check.call(meta_ok and c.position.is_equal_approx(Vector3(CarInterior.DASH_FACE, 0.0, 1.0))
+			and is_equal_approx(lid.position.y, CarInterior.GLOVE_Y),
+			"interiors: the glovebox's door is on the dashboard's face in front of the passenger seat, with lead-vr's meta (%s)" % c.position)
+	# opens on the client: the handle comes down and toward the seat; hands reach in only while it is open
+	var handle := func() -> Vector3: return it.to_local(lid.global_transform * (c.get_meta("handle") as Vector3))
+	var shut: Vector3 = handle.call()
+	var reach_shut := not view.can_reach(UID, glove) and view.can_reach(UID, bare) and not view.open_lid(UID, bare, true)
+	var opened := view.open_lid(UID, glove, true)
+	for i in 60:
+		view.interiors(0.05, eye)
+	var down: Vector3 = handle.call()
+	var reach_open := view.can_reach(UID, glove)
+	view.open_lid(UID, glove, false)
+	for i in 60:
+		view.interiors(0.05, eye)
+	_check.call(reach_shut and opened and reach_open and absf(it.lid_deg(glove)) < 0.1
+			and not view.can_reach(UID, glove) and down.y < shut.y - 0.1 and down.x < shut.x - 0.1,
+			"interiors: the glovebox opens on the client, its door down toward the seat; hands reach in only then (%s to %s)" % [shut, down])
+	# a look from the seat at the door meets the glovebox and gives its square; one over the dash doesn't
+	var ray := LookRay.new(world)
+	var door := VehicleView.frame_of(car, world.coords) * CarInterior.glove_box(Vector2i(1, 1)).get_center()
+	var hit := ray.cast(eye, door - eye)
+	var over := ray.cast(eye, Vector3(door.x, eye.y, door.z) - eye)
+	_check.call(hit.get("hit", false) and hit.get("square") == car.square(glove) and hit.get("vehicle") == UID
+			and hit.get("part") == glove and str(hit.get("what")).ends_with("glovebox")
+			and (hit.get("point", Vector3.INF) as Vector3).distance_to(door) < 0.2 and over.get("part", -1) != glove
+			and LookRay.box_t(AABB(Vector3.ZERO, Vector3.ONE), Vector3(-1, 0.5, 0.5), Vector3.RIGHT, 0.5) == -1.0,
+			"interiors: a look from the seat at the glovebox's door meets it, its square the glovebox's (%s)" % [hit])
 	view.free()
 	world.free()
