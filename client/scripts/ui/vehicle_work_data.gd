@@ -47,6 +47,11 @@ const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part",
 ## The commands the vehicle_work action takes so far (contracts/vehicle_work.md "The action").
 const ACTION_CMDS: PackedStringArray = ["r", "o"]
 const MAX_TAG := (1 << 31) - 1
+## The action names its part by row and by what the row holds (vpart, mount): the sim refuses a row that moved.
+const MAX_ACTION_VPART := 1 << 20
+const MAX_ACTION_MOUNT := 1023
+## The work_result text when the row no longer holds that part (another came off first): read again.
+const MOVED := "That part isn't there any more."
 const MAX_EVENT_TEXT := 200
 
 
@@ -106,6 +111,40 @@ static func work_result(ev: Variant, tag: int) -> Dictionary:
 	var uid: Variant = _int(d.get("uid"), 0, MAX_UID)
 	return {"started": amount == 1, "vehicle": uid if uid != null else 0,
 			"text": Snapshot.plain_text(d.get("text"), MAX_EVENT_TEXT)}
+
+
+## Whether the part rows on screen still name the parts the sim has: the action names a part by its row only, and
+## a removal moves the rows after it up. After a parts change or started work, r and o are held until a read
+## asked after it, with the player free, comes back whole.
+class Gate:
+	var stale := false
+	var _fresh := false   # the read out was asked after that
+
+	## The parts changed, or work started (its activity will change them).
+	func changed() -> void:
+		stale = true
+		_fresh = false
+
+	## A read went out; `busy`: the player's activity still runs (what it reads may change again).
+	func asked(busy: bool) -> void:
+		_fresh = stale and not busy
+
+	## The read came back; `ok` false: an error (no new list).
+	func answered(ok: bool) -> void:
+		if _fresh and ok:
+			stale = false
+		_fresh = false
+
+	## Whether to ask again (when none is out): the rows may be old and the player is free.
+	func wants_read(busy: bool) -> bool:
+		return stale and not busy
+
+	## Why r and o are held now, "" when they aren't: the player busy (CDDA's activity verb, "" for none), or the
+	## rows on screen may be old.
+	func held(busy: bool, verb: String) -> String:
+		if busy:
+			return ("Not while you're %s." % verb) if not verb.is_empty() else "Not while you're busy."
+		return "Checking the parts again..." if stale else ""
 
 
 ## The part entry with row `row` in a cleaned result, {} when it has none.

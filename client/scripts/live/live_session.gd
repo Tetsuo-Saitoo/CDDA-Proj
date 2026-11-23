@@ -581,15 +581,20 @@ func query_vehicle_work(uid: int, part := -1) -> int:
 	return id
 
 
-## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`
-## (contracts/vehicle_work.md "The action"; the sim checks it all again). Returns the action's tag, answered by one
-## `work_result` event (VehicleWorkData.work_result), or 0 when refused before it was queued.
-func queue_vehicle_work(uid: int, part: int, cmd: String) -> int:
+## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`,
+## which holds part `vpart` at `mount` (the read's part entry: the sim refuses a row that moved, with
+## VehicleWorkData.MOVED). contracts/vehicle_work.md "The action"; the sim checks it all again. Returns the
+## action's tag, answered by one `work_result` event (VehicleWorkData.work_result), or 0 when refused before it
+## was queued.
+func queue_vehicle_work(uid: int, part: int, vpart: int, mount: Vector2i, cmd: String) -> int:
 	if not _can("queue_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < 0 \
-			or part > VehicleWorkData.MAX_ROW or not cmd in VehicleWorkData.ACTION_CMDS:
+			or part > VehicleWorkData.MAX_ROW or not cmd in VehicleWorkData.ACTION_CMDS \
+			or vpart < 1 or vpart > VehicleWorkData.MAX_ACTION_VPART \
+			or absi(mount.x) > VehicleWorkData.MAX_ACTION_MOUNT or absi(mount.y) > VehicleWorkData.MAX_ACTION_MOUNT:
 		return 0
 	_work_tag = _work_tag % VehicleWorkData.MAX_TAG + 1
-	if _sim.queue_vehicle_work({"vehicle": uid, "part": part, "cmd": cmd, "tag": _work_tag}) != true:
+	if _sim.queue_vehicle_work({"vehicle": uid, "part": part, "vpart": vpart, "mount": [mount.x, mount.y],
+			"cmd": cmd, "tag": _work_tag}) != true:
 		return 0
 	return _work_tag
 

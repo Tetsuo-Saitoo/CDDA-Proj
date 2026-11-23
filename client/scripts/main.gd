@@ -96,6 +96,7 @@ var _work_again := false                 # a read was refused while one was out:
 var _work_tag := 0                       # the vehicle_work action waiting for its work_result (0 none)
 var _work_sent := 0                      # ... sent at (msec)
 var _work_cmd := ""                       # ... its command
+var _work_gate := VehicleWorkData.Gate.new()   # holds r and o while the rows on screen may name other parts
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -1758,6 +1759,7 @@ func _open_work() -> void:
 	_work_parts = veh.parts
 	_work_carried = world.snapshot.carried
 	_work_again = false
+	_work_gate = VehicleWorkData.Gate.new()
 	work_view.fit()
 	work_view.open(veh.uid, veh.name)
 	_ask_work()
@@ -1769,14 +1771,20 @@ func _ask_work() -> void:
 		return
 	if live != null and live.has_vehicle_work():
 		# refused (one still out, or the bridge busy): asked again when that one comes, else at the next snapshot
-		_work_again = live.query_vehicle_work(work_view.uid, work_view.selected) == 0
+		var id := live.query_vehicle_work(work_view.uid, work_view.selected)
+		_work_again = id == 0
+		if id > 0:
+			_work_gate.asked(_work_busy())
 		return
+	_work_gate.asked(_work_busy())
+	_work_gate.answered(true)   # the stand-in is read from this snapshot
 	_show_work(VehicleWorkData.stand_in(world.snapshot, world.tables, work_view.uid, work_view.selected))
 
 
 func _on_vehicle_work(r: Dictionary) -> void:
 	if not work_view.visible or r.get("vehicle") != work_view.uid:
 		return
+	_work_gate.answered(r.get("ok") == true)
 	_show_work(r)
 	if _work_again:
 		_work_again = false
@@ -1802,8 +1810,11 @@ func _work_follow(snap: Snapshot) -> void:
 		work_view.close()
 		grab.flash("The vehicle is out of reach." if veh != null else "The vehicle is gone.")
 		return
-	if veh.parts != _work_parts or snap.carried != _work_carried \
-			or (_work_again and live != null and not live.vehicle_work_pending()):
+	var moved := veh.parts != _work_parts
+	if moved:
+		_work_gate.changed()   # the rows may have moved: r and o wait for a read after this
+	if moved or snap.carried != _work_carried or (live != null and not live.vehicle_work_pending()
+			and (_work_again or _work_gate.wants_read(_work_busy()))):
 		_work_parts = veh.parts
 		_work_carried = snap.carried
 		_ask_work()
@@ -1827,10 +1838,19 @@ func _on_work_command(cmd: String, row: int) -> void:
 	if live == null or not live.can_vehicle_work() or not cmd in VehicleWorkData.ACTION_CMDS:
 		work_view.say("%s isn't connected to the game yet." % VehicleWorkData.COMMAND_NAMES.get(cmd, "That"))
 		return
+	var why := _work_gate.held(_work_busy(), world.snapshot.activity_verb if world.snapshot != null else "")
+	if not why.is_empty():
+		work_view.say(why)   # the action names its part by row: not while the rows may be old
+		return
 	if _work_tag > 0 and Time.get_ticks_msec() - _work_sent < LiveSession.QUERY_TIMEOUT_MS:
 		work_view.say("Still starting the last one.")
 		return
-	_work_tag = live.queue_vehicle_work(work_view.uid, row, cmd)
+	var p := VehicleWorkData.part_of(work_view.result, row)
+	if p.is_empty():
+		work_view.say("Checking the parts again...")
+		_ask_work()
+		return
+	_work_tag = live.queue_vehicle_work(work_view.uid, row, p["vpart"], p["mount"], cmd)
 	_work_sent = Time.get_ticks_msec()
 	_work_cmd = cmd
 	work_view.say("Starting..." if _work_tag > 0 else "The game didn't take that now.")
@@ -1846,6 +1866,9 @@ func _on_work_events(events: Array) -> void:
 		if r.is_empty():
 			continue
 		_work_tag = 0
+		var moved: bool = not r["started"] and r["text"] == VehicleWorkData.MOVED
+		if r["started"] or moved:
+			_work_gate.changed()   # its activity changes the parts; or they changed under the list on screen
 		if work_view.visible:
 			if r["started"]:
 				work_view.say("%s started." % VehicleWorkData.COMMAND_NAMES.get(_work_cmd, "Work"))
@@ -1853,7 +1876,16 @@ func _on_work_events(events: Array) -> void:
 					work_view.forget_selection()   # the rows after a removed part move up
 			else:
 				work_view.say(r["text"] if not (r["text"] as String).is_empty() else "Not started.")
+				if moved:
+					work_view.forget_selection()
+					_ask_work()   # read again
 		return
+
+
+## Whether the player's CDDA activity (a repair, a removal, a long wait) still runs.
+func _work_busy() -> bool:
+	return world.snapshot != null and not (world.snapshot.activity_id.is_empty()
+			and world.snapshot.activity_verb.is_empty())
 
 
 func _on_work_closed() -> void:

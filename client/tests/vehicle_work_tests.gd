@@ -36,6 +36,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_view(root, data)
 	_test_live()
 	_test_action(root)
+	_test_gate()
 
 
 ## The mock with a car next to the player: part 0 a frame and 1 another part on the square east of the player
@@ -225,16 +226,22 @@ func _test_action(root: Node) -> void:
 	var ls := LiveSession.new()
 	ls.state = "running"
 	ls._sim = sim
-	var t1 := ls.queue_vehicle_work(UID, 9, "r")
-	var t2 := ls.queue_vehicle_work(UID, 0, "o")
-	var refused := ls.queue_vehicle_work(UID, 9, "m") == 0 and ls.queue_vehicle_work(UID, -1, "r") == 0 \
-			and ls.queue_vehicle_work(0, 9, "r") == 0 and ls.queue_vehicle_work(UID, 4096, "o") == 0
+	var m := Vector2i(1, -1)
+	var t1 := ls.queue_vehicle_work(UID, 9, 630, m, "r")
+	var t2 := ls.queue_vehicle_work(UID, 0, 412, Vector2i.ZERO, "o")
+	var refused := ls.queue_vehicle_work(UID, 9, 630, m, "m") == 0 and ls.queue_vehicle_work(UID, -1, 630, m, "r") == 0 \
+			and ls.queue_vehicle_work(0, 9, 630, m, "r") == 0 and ls.queue_vehicle_work(UID, 4096, 630, m, "o") == 0 \
+			and ls.queue_vehicle_work(UID, 9, -1, m, "r") == 0 and ls.queue_vehicle_work(UID, 9, 0, m, "r") == 0 \
+			and ls.queue_vehicle_work(UID, 9, (1 << 20) + 1, m, "r") == 0 \
+			and ls.queue_vehicle_work(UID, 9, 630, Vector2i(1024, 0), "r") == 0 \
+			and ls.queue_vehicle_work(UID, 9, 630, Vector2i(0, -1024), "r") == 0
 	sim.accept = false
-	var full := ls.queue_vehicle_work(UID, 9, "r") == 0
+	var full := ls.queue_vehicle_work(UID, 9, 630, m, "r") == 0
 	ls._sim = null
 	ls.free()
 	var sent_ok: bool = t1 > 0 and t2 == t1 + 1 and refused and full and sim.queued.size() == 3 \
-			and sim.queued[0] == {"vehicle": UID, "part": 9, "cmd": "r", "tag": t1} and sim.queued[1]["cmd"] == "o"
+			and sim.queued[0] == {"vehicle": UID, "part": 9, "vpart": 630, "mount": [1, -1], "cmd": "r", "tag": t1} \
+			and sim.queued[1]["cmd"] == "o" and sim.queued[1]["vpart"] == 412 and sim.queued[1]["mount"] == [0, 0]
 	var ev := {"kind": "work_result", "uid": UID, "amount": 0, "detail": 5,
 			"text": "You don't meet the requirements to repair the <color_white>glovebox</color>."}
 	var no := VehicleWorkData.work_result(ev, 5)
@@ -272,3 +279,33 @@ func _test_action(root: Node) -> void:
 			and note.begins_with("Not your vehicle") and said and forgot and shut,
 			"vehicle work action: r and o queued with a tag, others refused; work_result read for its tag only; "
 			+ "someone else's vehicle noted; an appliance closes the view (%s; %s; %s)" % [sim.queued, no, note])
+
+
+## The hold on r and o (VehicleWorkData.Gate): after a parts change or started work, until a read asked after it,
+## with the player free, comes back whole.
+func _test_gate() -> void:
+	var g := VehicleWorkData.Gate.new()
+	var at_first: bool = g.held(false, "") == "" and not g.wants_read(false)
+	g.asked(false)   # a read out before the change...
+	g.changed()
+	g.answered(true)   # ... doesn't clear it
+	var old_kept: bool = g.stale and g.held(false, "") == "Checking the parts again..." and g.wants_read(false) \
+			and not g.wants_read(true)
+	g.asked(true)   # asked while the removal still runs
+	g.answered(true)
+	var busy_kept: bool = g.stale and g.held(true, "removing") == "Not while you're removing." \
+			and g.held(true, "") == "Not while you're busy."
+	g.asked(false)
+	g.changed()   # another part came off while it was out
+	g.answered(true)
+	var twice_kept: bool = g.stale
+	g.asked(false)
+	g.answered(false)   # an error answer has no new list
+	var error_kept: bool = g.stale and g.wants_read(false)
+	g.asked(false)
+	g.answered(true)
+	var cleared: bool = not g.stale and g.held(false, "") == "" and not g.wants_read(false)
+	_check.call(at_first and old_kept and busy_kept and twice_kept and error_kept and cleared,
+			"vehicle work hold: r and o wait after a parts change or started work until a read asked after it, "
+			+ "with the player free, comes back whole (%s %s %s %s %s %s)" % [at_first, old_kept, busy_kept,
+			twice_kept, error_kept, cleared])
