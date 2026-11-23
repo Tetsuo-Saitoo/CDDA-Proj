@@ -2,11 +2,11 @@
 
 Working on a vehicle by hand: install, repair, mend, remove, refill. CDDA's own vehicle screen (`veh_interact`)
 is a curses loop the client can't answer, so the client shows its own view and asks the sim two things: what can
-be done (this read), and to do it (the `vehicle_work` action, not built yet). CDDA decides both: the checks,
-texts and times come from `veh_interact`'s own code, run off-screen.
+be done (the read), and to do it (the action). CDDA decides both: the checks, texts and times come from
+`veh_interact`'s own code, run off-screen.
 
-Status: the **read is built and frozen as written here** (2026-11-22). The action and the install list are
-planned and not frozen; see the end.
+Status (2026-11-22): the **read** is built and frozen as written here. The **action** is built for repair and
+remove. Install, mend and refill are planned and not frozen; see the end.
 
 ## The read
 
@@ -34,7 +34,7 @@ on the game thread in the Windows build, 4 ms on Linux).
 ```json
 {
   "id": 7, "ok": true, "kind": "vehicle_work",
-  "vehicle": 123, "name": "Car", "turn": 5224405,
+  "vehicle": 123, "name": "Car", "turn": 5224405, "owned": true,
   "parts": [
     {"row": 0, "mount": [0, 0], "vpart": 412, "name": "frame", "variant": "cross",
      "hp": 100, "damage": 0, "flags": 0},
@@ -88,6 +88,7 @@ Top level:
 | `id`, `ok`, `kind` | The query id, `true`, `"vehicle_work"`. |
 | `vehicle`, `name` | The uid asked for; the vehicle's name as the snapshot gives it (≤ 60 columns). |
 | `turn` | The game turn the answer was worked out at. |
+| `owned` | `true` when the vehicle is the player's or nobody's. `false`: it belongs to someone else, and CDDA asks before any work on it (see the action); owners who see the work take it as theft. |
 | `parts` | The vehicle's own parts, in the order and with the row numbers of the snapshot's `vehicles[].parts` (CDDA's gap fillers, the rows with state bit 3, are not listed: they aren't parts to work on). At most 512; `parts_more` counts the ones left out. |
 | `selected` | Only with `part`: see below. |
 | `truncated` | `true` when part entries were dropped from the end to keep the result under 64 KB (`parts_more` counts them too). |
@@ -134,16 +135,64 @@ All text is game data: color tags, line breaks and control characters removed.
 | `error` | |
 |---|---|
 | `no such vehicle` | No vehicle with that uid in the reality bubble. |
+| `an appliance` | It is an appliance (a fridge, a lamp, a wall wire): CDDA has another screen for those, and this read and the action don't cover them. |
 | `too far` | No part of it is on the player's square or one next to it on the player's level (CDDA's rule for examining a vehicle). |
 | `no such part` | `part` is not one of its part rows (out of range, or a gap filler). |
 | `internal`, `too large` | As for the other queries. |
+
+## The action: repair and remove
+
+`CddaSim.queue_vehicle_work(d)` → `bool`: queued, or `false` when refused before queueing. It shares the action
+queue with the other queued actions (`ui_requests.md`) and runs at the main loop like them.
+
+| Key | Type | |
+|---|---|---|
+| `vehicle` | int, required | The snapshot's `vehicles[].uid`. |
+| `part` | int, required | A row of that vehicle's `parts` (0..4095), as the read's `row`. |
+| `cmd` | String, required | `"r"` repair (replaces a broken part) or `"o"` remove. |
+| `tag` | int, optional | 1..2^31−1: the client's number for this action, answered by one `work_result` event (`events.md`) when the action has run. |
+
+`false`, nothing queued: a missing key, a wrong type, anything out of range, another `cmd`, a full queue, no game
+running.
+
+When it runs, the sim checks everything again; nothing the client sent is taken on trust. Refused, nothing
+done, with the sentence as a `message` and as the event's text:
+
+| Text | |
+|---|---|
+| "There is no such vehicle here." | No vehicle with that uid in the reality bubble. |
+| "That can't be worked on like a vehicle." | An appliance, or a summoned vehicle. |
+| "That vehicle is too far away." | No part of it within a square of the player. |
+| "That vehicle has no such part." | Not one of its part rows now. |
+| CDDA's sentence | Its own check says no: the read's `text` for that command ("It's too dark to see what you are doing…", "This part cannot be uninstalled.", ...). |
+| "You don't meet the requirements to repair the X." / "... to remove the X." | A requirement line is not met (the read's `ok` false with `reason` 0). |
+| "The X needs no repair." | The part isn't damaged. |
+
+Otherwise the work starts as CDDA's vehicle screen starts it: the player gets CDDA's vehicle activity
+(`ACT_VEHICLE` in `get_held().activity`), which takes the read's `time_s`. As for any activity, turns pass and
+no snapshot comes until it ends, is interrupted (`interrupt()`) or asks something. CDDA's questions are real
+requests the client answers (a yes / no `popup` has no cancel: answer `YES` or `NO`, CDDA asks again otherwise):
+
+- Before anything else, a `popup` (yes / no) when the vehicle belongs to someone else ("This vehicle belongs
+  to: ..., there may be consequences if you are observed interacting with it, continue?"). CDDA asks this before
+  it checks the requirements, as its own screen does. No: nothing starts, and the event's text is "". A vehicle
+  with no owner becomes the player's when work on it is started, as in CDDA.
+- Before the start, a `popup` (yes / no) when the work would make an aircraft unfit to fly. No: nothing starts,
+  and the event's text is "".
+- When the work finishes, a `menu` when more than one component or tool could be used up for it.
+
+The `work_result` event says the work was **started** (`amount` 1), not that it is finished. What it did shows
+in the next snapshot and read: a repaired part's `hp` and `flags` (CDDA repairs down to the wear it can't take
+back, so `hp` can stay below 100 with the repair bit gone); a removed part's row gone, with the rows after it
+moving up by one. What a removal yields goes where CDDA puts it: into a cargo space on the player's
+square, else at their feet. CDDA uses up the components and tools when the work finishes, and checks them again
+then: if they are gone by then it says so and nothing is repaired or removed.
 
 ## Planned, not frozen
 
 - **Install**: the read gets an `install` section for a square of the vehicle: the part types CDDA would list
   there (`can_mount`), which of them the player could install now, and the requirement lines for one of them.
-- **The `vehicle_work` action** `{vehicle, part, cmd, ...}`: the sim runs the same check again and, when it
-  passes, starts CDDA's own activity. CDDA's questions come as the requests of `ui_requests.md`: a `popup` for
-  its yes/no warnings, `item_select` for what to refill from, `menu` for a new part's shape, for which component
-  or tool to use and for the mend choice, and `popup` + `target` (look) for the facing of a new light. Several
-  of these come when the work finishes, not when the action is sent.
+  The action gets `cmd` `"i"` with the part type. Its questions: a `menu` for a new part's shape, and `popup` +
+  `target` (look) for the facing of a new light, both when the work finishes.
+- **Mend and refill**: `cmd` `"m"` (CDDA's mend `menu`, then its own activity) and `"f"` (`item_select` for what
+  to refill from).
