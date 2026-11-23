@@ -135,6 +135,9 @@ func _test_view(root: Node, data: Variant) -> void:
 	v.set_result(VehicleWorkData.stand_in(s, null, UID, -1))
 	var first := v.selected   # front first: part 2 (mount x 1) is listed before the square of parts 0 and 1
 	var detail := v.detail_text()
+	# 800x450 (lead-qa): everything it holds fits the width it takes there, the command row wrapping
+	var need := v.get_combined_minimum_size().x
+	var fits := need <= VehicleWorkView.width_for(800.0) and v.grow_horizontal == Control.GROW_DIRECTION_BEGIN
 	v.handle_key(_key(KEY_DOWN))
 	var moved := v.selected
 	var mend := v.choose("m")
@@ -154,9 +157,10 @@ func _test_view(root: Node, data: Variant) -> void:
 	v.free()
 	_check.call(ignored and first == 2 and moved == 0 and picked.slice(0, 2) == [2, 0] and not mend
 			and "Nothing to do on this part." in mend_note and chosen == [["o", 0]] and views == ["hood"] and held
-			and shut and closed[0] == 2 and "r:on" in detail and "m:off" in detail and "i:off" in detail,
+			and shut and closed[0] == 2 and "r:on" in detail and "m:off" in detail and "i:off" in detail and fits,
 			"vehicle work view: the list by square, Down moves, a refused command says why, o chosen, 2 the hood view, "
-			+ "keys held while a prompt is up, too far and Esc close (%s; %s)" % [detail, chosen])
+			+ "keys held while a prompt is up, too far and Esc close; fits 800x450 (%s; %s; needs %d px)"
+			% [detail, chosen, need])
 
 
 func _test_live() -> void:

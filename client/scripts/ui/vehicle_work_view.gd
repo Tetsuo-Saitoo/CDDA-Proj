@@ -46,7 +46,7 @@ var _note: Label
 var _list: VBoxContainer
 var _scroll: ScrollContainer
 var _part_title: Label
-var _cmd_box: HBoxContainer
+var _cmd_box: HFlowContainer   # wraps on a narrow window (800x450: the five don't fit one row)
 var _buttons := {}      # cmd -> Button
 var _why: Label
 var _lines: VBoxContainer
@@ -62,6 +62,7 @@ func _init() -> void:
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	grow_horizontal = Control.GROW_DIRECTION_BEGIN   # never past the right edge, should content ask for more
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = BACK
 	sb.set_content_margin_all(10)
@@ -87,7 +88,7 @@ func _init() -> void:
 	_part_title = _label("", HEAD)
 	_part_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(_part_title)
-	_cmd_box = HBoxContainer.new()
+	_cmd_box = HFlowContainer.new()
 	box.add_child(_cmd_box)
 	for k: String in KEYS:
 		var b := Button.new()
@@ -142,11 +143,16 @@ func close() -> void:
 ## Size and place for the window: docked right, at most MAX_W wide and 45% of the window, full height less a margin.
 func fit() -> void:
 	var vp := get_viewport_rect().size if is_inside_tree() else Vector2(1280, 720)
-	var w := clampf(vp.x * 0.45, MIN_W, MAX_W)
+	var w := width_for(vp.x)
 	offset_left = -w - 8.0
 	offset_right = -8.0
 	offset_top = 8.0
 	offset_bottom = -8.0
+
+
+## The view's width in a window `window_w` wide.
+static func width_for(window_w: float) -> float:
+	return clampf(window_w * 0.45, MIN_W, MAX_W)
 
 
 ## A read for this vehicle came (VehicleWorkData.clean's Dictionary): shown. One for another vehicle is ignored.
@@ -309,6 +315,9 @@ func _build_list() -> void:
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.clip_text = true   # a long name or fault list doesn't widen the view
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.tooltip_text = _row_text(p)
 		b.custom_minimum_size.y = ROW_H
 		b.text = _row_text(p)
 		b.add_theme_color_override("font_color", _row_color(p))

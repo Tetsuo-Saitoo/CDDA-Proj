@@ -1764,7 +1764,8 @@ func _ask_work() -> void:
 	if not work_view.visible:
 		return
 	if live != null and live.has_vehicle_work():
-		_work_again = live.query_vehicle_work(work_view.uid, work_view.selected) == 0 and live.vehicle_work_pending()
+		# refused (one still out, or the bridge busy): asked again when that one comes, else at the next snapshot
+		_work_again = live.query_vehicle_work(work_view.uid, work_view.selected) == 0
 		return
 	_show_work(VehicleWorkData.stand_in(world.snapshot, world.tables, work_view.uid, work_view.selected))
 
@@ -1795,7 +1796,8 @@ func _work_follow(snap: Snapshot) -> void:
 		work_view.close()
 		grab.flash("The vehicle is out of reach." if veh != null else "The vehicle is gone.")
 		return
-	if veh.parts != _work_parts or snap.carried != _work_carried:
+	if veh.parts != _work_parts or snap.carried != _work_carried \
+			or (_work_again and live != null and not live.vehicle_work_pending()):
 		_work_parts = veh.parts
 		_work_carried = snap.carried
 		_ask_work()
