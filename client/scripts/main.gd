@@ -728,6 +728,11 @@ func _start_vr() -> void:
 	vr.save_path = VrSettings.FILE
 	vr.body = player_body   # one hand system: the body's arms reach for the VR hands
 	vr.ride = _vr_ride   # C5: standing on the player's vehicle, the rig rides along as it glides
+	vr.ride_square = vehicles_view.square_at   # ... while the head is over one of its cells as drawn
+	vr.drive.interior = vehicles_view.interior   # VR driving by hand: the wheel and the lids (VrDrive)
+	vr.drive.open_lid = vehicles_view.open_lid
+	vr.drive.can_reach = vehicles_view.can_reach   # car storage by hand: the tray on an open trunk (VrDrive.cargo_at)
+	vr.drive.square_at = vehicles_view.square_at
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
 	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
 	vr.on_lean = lean   # VR leaning (VrLean): a sideways head tilt asks for CDDA's peek that way; held 250 ms here
@@ -755,6 +760,10 @@ func _start_vr() -> void:
 	vr.gun.queue_action = func(a: String) -> bool: return live != null and _in_main_loop() and _queue_act(a)
 	vr.wheel.request_ui = request_ui   # radial menus by hand: CDDA's menu as a wheel around the hand
 	vr.wheel.queue_action = vr.gun.queue_action
+	vr.drive.queue_action = vr.gun.queue_action   # the wheel's steer and the pedals: CDDA's driving actions
+	vr.drive.paused = func() -> String:   # real time paused: say so in the headset, send nothing
+		return VrRig.vr_words(ClockControl.held_note()) \
+				if live != null and live.state == "running" and ClockControl.paused(live.clock()) else ""
 	vr.wheel.list_only = func() -> bool: return hud_settings.context_menu == HudSettings.MENU_LIST
 	add_child(vr)
 	vr.camera.make_current()
