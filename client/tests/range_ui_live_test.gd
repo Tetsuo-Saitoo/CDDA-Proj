@@ -1025,6 +1025,7 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 	var parts: Array = (wv.result as Dictionary).get("parts", [])
 	var pick := -1
 	var picked := ""
+	var old := {}   # the picked part's entry in the read: its row, type and mount before it comes off
 	var tried := []
 	for want: String in ["seatbelt", "mirror", "headlight", "horn", "stereo", "clock", "wiper"]:
 		for p: Dictionary in parts:
@@ -1039,6 +1040,7 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 			if wv.selected == row and str(wv.call("detail_text")).contains("o:on"):
 				pick = row
 				picked = p["name"]
+				old = p
 			else:   # what the game says against it
 				tried.append("%s: %s" % [p["name"], ((wv.get("_buttons") as Dictionary)["o"] as Button).tooltip_text])
 	if pick < 0:
@@ -1092,6 +1094,36 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 			and (act == null or str(act) == ""),
 			"vehicle work: o pressed while the work ran (the view: \"%s\") and right after it ended (\"%s\"; the list marked old then: %s) starts nothing more: still %d part rows, %d turns on, activity \"%s\""
 			% [during, right_after, old_then, veh2.part_count() if veh2 != null else -1, _main.world.snapshot.turn - turn1, act])
+	# The removed part's old row, sent with its type and mount (a bridge that takes them): the rows moved up, so
+	# another part has that row now, and the game refuses instead of working on that one.
+	var names_part: bool = _live.get_method_list().any(func(m: Dictionary) -> bool:
+		return m["name"] == "queue_vehicle_work" and (m["args"] as Array).size() == 5)
+	if done and names_part and int(old.get("vpart", -1)) > 0 and old.get("mount") is Vector2i:
+		var results := []
+		var note := func(evs: Array) -> void:
+			for e: Variant in evs:
+				if e is Dictionary and (e as Dictionary).get("kind") == "work_result":
+					results.append(e)
+		_live.events_arrived.connect(note)
+		var tag: int = _live.call("queue_vehicle_work", uid, old["row"], old["vpart"], old["mount"], "o")
+		var told := func() -> bool:
+			return results.any(func(e: Dictionary) -> bool: return int(e.get("detail", 0)) == tag)
+		var got: bool = tag > 0 and await _until(told, SHOW_TIMEOUT_MS)
+		_live.events_arrived.disconnect(note)
+		var mine := {}
+		for e: Dictionary in results:
+			if int(e.get("detail", 0)) == tag:
+				mine = e
+		await _frames(30)
+		var veh3 := _vehicle(uid)
+		var now_rows: Dictionary = (wv.result as Dictionary).get("rows", {})
+		var holds: String = str(((wv.result as Dictionary)["parts"][now_rows[old["row"]]] as Dictionary)["name"]) \
+				if now_rows.has(old["row"]) else "?"
+		var act3: Variant = _main.world.snapshot.get("activity_id")
+		_check(got and int(mine.get("amount", -1)) == 0 and str(mine.get("text", "")) == "That part isn't there any more."
+				and veh3 != null and veh3.part_count() == rows1 and (act3 == null or str(act3) == ""),
+				"vehicle work: the removed %s's old row %d, sent with its type and mount, is refused by the game: \"%s\" (that row holds \"%s\" now); nothing starts (asked %s, answered %s, still %d part rows)"
+				% [picked, old["row"], mine.get("text", ""), holds, tag > 0, got, veh3.part_count() if veh3 != null else -1])
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
 
