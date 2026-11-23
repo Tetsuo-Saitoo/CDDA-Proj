@@ -1120,6 +1120,15 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 			wv.call("close")
 		root.size = was
 		return
+	# tanks and batteries say what they hold (the game's own read with lead-bridge's fill; nothing said without it)
+	var holds := []
+	for p: Dictionary in parts:
+		var f: Variant = p.get("fill", {})
+		if f is Dictionary and not (f as Dictionary).is_empty():
+			holds.append(((wv.get("_row_buttons") as Dictionary)[p["row"]] as Button).text)
+	if not holds.is_empty():
+		_check(holds.all(func(t: String) -> bool: return t.contains("/") or t.contains("empty")),
+				"vehicle work: the rows of the tank and the battery say what they hold: %s" % [holds])
 	# the selection, and what the commands say
 	var first: int = wv.selected
 	await _tap(KEY_DOWN)
