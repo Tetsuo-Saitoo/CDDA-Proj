@@ -4,8 +4,8 @@ extends Node3D
 ## vehicle within INTERIOR_NEAR, a child of its node, so in its mount grid: x ahead, z to the right, a cell per square
 ## on its floor). From CDDA's own parts: at the first controls drawn, the steering wheel (turned by how far CDDA
 ## steers) and the instrument cluster (CarDash); on each lockable, covered container drawn as a box or a half board
-## (has_lid: trunks, boxes, a bin), a hinged lid over a dark opening, hinged on the side toward the vehicle's middle.
-## No contents yet. lead-vr's anchors (anchors()): "Wheel" with "WheelSpin" (spins about its local z; meta radius_m,
+## (has_lid: trunks, boxes, a bin), a hinged lid over a dark opening, hinged on the side toward the vehicle's middle;
+## on a glovebox, a door in the dashboard behind its square (glove_doors). No contents yet. lead-vr's anchors (anchors()): "Wheel" with "WheelSpin" (spins about its local z; meta radius_m,
 ## part), "Dash", "Cargo_<part>" with "Lid" (the pivot on the hinge; meta part, square, hinge_axis, open_deg, handle,
 ## cdda_open). Nothing here moves a WheelSpin or Lid whose meta "held" is true (a VR hand has it). A lid of a part
 ## CDDA opens (cdda_open) follows its state (VPART_OPEN); CDDA 0.I opens no container, so the others open on the
@@ -32,6 +32,15 @@ const MAX_LIDS := 64
 const OPENING := Color(0.03, 0.03, 0.03)
 const HANDLE := Color(0.25, 0.25, 0.27)
 const VIEW_M := 30.0          # wheel and lids are drawn this near the camera
+## The glovebox (lead-bridge's vpart, contracts/snapshot.md): on the windshield's square ahead of a front seat; its
+## door is drawn in the dashboard in front of that seat, hinged at its bottom edge, the top opening toward the seat.
+const GLOVEBOX := "fp3d_glovebox"
+const DASH_FACE := 0.38       # m: the dashboard's back face ahead of a cell's middle (VehicleView.shapes: DASH, CONTROLS)
+const GLOVE_W := 0.36         # m: the door across
+const GLOVE_H := 0.17         # and up
+const GLOVE_Y := 0.95         # its bottom edge (the hinge) above the floor
+const GLOVE_T := 0.02         # its thickness
+const GLOVE_OPEN := 80.0      # degrees: down to a shelf
 
 static var _wheel_mesh: ArrayMesh
 
@@ -84,8 +93,8 @@ static func has_lid(def: IdTables.Def) -> bool:
 
 
 ## The parts a vehicle's interior is built from: [the first controls drawn (part index, -1 none), [[lid part, kind],
-## ...]]: each unbroken container with a lid drawn as a box or a half board, one per square, at most MAX_LIDS.
-## Parts above `z_max` and gap fillers are left out.
+## ...]]: each unbroken container with a lid drawn as a box or a half board, then each glovebox with a door
+## (glove_doors; kind DASH), one per square, at most MAX_LIDS. Parts above `z_max` and gap fillers are left out.
 static func parts_of(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int) -> Array:
 	var controls := -1
 	var out := []
@@ -104,7 +113,51 @@ static func parts_of(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_
 				and out.size() < MAX_LIDS:
 			seen[m] = true
 			out.append([i, kind])
+	for g: Array in glove_doors(veh, snap, tables, z_max):
+		if not seen.has(g[1]) and out.size() < MAX_LIDS:
+			seen[g[1]] = true
+			out.append([g[0], VehicleView.Kind.DASH])
 	return [controls, out]
+
+
+## The gloveboxes of `veh` with a door drawn: [[part, mount], ...], at most MAX_LIDS: each unbroken GLOVEBOX part
+## with a dashboard on the square behind it (the controls' or a seat's in their row, as VehicleView draws them).
+## Parts above `z_max` and gap fillers are left out.
+static func glove_doors(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int) -> Array:
+	var rows := {}    # mount x of the controls
+	var dash := {}    # mount -> true: a dashboard is drawn there
+	var seats := []
+	var gloves := []
+	for i in veh.part_count():
+		var j := i * Snapshot.VPART_STRIDE
+		var state := veh.parts[j + 4]
+		if veh.pos.z + veh.parts[j + 7] > z_max or (state & Snapshot.VPART_FILLER) != 0:
+			continue
+		var def := VehicleView.def_of(tables, snap, veh.parts[j + 2])
+		var m := Vector2i(veh.parts[j], veh.parts[j + 1])
+		if def != null and def.id == GLOVEBOX:
+			if (state & Snapshot.VPART_BROKEN) == 0 and gloves.size() < MAX_LIDS:
+				gloves.append([i, m])
+			continue
+		var kind := VehicleView.kind_of(def, state)
+		if kind == VehicleView.Kind.CONTROLS:
+			rows[m.x] = true
+			dash[m] = true
+		elif kind == VehicleView.Kind.SEAT:
+			seats.append(m)
+	if gloves.is_empty():
+		return []
+	for m: Vector2i in seats:
+		if rows.has(m.x):
+			dash[m] = true
+	return gloves.filter(func(g: Array) -> bool: return dash.has((g[1] as Vector2i) - Vector2i(1, 0)))
+
+
+## Where the door of a glovebox on mount `m` is drawn, closed, with the dashboard's depth behind it (mount grid: x
+## ahead, z right, y up from the floor): what a look meets (LookRay).
+static func glove_box(m: Vector2i) -> AABB:
+	return AABB(Vector3(m.x - 1 + DASH_FACE - GLOVE_T, GLOVE_Y, m.y - 0.5 * GLOVE_W),
+			Vector3(GLOVE_T + 0.5 - DASH_FACE, GLOVE_H, GLOVE_W))
 
 
 ## What an interior is built from: the parts (index, mount, vpart, kind) and the id tables. Their states (a lid
@@ -139,6 +192,9 @@ static func build(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max
 		it._add_controls(veh, p[0])
 	for e: Array in p[1]:
 		var j: int = e[0] * Snapshot.VPART_STRIDE
+		if e[1] == VehicleView.Kind.DASH:
+			it._add_glovebox(veh, e[0], VehicleView.damaged(VehicleView.DASH_COLOR.lightened(0.12), veh.parts[j + 3], veh.parts[j + 4]))
+			continue
 		var def := VehicleView.def_of(tables, snap, veh.parts[j + 2])
 		var col := paint if e[1] == VehicleView.Kind.HALF else VehicleView.color_of(e[1], def, veh.parts[j + 3], veh.parts[j + 4])
 		it._add_lid(veh, e[0], e[1], def != null and def.flags.has("OPENABLE"), mid, col)
@@ -313,6 +369,42 @@ func _add_lid(veh: Snapshot.Vehicle, part: int, kind: int, cdda_open: bool, mid:
 			Vector3(-s * h, 0.5 * LID_T, 0.0)), col)
 	VehicleView._box(tris, Transform3D(Basis.from_scale(Vector3(0.025, 0.018, 0.14)),
 			Vector3(-s * (2.0 * h - 0.04), LID_T + 0.009, 0.0)), HANDLE)
+	lid.add_child(_mesh_node("lid", tris))
+	c.add_child(lid)
+	add_child(c)
+	lids[part] = c
+	lid_at[Vector2i(veh.parts[j], veh.parts[j + 1])] = part
+	_lid_goal[part] = 0.0
+	_lid_set[part] = 0.0
+
+
+## The door of glovebox part `part` (its "Cargo_<part>" on the dashboard's face behind the glovebox's square, at
+## the floor): hinged at its bottom edge across the cell (hinge_axis +z), the top swinging toward the seat. CDDA
+## doesn't open it (cdda_open false).
+func _add_glovebox(veh: Snapshot.Vehicle, part: int, col: Color) -> void:
+	var j := part * Snapshot.VPART_STRIDE
+	var c := Node3D.new()
+	c.name = "Cargo_%d" % part
+	c.position = Vector3(veh.parts[j] - 1 + DASH_FACE, 0.0, veh.parts[j + 1])
+	c.set_meta("part", part)
+	c.set_meta("square", veh.square(part))
+	c.set_meta("hinge_axis", Vector3(0.0, 0.0, 1.0))
+	c.set_meta("open_deg", GLOVE_OPEN)
+	c.set_meta("handle", Vector3(-0.012, GLOVE_H - 0.03, 0.0))   # in the Lid's frame
+	c.set_meta("cdda_open", false)
+	var hole := []
+	VehicleView._box(hole, Transform3D(Basis.from_scale(Vector3(0.004, GLOVE_H - 0.02, GLOVE_W - 0.02)),
+			Vector3(-0.003, GLOVE_Y + 0.5 * GLOVE_H, 0.0)), OPENING)
+	c.add_child(_mesh_node("opening", hole))
+	var lid := Node3D.new()
+	lid.name = "Lid"
+	lid.position = Vector3(-GLOVE_T, GLOVE_Y, 0.0)
+	lid.set_meta("held", false)
+	var tris := []
+	VehicleView._box(tris, Transform3D(Basis.from_scale(Vector3(GLOVE_T, GLOVE_H, GLOVE_W)),
+			Vector3(0.5 * GLOVE_T, 0.5 * GLOVE_H, 0.0)), col)
+	VehicleView._box(tris, Transform3D(Basis.from_scale(Vector3(0.012, 0.016, 0.1)),
+			Vector3(-0.006, GLOVE_H - 0.03, 0.0)), HANDLE)
 	lid.add_child(_mesh_node("lid", tris))
 	c.add_child(lid)
 	add_child(c)
