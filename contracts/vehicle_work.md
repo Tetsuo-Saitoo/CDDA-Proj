@@ -132,11 +132,13 @@ All text is game data: color tags, line breaks and control characters removed.
 ### Errors
 
 `{"id": 7, "ok": false, "kind": "vehicle_work", "vehicle": 123, "error": "..."}`: `vehicle` is the uid the
-query named (added 2026-11-22; left out for `internal` and `too large` answers of older bridges). `error` is one
-of:
+query named (added 2026-11-22; left out for `internal` and `too large` answers of older bridges). `mounted` and
+`in shell` also carry `text`, CDDA's sentence for it (added 2026-11-23). `error` is one of:
 
 | `error` | |
 |---|---|
+| `in shell` | The player is inside their shell: CDDA lets them examine nothing from there. `text`: "You can't examine your surroundings while you're in your shell." |
+| `mounted` | The player is riding (a mech aside): CDDA opens no vehicle screen from the saddle. `text`: "You cannot interact with a vehicle while mounted." |
 | `no such vehicle` | No vehicle with that uid in the reality bubble. |
 | `an appliance` | It is an appliance (a fridge, a lamp, a wall wire): CDDA has another screen for those, and this read and the action don't cover them. |
 | `too far` | No part of it is on the player's square or one next to it on the player's level (CDDA's rule for examining a vehicle). |
@@ -169,6 +171,7 @@ done, with the sentence as a `message` and as the event's text:
 
 | Text | |
 |---|---|
+| "You can't examine your surroundings while you're in your shell." / "You cannot interact with a vehicle while mounted." | CDDA's own rules before its vehicle screen opens (the read's `in shell` and `mounted`). Checked first. |
 | "There is no such vehicle here." | No vehicle with that uid in the reality bubble. |
 | "That can't be worked on like a vehicle." | An appliance, or a summoned vehicle. |
 | "That vehicle is too far away." | No part of it within a square of the player. |
