@@ -44,6 +44,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_pedals(d, snap, veh)
 	_test_lids(d, veh)
 	_test_cargo(d, veh)
+	_test_glovebox(root, d)
 	_test_rig(root, snap)
 	_test_rig_cargo(root, veh)
 	car.free()
@@ -248,8 +249,31 @@ func _test_cargo(d: VrDrive, veh: Snapshot.Vehicle) -> void:
 	_reach = false
 	var shut: bool = d.cargo_at(inside, snap).is_empty()
 	_reach = true
-	var opening: bool = d.cargo_at(inside, snap) == want and d.cargo_at(deep, snap).is_empty() \
+	# The trunk as CarInterior builds it: its own "opening" (the box under the lid) reaching up (opening_out).
+	var real: bool = c.get_meta("opening") is AABB and c.get_meta("opening_out") == Vector3.UP
+	var opening: bool = real and d.cargo_at(inside, snap) == want and d.cargo_at(deep, snap).is_empty() \
 			and d.cargo_at(beside, snap).is_empty()
+	# A box of the test's own, then an open face, a bad normal, a junk box; the trunk's own metas back after.
+	var keep_box: Variant = c.get_meta("opening")
+	var keep_out: Variant = c.get_meta("opening_out")
+	c.remove_meta("opening_out")
+	c.set_meta("opening", AABB(Vector3(-0.3, 0.1, -0.3), Vector3(0.6, 0.4, 0.6)))
+	var boxed: bool = d.cargo_at(c.global_transform * Vector3(0.0, 0.3, 0.0), snap) == want \
+			and d.cargo_at(inside, snap).is_empty()
+	var front := c.global_transform * Vector3(-0.5, 0.3, 0.0)   # 20 cm out of the box's -x face
+	var shut_side: bool = d.cargo_at(front, snap).is_empty()
+	c.set_meta("opening_out", Vector3(-1.0, 0.0, 0.0))   # it opens that way (the glovebox: toward the seat)
+	var out_face: bool = d.cargo_at(front, snap) == want and d.cargo_at(inside, snap).is_empty()
+	c.set_meta("opening_out", Vector3(-2.0, 0.0, 0.0))   # not a unit normal: no reach out
+	var bad_out: bool = d.cargo_at(front, snap).is_empty()
+	c.remove_meta("opening_out")
+	c.set_meta("opening", AABB(Vector3.ZERO, Vector3(INF, 1.0, 1.0)))   # junk: the lid's rule instead
+	var junk: bool = d.cargo_at(inside, snap) == want
+	c.remove_meta("opening")
+	var no_box: bool = d.cargo_at(inside, snap) == want   # none: the lid's rule
+	c.set_meta("opening", keep_box)
+	c.set_meta("opening_out", keep_out)
+	opening = opening and boxed and shut_side and out_face and bad_out and junk and no_box
 	_cell = trunk
 	var cell: bool = d.cargo_at(beside, snap, true) == want
 	_cell = trunk + Vector3i(0, 1, 0)
@@ -284,6 +308,43 @@ func _test_cargo(d: VrDrive, veh: Snapshot.Vehicle) -> void:
 	_check.call(shut and opening and cell and off and bad and unlisted and up_quiet and swung and opened and closed,
 			"vr drive cargo: a hand in an open lid's opening (or, asked, over a cargo square) is in that cargo space while it can be reached and the snapshot lists it; a lid let go, or swung under %d degrees, is told (%s)"
 			% [int(CarInterior.LID_REACH), [shut, opening, cell, off, bad, unlisted, up_quiet, swung, opened, closed, _changed]])
+
+
+## The glovebox as CarInterior builds it (its door on the dash's face, opening toward the seat): a hand in the space
+## behind the door, or up to REACH_ABOVE out of it toward the seat, is in it; further out or over it, not.
+func _test_glovebox(root: Node, d: VrDrive) -> void:
+	var car := Node3D.new()
+	car.transform = Transform3D(Basis(Vector3.UP, deg_to_rad(-60.0)), Vector3(-5.0, 0.0, 2.0))
+	root.add_child(car)
+	var veh := Snapshot.Vehicle.new()
+	veh.uid = UID + 1
+	veh.pos = Vector3i(20, 20, 0)
+	veh.parts = PackedInt32Array([1, 0, 1, 255, 0, 1, 0, 0])   # the glovebox, one cell ahead of the seat
+	veh.cargo = [{"part": 0, "used_ml": 0, "capacity_ml": 5000, "more": 0, "items": PackedInt64Array([502, 4])}] as Array[Dictionary]
+	var gi := CarInterior.new()
+	gi.uid = veh.uid
+	car.add_child(gi)
+	gi._add_glovebox(veh, 0, Color.GRAY)
+	var keep := d.interior
+	d.interior = func(uid: int) -> Dictionary: return gi.anchors() if uid == veh.uid else {}
+	_reach = true
+	var s := Snapshot.new()
+	s.vehicles = [veh] as Array[Snapshot.Vehicle]
+	s.vehicles_moved()
+	s.player_pos = veh.square(0) + Vector3i(-1, 0, 0)
+	var c: Node3D = gi.lids[0]
+	var want := {"kind": "cargo", "vehicle": veh.uid, "part": 0, "square": veh.square(0)}
+	var at := func(x: float, y: float) -> Vector3: return c.global_transform * Vector3(x, y, 0.05)
+	var behind: bool = d.cargo_at(at.call(0.06, 1.03), s) == want
+	var out: bool = d.cargo_at(at.call(-0.2, 1.03), s) == want
+	var far: bool = d.cargo_at(at.call(-0.4, 1.03), s).is_empty()
+	var over: bool = d.cargo_at(at.call(0.06, 1.3), s).is_empty()
+	var low: bool = d.cargo_at(at.call(-0.1, 0.8), s).is_empty()
+	d.interior = keep
+	car.free()
+	_check.call(behind and out and far and over and low,
+			"vr drive glovebox: a hand behind its door or up to %.2f m out toward the seat is in it; further, over or under it, not (%s)"
+			% [VrDrive.REACH_ABOVE, [behind, out, far, over, low]])
 
 
 ## The rig: trigger with an empty hand in an open trunk lays out what it holds in the tray (nothing: a note; the lid

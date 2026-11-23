@@ -14,3 +14,4 @@ __pycache__/
 /client/bin/*.so
 /client/bin/*.exp
 /client/bin/*.lib
+.serena/

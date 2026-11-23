@@ -89,6 +89,8 @@ class CddaSim : public godot::RefCounted
 
         int64_t match_recipes( const godot::Dictionary &container );
         int64_t query_character();
+        int64_t query_vehicle_work( const godot::Dictionary &d );
+        bool queue_vehicle_work( const godot::Dictionary &d );
         godot::String take_query_result( int64_t id );
 };
 
