@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-22 — Storage openings for VR hands (lead-world): each trunk, box and the glovebox now says where its inside is and which way it opens, so VR hands can find the glovebox behind its door as well as a trunk under its lid. Client tests pass.
 - 2026-11-22 — Bridge: a fork test that failed once in a full run and passed when run again is fixed. The test built a small wall where the map had parked a van, and which of the two the game reported on a shared square changed from run to run. The test now moves parked vehicles off the ground it builds on. No game code changed. Passes on Windows and Linux.
 - 2026-11-22 — Glovebox door (lead-world): the glovebox now has a door in the dashboard in front of the passenger seat. It swings down toward you when opened, hands reach in only while it is open, and looking at it from the seat picks the glovebox, so E opens it. Client tests pass; not yet seen in a running game.
 - 2026-11-22 — Car storage in VR (lead-vr): open a trunk or glovebox lid by hand and what's inside is laid out in front of you to take; shut it and the items go away. Pull the trigger with an empty hand in an open trunk (or over a truck bed) to lay them out again. Not tried in a headset yet.

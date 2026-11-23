@@ -7,7 +7,8 @@ extends Node3D
 ## (has_lid: trunks, boxes, a bin), a hinged lid over a dark opening, hinged on the side toward the vehicle's middle;
 ## on a glovebox, a door in the dashboard behind its square (glove_doors). No contents yet. lead-vr's anchors (anchors()): "Wheel" with "WheelSpin" (spins about its local z; meta radius_m,
 ## part), "Dash", "Cargo_<part>" with "Lid" (the pivot on the hinge; meta part, square, hinge_axis, open_deg, handle,
-## cdda_open). Nothing here moves a WheelSpin or Lid whose meta "held" is true (a VR hand has it). A lid of a part
+## cdda_open, opening: the space hands reach into, an AABB in the Cargo node's frame, opening_out: its open face's
+## outward normal there). Nothing here moves a WheelSpin or Lid whose meta "held" is true (a VR hand has it). A lid of a part
 ## CDDA opens (cdda_open) follows its state (VPART_OPEN); CDDA 0.I opens no container, so the others open on the
 ## client only (open_lid) and stay where a hand leaves them. Moves only while something is on its way (step).
 
@@ -356,6 +357,8 @@ func _add_lid(veh: Snapshot.Vehicle, part: int, kind: int, cdda_open: bool, mid:
 	c.set_meta("open_deg", LID_OPEN)
 	c.set_meta("handle", Vector3(-s * (2.0 * h - 0.04), LID_T + 0.012, 0.0))   # in the Lid's frame
 	c.set_meta("cdda_open", cdda_open)
+	c.set_meta("opening", AABB(Vector3(-h, VehicleView.DECK, -h), Vector3(2.0 * h, LID_TOP - VehicleView.DECK, 2.0 * h)))
+	c.set_meta("opening_out", Vector3.UP)
 	var hole := []
 	VehicleView._box(hole, Transform3D(Basis.from_scale(Vector3(2.0 * h - 0.08, 0.004, 2.0 * h - 0.08)),
 			Vector3(0.0, LID_TOP + 0.002, 0.0)), OPENING)
@@ -392,6 +395,8 @@ func _add_glovebox(veh: Snapshot.Vehicle, part: int, col: Color) -> void:
 	c.set_meta("open_deg", GLOVE_OPEN)
 	c.set_meta("handle", Vector3(-0.012, GLOVE_H - 0.03, 0.0))   # in the Lid's frame
 	c.set_meta("cdda_open", false)
+	c.set_meta("opening", AABB(Vector3(0.0, GLOVE_Y, -0.5 * GLOVE_W), Vector3(0.5 - DASH_FACE, GLOVE_H, GLOVE_W)))
+	c.set_meta("opening_out", Vector3(-1.0, 0.0, 0.0))
 	var hole := []
 	VehicleView._box(hole, Transform3D(Basis.from_scale(Vector3(0.004, GLOVE_H - 0.02, GLOVE_W - 0.02)),
 			Vector3(-0.003, GLOVE_Y + 0.5 * GLOVE_H, 0.0)), OPENING)
