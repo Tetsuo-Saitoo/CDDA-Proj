@@ -20,6 +20,8 @@ const MAX_VARIANT := 64
 const MAX_DAMAGE := 100
 const MAX_TIME_S := 365 * 24 * 3600
 const MAX_TURN := (1 << 53) - 1
+const MAX_FILL := (1 << 53) - 1
+const FILL_UNITS: PackedStringArray = ["ml", "charges"]
 
 ## Part flags (a part's `flags`).
 const BROKEN := 1
@@ -249,10 +251,34 @@ static func _part(p: Variant) -> Dictionary:
 			if not s.is_empty():
 				faults.append(s)
 	var name := Snapshot.plain_text(d.get("name"), MAX_NAME)
-	return {"row": row, "mount": Vector2i(mx, my), "vpart": vpart if vpart != null else -1,
+	return {"row": row, "mount": Vector2i(mx, my), "vpart": vpart if vpart != null else -1, "fill": _fill(d.get("fill")),
 			"name": name if not name.is_empty() else "part", "variant": _variant(d.get("variant")),
 			"hp": hp if hp != null else 0, "damage": dmg if dmg != null else 0,
 			"flags": (flags if flags != null else 0) & ALL_FLAGS, "faults": faults}
+
+
+## A tank's or battery's `fill` (what, now, max, unit), {} when there is none or it isn't whole.
+static func _fill(v: Variant) -> Dictionary:
+	if not v is Dictionary:
+		return {}
+	var d: Dictionary = v
+	var now: Variant = _int(d.get("now"), 0, MAX_FILL)
+	var most: Variant = _int(d.get("max"), 0, MAX_FILL)
+	var unit: Variant = d.get("unit")
+	if now == null or most == null or not unit is String or not unit in FILL_UNITS:
+		return {}
+	return {"what": Snapshot.plain_text(d.get("what"), MAX_NAME), "now": now, "max": most, "unit": unit}
+
+
+## A `fill` in words: "gasoline 45.0/60.0 L", "battery 3000/3000", "empty" (max 0: no "/max"); "" for none.
+static func fill_text(f: Dictionary) -> String:
+	if f.is_empty():
+		return ""
+	var what: String = f["what"] if not (f["what"] as String).is_empty() else "empty"
+	if f["unit"] == "ml":
+		var l := "%.1f" % (f["now"] / 1000.0)
+		return "%s %s%s L" % [what, l, ("/%.1f" % (f["max"] / 1000.0)) if f["max"] > 0 else ""]
+	return "%s %d%s" % [what, f["now"], ("/%d" % f["max"]) if f["max"] > 0 else ""]
 
 
 static func _selected(v: Variant, rows: Dictionary) -> Dictionary:

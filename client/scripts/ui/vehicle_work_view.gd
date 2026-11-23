@@ -351,6 +351,9 @@ static func _row_text(p: Dictionary) -> String:
 		s += "  broken"
 	if not (p["faults"] as PackedStringArray).is_empty():
 		s += "  (" + ", ".join(p["faults"]) + ")"
+	var fill := VehicleWorkData.fill_text(p.get("fill", {}))
+	if not fill.is_empty():
+		s += "  " + fill
 	return s
 
 

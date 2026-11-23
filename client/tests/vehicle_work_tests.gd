@@ -52,12 +52,14 @@ static func _with_car(data: Variant, far := false) -> Snapshot:
 static func _sample(id: int) -> Dictionary:
 	return {"id": id, "ok": true, "kind": "vehicle_work", "vehicle": UID, "name": "Car", "turn": 5224405,
 		"parts": [
-			{"row": 0, "mount": [0, 0], "vpart": 412, "name": "frame", "variant": "cross", "hp": 100, "damage": 0, "flags": 0},
+			{"row": 0, "mount": [0, 0], "vpart": 412, "name": "frame", "variant": "cross", "hp": 100, "damage": 0, "flags": 0,
+				"fill": {"what": "gasoline", "now": 45000, "max": 60000, "unit": "ml"}},
 			{"row": 9, "mount": [1, -1], "vpart": 630, "name": "<color_red>wheel</color> (faulty)\u0007", "variant": "",
 				"hp": 31, "damage": 3, "flags": 6 | 64, "faults": ["Flat tire", 5]},
 			{"row": 9, "mount": [0, 0], "vpart": 1, "name": "again", "hp": 1, "damage": 0, "flags": 0},
 			{"row": -1, "mount": [0, 0]}, {"row": 3, "mount": [999, 0]}, "junk",
-			{"row": 4, "mount": [0, 0], "vpart": 2, "name": "seat", "variant": "é", "hp": 100, "damage": 0, "flags": 0}],
+			{"row": 4, "mount": [0, 0], "vpart": 2, "name": "seat", "variant": "é", "hp": 100, "damage": 0, "flags": 0,
+				"fill": {"what": "x", "now": 1, "max": 2, "unit": "furlongs"}}],
 		"parts_more": 2,
 		"selected": {"row": 9, "here": [8, 9, 4, 4], "commands": [
 			{"cmd": "r", "ok": false, "reason": 0, "text": "", "time_s": 1800, "lines": [
@@ -78,7 +80,11 @@ func _test_parse() -> void:
 	var wheel := VehicleWorkData.part_of(r, 9) if ok else {}
 	var seat := VehicleWorkData.part_of(r, 4) if ok else {}
 	ok = ok and wheel.get("name") == "wheel (faulty)" and wheel["flags"] == 6 and wheel["faults"] == PackedStringArray(["Flat tire"]) \
-			and wheel["mount"] == Vector2i(1, -1) and seat.get("variant") == "" and VehicleWorkData.part_of(r, 0)["variant"] == "cross"
+			and wheel["mount"] == Vector2i(1, -1) and seat.get("variant") == "" and VehicleWorkData.part_of(r, 0)["variant"] == "cross" \
+			and VehicleWorkData.fill_text(VehicleWorkData.part_of(r, 0)["fill"]) == "gasoline 45.0/60.0 L" \
+			and seat["fill"].is_empty() and wheel["fill"].is_empty() \
+			and VehicleWorkData.fill_text({"what": "", "now": 0, "max": 0, "unit": "charges"}) == "empty 0" \
+			and VehicleWorkData.fill_text({"what": "battery", "now": 3000, "max": 3000, "unit": "charges"}) == "battery 3000/3000"
 	var sel: Dictionary = r.get("selected", {})
 	var cmds: Array = sel.get("commands", [])
 	var rep := VehicleWorkData.command_of(r, "r")
