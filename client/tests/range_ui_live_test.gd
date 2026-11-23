@@ -995,12 +995,12 @@ func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
 ## car has fewer part rows, the view lists one part fewer and is still open. Said, not failed, when the read allows
 ## removing none of them.
 func _work_remove_live(wv: Variant, uid: int) -> void:
-	if _main.hands.picker.carried().is_empty():   # the kit: a screwdriver set, a multitool
-		var kits := _live.kits_given()
+	if _live.kits_given() < 1:   # the kit: a screwdriver set, a multitool
 		_live.give_test_kit()
 		_live.queue_action("pause")
-		var kit_in := func() -> bool: return _live.kits_given() > kits and not _main.hands.picker.carried().is_empty()
+		var kit_in := func() -> bool: return _live.kits_given() > 0 and not _main.hands.picker.carried().is_empty()
 		await _until(kit_in, OP_TIMEOUT_MS)
+		await _frames(10)   # (what the player carries changed: the view asks again)
 	var parts: Array = (wv.result as Dictionary).get("parts", [])
 	var pick := -1
 	var picked := ""
