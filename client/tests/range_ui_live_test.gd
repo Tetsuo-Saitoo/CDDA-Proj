@@ -1004,11 +1004,14 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var read := func() -> bool: return wv.visible and not wv.waiting and not (wv.result as Dictionary).is_empty()
 	var shut := func() -> bool: return not wv.visible
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	var was: Vector2i = root.size   # (headless the window starts tiny)
+	root.size = Vector2i(1280, 720)
+	await _frames(4)
 	# it opens docked right, on the car next to the player
 	root.push_input(key)
 	var came: bool = await _until(read, SHOW_TIMEOUT_MS)
 	await _frames(2)
-	var win := Vector2(root.size)
+	var win := root.get_visible_rect().size
 	var rect: Rect2 = (wv as Control).get_global_rect()
 	var res: Dictionary = wv.result
 	var stand_in: bool = res.get("stand_in", false) == true
@@ -1029,6 +1032,7 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	if not came or order.size() < 2:
 		if wv.visible:
 			wv.call("close")
+		root.size = was
 		return
 	# the selection, and what the commands say
 	var first: int = wv.selected
@@ -1122,20 +1126,19 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 			"vehicle work: Esc closes it, and so does %s (after Esc open %s; opened again %s; after the key open %s)"
 			% [InputActions.prompt_of(&"vehicle_work"), not esc_closes, again, wv.visible])
 	# it fits 800x450
-	var was: Vector2i = root.size
 	root.size = Vector2i(800, 450)
 	await _frames(4)
 	root.push_input(key)
 	var small: bool = await _until(read, SHOW_TIMEOUT_MS)
 	await _frames(3)
-	var win2 := Vector2(root.size)
+	var win2 := root.get_visible_rect().size
 	var rect2: Rect2 = (wv as Control).get_global_rect()
 	var hint_r: Rect2 = (wv.get("_hint") as Control).get_global_rect()
 	var cmds_r: Rect2 = (wv.get("_cmd_box") as Control).get_global_rect()
 	_check(small and rect2.position.x >= -0.5 and rect2.position.y >= -0.5 and rect2.end.x <= win2.x + 0.5 and rect2.end.y <= win2.y + 0.5
 			and rect2.encloses(hint_r.grow(-1.0)) and rect2.encloses(cmds_r.grow(-1.0)),
-			"vehicle work: it fits an 800x450 window (the view %s in %s; its command row %s and its key line %s inside it)"
-			% [rect2, win2, cmds_r, hint_r])
+			"vehicle work: it fits an 800x450 window (the view %s in %s, %d px past its right edge; its command row %s and its key line %s inside it; the view's smallest size %s)"
+			% [rect2, win2, maxi(roundi(rect2.end.x - win2.x), 0), cmds_r, hint_r, (wv as Control).get_combined_minimum_size()])
 	# out of reach it closes and says so; away from any car the key says there is none
 	var away := func() -> bool: return _main.world.snapshot.player_pos == far and not _main.world.busy()
 	var gone: bool = await _cheat(_live.cheat_teleport(far)) == "" and await _until(away, SHOW_TIMEOUT_MS)
