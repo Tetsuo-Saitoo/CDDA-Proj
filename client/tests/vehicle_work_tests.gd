@@ -37,6 +37,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_live()
 	_test_action(root)
 	_test_gate()
+	_test_install(root)
 
 
 ## The mock with a car next to the player: part 0 a frame and 1 another part on the square east of the player
@@ -173,7 +174,7 @@ func _test_view(root: Node, data: Variant) -> void:
 	v.free()
 	_check.call(ignored and first == 2 and moved == 0 and picked.slice(0, 2) == [2, 0] and not mend
 			and "Nothing to do on this part." in mend_note and chosen == [["o", 0]] and views == ["hood"] and held
-			and shut and closed[0] == 2 and "r:on" in detail and "m:off" in detail and "i:off" in detail and fits,
+			and shut and closed[0] == 2 and "r:on" in detail and "m:off" in detail and "i:on" in detail and fits,
 			"vehicle work view: the list by square, Down moves, a refused command says why, o chosen, 2 the hood view, "
 			+ "keys held while a prompt is up, too far and Esc close; fits 800x450 (%s; %s; needs %d px)"
 			% [detail, chosen, need])
@@ -270,15 +271,25 @@ func _test_action(root: Node) -> void:
 	var said := "Repair started." in v.detail_text()
 	v.forget_selection()
 	var forgot := v.selected == -1
+	var mounted := VehicleWorkData.parse_result(JSON.stringify({"id": 3, "ok": false, "kind": "vehicle_work",
+			"vehicle": UID, "error": "mounted", "text": "You cannot interact with a vehicle while <color_red>mounted</color>."}), 3)
+	v.set_result(mounted)
+	var shell := VehicleWorkData.parse_result(JSON.stringify({"id": 3, "ok": false, "kind": "vehicle_work",
+			"vehicle": UID, "error": "in shell"}), 3)
+	var told: bool = v.visible and "You cannot interact with a vehicle while mounted." in v.detail_text() \
+			and mounted == {"ok": false, "vehicle": UID, "error": "mounted",
+				"text": "You cannot interact with a vehicle while mounted."} \
+			and shell == {"ok": false, "vehicle": UID, "error": "in shell"}
 	app["vehicle"] = UID
 	v.set_result(app)
 	var shut := not v.visible
 	root.remove_child(v)
 	v.free()
 	_check.call(sent_ok and ev_ok and r["owned"] == false and mine["owned"] == true and app["error"] == "an appliance"
-			and note.begins_with("Not your vehicle") and said and forgot and shut,
+			and note.begins_with("Not your vehicle") and said and forgot and shut and told,
 			"vehicle work action: r and o queued with a tag, others refused; work_result read for its tag only; "
-			+ "someone else's vehicle noted; an appliance closes the view (%s; %s; %s)" % [sim.queued, no, note])
+			+ "someone else's vehicle noted; CDDA's sentence for mounted shown; an appliance closes the view "
+			+ "(%s; %s; %s; %s)" % [sim.queued, no, note, mounted])
 
 
 ## The hold on r and o (VehicleWorkData.Gate): after a parts change or started work, until a read asked after it,
@@ -309,3 +320,95 @@ func _test_gate() -> void:
 			"vehicle work hold: r and o wait after a parts change or started work until a read asked after it, "
 			+ "with the player free, comes back whole (%s %s %s %s %s %s)" % [at_first, old_kept, busy_kept,
 			twice_kept, error_kept, cleared])
+
+## The read's install section for square `at`: three whole types (212 has and fits, 57 has but doesn't fit, 12
+## fits but is missing items) and four that aren't whole; `pick` > 0: that type's requirement lines.
+static func _install_sample(id: int, pick: int, at := [0, 0]) -> Dictionary:
+	var d := _sample(id)
+	d.erase("selected")
+	d["install"] = {"mount": at, "reason": 0, "text": "", "types_more": 4,
+		"types": [[212, 3], [57, 1], [12, 2], [12, 3], "junk", [0, 3], [99, 9]]}
+	if pick > 0:
+		d["install"]["selected"] = {"cmd": "i", "vpart": pick, "ok": true, "reason": 0, "text": "", "time_s": 300,
+			"lines": [{"text": "Time required:", "met": 0}, {"text": "> mechanics 1", "met": 1}]}
+	return d
+
+
+## C6 install: the read's install section cleaned and listed; LiveSession's install read and "i" action; the view's
+## install mode (types, pick, square, all types, install, back).
+func _test_install(root: Node) -> void:
+	var names := func(vp: int) -> String: return {212: "seat", 57: "<color_red>frame</color>"}.get(vp, "")
+	var inst: Dictionary = VehicleWorkData.parse_result(JSON.stringify(_install_sample(5, 0)), 5)["install"]
+	var picked: Dictionary = VehicleWorkData.parse_result(JSON.stringify(_install_sample(6, 212)), 6)["install"]
+	var bad := _install_sample(7, 0)
+	bad["install"]["mount"] = [2000, 0]
+	var rows := VehicleWorkData.install_rows(inst, names)
+	var all := VehicleWorkData.install_rows(inst, names, true)
+	var data_ok: bool = inst["mount"] == Vector2i.ZERO and inst["types"].size() == 3 and inst["types_more"] == 8 \
+			and inst["selected"].is_empty() and rows.size() == 2 and rows[0]["name"] == "seat" and rows[0]["have"] \
+			and rows[1]["name"] == "part #12" and not rows[1]["have"] and all.size() == 3 and all[1]["name"] == "frame" \
+			and not all[1]["fits"] and picked["selected"]["vpart"] == 212 and picked["selected"]["ok"] \
+			and VehicleWorkData.parse_result(JSON.stringify(bad), 7)["install"].is_empty() \
+			and VehicleWorkData.install_refusal(inst) == "" \
+			and VehicleWorkData.install_refusal({"reason": 7, "text": ""}) == VehicleWorkData.REASONS[7]
+	var sim := WorkSim.new()
+	var ls := LiveSession.new()
+	ls.state = "running"
+	ls._sim = sim
+	var q1 := ls.query_vehicle_work(UID, -1, Vector2i(1, 0))
+	ls._work_query = 0
+	var q2 := ls.query_vehicle_work(UID, -1, Vector2i(1, 0), 212)
+	ls._work_query = 0
+	var q_refused := ls.query_vehicle_work(UID, 3, Vector2i(1, 0)) == 0 and ls.query_vehicle_work(UID, -1, Vector2i.MAX, 212) == 0 \
+			and ls.query_vehicle_work(UID, -1, Vector2i(1024, 0)) == 0 and ls.query_vehicle_work(UID, -1, Vector2i(1, 0), -1) == 0
+	var t := ls.queue_vehicle_work(UID, -1, 212, Vector2i(1, 0), "i")
+	var i_refused := ls.queue_vehicle_work(UID, 3, 212, Vector2i(1, 0), "i") == 0
+	ls._sim = null
+	ls.free()
+	var live_ok: bool = q1 > 0 and q2 > 0 and q_refused and i_refused and sim.asked.size() == 2 \
+			and sim.asked[0] == {"vehicle": UID, "install": [1, 0]} and sim.asked[1] == {"vehicle": UID, "install": [1, 0], "vpart": 212} \
+			and sim.queued == [{"vehicle": UID, "vpart": 212, "mount": [1, 0], "cmd": "i", "tag": t}]
+	var asked: Array = []
+	var chosen: Array = []
+	var v := VehicleWorkView.new()
+	v.mouse_hook = func(_m: int) -> int: return Input.MOUSE_MODE_VISIBLE
+	v.type_name = names
+	v.install_asked.connect(func(at: Vector2i, vp: int) -> void: asked.append([at, vp]))
+	v.install_chosen.connect(func(vp: int, at: Vector2i) -> void: chosen.append([vp, at]))
+	root.add_child(v)
+	v.open(UID)
+	v.set_result(VehicleWorkData.parse_result(JSON.stringify(_sample(3)), 3))
+	v.select(0)
+	v.choose("i")
+	var began: bool = v.installing and v.install_at == Vector2i.ZERO and asked == [[Vector2i.ZERO, 0]]
+	v.set_result(VehicleWorkData.parse_result(JSON.stringify(_install_sample(4, 0)), 4))
+	var listed := v.list_text()
+	var early := v.choose("i")   # nothing picked yet
+	v.move(1)
+	v.set_result(VehicleWorkData.parse_result(JSON.stringify(_install_sample(5, 212)), 5))
+	var detail := v.detail_text()
+	var sent := v.choose("i")
+	v.toggle_all()
+	var listed_all := v.list_text()
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_RIGHT
+	key.shift_pressed = true
+	key.pressed = true
+	v.handle_key(key)
+	var moved: bool = v.install_at == Vector2i(0, 1) and asked.back() == [Vector2i(0, 1), 0] and v.install_pick == 0
+	var esc := InputEventKey.new()
+	esc.physical_keycode = KEY_ESCAPE
+	esc.pressed = true
+	v.handle_key(esc)
+	var back: bool = not v.installing and v.visible and v.selected == 0 and "missing items" not in v.list_text()
+	root.remove_child(v)
+	v.free()
+	var view_ok: bool = began and listed == "  seat\n  part #12  (missing items)" and not early \
+			and asked[1] == [Vector2i.ZERO, 212] and sent and chosen == [[212, Vector2i.ZERO]] \
+			and "Install with: frame" in detail and "> seat" in detail and "> mechanics 1" in detail and "i:on" in detail \
+			and "r:off" in detail and "frame  (doesn't fit here)" in listed_all and moved and back
+	_check.call(data_ok and live_ok and view_ok,
+			"vehicle work install: the read's install section cleaned and listed (fitting types, names, missing items); "
+			+ "the install read and the i action go out in the contract's shape; the view's install mode picks a type, "
+			+ "installs it, moves the square, lists all types and goes back (%s %s %s; %s; %s)" % [data_ok, live_ok,
+			view_ok, listed, detail])

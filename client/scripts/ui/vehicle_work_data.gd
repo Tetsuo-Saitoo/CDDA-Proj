@@ -43,9 +43,14 @@ const COMMAND_NAMES := {"r": "Repair", "o": "Remove", "m": "Mend", "f": "Refill"
 const REASONS: PackedStringArray = ["", "Nothing to do on this part.", "Missing tools.", "Something is attached to it.",
 		"Not enough skill.", "The vehicle is moving.", "Your morale is too low.", "It's too dark to see."]
 const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part", "internal", "too large",
-		"an appliance"]
+		"an appliance", "mounted", "in shell"]
 ## The commands the vehicle_work action takes so far (contracts/vehicle_work.md "The action").
-const ACTION_CMDS: PackedStringArray = ["r", "o"]
+const ACTION_CMDS: PackedStringArray = ["r", "o", "i"]
+## The read's install section (with `install`): a type's bits, and how many types are kept.
+const HAVE := 1   # the player has its components and tools (skills not counted, as in CDDA's list)
+const FITS := 2   # it fits the square as the vehicle is now (CDDA's mount rules)
+const MAX_TYPES := 1024
+const INSTALL: PackedStringArray = ["i"]
 const MAX_TAG := (1 << 31) - 1
 ## The action names its part by row and by what the row holds (vpart, mount): the sim refuses a row that moved.
 const MAX_ACTION_VPART := 1 << 20
@@ -56,8 +61,8 @@ const MAX_EVENT_TEXT := 200
 
 
 ## A vehicle-work result's text (CddaSim.take_query_result) for query `id`: {ok: true, vehicle, name, turn, parts,
-## parts_more, selected, truncated} or {ok: false, vehicle, error}, cleaned; {} when it isn't one (too big, not
-## JSON, another id or kind).
+## parts_more, selected, truncated} or {ok: false, vehicle, error, text (CDDA's sentence, only when it gave one)},
+## cleaned; {} when it isn't one (too big, not JSON, another id or kind).
 static func parse_result(text: Variant, id: int) -> Dictionary:
 	if not text is String or (text as String).is_empty() or (text as String).length() > MAX_RESULT_BYTES:
 		return {}
@@ -75,7 +80,12 @@ static func clean(d: Dictionary) -> Dictionary:
 	var uid: Variant = _int(d.get("vehicle"), 1, MAX_UID)
 	if d.get("ok") != true:
 		var e: Variant = d.get("error")
-		return {"ok": false, "vehicle": uid if uid != null else 0, "error": e if e is String and e in ERRORS else "internal"}
+		var out := {"ok": false, "vehicle": uid if uid != null else 0,
+				"error": e if e is String and e in ERRORS else "internal"}
+		var said := Snapshot.plain_text(d.get("text"), MAX_TEXT)
+		if not said.is_empty():
+			out["text"] = said
+		return out
 	if uid == null:
 		return {"ok": false, "vehicle": 0, "error": "internal"}
 	var parts: Array[Dictionary] = []
@@ -96,7 +106,8 @@ static func clean(d: Dictionary) -> Dictionary:
 	var turn: Variant = _int(d.get("turn"), 0, MAX_TURN)
 	return {"ok": true, "vehicle": uid, "name": Snapshot.plain_text(d.get("name"), MAX_NAME),
 			"turn": turn if turn != null else 0, "owned": d.get("owned") != false, "parts": parts, "rows": rows,
-			"parts_more": (more if more != null else 0) + dropped, "selected": sel, "truncated": d.get("truncated") == true}
+			"parts_more": (more if more != null else 0) + dropped, "selected": sel, "truncated": d.get("truncated") == true,
+			"install": _install(d.get("install"))}
 
 
 ## A `work_result` event (contracts/events.md) answering the vehicle_work action tagged `tag`: {started, vehicle,
@@ -111,6 +122,30 @@ static func work_result(ev: Variant, tag: int) -> Dictionary:
 	var uid: Variant = _int(d.get("uid"), 0, MAX_UID)
 	return {"started": amount == 1, "vehicle": uid if uid != null else 0,
 			"text": Snapshot.plain_text(d.get("text"), MAX_EVENT_TEXT)}
+
+
+## Why nothing can be installed on the install section's square, "" when something can: CDDA's sentence, else
+## REASONS.
+static func install_refusal(inst: Dictionary) -> String:
+	var reason: int = inst.get("reason", 0)
+	if reason == 0:
+		return ""
+	var t: String = inst.get("text", "")
+	return t if not t.is_empty() else REASONS[reason]
+
+
+## The install section's types to list, in CDDA's order: {vpart, name, have, fits}; only those that fit the square
+## unless `all`. `name_of`: (vpart) -> String, the id table's name ("" unknown).
+static func install_rows(inst: Dictionary, name_of: Callable, all := false) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for t: Dictionary in inst.get("types", []):
+		var fits := (int(t["bits"]) & FITS) != 0
+		if not fits and not all:
+			continue
+		var n := Snapshot.plain_text(name_of.call(t["vpart"]) if name_of.is_valid() else "", MAX_NAME)
+		out.append({"vpart": t["vpart"], "name": n if not n.is_empty() else "part #%d" % t["vpart"],
+				"have": (int(t["bits"]) & HAVE) != 0, "fits": fits})
+	return out
 
 
 ## Whether the part rows on screen still name the parts the sim has: the action names a part by its row only, and
@@ -320,6 +355,44 @@ static func fill_text(f: Dictionary) -> String:
 	return "%s %d%s" % [what, f["now"], ("/%d" % f["max"]) if f["max"] > 0 else ""]
 
 
+## The read's `install` section: {mount, reason, text, types [{vpart, bits}], types_more, selected (an "i" command
+## plus `vpart`; {} for none)}; {} when there is none or it isn't whole. A type that isn't whole is left out.
+static func _install(v: Variant) -> Dictionary:
+	if not v is Dictionary:
+		return {}
+	var d: Dictionary = v
+	var m: Variant = d.get("mount")
+	var two := m is Array and (m as Array).size() == 2
+	var mx: Variant = _int(m[0], -MAX_ACTION_MOUNT, MAX_ACTION_MOUNT) if two else null
+	var my: Variant = _int(m[1], -MAX_ACTION_MOUNT, MAX_ACTION_MOUNT) if two else null
+	if mx == null or my == null:
+		return {}
+	var types: Array[Dictionary] = []
+	var seen := {}
+	var dropped := 0
+	var tv: Variant = d.get("types")
+	if tv is Array:
+		for e: Variant in (tv as Array).slice(0, MAX_TYPES):
+			var pair := e is Array and (e as Array).size() == 2
+			var vp: Variant = _int(e[0], 1, MAX_ACTION_VPART) if pair else null
+			var bits: Variant = _int(e[1], 0, HAVE | FITS) if pair else null
+			if vp == null or bits == null or seen.has(vp):
+				dropped += 1
+				continue
+			seen[vp] = true
+			types.append({"vpart": vp, "bits": bits})
+		dropped += maxi((tv as Array).size() - MAX_TYPES, 0)
+	var more: Variant = _int(d.get("types_more"), 0, MAX_ACTION_VPART)
+	var reason: Variant = _int(d.get("reason"), 0, REASONS.size() - 1)
+	var sv: Variant = d.get("selected")
+	var pick: Variant = _int((sv as Dictionary).get("vpart"), 1, MAX_ACTION_VPART) if sv is Dictionary else null
+	var sel: Dictionary = _command(sv, INSTALL) if pick != null else {}
+	return {"mount": Vector2i(mx, my), "reason": reason if reason != null else 1,
+			"text": Snapshot.plain_text(d.get("text"), MAX_TEXT), "types": types,
+			"types_more": (more if more != null else 0) + dropped,
+			"selected": sel.merged({"vpart": pick}) if not sel.is_empty() else {}}
+
+
 static func _selected(v: Variant, rows: Dictionary) -> Dictionary:
 	if not v is Dictionary:
 		return {}
@@ -346,13 +419,13 @@ static func _selected(v: Variant, rows: Dictionary) -> Dictionary:
 	return {"row": row, "here": here, "commands": cmds}
 
 
-static func _command(v: Variant) -> Dictionary:
+static func _command(v: Variant, allowed: PackedStringArray = COMMANDS) -> Dictionary:
 	if not v is Dictionary:
 		return {}
 	var d: Dictionary = v
 	var cmd: Variant = d.get("cmd")
 	var reason: Variant = _int(d.get("reason"), 0, REASONS.size() - 1)
-	if not cmd is String or not cmd in COMMANDS or not d.get("ok") is bool:
+	if not cmd is String or not cmd in allowed or not d.get("ok") is bool:
 		return {}
 	var lines: Array[Dictionary] = []
 	var lv: Variant = d.get("lines")

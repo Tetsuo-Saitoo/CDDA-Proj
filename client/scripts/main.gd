@@ -1785,7 +1785,8 @@ func _ask_work() -> void:
 		return
 	if live != null and live.has_vehicle_work():
 		# refused (one still out, or the bridge busy): asked again when that one comes, else at the next snapshot
-		var id := live.query_vehicle_work(work_view.uid, work_view.selected)
+		var id := live.query_vehicle_work(work_view.uid, -1, work_view.install_at, work_view.install_pick) \
+				if work_view.installing else live.query_vehicle_work(work_view.uid, work_view.selected)
 		_work_again = id == 0
 		if id > 0:
 			_work_gate.asked(_work_busy())
@@ -1849,24 +1850,56 @@ func _on_work_view(view: String) -> void:
 ## A command the read allows: sent as the vehicle_work action (repair and remove so far; the sim checks it all
 ## again), one at a time. Its work_result says whether CDDA's activity started.
 func _on_work_command(cmd: String, row: int) -> void:
-	if live == null or not live.can_vehicle_work() or not cmd in VehicleWorkData.ACTION_CMDS:
-		work_view.say("%s isn't connected to the game yet." % VehicleWorkData.COMMAND_NAMES.get(cmd, "That"))
-		return
-	var why := _work_gate.held(_work_busy(), world.snapshot.activity_verb if world.snapshot != null else "")
-	if not why.is_empty():
-		work_view.say(why)   # the action names its part by row: not while the rows may be old
-		if _work_gate.wants_read(_work_busy()) and not live.vehicle_work_pending():
-			_ask_work()   # no snapshot may come while the view waits: ask now
-		return
-	if _work_tag > 0 and Time.get_ticks_msec() - _work_sent < LiveSession.QUERY_TIMEOUT_MS:
-		work_view.say("Still starting the last one.")
+	if not _work_can_send(cmd):
 		return
 	var p := VehicleWorkData.part_of(work_view.result, row)
 	if p.is_empty():
 		work_view.say("Checking the parts again...")
 		_ask_work()
 		return
-	_work_tag = live.queue_vehicle_work(work_view.uid, row, p["vpart"], p["mount"], cmd)
+	_work_send(row, p["vpart"], p["mount"], cmd)
+
+
+## Install mode asked for its square's types (and the picked type's lines): read from the game only (the
+## snapshot's stand-in knows nothing of CDDA's install rules).
+func _on_work_install(at: Vector2i, vpart: int) -> void:
+	if live == null or not live.has_vehicle_work() or not live.can_vehicle_work():
+		work_view.end_install()
+		work_view.say("Installing isn't connected to the game yet.")
+		return
+	if vpart == 0:   # a new square (lead-world's calls; the parts list's highlight comes back with its row)
+		call_if(vehicles_view, "highlight_square", [work_view.uid, at])
+		call_if(work_cam, "focus_square", [work_view.uid, at])
+	_ask_work()
+
+
+## The picked type the read allows on the square: sent as the vehicle_work action "i" (the sim checks it all
+## again; CDDA's own questions come as prompts, a light's facing when the work finishes).
+func _on_work_install_chosen(vpart: int, at: Vector2i) -> void:
+	if _work_can_send("i"):
+		_work_send(-1, vpart, at, "i")
+
+
+## Whether an action may go out now; else the view says why (not connected, the player busy or the list old,
+## the last one still starting).
+func _work_can_send(cmd: String) -> bool:
+	if live == null or not live.can_vehicle_work() or not cmd in VehicleWorkData.ACTION_CMDS:
+		work_view.say("%s isn't connected to the game yet." % VehicleWorkData.COMMAND_NAMES.get(cmd, "That"))
+		return false
+	var why := _work_gate.held(_work_busy(), world.snapshot.activity_verb if world.snapshot != null else "")
+	if not why.is_empty():
+		work_view.say(why)   # the action names its part by row: not while the rows may be old
+		if _work_gate.wants_read(_work_busy()) and not live.vehicle_work_pending():
+			_ask_work()   # no snapshot may come while the view waits: ask now
+		return false
+	if _work_tag > 0 and Time.get_ticks_msec() - _work_sent < LiveSession.QUERY_TIMEOUT_MS:
+		work_view.say("Still starting the last one.")
+		return false
+	return true
+
+
+func _work_send(row: int, vpart: int, mount: Vector2i, cmd: String) -> void:
+	_work_tag = live.queue_vehicle_work(work_view.uid, row, vpart, mount, cmd)
 	_work_sent = Time.get_ticks_msec()
 	_work_for = work_view.uid
 	_work_cmd = cmd
@@ -1891,6 +1924,8 @@ func _on_work_events(events: Array) -> void:
 		if r["started"] or moved:
 			_work_gate.changed()   # its activity changes the parts; or they changed under the list on screen
 		if r["started"]:
+			if _work_cmd == "i":
+				work_view.end_install()   # the new part is the vehicle's last row once the work is done
 			work_view.say("%s started." % VehicleWorkData.COMMAND_NAMES.get(_work_cmd, "Work"))
 			if _work_cmd == "o":
 				work_view.forget_selection()   # the rows after a removed part move up
@@ -2168,6 +2203,11 @@ func _setup_hud() -> void:
 	work_view.command_chosen.connect(_on_work_command)
 	work_view.view_chosen.connect(_on_work_view)
 	work_view.closed.connect(_on_work_closed)
+	work_view.install_asked.connect(_on_work_install)
+	work_view.install_chosen.connect(_on_work_install_chosen)
+	work_view.type_name = func(vp: int) -> String:   # the id table's name for a part type
+		var def := VehicleView.def_of(world.tables, world.snapshot, vp)
+		return def.name if def != null else ""
 	layer.add_child(work_view)
 	request_ui = RequestUI.new()
 	request_ui.direction_mapper = _screen_step
