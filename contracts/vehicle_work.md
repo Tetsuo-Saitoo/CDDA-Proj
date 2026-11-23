@@ -5,8 +5,8 @@ is a curses loop the client can't answer, so the client shows its own view and a
 be done (this read), and to do it (the `vehicle_work` action, not built yet). CDDA decides both: the checks,
 texts and times come from `veh_interact`'s own code, run off-screen.
 
-Status: the **read is frozen as written here** (2026-11-22). The action and the install list are planned and not
-frozen; see the end.
+Status: the **read is built and frozen as written here** (2026-11-22). The action and the install list are
+planned and not frozen; see the end.
 
 ## The read
 
@@ -26,7 +26,8 @@ pending (one at a time), 8 queries pending already, no game running.
 
 When to ask: when the work view opens, when the selection changes, and when the snapshot shows the vehicle or
 what the player carries has changed. Not every frame: each one makes CDDA go through every part type for the
-selected square, as its own screen does on a cursor move.
+selected square, as its own screen does on a cursor move (measured for a car with a part selected: about 20 ms
+on the game thread in the Windows build, 4 ms on Linux).
 
 ### Result
 
@@ -37,24 +38,43 @@ selected square, as its own screen does on a cursor move.
   "parts": [
     {"row": 0, "mount": [0, 0], "vpart": 412, "name": "frame", "variant": "cross",
      "hp": 100, "damage": 0, "flags": 0},
-    {"row": 9, "mount": [1, -1], "vpart": 630, "name": "wheel (faulty)", "variant": "",
-     "hp": 31, "damage": 3, "flags": 6, "faults": ["Flat tire"]}
+    {"row": 41, "mount": [-2, 1], "vpart": 630, "name": "wheel (faulty)", "variant": "",
+     "hp": 100, "damage": 0, "flags": 4, "faults": ["Flat tire"]},
+    {"row": 79, "mount": [1, 1], "vpart": 977, "name": "glovebox", "variant": "",
+     "hp": 50, "damage": 3, "flags": 2}
   ],
   "parts_more": 0,
   "selected": {
-    "row": 9, "here": [8, 9],
+    "row": 79, "here": [12, 13, 79],
     "commands": [
-      {"cmd": "r", "ok": false, "reason": 0, "text": "", "time_s": 1800, "lines": [
+      {"cmd": "r", "ok": false, "reason": 0, "text": "", "time_s": 600, "lines": [
         {"text": "Time required:", "met": 0},
-        {"text": "> 30 minutes", "met": 0},
+        {"text": "> about 10 minutes", "met": 0},
+        {"text": "Skills required:", "met": 0},
+        {"text": "> mechanics 1", "met": 1},
+        {"text": "Components required:", "met": 0},
+        {"text": "> 2 bone glues OR 20 superglue OR 50 duct tape", "met": 2},
+        {"text": "Tools required:", "met": 0},
+        {"text": "> NONE", "met": 1},
+        {"text": "Description", "met": 0},
+        {"text": "> A small lidded compartment in the dashboard.  Holds a few litres.", "met": 0}
+      ]},
+      {"cmd": "o", "ok": true, "reason": 0, "text": "", "time_s": 210, "lines": [
+        {"text": "Removing the |. glovebox will yield:", "met": 0},
+        {"text": "> |. glovebox", "met": 0},
+        {"text": "Time required:", "met": 0},
+        {"text": "> about 3 minutes", "met": 0},
         {"text": "Skills required:", "met": 0},
         {"text": "> mechanics 1", "met": 1},
         {"text": "Tools required:", "met": 0},
-        {"text": "> 1 tool with wrenching quality of 1 or more", "met": 2}
+        {"text": "> 1 tool with screw driving of 1 or more.", "met": 1},
+        {"text": "Additional requirements:", "met": 0},
+        {"text": "> 1 tool with lifting 1 OR strength 1", "met": 1},
+        {"text": "Description", "met": 0},
+        {"text": "> A small lidded compartment in the dashboard.  Holds a few litres.", "met": 0}
       ]},
-      {"cmd": "o", "ok": true, "reason": 0, "text": "", "time_s": 600, "lines": []},
-      {"cmd": "m", "ok": true, "reason": 0, "text": "", "time_s": 0, "lines": []},
-      {"cmd": "f", "ok": false, "reason": 1, "text": "", "time_s": 0, "lines": []}
+      {"cmd": "m", "ok": false, "reason": 1, "text": "", "time_s": 0, "lines": []},
+      {"cmd": "f", "ok": false, "reason": 1, "text": "No parts can currently be refilled.", "time_s": 0, "lines": []}
     ]
   },
   "truncated": false
@@ -101,9 +121,9 @@ A command:
 | `cmd` | `"r"`, `"o"`, `"m"` or `"f"`: CDDA's own keys. |
 | `ok` | The work can start now on this part. |
 | `reason` | CDDA's `task_reason` for the command: 0 can be done, 1 no valid target, 2 lacks tools, 3 not free (something is attached to it), 4 lacks skill, 5 the vehicle is moving or being driven, 6 morale too low, 7 too dark. CDDA checks tools and skills in the lines, not here: `ok` false with `reason` 0 means a line is not met. |
-| `text` | CDDA's one sentence when it refuses outright, e.g. "It's too dark to see what you are doing…", "This part cannot be uninstalled."; `""` when it has none (≤ 200 columns). For `m` and `f`, `reason` 1 with `""` means this part has nothing to mend or refill. |
+| `text` | CDDA's one sentence when it refuses outright, e.g. "It's too dark to see what you are doing…", "This part cannot be uninstalled."; `""` when it has none (≤ 200 columns). `reason` 1 with `""` means this part itself has nothing to repair, mend or refill, whatever other parts of the vehicle have. |
 | `time_s` | How long the work takes, in seconds of game time (0 for `m` and `f`: mending takes the time of the fix chosen in its menu, refilling is done at once). |
-| `lines` | CDDA's requirement text for the command on this part, one entry a line (at most 64, each ≤ 200 columns): time, skills, components, tools, lifting or jacking, what removing yields, then the part type's description. `met`: 0 a heading or a note, 1 a requirement that is met, 2 one that is not (from the colour CDDA gives the line). |
+| `lines` | CDDA's requirement text for the command on this part, one entry a line (at most 64, each ≤ 200 columns): time, skills, components, tools, lifting or jacking, what removing yields, then the part type's description. `met`: 0 a heading or a note, 1 a requirement that is met, 2 one that is not (from the colour CDDA gives the line under its requirement headings; also 2 for a red sentence of CDDA's that rules the work out, such as "This part cannot be repaired."). A part's or item's name in a line may start with CDDA's condition marks, e.g. `|.`. |
 
 All text is game data: color tags, line breaks and control characters removed.
 

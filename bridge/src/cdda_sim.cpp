@@ -24,6 +24,7 @@
 #include "fp3d/held.h"
 #include "fp3d/id_tables.h"
 #include "fp3d/test_range.h"
+#include "fp3d/vehicle_work.h"
 #include "sim_session.h"
 
 using godot::Array;
@@ -242,6 +243,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
+    ClassDB::bind_method( D_METHOD( "query_vehicle_work", "d" ), &CddaSim::query_vehicle_work );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
@@ -925,6 +927,34 @@ int64_t CddaSim::query_character()
         return 0;
     }
     return static_cast<int64_t>( fp3d::post_character_query() );
+}
+
+// C6: what can be done to a vehicle next to the player (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile
+// input: every key is checked for type and range; anything wrong is refused whole (0) and nothing is posted.
+int64_t CddaSim::query_vehicle_work( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    Variant v;
+    if( !d.has( "vehicle" ) || !field( d, "vehicle", Variant::INT, v ) ) {
+        return 0;
+    }
+    const int64_t vehicle = v;
+    int64_t part = -1;
+    if( d.has( "part" ) ) {
+        Variant p;
+        if( !field( d, "part", Variant::INT, p ) ) {
+            return 0;
+        }
+        part = p;
+    }
+    if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || part < -1 ||
+        part > fp3d::max_work_part_row ) {
+        return 0;
+    }
+    return static_cast<int64_t>( fp3d::post_vehicle_work_query( static_cast<uint64_t>( vehicle ),
+                                 static_cast<int>( part ) ) );
 }
 
 String CddaSim::take_query_result( int64_t id )
