@@ -1850,8 +1850,8 @@ func _on_work_view(view: String) -> void:
 	call_if(work_cam, "view", [work_view.uid, view])
 
 
-## A command the read allows: sent as the vehicle_work action (repair and remove so far; the sim checks it all
-## again), one at a time. Its work_result says whether CDDA's activity started.
+## A command the read allows: sent as the vehicle_work action (repair, remove, mend, refill; the sim checks it
+## all again; CDDA's own questions, which fault to mend or what to refill from, come as prompts), one at a time. Its work_result says whether CDDA's activity started.
 func _on_work_command(cmd: String, row: int) -> void:
 	if not _work_can_send(cmd):
 		return

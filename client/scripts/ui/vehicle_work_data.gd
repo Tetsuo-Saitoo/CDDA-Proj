@@ -45,7 +45,7 @@ const REASONS: PackedStringArray = ["", "Nothing to do on this part.", "Missing 
 const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part", "internal", "too large",
 		"an appliance", "mounted", "in shell"]
 ## The commands the vehicle_work action takes so far (contracts/vehicle_work.md "The action").
-const ACTION_CMDS: PackedStringArray = ["r", "o", "i"]
+const ACTION_CMDS: PackedStringArray = ["r", "o", "m", "f", "i"]
 ## The read's install section (with `install`): a type's bits, and how many types are kept.
 const HAVE := 1   # the player has its components and tools (skills not counted, as in CDDA's list)
 const FITS := 2   # it fits the square as the vehicle is now (CDDA's mount rules)
