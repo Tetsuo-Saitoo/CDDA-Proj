@@ -93,6 +93,9 @@ var _work_uid := 0                       # the vehicle the work view was opened 
 var _work_parts := PackedInt32Array()    # its parts and what the player carried when last asked
 var _work_carried := PackedInt64Array()
 var _work_again := false                 # a read was refused while one was out: ask again when it comes
+var _work_tag := 0                       # the vehicle_work action waiting for its work_result (0 none)
+var _work_sent := 0                      # ... sent at (msec)
+var _work_cmd := ""                       # ... its command
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -888,6 +891,7 @@ func _start_live() -> void:
 	live.held_changed.connect(hud_data.set_held)
 	live.character_sheet.connect(character_data.set_sheet)   # G4: the character screen's stats, skills ...
 	live.vehicle_work.connect(_on_vehicle_work)   # C6: the work view's read
+	live.events_arrived.connect(_on_work_events)   # C6: its action's work_result
 	live.state_changed.connect(func(s: String) -> void:
 		if s != "running":
 			character_data.set_sheet(null))   # another game, another character
@@ -1781,7 +1785,9 @@ func _on_vehicle_work(r: Dictionary) -> void:
 
 func _show_work(r: Dictionary) -> void:
 	if not work_view.set_result(r) and r.get("ok") != true and not work_view.visible:
-		grab.flash("The vehicle is out of reach." if r.get("error") == "too far" else "The vehicle is gone.")
+		var e: Variant = r.get("error")
+		grab.flash("The vehicle is out of reach." if e == "too far" else ("That's an appliance: examine it instead."
+				if e == "an appliance" else "The vehicle is gone."))
 
 
 ## A new snapshot while the view is open: closed when the vehicle went or is out of reach, asked again when its
@@ -1815,8 +1821,39 @@ func _on_work_view(view: String) -> void:
 	call_if(work_cam, "view", [work_view.uid, view])
 
 
-func _on_work_command(_cmd: String, _row: int) -> void:
-	grab.flash("Doing the work isn't connected to the game yet.")   # C6: the vehicle_work action, next step
+## A command the read allows: sent as the vehicle_work action (repair and remove so far; the sim checks it all
+## again), one at a time. Its work_result says whether CDDA's activity started.
+func _on_work_command(cmd: String, row: int) -> void:
+	if live == null or not live.can_vehicle_work() or not cmd in VehicleWorkData.ACTION_CMDS:
+		work_view.say("%s isn't connected to the game yet." % VehicleWorkData.COMMAND_NAMES.get(cmd, "That"))
+		return
+	if _work_tag > 0 and Time.get_ticks_msec() - _work_sent < LiveSession.QUERY_TIMEOUT_MS:
+		work_view.say("Still starting the last one.")
+		return
+	_work_tag = live.queue_vehicle_work(work_view.uid, row, cmd)
+	_work_sent = Time.get_ticks_msec()
+	_work_cmd = cmd
+	work_view.say("Starting..." if _work_tag > 0 else "The game didn't take that now.")
+
+
+## The work_result for the action in flight: started (CDDA's activity runs; the next snapshot and read show what it
+## did) or refused with CDDA's reason ("" when the player said no to its question).
+func _on_work_events(events: Array) -> void:
+	if _work_tag < 1:
+		return
+	for i in mini(events.size(), 4096):
+		var r := VehicleWorkData.work_result(events[i], _work_tag)
+		if r.is_empty():
+			continue
+		_work_tag = 0
+		if work_view.visible:
+			if r["started"]:
+				work_view.say("%s started." % VehicleWorkData.COMMAND_NAMES.get(_work_cmd, "Work"))
+				if _work_cmd == "o":
+					work_view.forget_selection()   # the rows after a removed part move up
+			else:
+				work_view.say(r["text"] if not (r["text"] as String).is_empty() else "Not started.")
+		return
 
 
 func _on_work_closed() -> void:

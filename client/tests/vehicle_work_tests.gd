@@ -13,6 +13,12 @@ class WorkSim:
 	var asked: Array = []
 	var results := {}
 	var next := 40
+	var queued: Array = []
+	var accept := true
+
+	func queue_vehicle_work(d: Dictionary) -> bool:
+		queued.append(d)
+		return accept
 
 	func query_vehicle_work(d: Dictionary) -> int:
 		asked.append(d)
@@ -29,6 +35,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_stand_in(data)
 	_test_view(root, data)
 	_test_live()
+	_test_action(root)
 
 
 ## The mock with a car next to the player: part 0 a frame and 1 another part on the square east of the player
@@ -203,3 +210,59 @@ static func _key(code: Key) -> InputEventKey:
 	k.physical_keycode = code
 	k.pressed = true
 	return k
+
+
+## The action (repair and remove so far): LiveSession.queue_vehicle_work and its work_result; the read's `owned`
+## and the appliance error.
+func _test_action(root: Node) -> void:
+	var sim := WorkSim.new()
+	var ls := LiveSession.new()
+	ls.state = "running"
+	ls._sim = sim
+	var t1 := ls.queue_vehicle_work(UID, 9, "r")
+	var t2 := ls.queue_vehicle_work(UID, 0, "o")
+	var refused := ls.queue_vehicle_work(UID, 9, "m") == 0 and ls.queue_vehicle_work(UID, -1, "r") == 0 \
+			and ls.queue_vehicle_work(0, 9, "r") == 0 and ls.queue_vehicle_work(UID, 4096, "o") == 0
+	sim.accept = false
+	var full := ls.queue_vehicle_work(UID, 9, "r") == 0
+	ls._sim = null
+	ls.free()
+	var sent_ok: bool = t1 > 0 and t2 == t1 + 1 and refused and full and sim.queued.size() == 3 \
+			and sim.queued[0] == {"vehicle": UID, "part": 9, "cmd": "r", "tag": t1} and sim.queued[1]["cmd"] == "o"
+	var ev := {"kind": "work_result", "uid": UID, "amount": 0, "detail": 5,
+			"text": "You don't meet the requirements to repair the <color_white>glovebox</color>."}
+	var no := VehicleWorkData.work_result(ev, 5)
+	var started := ev.duplicate()
+	started["amount"] = 1.0
+	started["text"] = ""
+	var odd := ev.duplicate()
+	odd["amount"] = 2
+	var ev_ok: bool = no == {"started": false, "vehicle": UID, "text": "You don't meet the requirements to repair the glovebox."} \
+			and VehicleWorkData.work_result(started, 5)["started"] and VehicleWorkData.work_result(ev, 6).is_empty() \
+			and VehicleWorkData.work_result(odd, 5).is_empty() and VehicleWorkData.work_result({"kind": "message"}, 5).is_empty() \
+			and VehicleWorkData.work_result(ev, 0).is_empty() and VehicleWorkData.work_result("junk", 5).is_empty()
+	var theirs := _sample(3)
+	theirs["owned"] = false
+	var r := VehicleWorkData.parse_result(JSON.stringify(theirs), 3)
+	var mine := VehicleWorkData.parse_result(JSON.stringify(_sample(3)), 3)
+	var app := VehicleWorkData.parse_result(JSON.stringify({"id": 3, "ok": false, "kind": "vehicle_work",
+			"error": "an appliance"}), 3)
+	var v := VehicleWorkView.new()
+	v.mouse_hook = func(_m: int) -> int: return Input.MOUSE_MODE_VISIBLE
+	root.add_child(v)
+	v.open(UID)
+	v.set_result(r)
+	var note := v._note.text
+	v.say("Repair started.")
+	var said := "Repair started." in v.detail_text()
+	v.forget_selection()
+	var forgot := v.selected == -1
+	app["vehicle"] = UID
+	v.set_result(app)
+	var shut := not v.visible
+	root.remove_child(v)
+	v.free()
+	_check.call(sent_ok and ev_ok and r["owned"] == false and mine["owned"] == true and app["error"] == "an appliance"
+			and note.begins_with("Not your vehicle") and said and forgot and shut,
+			"vehicle work action: r and o queued with a tag, others refused; work_result read for its tag only; "
+			+ "someone else's vehicle noted; an appliance closes the view (%s; %s; %s)" % [sim.queued, no, note])

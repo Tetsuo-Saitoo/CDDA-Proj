@@ -40,7 +40,12 @@ const COMMAND_NAMES := {"r": "Repair", "o": "Remove", "m": "Mend", "f": "Refill"
 ## CDDA's task_reason (veh_interact.h) in words, for a refusal without its own sentence.
 const REASONS: PackedStringArray = ["", "Nothing to do on this part.", "Missing tools.", "Something is attached to it.",
 		"Not enough skill.", "The vehicle is moving.", "Your morale is too low.", "It's too dark to see."]
-const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part", "internal", "too large"]
+const ERRORS: PackedStringArray = ["no such vehicle", "too far", "no such part", "internal", "too large",
+		"an appliance"]
+## The commands the vehicle_work action takes so far (contracts/vehicle_work.md "The action").
+const ACTION_CMDS: PackedStringArray = ["r", "o"]
+const MAX_TAG := (1 << 31) - 1
+const MAX_EVENT_TEXT := 200
 
 
 ## A vehicle-work result's text (CddaSim.take_query_result) for query `id`: {ok: true, vehicle, name, turn, parts,
@@ -83,8 +88,22 @@ static func clean(d: Dictionary) -> Dictionary:
 	var sel := _selected(d.get("selected"), rows)
 	var turn: Variant = _int(d.get("turn"), 0, MAX_TURN)
 	return {"ok": true, "vehicle": uid, "name": Snapshot.plain_text(d.get("name"), MAX_NAME),
-			"turn": turn if turn != null else 0, "parts": parts, "rows": rows,
+			"turn": turn if turn != null else 0, "owned": d.get("owned") != false, "parts": parts, "rows": rows,
 			"parts_more": (more if more != null else 0) + dropped, "selected": sel, "truncated": d.get("truncated") == true}
+
+
+## A `work_result` event (contracts/events.md) answering the vehicle_work action tagged `tag`: {started, vehicle,
+## text (CDDA's reason when refused; "" when started or the player said no)}; {} for another tag, kind or junk.
+static func work_result(ev: Variant, tag: int) -> Dictionary:
+	if not ev is Dictionary or (ev as Dictionary).get("kind") != "work_result" or tag < 1:
+		return {}
+	var d: Dictionary = ev
+	var amount: Variant = _int(d.get("amount"), 0, 1)
+	if _int(d.get("detail"), 1, MAX_TAG) != tag or amount == null:
+		return {}
+	var uid: Variant = _int(d.get("uid"), 0, MAX_UID)
+	return {"started": amount == 1, "vehicle": uid if uid != null else 0,
+			"text": Snapshot.plain_text(d.get("text"), MAX_EVENT_TEXT)}
 
 
 ## The part entry with row `row` in a cleaned result, {} when it has none.
@@ -135,7 +154,8 @@ static func stand_in(snap: Snapshot, tables: IdTables, uid: int, part := -1) -> 
 		return {"ok": false, "vehicle": uid, "error": "no such vehicle"}
 	if not in_reach(snap, veh):
 		return {"ok": false, "vehicle": uid, "error": "too far"}
-	var d := {"id": 1, "ok": true, "kind": "vehicle_work", "vehicle": uid, "name": veh.name, "turn": 0, "parts": []}
+	var d := {"id": 1, "ok": true, "kind": "vehicle_work", "vehicle": uid, "name": veh.name, "turn": 0, "owned": true,
+			"parts": []}
 	for i in mini(veh.part_count(), MAX_PARTS):
 		var k := i * Snapshot.VPART_STRIDE
 		var state := veh.parts[k + 4]

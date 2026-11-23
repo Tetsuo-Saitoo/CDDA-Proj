@@ -164,7 +164,7 @@ func set_result(r: Dictionary) -> bool:
 	waiting = false
 	if r.get("ok") != true:
 		var e: String = r.get("error", "internal")
-		if e in ["no such vehicle", "too far"]:
+		if e in ["no such vehicle", "too far", "an appliance"]:
 			close()
 			return false
 		_flash = "The game couldn't answer (%s)." % e
@@ -197,6 +197,17 @@ func select(row: int) -> void:
 		_scroll.ensure_control_visible(_row_buttons[row])
 	_show_part()
 	part_selected.emit(row)
+
+
+## Shows `text` under the commands (an action's outcome, CDDA's reason) until the selection changes.
+func say(text: String) -> void:
+	_flash = text
+	_show_part()
+
+
+## Drops the selection without asking (a removal moves the rows after it up): the next read selects the first part.
+func forget_selection() -> void:
+	selected = -1
 
 
 ## Moves the selection `delta` rows down the list (wraps).
@@ -354,6 +365,8 @@ func _show_part() -> void:
 	var stand_in: bool = result.get("stand_in", false)
 	_note.text = "Asking the game..." if waiting else \
 			("Stand-in: the game's own checks aren't connected yet." if stand_in else "")
+	if result.get("owned", true) == false:   # CDDA asks before any work on it; owners who see it take it as theft
+		_note.text = ("Not your vehicle: the game asks first. " + _note.text).strip_edges()
 	_note.visible = not _note.text.is_empty()
 	_part_title.text = "" if p.is_empty() else "%s  %d%%%s" % [p["name"], p["hp"],
 			("  [" + p["variant"] + "]") if not (p["variant"] as String).is_empty() else ""]

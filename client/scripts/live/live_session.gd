@@ -68,6 +68,7 @@ var _char_asked := 0
 var _work_query := 0
 var _work_asked := 0
 var _work_uid := 0   # the vehicle _work_query asked about
+var _work_tag := 0   # the last vehicle_work action's tag (1..2^31-1, wraps)
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
@@ -578,6 +579,24 @@ func query_vehicle_work(uid: int, part := -1) -> int:
 	_work_asked = Time.get_ticks_msec()
 	_work_uid = uid
 	return id
+
+
+## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`
+## (contracts/vehicle_work.md "The action"; the sim checks it all again). Returns the action's tag, answered by one
+## `work_result` event (VehicleWorkData.work_result), or 0 when refused before it was queued.
+func queue_vehicle_work(uid: int, part: int, cmd: String) -> int:
+	if not _can("queue_vehicle_work") or uid < 1 or uid > VehicleWorkData.MAX_UID or part < 0 \
+			or part > VehicleWorkData.MAX_ROW or not cmd in VehicleWorkData.ACTION_CMDS:
+		return 0
+	_work_tag = _work_tag % VehicleWorkData.MAX_TAG + 1
+	if _sim.queue_vehicle_work({"vehicle": uid, "part": part, "cmd": cmd, "tag": _work_tag}) != true:
+		return 0
+	return _work_tag
+
+
+## Whether the bridge takes the vehicle_work action (an older DLL doesn't: the view says it isn't connected).
+func can_vehicle_work() -> bool:
+	return _can("queue_vehicle_work")
 
 
 ## Whether the bridge answers the vehicle-work read (an older DLL doesn't: the view uses its stand-in).
