@@ -949,6 +949,13 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 	var pitch0: float = _main.fp.pitch
 	var met := []
 	var aimed := false
+	# headless the mouse isn't captured, so the game's pointer is the mouse's spot: put that in the middle of the screen
+	var mid := root.get_visible_rect().size / 2.0
+	var to_mid_of_screen := InputEventMouseMotion.new()
+	to_mid_of_screen.position = mid
+	to_mid_of_screen.global_position = mid
+	Input.parse_input_event(to_mid_of_screen)
+	await _frames(2)
 	for h: float in [1.0, 0.8, 0.6, 0.4, 1.2]:
 		if aimed:
 			break
@@ -973,10 +980,10 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 	if not head_on:   # the facts for whoever looks into it
 		var to_mid := _main.world.coords.ms_center_to_world(sq) + Vector3.UP - _main.fp.global_position
 		var cam := root.get_camera_3d()
-		print("    (car storage, %s: a look at the middle of its square %s met no part of it (at heights, it met: %s). The car faces %s degrees; the player is on %s, that square's middle at %s; the eye (fp) is at %s, the camera drawn at %s; the square's middle 1 m up is %.2f m from the eye, at yaw %d; looking around met it at [yaw, pitch] %s)"
+		print("    (car storage, %s: a look at the middle of its square %s met no part of it (at heights, it met: %s). The car faces %s degrees; the player is on %s, that square's middle at %s; the eye (fp) is at %s, the camera drawn at %s; the square's middle 1 m up is %.2f m from the eye, at yaw %d; the game's pointer is at %s on a screen whose middle is %s; looking around met it at [yaw, pitch] %s)"
 				% [what, sq, met, _vehicle(uid).face_deg if _vehicle(uid) != null else "?", _main.world.snapshot.player_pos,
 				_main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos), _main.fp.global_position,
-				cam.global_position if cam != null else "?", to_mid.length(), roundi(rad_to_deg(atan2(-to_mid.x, -to_mid.z))), around])
+				cam.global_position if cam != null else "?", to_mid.length(), roundi(rad_to_deg(atan2(-to_mid.x, -to_mid.z))), _main.call("_pointer"), mid, around])
 	if not aimed:
 		print("    (car storage, %s: from %s the pointer meets no part on its square %s, head-on or looking around, so E on it is not checked; aimed at heights, it met: %s; the eye is at %s, the middle of the player's square at %s)"
 				% [what, _main.world.snapshot.player_pos, sq, met, _main.fp.global_position,
