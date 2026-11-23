@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — Vehicle work camera (lead-world): in the vehicle work view, picking a part now glides the camera to it and tints it, and the views look around the car, over the engine or low under its side; closing gives your view back. Client tests pass; not yet seen in a running game.
 - 2026-11-22 — Storage openings for VR hands (lead-world): each trunk, box and the glovebox now says where its inside is and which way it opens, so VR hands can find the glovebox behind its door as well as a trunk under its lid. Client tests pass.
 - 2026-11-23 — Bridge: repairing or removing a car part now double-checks which part is meant, so a key pressed just after another part came off can't land on the wrong part (asked for by QA before testers get it). Passes on Windows and Linux.
 - 2026-11-22 — Bridge: the car repair view can now show what each fuel tank and battery holds and how full it is (asked for by the UI lead). Passes on Windows and Linux.

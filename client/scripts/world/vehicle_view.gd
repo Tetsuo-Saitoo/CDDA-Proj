@@ -17,7 +17,8 @@ extends Node3D
 ## (Snapshot.VPART_FILLER) only block. Real models and doors by hand are later slices.
 ## Interiors (CarInterior): seats with a back and headrest, a dashboard across the front row (baked); for vehicles
 ## near the camera the steering wheel, the instrument cluster (CarDash) and lids on the containers, lead-vr's anchors
-## (interior()); only the vehicle the player is in comes alive (set_ride).
+## (interior()); only the vehicle the player is in comes alive (set_ride). C6 vehicle work: where a part is
+## (part_anchor, work_pose: PartSpot) and a tint over the selected one (highlight).
 
 ## DASH: not a part's kind; the dashboard in front of a seat beside the controls.
 enum Kind { NONE, FRAME, BOARD, HALF, DOOR, GLASS_DOOR, DOOR_OPEN, WINDOW, ROOF, WHEEL, SEAT, ENGINE, TANK, CARGO,
@@ -74,6 +75,7 @@ const RUST := Color(0.45, 0.26, 0.14)
 const CHAR := Color(0.12, 0.11, 0.1)
 const LIT := Color(1.0, 0.95, 0.75)
 const DASH_COLOR := Color(0.16, 0.16, 0.17)   # the dashboard (controls), whatever CDDA's colour
+const HIGHLIGHT := Color(1.0, 0.78, 0.2, 0.3)  # C6: the tint over the part the work view has selected
 const INTERIOR_NEAR := 20.0   # m: a vehicle this near the camera gets its interior (CarInterior)
 const INTERIOR_FAR := 30.0    # and loses it this far
 const INTERIOR_BUILDS := 2    # interiors built per frame at most
@@ -120,6 +122,9 @@ static var _mark_mats := []    # [block, sign] ShaderMaterial, made once
 var _snap: Snapshot = null     # the snapshot last applied
 var _ride_uid := 0             # the vehicle the player is in (set_ride), 0 none
 var _ride := {}                # its dash reading
+var _highlight := []           # [uid, row] highlighted (C6, highlight()), [] none
+var _lit: MeshInstance3D       # its tint, a child of that vehicle's node; null while none is drawn
+static var _lit_material: Material
 static var _shapes := {}       # Kind -> [[Look, AABB], ...], made once
 static var _mats := {}         # Look -> Material
 
@@ -291,6 +296,8 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			if gone.marks != null:
 				gone.marks.free()
 	_cars = cars
+	if not _highlight.is_empty() or _lit != null:
+		_place_highlight()   # its vehicle may be built again, its parts moved or gone
 
 
 ## Frees what a vehicle draws and forgets what it was built from.
@@ -468,6 +475,75 @@ func open_lid(uid: int, part: int, open: bool) -> bool:
 	var j := part * Snapshot.VPART_STRIDE
 	var lid: int = car.interior.lid_at.get(Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), -1)
 	return lid >= 0 and car.interior.open_lid(lid, open)
+
+
+## C6 (lead-ui's work view): part `row` of vehicle `uid` as drawn now (PartSpot.anchor): {point, normal (unit),
+## size (m)} in the world; {} when the vehicle isn't drawn or the row is no part of its own.
+func part_anchor(uid: int, row: int) -> Dictionary:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
+		return {}
+	var a := PartSpot.anchor(car.veh, _snap, _world.tables, row)
+	if a.is_empty():
+		return {}
+	var xf := car.node.global_transform
+	return {"point": xf * (a["point"] as Vector3), "normal": (xf.basis * (a["normal"] as Vector3)).normalized(),
+			"size": a["size"]}
+
+
+## Where the work camera (WorkCamera) stands for `what` ("part" with `row`, or one of PartSpot.VIEWS): [eye, at] in
+## vehicle `uid`'s mount grid (drawn() carries it to the world); [] when it isn't drawn or there's nothing to see.
+func work_pose(uid: int, what: String, row := -1) -> Array:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
+		return []
+	return PartSpot.work_pose(car.veh, _snap, _world.tables, what, row)
+
+
+## C6: shows part `row` of vehicle `uid` (a see-through tint over where it is drawn, seen through what is in front
+## of it; it follows the vehicle and is placed again with each snapshot); -1: none.
+func highlight(uid: int, row: int) -> void:
+	_highlight = [uid, row] if row >= 0 else []
+	_place_highlight()
+
+
+func _place_highlight() -> void:
+	if is_instance_valid(_lit):
+		if _lit.get_parent() != null:
+			_lit.get_parent().remove_child(_lit)
+		_lit.queue_free()
+	_lit = null
+	if _highlight.is_empty():
+		return
+	var car: Car = _cars.get(_highlight[0])
+	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
+		return
+	var a := PartSpot.anchor(car.veh, _snap, _world.tables, _highlight[1])
+	if a.is_empty():
+		return
+	var box: AABB = (a["box"] as AABB).grow(0.03)
+	var mesh := BoxMesh.new()
+	mesh.size = box.size
+	mesh.material = _highlight_material()
+	_lit = MeshInstance3D.new()
+	_lit.name = "Highlight"
+	_lit.mesh = mesh
+	_lit.position = box.get_center()
+	_lit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	car.node.add_child(_lit)
+
+
+static func _highlight_material() -> Material:
+	if _lit_material == null:
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		m.albedo_color = HIGHLIGHT
+		m.no_depth_test = true
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.render_priority = 2
+		_lit_material = m
+	return _lit_material
 
 
 ## The client's rule for cargo (CDDA has none; the coordinator's): whether hands may reach into part `part` of vehicle
