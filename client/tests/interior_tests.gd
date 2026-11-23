@@ -149,7 +149,8 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	var meta_ok: bool = cargo.get_meta("part") == trunk and cargo.get_meta("square") == car.square(trunk) \
 			and cargo.get_meta("open_deg") == CarInterior.LID_OPEN and cargo.get_meta("cdda_open") == false \
 			and cargo.get_meta("hinge_axis") == Vector3(0, 0, -1) and lid.get_meta("held") == false \
-			and (cargo.get_meta("handle") as Vector3).x < -0.5
+			and (cargo.get_meta("handle") as Vector3).x < -0.5 and cargo.get_meta("opening_out") == Vector3.UP \
+			and cargo.get_meta("opening") == AABB(Vector3(-0.4, VehicleView.DECK, -0.4), Vector3(0.8, CarInterior.LID_TOP - VehicleView.DECK, 0.8))
 	_check.call(meta_ok and lid.position.x > 0.3 and (front.get_node("Lid") as Node3D).position.x < -0.3
 			and is_equal_approx((a["Cargo_%d" % sedan].get_node("Lid") as Node3D).position.y, CarInterior.LID_TOP + 0.006),
 			"interiors: lids hinge on the side toward the middle (a trunk at its front, a box ahead at its back) with lead-vr's meta")
@@ -330,6 +331,10 @@ func _test_glovebox(root: Node, data: Variant) -> void:
 	var meta_ok: bool = c.get_meta("part") == glove and c.get_meta("square") == car.square(glove) \
 			and c.get_meta("hinge_axis") == Vector3(0, 0, 1) and c.get_meta("open_deg") == CarInterior.GLOVE_OPEN \
 			and c.get_meta("cdda_open") == false and lid.get_meta("held") == false and not a.has("Cargo_%d" % bare)
+	# the space behind the door, inside the dashboard, open toward the seat
+	var op: AABB = c.get_meta("opening", AABB())
+	meta_ok = meta_ok and c.get_meta("opening_out") == Vector3(-1, 0, 0) and op.position.x == 0.0 and op.size.x > 0.1 \
+			and CarInterior.glove_box(Vector2i(1, 1)).grow(0.001).encloses(AABB(op.position + c.position, op.size))
 	_check.call(meta_ok and c.position.is_equal_approx(Vector3(CarInterior.DASH_FACE, 0.0, 1.0))
 			and is_equal_approx(lid.position.y, CarInterior.GLOVE_Y),
 			"interiors: the glovebox's door is on the dashboard's face in front of the passenger seat, with lead-vr's meta (%s)" % c.position)
