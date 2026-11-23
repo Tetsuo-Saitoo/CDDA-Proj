@@ -950,6 +950,16 @@ func _tap(code: Key) -> void:
 	await _frames(2)
 
 
+## Waits (at most 3 s) until the first-person eye stands over the middle of the player's square: after a step the
+## camera glides there, and a look cast on the way starts from the square it is leaving.
+func _eye_settled() -> void:
+	var there := func() -> bool:
+		var mid: Vector3 = _main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos)
+		var eye: Vector3 = _main.fp.global_position
+		return Vector2(eye.x - mid.x, eye.z - mid.z).length() < 0.03
+	await _until(there, 3000)
+
+
 ## Headless the mouse isn't captured, so the game's pointer is the mouse's spot: puts that in the middle of the screen.
 func _centre_pointer() -> void:
 	var mid := root.get_visible_rect().size / 2.0
@@ -974,6 +984,7 @@ func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
 		print("  (this client draws no door for the glovebox: a look at it not checked)")
 		return
 	var door: Node3D = door_of.call()
+	await _eye_settled()   # (the camera glides onto the seat: from the driver's side the seat is met first)
 	await _centre_pointer()
 	var yaw0: float = _main.fp.yaw
 	var pitch0: float = _main.fp.pitch
@@ -1265,6 +1276,7 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 	var aimed := false
 	# headless the mouse isn't captured, so the game's pointer is the mouse's spot: put that in the middle of the screen
 	var mid := root.get_visible_rect().size / 2.0
+	await _eye_settled()
 	await _centre_pointer()
 	for h: float in [1.0, 0.8, 0.6, 0.4, 1.2]:
 		if aimed:
