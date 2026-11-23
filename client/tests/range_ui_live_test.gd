@@ -1047,6 +1047,10 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	var why_m := why.text
 	await _tap(KEY_I)
 	var why_i := why.text
+	var why_o := ""
+	if detail.contains("o:off"):   # (a refused command only says why: nothing is sent)
+		await _tap(KEY_O)
+		why_o = why.text
 	var allowed := ""
 	var said := ""
 	for c: String in ["o", "r", "f"]:
@@ -1058,8 +1062,9 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 	_check(first == order[0] and second == order[1] and wv.selected == first and detail.contains("i:off")
 			and why_i.contains("Installing") and (not detail.contains("m:off") or not why_m.is_empty())
 			and (said == "" or said.contains("isn't connected")),
-			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\"; %s"
-			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i,
+			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\", a refused o says \"%s\"; the lines shown: %s; %s"
+			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i, why_o,
+			detail.get_slice(" | ", 3).left(240),
 			("the allowed %s says \"%s\"" % [allowed, said]) if said != "" else "no allowed command pressed"])
 	# 1 2 3: nothing yet (a work camera, once it lands, is not judged here)
 	var cam := root.get_camera_3d()
