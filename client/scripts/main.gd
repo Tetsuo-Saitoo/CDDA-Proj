@@ -731,6 +731,8 @@ func _start_vr() -> void:
 	vr.ride_square = vehicles_view.square_at   # ... while the head is over one of its cells as drawn
 	vr.drive.interior = vehicles_view.interior   # VR driving by hand: the wheel and the lids (VrDrive)
 	vr.drive.open_lid = vehicles_view.open_lid
+	vr.drive.can_reach = vehicles_view.can_reach   # car storage by hand: the tray on an open trunk (VrDrive.cargo_at)
+	vr.drive.square_at = vehicles_view.square_at
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
 	vr.eye_on = hud_settings.eye_on   # F1 > Eye tracking: the tracker, zoom, labels, menus, lean (read each frame)
 	vr.on_lean = lean   # VR leaning (VrLean): a sideways head tilt asks for CDDA's peek that way; held 250 ms here

@@ -412,6 +412,7 @@ func _build() -> void:
 	busy.clock = func() -> String: return hud.data.clock if hud != null and hud.data != null else ""
 	camera.add_child(busy)
 	drive.flash = busy.flash
+	drive.lid_changed = _lid_changed
 	drive.paused = func() -> String: return vr_words(ClockControl.held_note()) if not busy.paused_line().is_empty() else ""
 	hint = VrHint.new()   # top level: placed in world space, following the head lazily
 	hint.rig = self
@@ -788,6 +789,43 @@ func open_tray(c: XRController3D) -> bool:
 		return false
 	var src := ItemTray.source_for(world.snapshot, t["item"])
 	return not src.is_empty() and tray.open(src, camera.global_transform)
+
+
+## Car storage: trigger on controller c with an empty hand in a cargo space it can reach (VrDrive.cargo_at: an open
+## lid's opening; `cells`: anywhere over a cargo square without a lid too): the tray lays out what CDDA lists in it
+## (empty: a note). False when the hand holds something or is in none.
+func open_cargo(c: XRController3D, cells: bool) -> bool:
+	if world.snapshot == null or ui_open() or (hands != null and not hands.holding(hand_id(c)).is_empty()):
+		return false
+	var src := drive.cargo_at(c.global_position, world.snapshot, cells)
+	if src.is_empty():
+		return false
+	_show_cargo(src)
+	return true
+
+
+## A hand let a lid go open: its cargo laid out in the tray, as the flat screen's E does; shut (or swung under
+## CarInterior.LID_REACH): the tray showing it goes. VrDrive.lid_changed.
+func _lid_changed(uid: int, _part: int, sq: Vector3i, open: bool) -> void:
+	var src := ItemTray.source_for_cargo(world.snapshot, sq)
+	if src.is_empty() or src["vehicle"] != uid:
+		return
+	if not open:
+		if tray.is_open() and tray.source.get("kind") == "cargo" and tray.source.get("vehicle") == uid \
+				and tray.source.get("part") == src["part"]:
+			tray.close("shut")
+	elif not ui_open():
+		_show_cargo(src)
+
+
+## The tray on cargo source `src` (ItemTray.source_for_cargo) in front of the head; nothing in it: a note.
+func _show_cargo(src: Dictionary) -> bool:
+	if tray.open(src, camera.global_transform):
+		return true
+	var at := world.snapshot.vehicle_at(src["square"])
+	if not at.is_empty():
+		busy.flash("Nothing in the %s." % VehicleView.part_label(world.snapshot, world.tables, at[0], src["part"]))
+	return false
 
 
 ## Trigger on controller c with an empty hand touching nothing: the item it points at (pointed_item, looked for
@@ -2091,6 +2129,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		return   # a gun in the main hand fires (VrGun)
 	if n == "trigger_click" and fire_press(c):
 		return   # L9: a hand low over a fire square lights or puts out that fire
+	if n == "trigger_click" and not drive.holds_wheel(ci) and open_cargo(c, false):
+		return   # an empty hand in an open trunk's or glovebox's opening: what it holds, in the tray
 	if n == "trigger_click" and (hands == null or hands.holding(hand_id(c)).is_empty() or drive.holds_wheel(ci)) \
 			and drive.pedal(ci, c == main_ctrl(), world.snapshot):
 		return   # driving: an empty hand's trigger (or one on the wheel) is the throttle (main) or the brake (VrDrive)
@@ -2103,7 +2143,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			use_stair(c, s)
 		elif c == main_ctrl() and gaze_throw(c):
 			pass   # an item in the main hand thrown where the tracked eyes look
-		elif not pull_with(c) and not open_tray(c):
+		elif not pull_with(c) and not open_tray(c) and not open_cargo(c, true):
 			_feel(c)
 		return
 	if n == "grip_click":

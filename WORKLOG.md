@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-22 — Car storage in VR (lead-vr): open a trunk or glovebox lid by hand and what's inside is laid out in front of you to take; shut it and the items go away. Pull the trigger with an empty hand in an open trunk (or over a truck bed) to lay them out again. Not tried in a headset yet.
 - 2026-11-22 — VR driving fix (lead-vr, lead-qa's review): opening a menu while holding the stick forward no longer keeps speeding the car up; a stick resting at the edge can't flicker extra speed changes.
 - 2026-11-22 — VR driving by hand (lead-vr): at a car's controls in VR, grip the steering wheel with one or both hands and turn it to steer; the main-hand trigger speeds up and the other slows down (or the right stick forward / back), as CDDA's own driving keys. No walking while driving, and the view never moves on its own. Trunk and box lids open and shut by their handle with either hand. Riding a turned car in VR now follows the car exactly as drawn. Not tried in a headset yet.
 - 2026-11-22 — Car dashboard comes alive (lead-world): in the car you are in, the 3D gauges now show the real speed, cruise setting, fuel and battery, the warning lamps light, and the steering wheel turns with the steering, all from the same data as the driving HUD. Client tests pass; not yet seen in a running game.

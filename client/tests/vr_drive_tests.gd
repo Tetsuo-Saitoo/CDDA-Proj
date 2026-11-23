@@ -4,7 +4,8 @@ extends RefCounted
 ## stick as UP / DOWN, repeated while held, a diagonal with a steer; nothing while real time is paused (the note, once);
 ## not driving: the wheel let go, no pedals; lids swung by their handle about the hinge, let go: open past LID_SNAP,
 ## else shut; the rig's grips, triggers and sticks go there while driving and it doesn't walk; the ride's square from
-## VehicleView.square_at. Run by run_tests.gd.
+## VehicleView.square_at; car storage by hand: the cargo space a hand is in, the tray on it, a lid's changes told.
+## Run by run_tests.gd.
 
 const UID := 7
 
@@ -16,6 +17,9 @@ var _note := ""                 # what the paused stub answers
 var _flashes: Array = []
 var _ci: CarInterior
 var _sq: Variant = null         # what the ride_square stub answers
+var _reach := true              # what the can_reach stub answers
+var _cell: Variant = null       # what the square_at stub answers
+var _changed: Array = []        # lid_changed calls
 
 
 func run(root: Node, check: Callable) -> void:
@@ -39,7 +43,9 @@ func run(root: Node, check: Callable) -> void:
 	_test_wheel(d, snap, veh)
 	_test_pedals(d, snap, veh)
 	_test_lids(d, veh)
+	_test_cargo(d, veh)
 	_test_rig(root, snap)
+	_test_rig_cargo(root, veh)
 	car.free()
 
 
@@ -218,6 +224,110 @@ func _test_lids(d: VrDrive, veh: Snapshot.Vehicle) -> void:
 	_check.call(miss and took and swung and top and shut and opens and open and closes,
 			"vr drive: a lid's handle taken swings it about its hinge (0 to %d); let go past %d it opens, else shuts; nothing sent (%s)"
 			% [CarInterior.LID_OPEN, VrDrive.LID_SNAP, [miss, took, swung, top, shut, opens, open, closes]])
+
+
+static func _trunk_row(items: PackedInt64Array) -> Array[Dictionary]:
+	return [{"part": 1, "used_ml": 250, "capacity_ml": 1000, "more": 0, "items": items}] as Array[Dictionary]
+
+
+## Car storage by hand: the cargo space a hand is in (an open lid's opening while can_reach allows it; asked, any
+## reachable cargo square under it), only one the snapshot lists; a lid let go open or shut, or swung under
+## LID_REACH while held, is told (lid_changed).
+func _test_cargo(d: VrDrive, veh: Snapshot.Vehicle) -> void:
+	d.can_reach = func(_uid: int, _part: int) -> bool: return _reach
+	d.square_at = func(_uid: int, _p: Vector3) -> Variant: return _cell
+	d.lid_changed = func(uid: int, part: int, sq: Vector3i, open: bool) -> void: _changed.append([uid, part, sq, open])
+	veh.cargo = _trunk_row(PackedInt64Array([501, 3]))
+	var snap := _snap(veh, false, 0.0)
+	var trunk := veh.square(1)
+	var want := {"kind": "cargo", "vehicle": UID, "part": 1, "square": trunk}
+	var c: Node3D = _ci.lids[1]
+	var inside := c.global_transform * Vector3(0.1, CarInterior.LID_TOP - 0.3, -0.1)
+	var deep := c.global_transform * Vector3(0.0, CarInterior.LID_TOP - 1.0, 0.0)
+	var beside := c.global_transform * Vector3(0.6, CarInterior.LID_TOP, 0.0)
+	_reach = false
+	var shut: bool = d.cargo_at(inside, snap).is_empty()
+	_reach = true
+	var opening: bool = d.cargo_at(inside, snap) == want and d.cargo_at(deep, snap).is_empty() \
+			and d.cargo_at(beside, snap).is_empty()
+	_cell = trunk
+	var cell: bool = d.cargo_at(beside, snap, true) == want
+	_cell = trunk + Vector3i(0, 1, 0)
+	var off: bool = d.cargo_at(beside, snap, true).is_empty()
+	_cell = null
+	var bad: bool = d.cargo_at(Vector3(NAN, 0.0, 0.0), snap).is_empty() and d.cargo_at(inside, null).is_empty()
+	veh.cargo = [] as Array[Dictionary]
+	var unlisted: bool = d.cargo_at(inside, snap).is_empty()
+	# The lid: told when hands can no longer reach in and when it is let go.
+	_changed.clear()
+	var lid: Node3D = c.get_node("Lid")
+	var axis: Vector3 = c.get_meta("hinge_axis")
+	var handle: Vector3 = c.get_meta("handle")
+	var at := func(deg: float) -> Vector3: return c.global_transform * (lid.position + Basis(axis, deg_to_rad(deg)) * handle)
+	d.grip(0, at.call(0.0), snap)
+	d.update([at.call(70.0), Vector3.ZERO], snap, 0)
+	var up_quiet: bool = _changed.is_empty()
+	d.update([at.call(20.0), Vector3.ZERO], snap, 0)
+	d.update([at.call(10.0), Vector3.ZERO], snap, 0)
+	var swung: bool = _changed == [[UID, 1, trunk, false]]
+	d.update([at.call(60.0), Vector3.ZERO], snap, 0)
+	d.let_go(0)
+	var opened: bool = _changed.size() == 2 and _changed[1] == [UID, 1, trunk, true]
+	_ci.step(1.0)
+	d.grip(0, at.call(CarInterior.LID_OPEN), snap)
+	d.update([at.call(15.0), Vector3.ZERO], snap, 0)
+	d.let_go(0)
+	var closed: bool = _changed.size() == 4 and _changed[2] == [UID, 1, trunk, false] \
+			and _changed[3] == [UID, 1, trunk, false]
+	_ci.step(1.0)
+	d.lid_changed = Callable()
+	_check.call(shut and opening and cell and off and bad and unlisted and up_quiet and swung and opened and closed,
+			"vr drive cargo: a hand in an open lid's opening (or, asked, over a cargo square) is in that cargo space while it can be reached and the snapshot lists it; a lid let go, or swung under %d degrees, is told (%s)"
+			% [int(CarInterior.LID_REACH), [shut, opening, cell, off, bad, unlisted, up_quiet, swung, opened, closed, _changed]])
+
+
+## The rig: trigger with an empty hand in an open trunk lays out what it holds in the tray (nothing: a note; the lid
+## shut: not reached); a lid let go shut puts the tray away, let go open brings it.
+func _test_rig_cargo(root: Node, veh: Snapshot.Vehicle) -> void:
+	var world := WorldView.new()
+	veh.cargo = _trunk_row(PackedInt64Array([501, 3]))
+	world.snapshot = _snap(veh, false, 0.0)
+	world.snapshot.player_pos = veh.square(1) + Vector3i(1, 0, 0)   # the tray lists only what is next to the player
+	var sm := Snapshot.Submap.new()
+	sm.pos = CddaCoords.ms_to_sm(veh.square(1))
+	world.snapshot.submaps[sm.pos] = sm
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	var wired: bool = rig.drive.lid_changed == Callable(rig, "_lid_changed")
+	var d := _drive()
+	d.can_reach = func(_uid: int, _part: int) -> bool: return _reach
+	d.lid_changed = Callable(rig, "_lid_changed")
+	rig.drive = d
+	_reach = true
+	var trunk := veh.square(1)
+	rig.right.global_position = (_ci.lids[1] as Node3D).global_transform * Vector3(0.0, CarInterior.LID_TOP - 0.3, 0.0)
+	rig.press(rig.right, "trigger_click")
+	var shown: bool = rig.tray.is_open() and rig.tray.source.get("kind") == "cargo" and rig.tray.rows.size() == 1
+	d.lid_changed.call(UID, 1, trunk, false)
+	var put_away: bool = not rig.tray.is_open()
+	d.lid_changed.call(UID, 1, trunk, true)
+	var brought: bool = rig.tray.is_open()
+	rig.tray.close()
+	veh.cargo = _trunk_row(PackedInt64Array())
+	rig.press(rig.right, "trigger_click")
+	var note: bool = not rig.tray.is_open() and rig.busy._flash.begins_with("Nothing in the")
+	veh.cargo = _trunk_row(PackedInt64Array([501, 3]))
+	_reach = false
+	rig.busy._flash = ""
+	rig.press(rig.right, "trigger_click")
+	var lid_shut: bool = not rig.tray.is_open() and rig.busy._flash.is_empty()
+	_reach = true
+	veh.cargo = [] as Array[Dictionary]
+	_check.call(wired and shown and put_away and brought and note and lid_shut,
+			"vr drive rig cargo: trigger in an open trunk lays out what it holds (nothing: a note; shut: not reached); a lid let go shut puts the tray away, open brings it (%s)"
+			% [[wired, shown, put_away, brought, note, lid_shut]])
+	rig.free()
+	world.free()
 
 
 ## The rig: a grip at the rim takes the wheel (not an item), the trigger is a pedal, the sticks don't walk or aim a

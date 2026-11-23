@@ -12,6 +12,9 @@ extends RefCounted
 ## A grip on the handle of a lid (any drawn interior's "Cargo_<part>" > "Lid") swings it about its hinge with the hand,
 ## 0 to its open_deg; let go, it opens fully past LID_SNAP, else shuts (VehicleView.open_lid: the client's own, CDDA
 ## has no lids; hands reach in from CarInterior.LID_REACH, VehicleView.can_reach). Nothing is sent for a lid.
+## Car storage by hand: `lid_changed` tells the rig when a hand lets a lid go open (its cargo laid out in the tray, as
+## the flat screen's E does) or shut, or swings a held one under LID_REACH (the tray on it goes); `cargo_at` is the
+## cargo space a hand is in (an open lid's opening; with `cells` any reachable cargo square under it).
 
 const GRAB_M := 0.08          # m: a hand this near the rim's circle (in its plane and off it) takes the wheel
 const HUB_M := 0.03           # m: a hand this near the wheel's axis turns nothing (no angle there)
@@ -23,7 +26,9 @@ const STICK_OFF := 0.5        # ... until it comes back inside this (no flicker 
 const LID_GRAB_M := 0.09      # m: a hand this near a lid's handle takes the lid
 const LID_SNAP := 40.0        # degrees: let go past this, a lid opens; else it shuts
 const NOTE_MS := 1500         # the pause note again no sooner (main.gd's PAUSE_NOTE_MS)
-const MAX_CARS := 64          # vehicles looked through for a lid's handle
+const MAX_CARS := 64          # vehicles looked through for a lid's handle or a cargo space
+const REACH_DEPTH := 0.7      # m: a hand this far down into a lid's opening reaches in ...
+const REACH_ABOVE := 0.25     # ... and this far over it
 const MAX_SENT := 16
 
 var interior := Callable()      # (uid) -> Dictionary: VehicleView.interior (main.gd); unset: no wheel, no lids
@@ -31,6 +36,9 @@ var open_lid := Callable()      # (uid, part, open) -> bool: VehicleView.open_li
 var queue_action := Callable()  # (act) -> bool: CDDA's action (main.gd's _queue_act); false: not sent
 var paused := Callable()        # () -> String: the note to show while real time is paused, "" while it runs
 var flash := Callable()         # (note) -> void: shows a note low in the view (VrBusy.flash)
+var can_reach := Callable()     # (uid, part) -> bool: VehicleView.can_reach (main.gd); unset: no cargo by hand
+var square_at := Callable()     # (uid, world point) -> Vector3i or null: VehicleView.square_at (main.gd)
+var lid_changed := Callable()   # (uid, part, square, open) -> void: a lid let go open / shut, or swung under LID_REACH
 
 var sent: Array[String] = []    # the actions sent, newest last (MAX_SENT; tests)
 var _wheel: Array = [null, null]    # hand (0 left, 1 right) -> the WheelSpin it holds
@@ -152,7 +160,8 @@ func _grip_lid(i: int, at: Vector3, snap: Snapshot) -> bool:
 			var d := (lid.global_transform * (h as Vector3)).distance_to(at)
 			if d < best_d:
 				best_d = d
-				best = {"uid": veh.uid, "part": part, "cargo": c, "lid": lid}
+				best = {"uid": veh.uid, "part": part, "cargo": c, "lid": lid,
+						"reach": _lid_deg(c, lid) >= CarInterior.LID_REACH - 0.01}
 	if best.is_empty():
 		return false
 	(best["lid"] as Node3D).set_meta("held", true)
@@ -180,13 +189,74 @@ func let_go(i: int) -> bool:
 	var c: Variant = g["cargo"]
 	if is_instance_valid(lid):
 		(lid as Node3D).set_meta("held", false)
-		var deg := 0.0
-		if is_instance_valid(c):
-			deg = rad_to_deg(CarInterior.angle_about((lid as Node3D).basis,
-					(c as Node3D).get_meta("hinge_axis", Vector3.BACK)))
+		var deg := _lid_deg(c, lid) if is_instance_valid(c) else 0.0
 		if open_lid.is_valid():
 			open_lid.call(g["uid"], g["part"], deg >= LID_SNAP)
+		_tell(g, deg >= LID_SNAP)
 	return true
+
+
+## How far lid `lid` of cargo node `c` is open, degrees about its hinge.
+static func _lid_deg(c: Variant, lid: Variant) -> float:
+	return rad_to_deg(CarInterior.angle_about((lid as Node3D).basis, (c as Node3D).get_meta("hinge_axis", Vector3.BACK)))
+
+
+## lid_changed for held lid `g` (open: let go open; else shut, or swung under LID_REACH).
+func _tell(g: Dictionary, open: bool) -> void:
+	var c: Variant = g.get("cargo")
+	if not lid_changed.is_valid() or not is_instance_valid(c):
+		return
+	var sq: Variant = (c as Node3D).get_meta("square", null)
+	if sq is Vector3i:
+		lid_changed.call(g["uid"], g["part"], sq, open)
+
+
+## The cargo space hand point `p` reaches into, as ItemTray.source_for_cargo gives it ({kind: "cargo", vehicle, part,
+## square}; {} none): within a drawn lid's opening (REACH_DEPTH down to REACH_ABOVE over its top) while can_reach
+## allows it; `cells`: else anywhere over one of a vehicle's cargo squares (square_at) that can_reach allows (one
+## without a lid: a truck bed, a seat's storage). Only what the snapshot lists (next to the player).
+func cargo_at(p: Vector3, snap: Snapshot, cells := false) -> Dictionary:
+	if snap == null or not p.is_finite() or not can_reach.is_valid():
+		return {}
+	var n := 0
+	for veh: Snapshot.Vehicle in snap.vehicles:
+		n += 1
+		if n > MAX_CARS:
+			break
+		if veh.cargo.is_empty():
+			continue
+		var a: Variant = interior.call(veh.uid) if interior.is_valid() else {}
+		if a is Dictionary:
+			for k: Variant in a:
+				var c: Variant = a[k]
+				if not k is String or not (k as String).begins_with("Cargo_") or not c is Node3D \
+						or not is_instance_valid(c) or not (c as Node3D).is_inside_tree():
+					continue
+				var sq: Variant = (c as Node3D).get_meta("square", null)
+				var lid := (c as Node3D).get_node_or_null("Lid") as Node3D
+				if not sq is Vector3i or lid == null:
+					continue
+				var h := absf(lid.position.x)   # the hinge is on the opening's edge
+				var l := (c as Node3D).global_transform.affine_inverse() * p
+				if absf(l.x) <= h and absf(l.z) <= h and l.y <= CarInterior.LID_TOP + REACH_ABOVE \
+						and l.y >= CarInterior.LID_TOP - REACH_DEPTH:
+					var src := _reachable(snap, veh.uid, sq)
+					if not src.is_empty():
+						return src
+		if cells and square_at.is_valid():
+			var sq: Variant = square_at.call(veh.uid, p)
+			if sq is Vector3i:
+				var src := _reachable(snap, veh.uid, sq)
+				if not src.is_empty():
+					return src
+	return {}
+
+
+func _reachable(snap: Snapshot, uid: int, sq: Vector3i) -> Dictionary:
+	var src := ItemTray.source_for_cargo(snap, sq)
+	if src.is_empty() or src["vehicle"] != uid or can_reach.call(uid, src["part"]) != true:
+		return {}
+	return src
 
 
 ## The interior of a WheelSpin moves on (CarInterior.step: it follows the held wheel, turns it back once let go).
@@ -348,3 +418,7 @@ func _follow_lids(hands: Array) -> void:
 			continue
 		deg = top if deg < -90.0 else clampf(deg, 0.0, top)
 		(lid as Node3D).basis = Basis(axis.normalized(), deg_to_rad(deg))
+		var reach := deg >= CarInterior.LID_REACH - 0.01
+		if g.get("reach", true) and not reach:
+			_tell(g, false)   # swung shut far enough that hands no longer reach in
+		g["reach"] = reach
