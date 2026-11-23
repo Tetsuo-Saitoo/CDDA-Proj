@@ -955,8 +955,37 @@ int64_t CddaSim::query_vehicle_work( const Dictionary &d )
         part > fp3d::max_work_part_row ) {
         return 0;
     }
-    return static_cast<int64_t>( fp3d::post_vehicle_work_query( static_cast<uint64_t>( vehicle ),
-                                 static_cast<int>( part ) ) );
+    fp3d::vehicle_work_ask ask;
+    ask.vehicle = static_cast<uint64_t>( vehicle );
+    ask.part = static_cast<int>( part );
+    // The install list for a square: `install` [x, y], and optionally `vpart`, the type picked there.
+    Variant square;
+    Variant type;
+    if( !field( d, "install", Variant::ARRAY, square ) || !field( d, "vpart", Variant::INT, type ) ) {
+        return 0;
+    }
+    if( d.has( "install" ) ) {
+        const Array mount = square;
+        if( part != -1 || mount.size() != 2 || mount[0].get_type() != Variant::INT ||
+            mount[1].get_type() != Variant::INT ) {
+            return 0;
+        }
+        const int64_t x = mount[0];
+        const int64_t y = mount[1];
+        const int64_t vpart = d.has( "vpart" ) ? static_cast<int64_t>( type ) : 0;
+        if( x < -fp3d::max_work_mount || x > fp3d::max_work_mount || y < -fp3d::max_work_mount ||
+            y > fp3d::max_work_mount || ( d.has( "vpart" ) && vpart < 1 ) ||
+            vpart > static_cast<int64_t>( fp3d::max_work_vpart ) ) {
+            return 0;
+        }
+        ask.install = true;
+        ask.mount_x = static_cast<int>( x );
+        ask.mount_y = static_cast<int>( y );
+        ask.vpart = static_cast<uint32_t>( vpart );
+    } else if( d.has( "vpart" ) ) {
+        return 0;
+    }
+    return static_cast<int64_t>( fp3d::post_vehicle_work_query( ask ) );
 }
 
 // C6: start work on a vehicle part (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile input: every key
@@ -972,15 +1001,20 @@ bool CddaSim::queue_vehicle_work( const Dictionary &d )
     Variant c;
     Variant ty;
     Variant mo;
-    if( !d.has( "vehicle" ) || !d.has( "part" ) || !d.has( "cmd" ) || !d.has( "vpart" ) || !d.has( "mount" ) ||
+    if( !d.has( "vehicle" ) || !d.has( "cmd" ) || !d.has( "vpart" ) || !d.has( "mount" ) ||
         !field( d, "vehicle", Variant::INT, v ) || !field( d, "part", Variant::INT, p ) ||
         !field( d, "cmd", Variant::STRING, c ) || !field( d, "vpart", Variant::INT, ty ) ||
         !field( d, "mount", Variant::ARRAY, mo ) ) {
         return false;
     }
     const int64_t vehicle = v;
-    const int64_t part = p;
     const String cmd = c;
+    // Install names a square and a type and no part row; the others name a part by its row.
+    const bool install = cmd == "i";
+    if( install == d.has( "part" ) ) {
+        return false;
+    }
+    const int64_t part = install ? -1 : static_cast<int64_t>( p );
     const int64_t vpart = ty;
     const Array mount = mo;
     if( mount.size() != 2 || mount[0].get_type() != Variant::INT || mount[1].get_type() != Variant::INT ) {
@@ -988,8 +1022,8 @@ bool CddaSim::queue_vehicle_work( const Dictionary &d )
     }
     const int64_t mount_x = mount[0];
     const int64_t mount_y = mount[1];
-    if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || part < 0 ||
-        part > fp3d::max_work_part_row || ( cmd != "r" && cmd != "o" ) || vpart < 1 ||
+    if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || ( !install && part < 0 ) ||
+        part > fp3d::max_work_part_row || ( cmd != "r" && cmd != "o" && !install ) || vpart < 1 ||
         vpart > static_cast<int64_t>( fp3d::max_work_vpart ) || mount_x < -fp3d::max_work_mount ||
         mount_x > fp3d::max_work_mount || mount_y < -fp3d::max_work_mount || mount_y > fp3d::max_work_mount ) {
         return false;
@@ -1000,7 +1034,7 @@ bool CddaSim::queue_vehicle_work( const Dictionary &d )
     a.vpart = static_cast<uint32_t>( vpart );
     a.mount_x = static_cast<int>( mount_x );
     a.mount_y = static_cast<int>( mount_y );
-    a.cmd = cmd == "r" ? 'r' : 'o';
+    a.cmd = install ? 'i' : cmd == "r" ? 'r' : 'o';
     Variant t;
     if( !field( d, "tag", Variant::INT, t ) ) {
         return false;
