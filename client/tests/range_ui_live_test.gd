@@ -1066,6 +1066,14 @@ func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void
 			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i, why_o,
 			detail.get_slice(" | ", 3).left(240),
 			("the allowed %s says \"%s\"" % [allowed, said]) if said != "" else "no allowed command pressed"])
+	# the game's own read: an error answer reaches the view (asked for a part row the car hasn't)
+	if not stand_in and _live.has_method("query_vehicle_work"):
+		var asked: int = _live.call("query_vehicle_work", car.uid, 4000)
+		var told := func() -> bool: return why.text.contains("couldn't answer")
+		var got: bool = asked > 0 and await _until(told, SHOW_TIMEOUT_MS)
+		_check(got and wv.visible,
+				"vehicle work: an error answer from the game reaches the view (asked for a part row the car hasn't: \"%s\"; asked %s, view open %s)"
+				% [why.text, asked > 0, wv.visible])
 	# 1 2 3: nothing yet (a work camera, once it lands, is not judged here)
 	var cam := root.get_camera_3d()
 	var cam0 := cam.global_transform if cam != null else Transform3D()
