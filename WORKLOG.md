@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — Bridge: looking at a jumper cable in the car work view no longer touches the battery at the cable's other end. Passes on Windows and Linux.
 - 2026-11-23 — Bridge: car parts can now be installed by hand (C6). The game lists every part that could go on a chosen square of a car, which of them you have the pieces for and which fit there, what one of them needs, and installs it the way the game itself does, with its own questions (a part's shape, a light's facing). Passes on Windows and Linux.
 - 2026-11-23 — Bridge: car work now follows two more of the game's own rules (not from horseback, not from inside a shell). Background questions to the game (recipes, the character sheet, car parts) are answered in fixed-size rounds, and each kind keeps its own waiting answers. Passes on Windows and Linux.
 - 2026-11-22 — Storage openings for VR hands (lead-world): each trunk, box and the glovebox now says where its inside is and which way it opens, so VR hands can find the glovebox behind its door as well as a trunk under its lid. Client tests pass.
