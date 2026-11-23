@@ -24,6 +24,7 @@
 #include "fp3d/held.h"
 #include "fp3d/id_tables.h"
 #include "fp3d/test_range.h"
+#include "fp3d/vehicle_work.h"
 #include "sim_session.h"
 
 using godot::Array;
@@ -140,7 +141,8 @@ Dictionary request_dict( const fp3d::ui_request &r )
 const char *event_kind_name( fp3d::event_kind k )
 {
     static const char *const names[] = { "sound", "message", "attack", "damage", "projectile", "explosion",
-                                         "death", "anim", "turn_end", "lightning", "item_result", "misfire"
+                                         "death", "anim", "turn_end", "lightning", "item_result", "misfire",
+                                         "work_result"
                                        };
     static_assert( std::size( names ) == fp3d::event_kind_count, "a name for every event kind" );
     const size_t i = static_cast<size_t>( k );
@@ -242,6 +244,8 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "get_weather_types" ), &CddaSim::get_weather_types );
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
+    ClassDB::bind_method( D_METHOD( "query_vehicle_work", "d" ), &CddaSim::query_vehicle_work );
+    ClassDB::bind_method( D_METHOD( "queue_vehicle_work", "d" ), &CddaSim::queue_vehicle_work );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
 
@@ -925,6 +929,90 @@ int64_t CddaSim::query_character()
         return 0;
     }
     return static_cast<int64_t>( fp3d::post_character_query() );
+}
+
+// C6: what can be done to a vehicle next to the player (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile
+// input: every key is checked for type and range; anything wrong is refused whole (0) and nothing is posted.
+int64_t CddaSim::query_vehicle_work( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    Variant v;
+    if( !d.has( "vehicle" ) || !field( d, "vehicle", Variant::INT, v ) ) {
+        return 0;
+    }
+    const int64_t vehicle = v;
+    int64_t part = -1;
+    if( d.has( "part" ) ) {
+        Variant p;
+        if( !field( d, "part", Variant::INT, p ) ) {
+            return 0;
+        }
+        part = p;
+    }
+    if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || part < -1 ||
+        part > fp3d::max_work_part_row ) {
+        return 0;
+    }
+    return static_cast<int64_t>( fp3d::post_vehicle_work_query( static_cast<uint64_t>( vehicle ),
+                                 static_cast<int>( part ) ) );
+}
+
+// C6: start work on a vehicle part (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile input: every key
+// is checked for type and range; anything wrong is refused whole and nothing is queued. The sim checks the
+// vehicle, the part and CDDA's own rules again when the action runs.
+bool CddaSim::queue_vehicle_work( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return false;
+    }
+    Variant v;
+    Variant p;
+    Variant c;
+    Variant ty;
+    Variant mo;
+    if( !d.has( "vehicle" ) || !d.has( "part" ) || !d.has( "cmd" ) || !d.has( "vpart" ) || !d.has( "mount" ) ||
+        !field( d, "vehicle", Variant::INT, v ) || !field( d, "part", Variant::INT, p ) ||
+        !field( d, "cmd", Variant::STRING, c ) || !field( d, "vpart", Variant::INT, ty ) ||
+        !field( d, "mount", Variant::ARRAY, mo ) ) {
+        return false;
+    }
+    const int64_t vehicle = v;
+    const int64_t part = p;
+    const String cmd = c;
+    const int64_t vpart = ty;
+    const Array mount = mo;
+    if( mount.size() != 2 || mount[0].get_type() != Variant::INT || mount[1].get_type() != Variant::INT ) {
+        return false;
+    }
+    const int64_t mount_x = mount[0];
+    const int64_t mount_y = mount[1];
+    if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || part < 0 ||
+        part > fp3d::max_work_part_row || ( cmd != "r" && cmd != "o" ) || vpart < 1 ||
+        vpart > static_cast<int64_t>( fp3d::max_work_vpart ) || mount_x < -fp3d::max_work_mount ||
+        mount_x > fp3d::max_work_mount || mount_y < -fp3d::max_work_mount || mount_y > fp3d::max_work_mount ) {
+        return false;
+    }
+    fp3d::vehicle_work_action a;
+    a.vehicle = static_cast<uint64_t>( vehicle );
+    a.part = static_cast<int>( part );
+    a.vpart = static_cast<uint32_t>( vpart );
+    a.mount_x = static_cast<int>( mount_x );
+    a.mount_y = static_cast<int>( mount_y );
+    a.cmd = cmd == "r" ? 'r' : 'o';
+    Variant t;
+    if( !field( d, "tag", Variant::INT, t ) ) {
+        return false;
+    }
+    if( d.has( "tag" ) ) {
+        const int64_t tag = t;
+        if( tag < 1 || tag > static_cast<int64_t>( fp3d::max_item_tag ) ) {
+            return false;
+        }
+        a.tag = static_cast<uint32_t>( tag );
+    }
+    return fp3d::queue_vehicle_work_action( a );
 }
 
 String CddaSim::take_query_result( int64_t id )
