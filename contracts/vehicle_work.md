@@ -152,11 +152,17 @@ queue with the other queued actions (`ui_requests.md`) and runs at the main loop
 |---|---|---|
 | `vehicle` | int, required | The snapshot's `vehicles[].uid`. |
 | `part` | int, required | A row of that vehicle's `parts` (0..4095), as the read's `row`. |
+| `vpart` | int, required | That part's type as the read (or the snapshot row) gave it: the `vpart` id-table index (1..2^20). |
+| `mount` | Array, required | That part's mount as the read gave it: `[x, y]`, two ints (each −1023..1023). |
 | `cmd` | String, required | `"r"` repair (replaces a broken part) or `"o"` remove. |
 | `tag` | int, optional | 1..2^31−1: the client's number for this action, answered by one `work_result` event (`events.md`) when the action has run. |
 
-`false`, nothing queued: a missing key, a wrong type, anything out of range, another `cmd`, a full queue, no game
-running.
+`vpart` and `mount` name the part a second time. Rows move up when a part comes off, so a `part` taken from a
+list read before that can be another part's row by now; the sim then refuses instead of working on the wrong
+part. Send them as ints: a result parsed from JSON has floats. (Added 2026-11-23, before this shape was frozen.)
+
+`false`, nothing queued: a missing key, a wrong type (a `mount` that isn't two ints), anything out of range,
+another `cmd`, a full queue, no game running.
 
 When it runs, the sim checks everything again; nothing the client sent is taken on trust. Refused, nothing
 done, with the sentence as a `message` and as the event's text:
@@ -167,6 +173,7 @@ done, with the sentence as a `message` and as the event's text:
 | "That can't be worked on like a vehicle." | An appliance, or a summoned vehicle. |
 | "That vehicle is too far away." | No part of it within a square of the player. |
 | "That vehicle has no such part." | Not one of its part rows now. |
+| "That part isn't there any more." | The row now holds a part of another type or at another mount than `vpart` and `mount` say: the client's list is older than the vehicle. Read again. Checked before any of CDDA's questions. |
 | CDDA's sentence | Its own check says no: the read's `text` for that command ("It's too dark to see what you are doing…", "This part cannot be uninstalled.", ...). |
 | "You don't meet the requirements to repair the X." / "... to remove the X." | A requirement line is not met (the read's `ok` false with `reason` 0). |
 | "The X needs no repair." | The part isn't damaged. |

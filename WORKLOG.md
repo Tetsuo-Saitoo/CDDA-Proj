@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — Bridge: repairing or removing a car part now double-checks which part is meant, so a key pressed just after another part came off can't land on the wrong part (asked for by QA before testers get it). Passes on Windows and Linux.
 - 2026-11-22 — Bridge: the car repair view can now show what each fuel tank and battery holds and how full it is (asked for by the UI lead). Passes on Windows and Linux.
 - 2026-11-22 — Bridge: a car part can now be repaired or taken off by hand (C6, second piece). The game checks the request by its own rules, refuses in its own words when something is missing, and otherwise does the work as its own vehicle screen would: it takes the same time and uses up the same tools and materials. Fridges and other appliances are left alone; the game handles those separately. Fitting new parts, mending faults and refilling come next. Passes on Windows and Linux.
 - 2026-11-22 — Bridge: first piece of hands-on car repair (C6). The game can now be asked what can be done to a car you stand next to: every part with its condition and faults, and for a chosen part whether it can be repaired, removed, mended or refilled right now, how long it takes and what it needs, in the game's own words and by its own rules. Nothing can be done to the car through this yet; that comes next. Passes on Windows and Linux.
