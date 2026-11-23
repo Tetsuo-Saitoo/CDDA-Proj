@@ -1445,6 +1445,7 @@ static func _stick(c: XRController3D) -> Vector2:
 ## with x right and y forward, -1..1.
 func step(delta: float, inp: Dictionary) -> void:
 	var moving := false
+	var stick := 0.0   # the turn stick as a pedal: only the driving branch reads it; a menu or wheel up lets it go
 	if menu_open():
 		if menu.nav(inp.get("move", Vector2.ZERO)):
 			_settings_changed()
@@ -1454,7 +1455,7 @@ func step(delta: float, inp: Dictionary) -> void:
 		pass   # a wheel around the hand: its stick points (update_wheel), no moving
 	elif VrDrive.driving_uid(world.snapshot) != 0:   # driving: no walking or teleport; the turn stick's y is a pedal
 		var tv: Vector2 = inp.get("turn", Vector2.ZERO)
-		drive.set_stick(tv.y if absf(tv.y) > absf(tv.x) else 0.0)
+		stick = tv.y if absf(tv.y) > absf(tv.x) else 0.0
 		if aiming:
 			aiming = false
 			arc = {}
@@ -1469,6 +1470,7 @@ func step(delta: float, inp: Dictionary) -> void:
 		_aim(tv)
 		if _turn(tv, delta):
 			moving = true
+	drive.set_stick(stick)
 	vignette = move_toward(vignette, settings["vignette"] if moving or _gliding else 0.0, delta * 4.0)
 	_fade = maxf(_fade - delta / FADE_S, 0.0)
 	_update_visuals()

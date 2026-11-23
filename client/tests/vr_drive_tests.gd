@@ -146,15 +146,26 @@ func _test_pedals(d: VrDrive, snap: Snapshot, veh: Snapshot.Vehicle) -> void:
 	d.unpedal(0)
 	d.unpedal(1)
 	d.set_stick(-0.9)
-	d.update(hands, snap, 10720)
-	var stick: bool = _acts.back() == "DOWN"
-	d.set_stick(0.2)
 	var n := _acts.size()
+	d.update(hands, snap, 10720)   # the brake went at 10710: the stick waits out PEDAL_MS
+	var waits: bool = _acts.size() == n
+	d.update(hands, snap, 11010)
+	var stick: bool = _acts.size() == n + 1 and _acts.back() == "DOWN"
+	d.set_stick(-0.6)   # inside STICK_ON, outside STICK_OFF: still held
+	var edge: bool = d._stick == -1
+	d.set_stick(0.2)
+	n = _acts.size()
 	d.update(hands, snap, 11500)
 	var rest: bool = _acts.size() == n
-	_check.call(walking and on and held and up and brake and stick and rest,
-			"vr drive: while driving the triggers (main: UP, other: DOWN, brake first) and the turn stick repeat every %d ms while held (%s)"
-			% [VrDrive.PEDAL_MS, _acts])
+	# A stick wobbling at the edge sends at most one a PEDAL_MS.
+	for t in range(11600, 12200, 20):
+		d.set_stick(0.75 if t % 40 < 20 else 0.4)
+		d.update(hands, snap, t)
+	var wobble: int = _acts.size() - n
+	d.set_stick(0.0)
+	_check.call(walking and on and held and up and brake and waits and stick and edge and rest and wobble == 2,
+			"vr drive: while driving the triggers (main: UP, other: DOWN, brake first) and the turn stick (on past %.1f, off inside %.1f) repeat every %d ms while held, at most that however the stick wobbles (%s)"
+			% [VrDrive.STICK_ON, VrDrive.STICK_OFF, VrDrive.PEDAL_MS, [waits, stick, edge, rest, wobble, _acts]])
 	# A steer and a pedal due together: one diagonal.
 	_acts.clear()
 	d.grip(1, _rim(90.0), snap)
@@ -230,6 +241,13 @@ func _test_rig(root: Node, snap: Snapshot) -> void:
 	var at := rig.global_position
 	rig.step(0.5, {"move": Vector2(0.0, 1.0), "turn": Vector2(0.0, 0.95)})
 	var still: bool = rig.global_position.is_equal_approx(at) and not rig.aiming and rig.drive._stick == 1
+	# The menu opened with the stick forward, then the stick let go: the pedal goes up, nothing more is sent.
+	rig.toggle_menu()
+	rig.step(0.1, {"move": Vector2.ZERO, "turn": Vector2.ZERO})
+	_acts.clear()
+	rig.drive.update([rig.left.global_position, rig.right.global_position], snap, 60000)
+	var menu_up: bool = rig.menu_open() and rig.drive._stick == 0 and _acts.is_empty()
+	rig.toggle_menu()
 	rig.step(0.1, {"move": Vector2.ZERO, "turn": Vector2.ZERO})
 	# Riding: the head over one of the car's cells as drawn (ride_square) on this level, else not.
 	var d0 := Transform3D(Basis(), rig.camera.global_position)
@@ -244,8 +262,8 @@ func _test_rig(root: Node, snap: Snapshot) -> void:
 	_sq = Vector3i(3, 4, rig.z + 1)
 	rig.ride_along()
 	var level: bool = rig.riding.following() == 0
-	_check.call(grip and gas and off and still and rides and leaves and level,
-			"vr drive rig: a grip at the rim takes the wheel, the trigger is a pedal, the sticks don't walk while driving; the ride's square is the drawn cell's (%s)"
-			% [[grip, gas, off, still, rides, leaves, level]])
+	_check.call(grip and gas and off and still and menu_up and rides and leaves and level,
+			"vr drive rig: a grip at the rim takes the wheel, the trigger is a pedal, the sticks don't walk while driving and a menu up lets the stick's pedal go; the ride's square is the drawn cell's (%s)"
+			% [[grip, gas, off, still, menu_up, rides, leaves, level]])
 	rig.free()
 	world.free()

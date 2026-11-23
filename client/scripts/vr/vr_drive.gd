@@ -18,7 +18,8 @@ const HUB_M := 0.03           # m: a hand this near the wheel's axis turns nothi
 const STEP_DEG := 15.0        # CDDA steers this far an action
 const STEER_WAIT_MS := 1500   # a steer no new turn answered in this long: the next may go anyway
 const PEDAL_MS := 300         # a held pedal repeats no faster
-const STICK_ON := 0.7         # the turn stick past this forward / back is a pedal
+const STICK_ON := 0.7         # the turn stick past this forward / back is a pedal ...
+const STICK_OFF := 0.5        # ... until it comes back inside this (no flicker at the edge)
 const LID_GRAB_M := 0.09      # m: a hand this near a lid's handle takes the lid
 const LID_SNAP := 40.0        # degrees: let go past this, a lid opens; else it shuts
 const NOTE_MS := 1500         # the pause note again no sooner (main.gd's PAUSE_NOTE_MS)
@@ -213,11 +214,15 @@ func unpedal(i: int) -> bool:
 	return true
 
 
-## The turn stick's forward / back (-1..1) while driving.
+## The turn stick's forward / back (-1..1) while driving; 0 whenever the rig's driving branch didn't read it (a menu,
+## a CDDA panel or a radial wheel up). On past STICK_ON, off inside STICK_OFF; a stick let go and pushed again waits
+## out the last pedal's PEDAL_MS, so it sends at most one a PEDAL_MS however it wobbles.
 func set_stick(y: float) -> void:
+	if not is_finite(y):
+		y = 0.0
 	var s := 1 if y > STICK_ON else (-1 if y < -STICK_ON else 0)
-	if s != _stick:
-		_pedal_due = 0
+	if s == 0 and _stick != 0 and y * _stick > STICK_OFF:
+		s = _stick
 	_stick = s
 
 
@@ -301,8 +306,7 @@ func _pedal_due_now(now_ms: int) -> String:
 	if d == 0:
 		d = _stick
 	if d == 0:
-		_pedal_due = 0
-		return ""
+		return ""   # _pedal_due stays: pushed again, the stick waits it out (a trigger press goes at once: pedal)
 	if now_ms < _pedal_due:
 		return ""
 	return "UP" if d > 0 else "DOWN"
