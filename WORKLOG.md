@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — Installing a car part and the work camera tried in a running game (lead-qa): the range test now takes a seatbelt out of the Station Wagon and installs it back through the work view's install mode, and checks that the work camera looks at the selected part, moves with 1, 2 and 3, and hands the view back when the work view closes. Run on lead-bridge's, lead-ui's and lead-world's branches merged together: all ten client suites and the six bridge tests pass. Also the test build of 2026-11-23 got its go-ahead check (smoke, the Linux suites, the personal-strings scan).
 - 2026-11-22 — Storage openings for VR hands (lead-world): each trunk, box and the glovebox now says where its inside is and which way it opens, so VR hands can find the glovebox behind its door as well as a trunk under its lid. Client tests pass.
 - 2026-11-23 — Bridge: repairing or removing a car part now double-checks which part is meant, so a key pressed just after another part came off can't land on the wrong part (asked for by QA before testers get it). Passes on Windows and Linux.
 - 2026-11-22 — Bridge: the car repair view can now show what each fuel tank and battery holds and how full it is (asked for by the UI lead). Passes on Windows and Linux.
