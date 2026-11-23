@@ -28,7 +28,9 @@ const LID_SNAP := 40.0        # degrees: let go past this, a lid opens; else it 
 const NOTE_MS := 1500         # the pause note again no sooner (main.gd's PAUSE_NOTE_MS)
 const MAX_CARS := 64          # vehicles looked through for a lid's handle or a cargo space
 const REACH_DEPTH := 0.7      # m: a hand this far down into a lid's opening reaches in ...
-const REACH_ABOVE := 0.25     # ... and this far over it
+const REACH_ABOVE := 0.25     # ... and this far over it (no "opening" meta)
+const OPENING_GROW := 0.05    # m: round a Cargo node's "opening" box, still in it
+const MAX_OPENING_M := 4.0    # an "opening" box this big or more is junk: the rule above instead
 const MAX_SENT := 16
 
 var interior := Callable()      # (uid) -> Dictionary: VehicleView.interior (main.gd); unset: no wheel, no lids
@@ -153,8 +155,8 @@ func _grip_lid(i: int, at: Vector3, snap: Snapshot) -> bool:
 			if not c is Node3D or not is_instance_valid(c) or not (c as Node3D).is_inside_tree():
 				continue
 			var lid := (c as Node3D).get_node_or_null("Lid") as Node3D
-			var h: Variant = (c as Node3D).get_meta("handle", null)
-			var part: Variant = (c as Node3D).get_meta("part", null)
+			var h: Variant = _meta(c, "handle")
+			var part: Variant = _meta(c, "part")
 			if lid == null or not h is Vector3 or not part is int or lid.get_meta("held", false):
 				continue
 			var d := (lid.global_transform * (h as Vector3)).distance_to(at)
@@ -206,7 +208,7 @@ func _tell(g: Dictionary, open: bool) -> void:
 	var c: Variant = g.get("cargo")
 	if not lid_changed.is_valid() or not is_instance_valid(c):
 		return
-	var sq: Variant = (c as Node3D).get_meta("square", null)
+	var sq: Variant = _meta(c, "square")
 	if sq is Vector3i:
 		lid_changed.call(g["uid"], g["part"], sq, open)
 
@@ -232,14 +234,12 @@ func cargo_at(p: Vector3, snap: Snapshot, cells := false) -> Dictionary:
 				if not k is String or not (k as String).begins_with("Cargo_") or not c is Node3D \
 						or not is_instance_valid(c) or not (c as Node3D).is_inside_tree():
 					continue
-				var sq: Variant = (c as Node3D).get_meta("square", null)
+				var sq: Variant = _meta(c, "square")
 				var lid := (c as Node3D).get_node_or_null("Lid") as Node3D
 				if not sq is Vector3i or lid == null:
 					continue
-				var h := absf(lid.position.x)   # the hinge is on the opening's edge
 				var l := (c as Node3D).global_transform.affine_inverse() * p
-				if absf(l.x) <= h and absf(l.z) <= h and l.y <= CarInterior.LID_TOP + REACH_ABOVE \
-						and l.y >= CarInterior.LID_TOP - REACH_DEPTH:
+				if _in_opening(c as Node3D, lid, l):
 					var src := _reachable(snap, veh.uid, sq)
 					if not src.is_empty():
 						return src
@@ -250,6 +250,31 @@ func cargo_at(p: Vector3, snap: Snapshot, cells := false) -> Dictionary:
 				if not src.is_empty():
 					return src
 	return {}
+
+
+## Whether `l` (in cargo node c's frame) is in its container: lead-world's meta "opening" (an AABB in that frame,
+## where a hand is in it; the glovebox's too) reaching REACH_ABOVE out past its open face (meta "opening_out", that
+## face's unit normal: (0, 1, 0) under a lid, toward the seat for the glovebox), OPENING_GROW round; without one (or
+## a junk one), the box under a lid hinged on its top's edge (|x|, |z| within the hinge's offset, REACH_DEPTH down to
+## REACH_ABOVE over LID_TOP).
+static func _in_opening(c: Node3D, lid: Node3D, l: Vector3) -> bool:
+	var box: Variant = _meta(c, "opening")
+	if box is AABB:
+		var b := box as AABB
+		if b.position.is_finite() and b.size.is_finite() and b.size.x > 0.0 and b.size.y > 0.0 and b.size.z > 0.0 \
+				and b.size.length() < MAX_OPENING_M:
+			var out: Variant = _meta(c, "opening_out")
+			if out is Vector3 and (out as Vector3).is_finite() and absf((out as Vector3).length() - 1.0) < 0.01:
+				b = b.merge(AABB(b.position + (out as Vector3) * REACH_ABOVE, b.size))
+			return b.grow(OPENING_GROW).has_point(l)
+	var h := absf(lid.position.x)
+	return absf(l.x) <= h and absf(l.z) <= h and l.y <= CarInterior.LID_TOP + REACH_ABOVE \
+			and l.y >= CarInterior.LID_TOP - REACH_DEPTH
+
+
+## Node n's meta `k`, null when it has none (get_meta's own null default logs an error).
+static func _meta(n: Variant, k: String) -> Variant:
+	return (n as Object).get_meta(k) if is_instance_valid(n) and (n as Object).has_meta(k) else null
 
 
 func _reachable(snap: Snapshot, uid: int, sq: Vector3i) -> Dictionary:
