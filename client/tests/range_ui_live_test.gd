@@ -958,7 +958,9 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		var hit: Dictionary = _main.call("_cast_screen", _main.call("_pointer"), false)
 		met.append([h, hit.get("square"), str(hit.get("what", "")).left(40)])
 		aimed = hit.get("hit", false) and hit.get("square") == sq and hit.get("vehicle") == uid
-	for down: float in [-0.3, -0.6, -0.9, -1.2]:   # not met head-on (the car is drawn rigid, off its squares): look around
+	var head_on := aimed
+	var around := []   # [yaw, pitch] in degrees where looking around met it
+	for down: float in [-0.3, -0.6, -0.9, -1.2]:   # not met head-on: look around
 		for k in 16:
 			if aimed:
 				break
@@ -966,6 +968,15 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 			await _frames(2)
 			var found: Dictionary = _main.call("_cast_screen", _main.call("_pointer"), false)
 			aimed = found.get("hit", false) and found.get("square") == sq and found.get("vehicle") == uid
+			if aimed:
+				around = [roundf(rad_to_deg(TAU * k / 16.0)), roundf(rad_to_deg(down))]
+	if not head_on:   # the facts for whoever looks into it
+		var to_mid := _main.world.coords.ms_center_to_world(sq) + Vector3.UP - _main.fp.global_position
+		var cam := root.get_camera_3d()
+		print("    (car storage, %s: a look at the middle of its square %s met no part of it (at heights, it met: %s). The car faces %s degrees; the player is on %s, that square's middle at %s; the eye (fp) is at %s, the camera drawn at %s; the square's middle 1 m up is %.2f m from the eye, at yaw %d; looking around met it at [yaw, pitch] %s)"
+				% [what, sq, met, _vehicle(uid).face_deg if _vehicle(uid) != null else "?", _main.world.snapshot.player_pos,
+				_main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos), _main.fp.global_position,
+				cam.global_position if cam != null else "?", to_mid.length(), roundi(rad_to_deg(atan2(-to_mid.x, -to_mid.z))), around])
 	if not aimed:
 		print("    (car storage, %s: from %s the pointer meets no part on its square %s, head-on or looking around, so E on it is not checked; aimed at heights, it met: %s; the eye is at %s, the middle of the player's square at %s)"
 				% [what, _main.world.snapshot.player_pos, sq, met, _main.fp.global_position,
