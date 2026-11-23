@@ -316,6 +316,7 @@ func _drive_live(start: Vector3i) -> void:
 			func(d: Vector3i) -> int: return _floor_at(seat + d))])
 	if not there:
 		return
+	await _work_view_live(car, out, start)
 	var step_in := _step_name(door - out)
 	var seated := func() -> bool: return _main.world.snapshot.player_pos == seat and not _main.world.busy()
 	for n in 6:   # the door opens, then two steps
@@ -917,6 +918,7 @@ func _cargo_seat_live(uid: int) -> void:
 	veh = _vehicle(uid)
 	var glovebox := _main.world.tables.index_of("vpart", "fp3d_glovebox")
 	var sq := Vector3i.MAX
+	var glove_part := -1
 	var names := []
 	for row: Dictionary in veh.get("cargo"):
 		var part: int = row["part"]
@@ -924,15 +926,234 @@ func _cargo_seat_live(uid: int) -> void:
 		names.append(type)
 		if glovebox >= 0 and type == glovebox:
 			sq = veh.square(part)
+			glove_part = part
 	if glovebox >= 0:
 		_check(sq != Vector3i.MAX and sq != _main.world.snapshot.player_pos,
 				"car storage: from the seat beside the driver's the snapshot lists %d spaces in reach, the glovebox among them, ahead of the seat (at %s, the player on %s; part types %s)"
 				% [(veh.get("cargo") as Array).size(), sq, _main.world.snapshot.player_pos, names])
+		if sq != Vector3i.MAX:
+			await _glove_door_live(uid, glove_part, sq)
 	else:
 		print("  (no glovebox in this game's data: the round runs on the first space listed)")
 	if sq == Vector3i.MAX:
 		sq = veh.square((veh.get("cargo") as Array)[0]["part"])
 	await _cargo_round("the glovebox" if glovebox >= 0 else "a space by the seat", uid, sq)
+
+
+## A key pressed once (no release), then two frames.
+func _tap(code: Key) -> void:
+	var k := InputEventKey.new()
+	k.keycode = code
+	k.physical_keycode = code
+	k.pressed = true
+	root.push_input(k)
+	await _frames(2)
+
+
+## Headless the mouse isn't captured, so the game's pointer is the mouse's spot: puts that in the middle of the screen.
+func _centre_pointer() -> void:
+	var mid := root.get_visible_rect().size / 2.0
+	var move := InputEventMouseMotion.new()
+	move.position = mid
+	move.global_position = mid
+	Input.parse_input_event(move)
+	await _frames(2)
+
+
+## lead-world's glovebox door (said so on a client that draws none): from the seat behind it, a look at the door as
+## it is drawn in the dashboard meets the glovebox: its own square (the windshield's), its vehicle and its part.
+func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
+	if not _main.vehicles_view.has_method("interior") or not _main._fp_active() or _main.view_mode != "first":
+		return
+	var door_of := func() -> Node3D:
+		var a: Variant = _main.vehicles_view.call("interior", uid)
+		var c: Variant = (a as Dictionary).get("Cargo_%d" % part) if a is Dictionary else null
+		return (c as Node3D).get_node_or_null("Lid") as Node3D if c is Node3D else null
+	var built := func() -> bool: return door_of.call() != null
+	if not await _until(built, 3000):
+		print("  (this client draws no door for the glovebox: a look at it not checked)")
+		return
+	var door: Node3D = door_of.call()
+	await _centre_pointer()
+	var yaw0: float = _main.fp.yaw
+	var pitch0: float = _main.fp.pitch
+	var at: Vector3 = door.global_transform * Vector3(0.0, 0.085, 0.0)   # the middle of the face toward the seat
+	var aim := (at - _main.fp.global_position).normalized()
+	_main.fp.set_look(atan2(-aim.x, -aim.z), asin(clampf(aim.y, -1.0, 1.0)))
+	await _frames(2)
+	var hit: Dictionary = _main.call("_cast_screen", _main.call("_pointer"), false)
+	_main.fp.set_look(yaw0, pitch0)
+	_check(hit.get("hit", false) and hit.get("square") == sq and hit.get("vehicle") == uid and hit.get("part") == part,
+			"glovebox door: from the seat behind it a look at the door as drawn (%.2f m from the eye, %.2f m up) meets the glovebox: its square %s, its vehicle and part %d (met: square %s, part %s, \"%s\")"
+			% [at.distance_to(_main.fp.global_position), at.y, sq, part, hit.get("square"), hit.get("part"),
+			str(hit.get("what", "")).left(40)])
+
+
+## lead-ui's vehicle work view (C6, read only; said so on a client without it). The player stands on `by`, next to
+## `car`; `far` is the arrival square. Shift+V opens it docked right on that car, its parts listed by square from
+## the front with their condition; Down / Up move the selection; a command the read doesn't allow says why; one it
+## allows says it isn't connected yet (pressed only on a stand-in read); 1 2 3 change nothing; while it is open the
+## game's own keys do nothing, and a CDDA prompt still gets its keys; Esc and the key close it; it fits 800x450; out
+## of reach it closes and says so; away from any car the key says there is none. The player ends on `by` again.
+func _work_view_live(car: Snapshot.Vehicle, by: Vector3i, far: Vector3i) -> void:
+	var wv: Variant = _main.get("work_view")
+	if wv == null or InputActions.slots(&"vehicle_work").is_empty():
+		print("  (no vehicle work view in this client: not checked)")
+		return
+	var key := _key_of(&"vehicle_work")
+	var read := func() -> bool: return wv.visible and not wv.waiting and not (wv.result as Dictionary).is_empty()
+	var shut := func() -> bool: return not wv.visible
+	var in_loop := func() -> bool: return _live.request.get("timed", false)
+	# it opens docked right, on the car next to the player
+	root.push_input(key)
+	var came: bool = await _until(read, SHOW_TIMEOUT_MS)
+	await _frames(2)
+	var win := Vector2(root.size)
+	var rect: Rect2 = (wv as Control).get_global_rect()
+	var res: Dictionary = wv.result
+	var stand_in: bool = res.get("stand_in", false) == true
+	var parts: Array = res.get("parts", [])
+	var rows: Dictionary = res.get("rows", {})
+	var order: Array = wv.get("_order")
+	var xs: Array = order.map(func(row: int) -> int: return (parts[rows[row]]["mount"] as Vector2i).x)
+	var from_front := not xs.is_empty()
+	for n in range(1, xs.size()):
+		from_front = from_front and xs[n] <= xs[n - 1]
+	var listing: PackedStringArray = str(wv.call("list_text")).split("\n")
+	var with_condition := Array(listing).all(func(l: String) -> bool: return l.contains("%"))
+	_check(came and wv.uid == car.uid and rect.position.x >= win.x * 0.5 and rect.end.x <= win.x + 0.5 and rect.position.y >= 0.0
+			and rect.end.y <= win.y + 0.5 and order.size() >= 10 and from_front and with_condition,
+			"vehicle work: next to the car %s opens the view on it, docked right (%s in a %s window): %d parts by square from the front, each with its condition (first \"%s\", last \"%s\"; a stand-in read: %s, note \"%s\")"
+			% [InputActions.prompt_of(&"vehicle_work"), rect, win, order.size(), listing[0].strip_edges() if listing.size() > 0 else "",
+			listing[-1].strip_edges() if listing.size() > 0 else "", stand_in, (wv.get("_note") as Label).text])
+	if not came or order.size() < 2:
+		if wv.visible:
+			wv.call("close")
+		return
+	# the selection, and what the commands say
+	var first: int = wv.selected
+	await _tap(KEY_DOWN)
+	await _until(read, SHOW_TIMEOUT_MS)
+	var second: int = wv.selected
+	await _tap(KEY_UP)
+	await _until(read, SHOW_TIMEOUT_MS)
+	var detail := str(wv.call("detail_text"))
+	var why := wv.get("_why") as Label
+	await _tap(KEY_M)
+	var why_m := why.text
+	await _tap(KEY_I)
+	var why_i := why.text
+	var allowed := ""
+	var said := ""
+	for c: String in ["o", "r", "f"]:
+		if allowed == "" and detail.contains("%s:on" % c):
+			allowed = c
+	if stand_in and allowed != "":   # (the game's own read may one day do the work: not pressed then)
+		await _tap(OS.find_keycode_from_string(allowed.to_upper()))
+		said = str(_main.grab.get("_flash"))
+	_check(first == order[0] and second == order[1] and wv.selected == first and detail.contains("i:off")
+			and why_i.contains("Installing") and (not detail.contains("m:off") or not why_m.is_empty())
+			and (said == "" or said.contains("isn't connected")),
+			"vehicle work: Down and Up move the selection (rows %d, %d, back to %d); on \"%s\" the commands are %s; m says \"%s\", i says \"%s\"; %s"
+			% [first, second, wv.selected, detail.get_slice(" | ", 0), detail.get_slice(" | ", 1), why_m, why_i,
+			("the allowed %s says \"%s\"" % [allowed, said]) if said != "" else "no allowed command pressed"])
+	# 1 2 3: nothing yet (a work camera, once it lands, is not judged here)
+	var cam := root.get_camera_3d()
+	var cam0 := cam.global_transform if cam != null else Transform3D()
+	var turn0: int = _main.world.snapshot.turn
+	for code: Key in [KEY_1, KEY_2, KEY_3]:
+		await _tap(code)
+	await _frames(6)
+	var still: bool = wv.visible and wv.selected == first and cam != null and cam.global_position.distance_to(cam0.origin) < 0.01 \
+			and cam.global_basis.z.angle_to(cam0.basis.z) < 0.01
+	if _main.get("work_cam") != null:
+		print("  (vehicle work: this client has a work camera: 1 2 3 not judged; the view open %s)" % wv.visible)
+	else:
+		_check(still and _main.world.snapshot.turn == turn0,
+				"vehicle work: 1, 2 and 3 change nothing yet: the view stays open on the same part, the camera stays and no turn passes")
+	# the game's own keys are off while it is open
+	for a: StringName in [&"inspect", &"character", &"wait"]:
+		var k := _key_of(a)
+		if k != null:
+			root.push_input(k)
+			await _frames(3)
+	await _tap(InputActions.MENU_KEY)
+	await _frames(8)
+	var menu_up: bool = _main.key_menu.visible
+	_check(wv.visible and not _main.inspect.visible and not _main.character.visible and not menu_up
+			and _main.world.snapshot.turn == turn0,
+			"vehicle work: while it is open the game's own keys do nothing (the pack, the character screen, wait, the key help: view open %s, pack %s, character %s, key help %s, turns passed %d)"
+			% [wv.visible, _main.inspect.visible, _main.character.visible, menu_up, _main.world.snapshot.turn - turn0])
+	if menu_up:
+		_main.key_menu.close()
+	# a CDDA prompt still gets its keys: Esc cancels the prompt, the view stays (no _until here: it answers prompts)
+	_live.queue_action("examine")
+	var prompt := ""
+	var until := Time.get_ticks_msec() + 5000
+	while Time.get_ticks_msec() < until and prompt.is_empty():
+		var r := _live.request
+		if not r.is_empty() and not r.get("timed", false):
+			prompt = str(r.get("kind", "?"))
+		else:
+			await create_timer(0.05).timeout
+	if prompt.is_empty():
+		print("  (vehicle work: CDDA asked nothing for examine: a prompt's keys not checked)")
+	else:
+		await _frames(3)
+		await _tap(KEY_ESCAPE)
+		until = Time.get_ticks_msec() + 5000
+		while Time.get_ticks_msec() < until and not _live.request.get("timed", false):
+			await create_timer(0.05).timeout
+		_check(_live.request.get("timed", false) and wv.visible,
+				"vehicle work: a CDDA prompt (%s, for examine) still gets its keys: Esc cancels the prompt and the view stays open (back in the main loop %s, view open %s)"
+				% [prompt, _live.request.get("timed", false), wv.visible])
+	await _until(in_loop, SHOW_TIMEOUT_MS)   # (a prompt still up is cancelled here)
+	# Esc closes it, and so does the key
+	if not wv.visible:
+		root.push_input(key)
+		await _until(read, SHOW_TIMEOUT_MS)
+	await _tap(KEY_ESCAPE)
+	var esc_closes: bool = not wv.visible
+	root.push_input(key)
+	var again: bool = await _until(read, SHOW_TIMEOUT_MS)
+	root.push_input(key)
+	await _frames(3)
+	_check(esc_closes and again and not wv.visible,
+			"vehicle work: Esc closes it, and so does %s (after Esc open %s; opened again %s; after the key open %s)"
+			% [InputActions.prompt_of(&"vehicle_work"), not esc_closes, again, wv.visible])
+	# it fits 800x450
+	var was: Vector2i = root.size
+	root.size = Vector2i(800, 450)
+	await _frames(4)
+	root.push_input(key)
+	var small: bool = await _until(read, SHOW_TIMEOUT_MS)
+	await _frames(3)
+	var win2 := Vector2(root.size)
+	var rect2: Rect2 = (wv as Control).get_global_rect()
+	var hint_r: Rect2 = (wv.get("_hint") as Control).get_global_rect()
+	var cmds_r: Rect2 = (wv.get("_cmd_box") as Control).get_global_rect()
+	_check(small and rect2.position.x >= -0.5 and rect2.position.y >= -0.5 and rect2.end.x <= win2.x + 0.5 and rect2.end.y <= win2.y + 0.5
+			and rect2.encloses(hint_r.grow(-1.0)) and rect2.encloses(cmds_r.grow(-1.0)),
+			"vehicle work: it fits an 800x450 window (the view %s in %s; its command row %s and its key line %s inside it)"
+			% [rect2, win2, cmds_r, hint_r])
+	# out of reach it closes and says so; away from any car the key says there is none
+	var away := func() -> bool: return _main.world.snapshot.player_pos == far and not _main.world.busy()
+	var gone: bool = await _cheat(_live.cheat_teleport(far)) == "" and await _until(away, SHOW_TIMEOUT_MS)
+	var closed_far: bool = gone and await _until(shut, SHOW_TIMEOUT_MS)
+	var said_far := str(_main.grab.get("_flash"))
+	root.push_input(key)
+	await _frames(4)
+	var none: bool = not wv.visible
+	var said_none := str(_main.grab.get("_flash"))
+	if wv.visible:
+		wv.call("close")
+	root.size = was
+	await _frames(4)
+	var back := func() -> bool: return _main.world.snapshot.player_pos == by and not _main.world.busy()
+	var returned: bool = await _cheat(_live.cheat_teleport(by)) == "" and await _until(back, SHOW_TIMEOUT_MS)
+	_check(closed_far and said_far == "The vehicle is out of reach." and none and said_none == "No vehicle next to you." and returned,
+			"vehicle work: moved out of reach it closes and says \"%s\"; away from any car %s opens nothing and says \"%s\" (there %s, closed %s, stayed shut %s; back by the car %s)"
+			% [said_far, InputActions.prompt_of(&"vehicle_work"), said_none, gone, closed_far, none, returned])
 
 
 ## E on a cargo space (lead-ui's _open_cargo), in first person: the look is turned onto square `sq` at a few
@@ -951,11 +1172,7 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 	var aimed := false
 	# headless the mouse isn't captured, so the game's pointer is the mouse's spot: put that in the middle of the screen
 	var mid := root.get_visible_rect().size / 2.0
-	var to_mid_of_screen := InputEventMouseMotion.new()
-	to_mid_of_screen.position = mid
-	to_mid_of_screen.global_position = mid
-	Input.parse_input_event(to_mid_of_screen)
-	await _frames(2)
+	await _centre_pointer()
 	for h: float in [1.0, 0.8, 0.6, 0.4, 1.2]:
 		if aimed:
 			break
@@ -989,6 +1206,10 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 				% [what, _main.world.snapshot.player_pos, sq, met, _main.fp.global_position,
 				_main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos)])
 	else:
+		var row_part: int = _cargo_row(uid, sq).get("part", -1)
+		var can := func() -> bool: return _main.vehicles_view.call("can_reach", uid, row_part) == true
+		var cannot := func() -> bool: return not can.call()
+		var covered: bool = row_part >= 0 and _main.vehicles_view.has_method("can_reach") and not can.call()   # a shut lid
 		var on_it: bool = _main.call("_open_cargo")
 		await _frames(3)
 		var tray_open: bool = _main.grab.tray_open()
@@ -1000,6 +1221,7 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 		else:
 			var src: Variant = _main.grab.tray.get("source") if tray_open else {}
 			var lid: Array = _main.get("_cargo_lid")
+			var lid_open: bool = not covered or await _until(can, 4000)
 			var esc := InputEventKey.new()
 			esc.keycode = KEY_ESCAPE
 			esc.physical_keycode = KEY_ESCAPE
@@ -1012,10 +1234,11 @@ func _cargo_e(what: String, uid: int, sq: Vector3i, empty: bool) -> void:
 				_main.grab.call("close_tray")
 			if menu_up:
 				_main.key_menu.close()
+			var lid_shut: bool = not covered or await _until(cannot, 6000)
 			_check(on_it and tray_open and src is Dictionary and (src as Dictionary).get("square") == sq and lid.size() == 2
-					and lid[0] == uid and closed and not menu_up,
-					"car storage, %s: E with the pointer on it opens the tray on it, which stays open, and notes its lid; Esc closes both and brings up no menu (E on it %s, tray open %s, lid noted %s, closed %s, menu up %s)"
-					% [what, on_it, tray_open, lid, closed, menu_up])
+					and lid[0] == uid and closed and not menu_up and lid_open and lid_shut,
+					"car storage, %s: E with the pointer on it opens the tray on it, which stays open, and notes its lid; Esc closes both and brings up no menu (E on it %s, tray open %s, lid noted %s, closed %s, menu up %s; a shut lid drawn over it %s: open for the hands after E %s, shut again after Esc %s)"
+					% [what, on_it, tray_open, lid, closed, menu_up, covered, lid_open, lid_shut])
 	_main.fp.set_look(yaw0, pitch0)
 	Input.mouse_mode = mouse
 
