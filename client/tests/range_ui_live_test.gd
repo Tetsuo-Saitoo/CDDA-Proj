@@ -1062,9 +1062,26 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 	var began: bool = await _until(started, SHOW_TIMEOUT_MS)
 	var said := why.text
 	var turn0: int = _main.world.snapshot.turn
-	root.push_input(o.duplicate())   # while the work runs
-	await _frames(2)
-	var during := why.text
+	# While the work runs: another part of that kind is selected at once and o pressed, before and (the work still
+	# running) after its read is back. That list is from before the removal: nothing may be sent for it.
+	var other := -1
+	for q: Dictionary in parts:
+		if other < 0 and q["row"] != pick and str(q["name"]) == picked:
+			other = q["row"]
+	var during := ""
+	if other >= 0:
+		wv.call("select", other)
+		root.push_input(o.duplicate())
+		during = why.text
+		var back := func() -> bool:
+			return not wv.waiting and ((wv.result as Dictionary).get("selected", {}) as Dictionary).get("row", -1) == other
+		if await _until(back, 3000) and _vehicle(uid) != null and _vehicle(uid).part_count() == rows0:
+			root.push_input(o.duplicate())
+			during += " / " + why.text
+	else:
+		root.push_input(o.duplicate())
+		await _frames(2)
+		during = why.text
 	var fewer := func() -> bool:
 		var v := _vehicle(uid)
 		return v != null and v.part_count() < rows0 and _live.request.get("timed", false) and not _main.world.busy()
@@ -1124,6 +1141,36 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 				and veh3 != null and veh3.part_count() == rows1 and (act3 == null or str(act3) == ""),
 				"vehicle work: the removed %s's old row %d, sent with its type and mount, is refused by the game: \"%s\" (that row holds \"%s\" now); nothing starts (asked %s, answered %s, still %d part rows)"
 				% [picked, old["row"], mine.get("text", ""), holds, tag > 0, got, veh3.part_count() if veh3 != null else -1])
+	# A list marked old with no read out (as after an answer that never came: set by hand here), on a part o is
+	# allowed for: o says so, asks again by itself, and the list is good again; nothing starts.
+	var gate2: Variant = _main.get("_work_gate")
+	var again := -1
+	for q: Dictionary in (wv.result as Dictionary).get("parts", []):
+		if again < 0 and str(q["name"]) == picked:
+			again = q["row"]
+	if done and gate2 != null and again >= 0:
+		wv.call("select", again)
+		var back2 := func() -> bool:
+			return not wv.waiting and ((wv.result as Dictionary).get("selected", {}) as Dictionary).get("row", -1) == again
+		await _until(back2, SHOW_TIMEOUT_MS)
+		await _frames(2)
+		if str(wv.call("detail_text")).contains("o:on") and gate2.get("stale") == false:
+			gate2.set("stale", true)
+			root.push_input(o.duplicate())
+			await _frames(2)
+			var held_says := why.text
+			var opened := func() -> bool: return gate2.get("stale") == false
+			var reopens: bool = await _until(opened, SHOW_TIMEOUT_MS)
+			await _frames(20)
+			var veh4 := _vehicle(uid)
+			var act4: Variant = _main.world.snapshot.get("activity_id")
+			_check(held_says == "Checking the parts again..." and reopens and veh4 != null and veh4.part_count() == rows1
+					and (act4 == null or str(act4) == ""),
+					"vehicle work: with the list marked old and no read out, o on \"%s\" says \"%s\", asks again by itself and the list is good again (%s); nothing starts (still %d part rows)"
+					% [picked, held_says, reopens, veh4.part_count() if veh4 != null else -1])
+		else:
+			print("  (vehicle work: no second %s to try an old list on: o %s, the list old %s)"
+					% [picked, str(wv.call("detail_text")).get_slice(" | ", 1), gate2.get("stale")])
 	var in_loop := func() -> bool: return _live.request.get("timed", false)
 	await _until(in_loop, SHOW_TIMEOUT_MS)
 
