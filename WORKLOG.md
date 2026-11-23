@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-22 — Car dashboard comes alive (lead-world): in the car you are in, the 3D gauges now show the real speed, cruise setting, fuel and battery, the warning lamps light, and the steering wheel turns with the steering, all from the same data as the driving HUD. Client tests pass; not yet seen in a running game.
 - 2026-11-22 — Car interiors, lead-qa's notes (lead-world): a storage lid a hand lets go of now stays where it was left, all dashboards share one model, and a car's inside is only re-checked when its parts change. Client tests pass.
 - 2026-11-21 — Car storage on the flat screen (not merged): standing next to a car, E on its trunk or glovebox opens the lid and lays out what's inside on the tray in front of you; click an item to take it; Esc closes the tray and the lid. Carry an item over the trunk and let go to put it in. Needs the car interiors and the bridge's cargo list to land first. Client tests pass.
 - 2026-11-21 — Car storage lids (lead-world): hands reach into a trunk, box or bin with a lid only while the lid is open; storage without a lid is always in reach. Looking at a car part now also tells the other screens which part it is, so E can open the right lid. Nothing changes in the game itself. Client tests pass; not yet tried in a running game.
