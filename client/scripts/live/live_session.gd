@@ -669,10 +669,12 @@ func put_item(uid: float, type: float, container: float, container_type: float, 
 
 ## Drop a carried item on square `pos`; `spot` (each 0..1 across the square) places it there, (-1, -1) none.
 ## `shelf` (L8: 0..ItemActions.MAX_SHELF, -1 none) goes only with a spot; outside that range: false, nothing sent.
-func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1) -> bool:
-	if shelf < -1 or shelf > ItemActions.MAX_SHELF:
+func drop_item(uid: float, type: float, pos: Vector3i, spot := Vector2(-1, -1), shelf := -1, cargo := false) -> bool:
+	if shelf < -1 or shelf > ItemActions.MAX_SHELF or (cargo and (spot != Vector2(-1, -1) or shelf != -1)):
 		return false
 	var a := {"op": "drop", "item": int(uid), "type": int(type), "pos": pos}
+	if cargo:   # into the vehicle cargo space on `pos` (contracts/bridge_api.md "Vehicle cargo by hand"), no spot
+		a["cargo"] = true
 	if spot.x >= 0.0 and spot.y >= 0.0:
 		a["spot"] = spot
 		if shelf >= 0:

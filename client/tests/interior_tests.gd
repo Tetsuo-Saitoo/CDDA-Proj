@@ -62,6 +62,24 @@ func _test_reading() -> void:
 			and r.unit == CarDash.unit_seen and long.top == CarDash.MAX_TOP and long.step == CarDash.MAX_TOP / CarDash.MAX_TICKS
 			and long.unit == CarDash.unit_seen and CarDash.reading_of("junk") == CarDash.reading_of({}),
 			"interiors: a dash reading is checked (types, NaN, ranges, ticks, unit text) (%s)" % [r])
+	# from the driving HUD's data: backing at 40 mph in km/h, a broken engine, tanks half and full, the battery low,
+	# skidding, battered, steering 10 degrees left
+	var ride := RideInfo.read({"uid": 5, "velocity": -4000, "cruise_velocity": 5000, "safe_velocity": 6000,
+			"max_velocity": 9000, "engine_on": true, "engines": [[1, 4]], "fuels": [[3, 50, 100], [4, 10, 10]],
+			"battery": [5, 100], "skidding": true, "turn_deg": 80, "health_pct": 50, "speed_unit": "km/h"}, Callable(), 90.0)
+	var d := CarDash.reading_from(ride)
+	var top := SpeedGauge.scale_top(ride)
+	var want := {"lit": true, "speed": ride.shown(-4000), "cruise": ride.shown(5000), "top": top,
+			"step": SpeedGauge.tick_step(top), "safe": ride.shown(6000), "red": ride.shown(9000), "unit": "km/h",
+			"fuel": 0.75, "battery": 0.05, "steer": -10,
+			"lamps": CarDash.Lamp.ENGINE | CarDash.Lamp.BATTERY | CarDash.Lamp.SKID | CarDash.Lamp.DAMAGE}
+	var off := CarDash.reading_from(RideInfo.read({"uid": 5, "engine_on": false, "battery": [0, 100], "cruise_velocity": 5000}))
+	var shown := CarDash.reading_of(d)
+	_check.call(d == want and not off.lit and off.cruise == 0.0 and off.fuel == -1.0 and off.lamps == CarDash.Lamp.BATTERY
+			and shown.lit and is_equal_approx(shown.speed, absf(ride.shown(-4000))) and shown.unit == "km/h"
+			and CarDash.reading_from(RideInfo.read(null)).is_empty() and CarDash.reading_from(null).is_empty(),
+			"interiors: the dash reads the driving HUD's data (scale and bands as its gauge, lamps, steering) (%s)" % [d])
+	CarDash.unit_seen = "mph"
 
 
 func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
@@ -153,6 +171,20 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	for i in 60:
 		view.interiors(0.05, eye)
 	_check.call(held and absf(it.lid_deg(trunk)) < 0.1, "interiors: a held lid isn't moved; let go, it closes")
+	# a hand moves it and lets go: it stays there while the car's dash and wheel move; open_lid still moves it
+	lid.set_meta("held", true)
+	lid.basis = Basis(cargo.get_meta("hinge_axis"), deg_to_rad(30.0))
+	lid.set_meta("held", false)
+	view.set_ride(UID, {"lit": true, "steer": 10})
+	for i in 60:
+		view.interiors(0.05, eye)
+	var left_at := it.lid_deg(trunk)
+	view.set_ride(0, {})
+	view.open_lid(UID, trunk, false)
+	for i in 60:
+		view.interiors(0.05, eye)
+	_check.call(absf(left_at - 30.0) < 0.1 and absf(it.lid_deg(trunk)) < 0.1,
+			"interiors: a lid a hand let go of stays there (%.1f degrees) until it is opened or closed" % left_at)
 	# the client's rule: hands reach into a lidded container only while its lid is open
 	var seat: int = index.call("seat", Vector2i(0, 1))
 	var frame: int = index.call("frame", Vector2i(-1, 0))   # on the trunk's square, under its lid
@@ -211,23 +243,26 @@ func _test_view(root: Node, data: Variant, tables: IdTables) -> void:
 	_check.call(not dash.lit and dash.value("speed") == 0.0 and is_equal_approx(it.wheel_deg(), 0.0),
 			"interiors: when the player leaves, the dash goes dark and the wheel straight")
 	# far off: dropped (the player's car kept); parts changed: built again; dropped with the model
+	var dash_mesh: Mesh = dash.cluster.mesh   # freed with the interior just below
 	view.set_ride(OTHER, {"lit": true})
 	view.interiors(0.0, eye + Vector3(VehicleView.INTERIOR_FAR + 15.0, 0, 0))
 	var dropped := view.interior(UID).is_empty() and not view.interior(OTHER).is_empty()
+	var other_dash: CarDash = view.interior(OTHER).get("Dash")
+	var shared := other_dash != null and other_dash.cluster.mesh == dash_mesh   # one cluster mesh for all
 	view.set_ride(0, {})
 	view.interiors(0.0, eye)
 	var it2: CarInterior = (view.interior(UID)["Wheel"] as Node3D).get_parent()
 	car.parts[box * Snapshot.VPART_STRIDE + 3] = 100   # worn: the same interior
 	view.apply(snap, world)
-	var same := (view.interior(UID)["Wheel"] as Node3D).get_parent() == it2
+	var same: bool = (view.interior(UID)["Wheel"] as Node3D).get_parent() == it2 and it2.seen[0] == car.parts   # checked once
 	car.parts[box * Snapshot.VPART_STRIDE + 2] = tables.index_of("vpart", "cargo_space")   # no lid there now
 	view.apply(snap, world)
 	var gone := view.interior(UID).is_empty()
 	var far_rule := gone and not view.can_reach(UID, trunk) and view.can_reach(UID, seat)   # no interior: lids shut
 	view.interiors(0.0, eye)
 	var again := view.interior(UID)
-	_check.call(dropped and same and gone and far_rule and again.has("Wheel") and not again.has("Cargo_%d" % box),
-			"interiors: dropped far from the camera (not the player's), kept while parts only wear, built again when they change")
+	_check.call(dropped and shared and same and gone and far_rule and again.has("Wheel") and not again.has("Cargo_%d" % box),
+			"interiors: dropped far from the camera (not the player's), kept while parts only wear, built again when they change; one cluster mesh for every dash")
 	view.max_verts = 0
 	view.apply(snap, world)
 	_check.call(view.interior(UID).is_empty(), "interiors: gone with the vehicle's model")

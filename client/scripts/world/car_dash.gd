@@ -156,6 +156,36 @@ static func reading_of(r: Variant) -> Dictionary:
 	return out
 
 
+## The reading of the vehicle the player is in from the driving HUD's data (RideInfo, checked there): lit while its
+## engine runs or its battery holds charge; the speedometer scaled and banded as the HUD's (SpeedGauge); fuel the
+## mean of its tanks; lamps: a broken engine, low fuel or charge, skidding, battered or worse (CDDA's words: 67% or
+## less). {} (dark) when there is none.
+static func reading_from(r: RideInfo) -> Dictionary:
+	if r == null or not r.ok:
+		return {}
+	var top := SpeedGauge.scale_top(r)
+	var fuel := -1.0
+	if not r.fuels.is_empty():
+		fuel = 0.0
+		for f: Dictionary in r.fuels:
+			fuel += float(f.left) / float(f.cap) / r.fuels.size()
+	var battery := float(r.battery_left) / float(r.battery_cap) if r.battery_cap > 0 and r.battery_left >= 0 else -1.0
+	var lamps := 0
+	if r.engines_broken > 0:
+		lamps |= Lamp.ENGINE
+	if fuel >= 0.0 and fuel < LOW:
+		lamps |= Lamp.FUEL
+	if battery >= 0.0 and battery < LOW:
+		lamps |= Lamp.BATTERY
+	if r.skidding:
+		lamps |= Lamp.SKID
+	if r.health >= 0 and r.health <= 67:
+		lamps |= Lamp.DAMAGE
+	return {"lit": r.engine_on or r.battery_left > 0, "speed": r.shown(r.velocity), "cruise": r.shown(r.set_speed()),
+			"top": top, "step": SpeedGauge.tick_step(top), "safe": r.shown(r.safe), "red": r.shown(r.top),
+			"unit": r.unit, "fuel": fuel, "battery": battery, "lamps": lamps, "steer": r.steer()}
+
+
 ## A number within lo..hi, else `fallback` (not a number, NaN or infinite).
 static func _number(v: Variant, lo: float, hi: float, fallback: float) -> float:
 	if not (v is int or v is float) or not is_finite(float(v)):
@@ -249,8 +279,24 @@ static func angle_of(f: float, sweep: Vector2) -> float:
 
 
 ## The plate, hood and cheeks, each gauge's housing (an outer wall, the bore it is set back in), bezel and centre
-## cap: one solid surface; the glass over each: another.
+## cap: one solid surface; the glass over each: another. One mesh, made once, for every dash.
 func _build_cluster() -> void:
+	if not _meshes.has("cluster"):
+		_meshes["cluster"] = _cluster_mesh()
+	cluster = MeshInstance3D.new()
+	cluster.name = "cluster"
+	cluster.mesh = _meshes["cluster"]
+	cluster.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(cluster)
+	faces = MeshInstance3D.new()
+	faces.name = "faces"
+	faces.material_override = _material("dial")
+	faces.layers = FACE_LAYER
+	faces.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(faces)
+
+
+static func _cluster_mesh() -> ArrayMesh:
 	var solid := []
 	var glass := []
 	var box := func(size: Vector3, at: Vector3, col: Color) -> void:
@@ -272,17 +318,7 @@ func _build_cluster() -> void:
 	var mesh := ArrayMesh.new()
 	CarInterior.surface(mesh, solid, VehicleView._material(VehicleView.Look.SOLID))
 	CarInterior.surface(mesh, glass, _material("glass"))
-	cluster = MeshInstance3D.new()
-	cluster.name = "cluster"
-	cluster.mesh = mesh
-	cluster.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(cluster)
-	faces = MeshInstance3D.new()
-	faces.name = "faces"
-	faces.material_override = _material("dial")
-	faces.layers = FACE_LAYER
-	faces.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(faces)
+	return mesh
 
 
 ## The dial faces for the reading's scale (built again only when it changed): each face, its bands and ticks, and
