@@ -43,8 +43,11 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 			if car.parts[j] == m.x and car.parts[j + 1] == m.y and car.parts[j + 2] == tables.index_of("vpart", id):
 				return i
 		return -1
+	# the van again with its roof gone: its engine open above
+	var d2: Dictionary = d.duplicate(true)
+	(d2["vehicles"][1] as Dictionary)["parts"] = van.slice(0, 2)
 	_test_spots(snap, tables, row)
-	_test_view(root, snap, tables, row)
+	_test_view(root, snap, tables, row, Snapshot.from_data(d2))
 
 
 func _test_spots(snap: Snapshot, tables: IdTables, row: Callable) -> void:
@@ -57,6 +60,11 @@ func _test_spots(snap: Snapshot, tables: IdTables, row: Callable) -> void:
 	var wheel: Dictionary = at.call("wheel", Vector2i(1, 1))
 	var muffler: Dictionary = at.call("muffler", Vector2i(-1, 1))
 	var right := Vector3(0, 0, 1)
+	var every := PartSpot.anchors(car, snap, tables)
+	var alike := every.size() == car.part_count() and PartSpot.anchors(null, snap, tables).is_empty()
+	for r in car.part_count():
+		alike = alike and every.get(r, {}) == PartSpot.anchor(car, snap, tables, r)
+	_check.call(alike, "work view: all parts' anchors in one pass are the same as one by one (%d)" % every.size())
 	_check.call(engine["normal"] == Vector3.UP and absf((engine["point"] as Vector3).x - 1.0) < 0.5
 			and alt["box"] == AABB(PartSpot.ON_ENGINE[0].position + Vector3(1, 0, 0), PartSpot.ON_ENGINE[0].size)
 			and alt["normal"] == Vector3.UP and bat["box"] != alt["box"]
@@ -98,7 +106,7 @@ func _test_spots(snap: Snapshot, tables: IdTables, row: Callable) -> void:
 			"work view: a square beside the car is seen from out there; the line to the eye leaves the body at its edge (%s, exit %s)" % [sq_pose, exit])
 
 
-func _test_view(root: Node, snap: Snapshot, tables: IdTables, row: Callable) -> void:
+func _test_view(root: Node, snap: Snapshot, tables: IdTables, row: Callable, open_van: Snapshot) -> void:
 	var world := WorldView.new()
 	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
 	world.set_id_tables(tables)
@@ -116,6 +124,19 @@ func _test_view(root: Node, snap: Snapshot, tables: IdTables, row: Callable) -> 
 	_check.call(not world_a.is_empty() and (world_a["point"] as Vector3).is_equal_approx(xf * (local["point"] as Vector3))
 			and view.part_anchor(UID + 7, seat).is_empty() and view.part_anchor(UID, -1).is_empty(),
 			"work view: a part's anchor in the world is where the vehicle is drawn (%s)" % [world_a])
+	# every part at once (VR hands): as one by one, worked out again when the vehicle changes
+	var all := view.part_anchors(UID)
+	var same := all.size() == car.part_count() and all.size() > 10
+	for r: int in all:
+		same = same and all[r] == view.part_anchor(UID, r)
+	var roofed_n: Vector3 = view.part_anchors(UID + 1)[1]["normal"]
+	view.apply(open_van, world)
+	var open_n: Vector3 = view.part_anchors(UID + 1)[1]["normal"]
+	view.apply(snap, world)
+	_check.call(same and view.part_anchors(UID + 7).is_empty() and not roofed_n.is_equal_approx(Vector3.UP)
+			and open_n.is_equal_approx(Vector3.UP)
+			and (view.part_anchors(UID + 1)[1]["normal"] as Vector3).is_equal_approx(roofed_n),
+			"work view: every part's anchor at once, as one by one; worked out again when the vehicle changes (%s, %s)" % [roofed_n, open_n])
 	# the highlight: over the part, kept with each snapshot, gone with -1
 	var lit := func() -> MeshInstance3D: return view.find_child("Highlight", true, false) as MeshInstance3D
 	view.highlight(UID, engine)
