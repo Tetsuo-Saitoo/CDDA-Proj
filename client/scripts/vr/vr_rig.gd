@@ -141,6 +141,11 @@ var drive := VrDrive.new()
 ## C6 vehicle work by hand (VrWork): the part an empty hand is on, lit. main.gd gives it part_anchors, highlight and the
 ## pull ray's LookRay.
 var work := VrWork.new()
+## ... and the wheel of CDDA's commands on a picked part with its panel (VrWorkMenu), on main's VehicleWorkSession
+## (main.work, set by main.gd).
+var work_menu := VrWorkMenu.new()
+var work_session: VehicleWorkSession = null: set = _set_work_session
+var _work_mine := false   # the session was opened from here: what it says is flashed
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -392,6 +397,7 @@ func _build() -> void:
 	wheel = VrWheel.new()
 	wheel.world = world
 	add_child(wheel)
+	add_child(work_menu)
 	looking = VrLook.new()
 	add_child(looking)
 	zoom = VrZoom.new()
@@ -800,6 +806,89 @@ func open_tray(c: XRController3D) -> bool:
 	return not src.is_empty() and tray.open(src, camera.global_transform)
 
 
+## C6 by hand: trigger on controller c with an empty hand on a part VrWork picked: the session opens on its vehicle
+## (CDDA's reach; else a note and a buzz) and reads that part, and the work wheel opens around the hand (VrWorkMenu).
+## False when the hand picked nothing.
+func open_work(c: XRController3D) -> bool:
+	var i := 0 if c == left else 1
+	var w: Dictionary = work.picked[i]
+	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() \
+			or not hands.holding(hand_id(c)).is_empty():
+		return false
+	var s := work_session
+	if s.uid != w["uid"] and not s.open(w["uid"]):
+		busy.flash(s.note)
+		feel(c, 0.3)
+		return true
+	_work_mine = true
+	work_menu.open(i, c.global_position, camera.global_transform, w["uid"], w["row"])
+	work.hold = true
+	s.select(w["row"])   # its read comes as `result` (the snapshot's stand-in at once without the game)
+	return true
+
+
+## The work wheel's trigger let go on hand `i`: a command the read allows goes to CDDA (VehicleWorkSession.send; the
+## wheel closes), a greyed one says why and buzzes, the middle keeps it up. False when it isn't that hand's.
+func work_release(i: int) -> bool:
+	if not work_menu.is_open() or work_menu.hand != i or not work_menu.armed:
+		return false
+	work_menu.armed = false
+	var cmd := work_menu.pointed
+	if cmd.is_empty():
+		return true
+	var c := left if i == 0 else right
+	if not work_menu.allowed(cmd):
+		busy.flash(work_menu.why_not(cmd))
+		feel(c, 0.3)
+		return true
+	var row := work_menu.row
+	close_work()
+	if work_session != null and not work_session.send(cmd, row):
+		feel(c, 0.3)   # `said` tells why nothing went
+	return true
+
+
+## The work wheel goes; the hands pick parts again. The session stays open for what CDDA answers.
+func close_work() -> void:
+	work_menu.close()
+	work.hold = false
+
+
+func _set_work_session(s: VehicleWorkSession) -> void:
+	if work_session != null and work_session.result.is_connected(work_menu.set_read):
+		work_session.result.disconnect(work_menu.set_read)
+		work_session.said.disconnect(_on_work_said)
+		work_session.closed.disconnect(_on_work_closed)
+		work_session.started.disconnect(_on_work_started)
+	work_session = s
+	_work_mine = false
+	if s != null:
+		s.result.connect(work_menu.set_read)
+		s.said.connect(_on_work_said)
+		s.closed.connect(_on_work_closed)
+		s.started.connect(_on_work_started)
+
+
+func _on_work_said(text: String) -> void:
+	if _work_mine and not text.is_empty():
+		busy.flash(text)
+
+
+## The session closed (another vehicle opened, the vehicle went or is out of reach): the wheel goes, saying why when
+## it was up; the hand's pick lit again (main's _on_work_closed put the light out).
+func _on_work_closed(_vehicle: int, why: String) -> void:
+	var shown := work_menu.is_open()
+	close_work()
+	work.relight()
+	if _work_mine and shown and not why.is_empty():
+		busy.flash(why)
+	_work_mine = false
+
+
+func _on_work_started(_cmd: String) -> void:
+	close_work()   # CDDA's activity runs: after "i" or "o" the rows move
+
+
 ## Car storage: trigger on controller c with an empty hand in a cargo space it can reach (VrDrive.cargo_at: an open
 ## lid's opening; `cells`: anywhere over a cargo square without a lid too): the tray lays out what CDDA lists in it
 ## (empty: a note). False when the hand holds something or is in none.
@@ -1089,6 +1178,8 @@ func release(c: XRController3D, n: String) -> void:
 		return
 	if n == "trigger_click" and drive.unpedal(0 if c == left else 1):
 		return   # a pedal let go
+	if n == "trigger_click" and work_release(0 if c == left else 1):
+		return   # the trigger that opened or armed the work wheel: let go on a command, it goes to CDDA
 	if n == "trigger_click" and wheel.release(0 if c == left else 1):
 		return   # the trigger that opened a wheel: letting go picks
 	if n != "grip_click":
@@ -1498,7 +1589,7 @@ func step(delta: float, inp: Dictionary) -> void:
 			_settings_changed()
 	elif panel.shown:   # a CDDA menu or prompt: the sticks pick in it, no moving
 		panel.nav(inp.get("move", Vector2.ZERO), inp.get("turn", Vector2.ZERO), delta)
-	elif wheel.active():
+	elif wheel.active() or work_menu.is_open():
 		pass   # a wheel around the hand: its stick points (update_wheel), no moving
 	elif VrDrive.driving_uid(world.snapshot) != 0:   # driving: no walking or teleport; the turn stick's y is a pedal
 		var tv: Vector2 = inp.get("turn", Vector2.ZERO)
@@ -1761,7 +1852,7 @@ func update_panel(delta: float) -> void:
 ## The settings menu or a CDDA menu / prompt (panel, or a wheel around the hand) is up: the triggers and sticks
 ## work it, not the world.
 func ui_open() -> bool:
-	return menu_open() or (panel != null and panel.shown) or (wheel != null and wheel.active())
+	return menu_open() or (panel != null and panel.shown) or (wheel != null and wheel.active()) or work_menu.is_open()
 
 
 ## Radial menus, per frame: the wheel's drawing and pointing (the stick of the hand that opened it, or that hand's
@@ -1773,9 +1864,17 @@ func update_wheel() -> void:
 	var free: Array[bool] = [false, false]
 	for i in 2:
 		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
-				and not menu_open() and not panel.shown and fire.target_at(at[i], null).is_empty()
+				and not menu_open() and not panel.shown and not work_menu.is_open() and fire.target_at(at[i], null).is_empty()
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
 	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() and menus_by_eye else {})
+	if work_menu.is_open():   # C6: the work wheel points with its hand or stick; it goes with the hand, a menu or the session
+		var c := left if work_menu.hand == 0 else right
+		if work_session == null or work_session.uid != work_menu.uid or world.snapshot == null or hands == null \
+				or menu_open() or panel.shown or not hands.holding(HAND_IDS[work_menu.hand]).is_empty() \
+				or c.global_position.distance_to(work_menu.center) > VrWorkMenu.AWAY_M:
+			close_work()
+		else:
+			work_menu.point(c.global_position, _stick(c))
 
 
 ## Opens the settings menu in front of the head, or closes it and saves the settings.
@@ -2113,6 +2212,12 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		elif n == "by_button" or (n == "menu_button" and c == right):
 			wheel.cancel()
 		return
+	if work_menu.is_open():   # C6: the work wheel: its hand's trigger arms it (letting go sends), B / Y close it
+		if n == "trigger_click" and work_menu.hand == (0 if c == left else 1):
+			work_menu.armed = true
+		elif n == "by_button" or (n == "menu_button" and c == right):
+			close_work()
+		return
 	if world.snapshot == null:
 		return
 	if looking.held and n == "trigger_click":   # the look ring up: the main trigger teleports there (cheat), else a buzz
@@ -2152,7 +2257,7 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			use_stair(c, s)
 		elif c == main_ctrl() and gaze_throw(c):
 			pass   # an item in the main hand thrown where the tracked eyes look
-		elif not pull_with(c) and not open_tray(c) and not open_cargo(c, true):
+		elif not pull_with(c) and not open_tray(c) and not open_cargo(c, true) and not open_work(c):
 			_feel(c)
 		return
 	if n == "grip_click":
