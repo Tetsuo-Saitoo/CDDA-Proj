@@ -5,8 +5,8 @@ is a curses loop the client can't answer, so the client shows its own view and a
 be done (the read), and to do it (the action). CDDA decides both: the checks, texts and times come from
 `veh_interact`'s own code, run off-screen.
 
-Status (2026-11-23): the **read** and the **action** are built and frozen as written here for repair, remove
-and install. Mend and refill are planned and not frozen; see the end.
+Status (2026-11-23): the **read** and the **action** are built and frozen as written here for repair, remove,
+install, mend and refill.
 
 ## The read
 
@@ -154,10 +154,10 @@ queue with the other queued actions (`ui_requests.md`) and runs at the main loop
 | Key | Type | |
 |---|---|---|
 | `vehicle` | int, required | The snapshot's `vehicles[].uid`. |
-| `part` | int, required for `r` and `o` | A row of that vehicle's `parts` (0..4095), as the read's `row`. Left out for `i`. |
+| `part` | int, required for `r`, `o`, `m` and `f` | A row of that vehicle's `parts` (0..4095), as the read's `row`. Left out for `i`. |
 | `vpart` | int, required | That part's type as the read (or the snapshot row) gave it: the `vpart` id-table index (1..2^20). |
 | `mount` | Array, required | That part's mount as the read gave it: `[x, y]`, two ints (each −1023..1023). |
-| `cmd` | String, required | `"r"` repair (replaces a broken part), `"o"` remove, or `"i"` install (see "Install": `vpart` and `mount` are then the type and the square). |
+| `cmd` | String, required | `"r"` repair (replaces a broken part), `"o"` remove, `"i"` install (see "Install": `vpart` and `mount` are then the type and the square), `"m"` mend a fault or `"f"` refill (see "Mend and refill"). |
 | `tag` | int, optional | 1..2^31−1: the client's number for this action, answered by one `work_result` event (`events.md`) when the action has run. |
 
 `vpart` and `mount` name the part a second time. Rows move up when a part comes off, so a `part` taken from a
@@ -264,6 +264,27 @@ questions on the way are real requests:
 The new part is the vehicle's last part row. CDDA uses up the components and tools when the work finishes and
 checks them again then ("You don't meet the requirements to install the X." as a message, nothing installed).
 
-## Planned, not frozen
-- **Mend and refill**: `cmd` `"m"` (CDDA's mend `menu`, then its own activity) and `"f"` (`item_select` for what
-  to refill from).
+## Mend and refill
+
+Frozen 2026-11-23. The read needs nothing new: its `m` and `f` commands say per part whether a fault can be mended
+or the part refilled now (`ok`, `reason`, `text`).
+
+`queue_vehicle_work(d)` with `cmd` `"m"` or `"f"` takes the same keys as repair and remove (`vehicle`, `part`,
+`vpart`, `mount`, optionally `tag`) and the same row + type + mount check. The vehicle-level refusals and the
+yes / no `popup` for someone else's vehicle are theirs too. What follows is CDDA's own:
+
+**Mend** (`"m"`). Refused with the sentence as a `message` and as the event's text: CDDA's own (the read's
+`text`: "Your morale is too low to mend…", "It's too dark to see what you are doing…", "No faulty parts require
+mending.", "You can't mend stuff while driving."), or "The X doesn't have any faults to mend." Otherwise CDDA
+opens its `menu` "Mend which fault?": one entry per fix it offers for the part's faults, with its description; a
+fix the player can't do is a disabled entry. A fix picked starts CDDA's mending activity (`ACT_MEND_ITEM` in
+`get_held().activity`), which takes that fix's time: `work_result` `amount` 1. The menu cancelled: `amount` 0,
+text "". When the activity ends the fault is gone from the read (`flags` bit 4, `faults`).
+
+**Refill** (`"f"`). Refused with CDDA's sentence ("You can't refill a moving vehicle.", "No parts can currently
+be refilled.") or "The X can't be refilled." Otherwise CDDA asks what to refill from: an `item_select` request
+"Refill X" listing what is at hand that fits, carried or within one square: for a tank a watertight container
+holding one liquid the tank takes, for another fuel store the fuel it takes. One picked starts CDDA's vehicle
+activity, which fills at once: `amount` 1, and CDDA's messages ("You refill the V's X.", "You completely refill
+the V's X.", "There's some left over!", "You refuel the V's X."). Nothing picked: `amount` 0, text "". The
+read's `fill` shows the new amount afterwards.

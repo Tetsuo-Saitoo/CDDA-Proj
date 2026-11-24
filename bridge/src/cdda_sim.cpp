@@ -1023,7 +1023,8 @@ bool CddaSim::queue_vehicle_work( const Dictionary &d )
     const int64_t mount_x = mount[0];
     const int64_t mount_y = mount[1];
     if( vehicle <= 0 || vehicle > static_cast<int64_t>( fp3d::max_item_uid ) || ( !install && part < 0 ) ||
-        part > fp3d::max_work_part_row || ( cmd != "r" && cmd != "o" && !install ) || vpart < 1 ||
+        part > fp3d::max_work_part_row ||
+        ( cmd != "r" && cmd != "o" && cmd != "m" && cmd != "f" && !install ) || vpart < 1 ||
         vpart > static_cast<int64_t>( fp3d::max_work_vpart ) || mount_x < -fp3d::max_work_mount ||
         mount_x > fp3d::max_work_mount || mount_y < -fp3d::max_work_mount || mount_y > fp3d::max_work_mount ) {
         return false;
@@ -1034,7 +1035,7 @@ bool CddaSim::queue_vehicle_work( const Dictionary &d )
     a.vpart = static_cast<uint32_t>( vpart );
     a.mount_x = static_cast<int>( mount_x );
     a.mount_y = static_cast<int>( mount_y );
-    a.cmd = install ? 'i' : cmd == "r" ? 'r' : 'o';
+    a.cmd = install ? 'i' : cmd == "r" ? 'r' : cmd == "m" ? 'm' : cmd == "f" ? 'f' : 'o';
     Variant t;
     if( !field( d, "tag", Variant::INT, t ) ) {
         return false;
