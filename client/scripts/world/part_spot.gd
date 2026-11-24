@@ -58,7 +58,8 @@ static func roofed(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables) -> D
 	var out := {}
 	for i in veh.part_count():
 		var j := i * Snapshot.VPART_STRIDE
-		if veh.parts[j + 4] & Snapshot.VPART_FILLER == 0 				and VehicleView.kind_of(VehicleView.def_of(tables, snap, veh.parts[j + 2]), veh.parts[j + 4]) == K.ROOF:
+		if veh.parts[j + 4] & Snapshot.VPART_FILLER == 0 \
+				and VehicleView.kind_of(VehicleView.def_of(tables, snap, veh.parts[j + 2]), veh.parts[j + 4]) == K.ROOF:
 			out[Vector2i(veh.parts[j], veh.parts[j + 1])] = true
 	return out
 
