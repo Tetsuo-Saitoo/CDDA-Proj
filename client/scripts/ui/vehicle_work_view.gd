@@ -182,6 +182,14 @@ static func width_for(window_w: float) -> float:
 	return clampf(window_w * 0.45, MIN_W, MAX_W)
 
 
+## The middle of the window left of the view, as a share of the window's width (where the work camera puts the
+## part: lead-world's work_cam.frame_x).
+static func free_center(window_w: float) -> float:
+	if window_w <= 0.0:
+		return 0.3
+	return clampf((window_w - width_for(window_w) - 16.0) * 0.5 / window_w, 0.1, 0.5)
+
+
 ## A read for this vehicle came (VehicleWorkData.clean's Dictionary): shown. One for another vehicle is ignored.
 ## False when it was ignored or it closes the view (the vehicle went or is out of reach: `ok` false with that
 ## error; main says why). In install mode only its install section for install_at is new to the list.

@@ -591,7 +591,7 @@ func query_vehicle_work(uid: int, part := -1, install := Vector2i.MAX, vpart := 
 	return id
 
 
-## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove) on part row `part` of vehicle `uid`,
+## C6: start `cmd` (VehicleWorkData.ACTION_CMDS: "r" repair, "o" remove, "m" mend, "f" refill) on part row `part` of vehicle `uid`,
 ## which holds part `vpart` at `mount` (the read's part entry: the sim refuses a row that moved, with
 ## VehicleWorkData.MOVED); or "i": install a part of type `vpart` on square `mount` (`part` -1, not sent). contracts/vehicle_work.md "The action"; the sim checks it all again. Returns the
 ## action's tag, answered by one `work_result` event (VehicleWorkData.work_result), or 0 when refused before it
