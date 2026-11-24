@@ -138,6 +138,9 @@ var riding := VrRide.new()
 ## Driving by hand (VrDrive): the wheel, the triggers and the turn stick as pedals, lids by their handles. main.gd
 ## gives it the interiors (VehicleView.interior, open_lid) and CDDA's queue.
 var drive := VrDrive.new()
+## C6 vehicle work by hand (VrWork): the part an empty hand is on, lit. main.gd gives it part_anchors, highlight and the
+## pull ray's LookRay.
+var work := VrWork.new()
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -598,6 +601,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 	if hands == null:
 		pack.close("gone")
 		tray.close("gone")
+		work.clear()
 		slots.hands = null
 		slots.refresh()
 		for i in 2:
@@ -629,11 +633,13 @@ func update_hands(delta: float, all_hands := false) -> void:
 			var pt := {}   # the open pack goes first, the tray, then what the hand touches, then what its pull ray meets
 			var tt := {}
 			var pointing := false
+			var looks := false   # the hand is free for a vehicle's part (VrWork): nothing else of the rig's under it
 			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not ui_open() \
 					and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
 				tt = tray.target_at(c.global_position) if pt.is_empty() else {}
 				var st := slot_take(i, pt, tt)
+				looks = st == null
 				if tt.get("kind") == "item":
 					t = tt
 				elif pt.is_empty() and tt.is_empty() and st == null:
@@ -650,8 +656,11 @@ func update_hands(delta: float, all_hands := false) -> void:
 			tray.hover(i, tt)
 			hands.hover(id, t)
 			_show_pull_ray(i, t if pointing else {})
+			work.update(i, c.global_position, -c.global_basis.z,
+					looks and t.is_empty() and pt.is_empty() and tt.is_empty() and not drive.holds(i), pointing, world.snapshot)
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
+		work.update(i, c.global_position, Vector3.ZERO, false, false, world.snapshot)
 		_show_pull_ray(i, {})
 		_pointed[i] = {}
 		_ray_wait[i] = 0.0
