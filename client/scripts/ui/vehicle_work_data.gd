@@ -355,6 +355,36 @@ static func fill_text(f: Dictionary) -> String:
 	return "%s %d%s" % [what, f["now"], ("/%d" % f["max"]) if f["max"] > 0 else ""]
 
 
+## A part of the read in words, as the work view and VR's panel list it: name, condition, broken, faults, fill.
+static func row_text(p: Dictionary) -> String:
+	var f: int = p["flags"]
+	var s := "%s  %d%%" % [p["name"], p["hp"]]
+	if (f & BROKEN) != 0:
+		s += "  broken"
+	if not (p["faults"] as PackedStringArray).is_empty():
+		s += "  (" + ", ".join(p["faults"]) + ")"
+	var fill := fill_text(p.get("fill", {}))
+	if not fill.is_empty():
+		s += "  " + fill
+	return s
+
+
+## An install_rows entry in words: its name, and why it can't go in now.
+static func type_text(t: Dictionary) -> String:
+	return t["name"] + ("" if t["have"] else "  (missing items)") + ("" if t["fits"] else "  (doesn't fit here)")
+
+
+## The install square `at` in words: the parts of read `r` already on it, or that it is empty.
+static func square_text(r: Dictionary, at: Vector2i) -> String:
+	var names := PackedStringArray()
+	for p: Dictionary in r.get("parts", []):
+		if p["mount"] == at:
+			names.append(p["name"])
+	if names.is_empty():
+		return "Install on an empty square"
+	return "Install with: " + ", ".join(names.slice(0, 3)) + (" ..." if names.size() > 3 else "")
+
+
 ## The read's `install` section: {mount, reason, text, types [{vpart, bits}], types_more, selected (an "i" command
 ## plus `vpart`; {} for none)}; {} when there is none or it isn't whole. A type that isn't whole is left out.
 static func _install(v: Variant) -> Dictionary:
