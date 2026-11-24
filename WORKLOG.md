@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — TASKS.md: the C6 vehicle work entry had been pasted into one line nine times over by merges; now one entry with the newest of each part (bridge done, hood and framing, the work view's install, mend and refill), and what is still to be tried live.
 - 2026-11-23 — Bridge: the last two pieces of hands-on car work (C6): mending a fault and refilling a tank or fuel store. The game shows its own list of fixes, or asks what to refill from, and does the work as it always does. Passes on Windows and Linux.
 - 2026-11-23 — Vehicle work view: an engine bay without a roof gets a hood that opens; a square can be highlighted and looked at for installing a part (also one beside the car); the work camera stays in front of walls, and what it looks at sits left of the work panel.
 - 2026-11-23 — Hood and work camera framing tried in a running game (lead-qa): the range test now checks that the part you select sits left of the work view's panel, that the hood view lifts the car's hood and the next view shuts it, and that install mode marks its square. Run on lead-world's, lead-ui's and lead-bridge's branches (mend and refill included) merged together: all ten client suites and the six bridge tests pass. Mending and refilling themselves could not be tried in a running game: the test car has no fault and a full tank.
