@@ -39,6 +39,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_gate()
 	_test_install(root)
 	_test_mend_refill()
+	_test_frame()
 
 
 ## The mock with a car next to the player: part 0 a frame and 1 another part on the square east of the player
@@ -431,3 +432,14 @@ func _test_mend_refill() -> void:
 			{"vehicle": UID, "part": 0, "vpart": 412, "mount": [0, 0], "cmd": "f", "tag": tf}],
 			"vehicle work mend and refill: m and f queued with the part's row, type and mount; no row refused (%s)"
 			% [sim.queued])
+
+
+## The work camera's frame_x: the middle of the window left of the view, at 800, 1280 and 1920 wide.
+func _test_frame() -> void:
+	var at := [VehicleWorkView.free_center(800.0), VehicleWorkView.free_center(1280.0), VehicleWorkView.free_center(1920.0)]
+	var left_of_view := true
+	for w: float in [800.0, 1280.0, 1920.0]:
+		left_of_view = left_of_view and VehicleWorkView.free_center(w) * w < w - VehicleWorkView.width_for(w)
+	_check.call(absf(at[0] - 0.265) < 0.01 and absf(at[1] - 0.2906) < 0.01 and absf(at[2] - 0.3604) < 0.01
+			and left_of_view and VehicleWorkView.free_center(0.0) == 0.3,
+			"vehicle work camera frame: the part centred left of the view (%s)" % [at])

@@ -1775,6 +1775,8 @@ func _open_work() -> void:
 	_work_carried = world.snapshot.carried
 	_work_again = false
 	_work_gate = VehicleWorkData.Gate.new()
+	if work_cam != null and is_instance_valid(work_cam) and "frame_x" in work_cam:   # the part left of the view
+		work_cam.frame_x = VehicleWorkView.free_center(get_viewport().get_visible_rect().size.x)
 	if _work_busy():
 		_work_gate.changed()   # work runs: the list read now may be old when it ends
 	work_view.fit()
@@ -1846,7 +1848,9 @@ func _on_work_part(row: int) -> void:
 
 
 func _on_work_view(view: String) -> void:
-	call_if(vehicles_view, "open_hood", [work_view.uid, view == "hood"])
+	var hood: Variant = call_if(vehicles_view, "open_hood", [work_view.uid, view == "hood"])
+	if view == "hood" and hood == false:
+		work_view.say("This vehicle has no engine bay to open.")
 	call_if(work_cam, "view", [work_view.uid, view])
 
 
@@ -1952,10 +1956,12 @@ func _on_work_closed() -> void:
 	call_if(work_cam, "leave", [])
 
 
-## Calls `method` on `o` when it has one (another lead's call that may not have landed yet); nothing otherwise.
-static func call_if(o: Object, method: String, args: Array) -> void:
+## Calls `method` on `o` when it has one (another lead's call that may not have landed yet) and returns what it
+## returns; null otherwise.
+static func call_if(o: Object, method: String, args: Array) -> Variant:
 	if o != null and is_instance_valid(o) and o.has_method(method):
-		o.callv(method, args)
+		return o.callv(method, args)
+	return null
 
 
 func _open_cargo() -> bool:
