@@ -4,8 +4,8 @@ extends RefCounted
 ## hand is on. A hand inside a part's drawn spot (VehicleView.part_anchors: its middle and size, worked out once a
 ## snapshot) picks it, the one it is most in for its size; with nothing touched and the trigger half pressed, the
 ## pull ray picks the part nearest where it meets the vehicle. The picked part is lit (VehicleView.highlight, one at a
-## time: the right hand's, else the left's). Nothing goes to CDDA here; the command wheel on a picked part comes with
-## lead-ui's VehicleWorkSession. Reach is CDDA's (VehicleWorkData.in_reach: a part of the vehicle next to the player);
+## time: the right hand's, else the left's). Nothing goes to CDDA here; the trigger on a picked part opens the command
+## wheel (VrWorkMenu, VrRig.open_work) on lead-ui's VehicleWorkSession. Reach is CDDA's (VehicleWorkData.in_reach: a part of the vehicle next to the player);
 ## not while driving.
 
 const TOUCH_M := 0.08       # m past a part's half size a hand still touches it
@@ -22,6 +22,7 @@ var ray := Callable()         # (origin, dir, max_m) -> Dictionary: LookRay.cast
 
 var picked: Array = [{}, {}]  # hand (0 left, 1 right) -> {uid, row} it is on; {} none
 var lit: Array = []           # [uid, row] highlighted; [] none
+var hold := false             # the work wheel is up on a pick (VrRig): picks and light stay
 var _due: Array[int] = [0, 0]
 
 
@@ -80,7 +81,7 @@ func nearest(uid: int, p: Vector3, snap: Snapshot) -> Dictionary:
 ## not free, or driving: nothing picked at once. Then the light follows.
 func update(i: int, p: Vector3, dir: Vector3, free: bool, pointing: bool, snap: Snapshot,
 		now_ms := Time.get_ticks_msec()) -> void:
-	if i < 0 or i > 1:
+	if i < 0 or i > 1 or hold:
 		return
 	if not free or snap == null or VrDrive.driving_uid(snap) != 0:
 		picked[i] = {}
@@ -100,6 +101,12 @@ func update(i: int, p: Vector3, dir: Vector3, free: bool, pointing: bool, snap: 
 func clear() -> void:
 	picked = [{}, {}]
 	_due = [0, 0] as Array[int]
+	_light()
+
+
+## The light again (another highlight put it out).
+func relight() -> void:
+	lit = []
 	_light()
 
 
