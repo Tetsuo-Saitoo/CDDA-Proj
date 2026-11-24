@@ -126,7 +126,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    the menu opens on its **Time** row (trigger: go on; also pauses). Driving (at a car's controls, CDDA's ^): grip the
    wheel's rim with one or both hands and turn it to steer; the right trigger (main hand) speeds up, the left slows
    down (or right stick forward / back); no walking or teleport while driving. Grip a trunk or box lid's handle and
-   swing it open or shut; let go open, what it holds is laid out in front (trigger in an open trunk, or over a truck
+   swing it open or shut (a car's hood too); let go open, what it holds is laid out in front (trigger in an open trunk, or over a truck
    bed, lays it out again); let go of an item over an open trunk to put it in. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
