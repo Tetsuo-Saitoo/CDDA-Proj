@@ -820,8 +820,10 @@ func open_work(c: XRController3D) -> bool:
 		busy.flash(s.note)
 		feel(c, 0.3)
 		return true
-	_work_mine = true
 	work_menu.open(i, c.global_position, camera.global_transform, w["uid"], w["row"])
+	if not work_menu.is_open():
+		return false   # a hand or head pose that isn't finite: nothing up, the picks go on
+	_work_mine = true
 	work.hold = true
 	s.select(w["row"])   # its read comes as `result` (the snapshot's stand-in at once without the game)
 	return true
@@ -848,10 +850,12 @@ func work_release(i: int) -> bool:
 	return true
 
 
-## The work wheel goes; the hands pick parts again. The session stays open for what CDDA answers.
+## The work wheel goes; the hands pick parts again, the light back on the hand's pick (the session's select may have
+## moved it to the other hand's part). The session stays open for what CDDA answers.
 func close_work() -> void:
 	work_menu.close()
 	work.hold = false
+	work.relight()
 
 
 func _set_work_session(s: VehicleWorkSession) -> void:
@@ -879,7 +883,6 @@ func _on_work_said(text: String) -> void:
 func _on_work_closed(_vehicle: int, why: String) -> void:
 	var shown := work_menu.is_open()
 	close_work()
-	work.relight()
 	if _work_mine and shown and not why.is_empty():
 		busy.flash(why)
 	_work_mine = false

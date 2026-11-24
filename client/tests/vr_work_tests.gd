@@ -196,6 +196,7 @@ func _test_rig_menu(root: Node, snap: Snapshot, veh: Snapshot.Vehicle) -> void:
 	var s := VehicleWorkSession.new()
 	s.world = world
 	rig.work_session = s
+	s.part_focused.connect(func(row: int) -> void: _lights.append([-1, row]))   # main moves the one light (select)
 	var m := rig.work_menu
 	_lights.clear()
 	var at := Vector3(0.0, 1.1, 0.0)
@@ -207,7 +208,7 @@ func _test_rig_menu(root: Node, snap: Snapshot, veh: Snapshot.Vehicle) -> void:
 			and m.allowed("o") and w.hold
 	rig.release(rig.right, "trigger_click")
 	rig.update_hands(0.016, true)
-	var stays: bool = m.is_open() and not m.armed and w.picked[1] == {"uid": UID, "row": 0} and _lights == [[UID, 0]]
+	var stays: bool = m.is_open() and not m.armed and w.picked[1] == {"uid": UID, "row": 0} and _lights == [[UID, 0], [-1, 0]]
 	var b0: int = rig.buzzes[1]
 	rig.right.global_position = at + Vector3(0.0, 0.1, 0.0)
 	rig.update_wheel()
@@ -230,7 +231,7 @@ func _test_rig_menu(root: Node, snap: Snapshot, veh: Snapshot.Vehicle) -> void:
 	rig.right.global_position = at
 	rig.press(rig.right, "trigger_click")
 	rig.press(rig.right, "by_button")
-	var cancel: bool = not m.is_open() and not w.hold
+	var cancel: bool = not m.is_open() and not w.hold and _lights.back() == [UID, 0]   # the hand's pick lit again
 	rig.press(rig.right, "trigger_click")
 	rig.release(rig.right, "trigger_click")
 	var far := _snap(veh, Vector3i(20, 20, 0), false)
