@@ -756,6 +756,9 @@ func _start_vr() -> void:
 	vr.drive.interior = vehicles_view.interior   # VR driving by hand: the wheel and the lids (VrDrive)
 	vr.drive.open_lid = vehicles_view.open_lid
 	vr.drive.open_hood = vehicles_view.open_hood   # C6: the hood by its handle
+	vr.work.anchors = vehicles_view.part_anchors   # C6 by hand: the part an empty hand is on, lit (VrWork)
+	vr.work.highlight = vehicles_view.highlight
+	vr.work.ray = func(o: Vector3, d: Vector3, m: float) -> Dictionary: return hands.look_ray.cast(o, d, m, false)
 	vr.drive.can_reach = vehicles_view.can_reach   # car storage by hand: the tray on an open trunk (VrDrive.cargo_at)
 	vr.drive.square_at = vehicles_view.square_at
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
