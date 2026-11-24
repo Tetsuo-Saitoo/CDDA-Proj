@@ -35,11 +35,42 @@ const MAX_MOUNT := 1024      # a mount further out than this is no vehicle's squ
 static func anchor(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, row: int) -> Dictionary:
 	if veh == null or row < 0 or row >= veh.part_count():
 		return {}
+	return _anchor(veh, snap, tables, row, cells_of(veh), null)
+
+
+## anchor() for every part of `veh`: {row: anchor}, gap fillers left out. One pass over its parts for its cells and
+## roofs (anchor() makes those per call): for a hand looking over all of them (lead-vr).
+static func anchors(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables) -> Dictionary:
+	var out := {}
+	if veh == null:
+		return out
+	var cells := cells_of(veh)
+	var roofs := roofed(veh, snap, tables)
+	for row in veh.part_count():
+		var a := _anchor(veh, snap, tables, row, cells, roofs)
+		if not a.is_empty():
+			out[row] = a
+	return out
+
+
+## The cells of `veh` a roof covers: {Vector2i: true}.
+static func roofed(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables) -> Dictionary:
+	var out := {}
+	for i in veh.part_count():
+		var j := i * Snapshot.VPART_STRIDE
+		if veh.parts[j + 4] & Snapshot.VPART_FILLER == 0 \
+				and VehicleView.kind_of(VehicleView.def_of(tables, snap, veh.parts[j + 2]), veh.parts[j + 4]) == K.ROOF:
+			out[Vector2i(veh.parts[j], veh.parts[j + 1])] = true
+	return out
+
+
+## anchor() with the vehicle's cells, and its roofed cells (null: looked up for this part alone).
+static func _anchor(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, row: int, cells: Dictionary,
+		roofs: Variant) -> Dictionary:
 	var j := row * Snapshot.VPART_STRIDE
 	var state := veh.parts[j + 4]
 	if state & Snapshot.VPART_FILLER != 0:
 		return {}
-	var cells := cells_of(veh)
 	var m := Vector2i(veh.parts[j], veh.parts[j + 1])
 	var def := VehicleView.def_of(tables, snap, veh.parts[j + 2])
 	var kind := VehicleView.kind_of(def, state)
@@ -58,7 +89,8 @@ static func anchor(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, row:
 		var side := 1.0 if not cells.has(m + Vector2i(0, 1)) else (-1.0 if not cells.has(m - Vector2i(0, 1)) else 0.0)
 		box.position.z += side * VehicleView.WHEEL_OUT
 	box.position += Vector3(m.x, 0.0, m.y)
-	var up := above and (kind in FROM_ABOVE or not covered(veh, snap, tables, m))
+	var roof: bool = (roofs as Dictionary).has(m) if roofs is Dictionary else covered(veh, snap, tables, m)
+	var up := above and (kind in FROM_ABOVE or not roof)
 	return {"box": box, "point": box.get_center(), "normal": Vector3.UP if up else out_of(cells, m),
 			"size": maxf(box.size.x, maxf(box.size.y, box.size.z)), "cell": m}
 

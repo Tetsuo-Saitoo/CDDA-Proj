@@ -109,6 +109,7 @@ class Car:
 	var marks: Node3D        # their blocks and signs (two MultiMeshInstance3D); null while none
 	var paint := DEFAULT_COLOR   # its body's colour
 	var interior: CarInterior    # a child of node while near the camera (interiors()); null else
+	var spots: Variant = null    # PartSpot.anchors of veh (mount grid), worked out when first asked; null: not yet
 
 
 var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
@@ -284,6 +285,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 				car.signed = car.marked.filter(func(sq: Vector3i) -> bool: return not body.has(sq))
 				_mark(car, world)
 			car.veh = veh
+			car.spots = null
 			car.mid = _mid(veh)
 			cars[veh.uid] = car
 			_show_marks(car)
@@ -481,12 +483,33 @@ func open_lid(uid: int, part: int, open: bool) -> bool:
 ## size (m)} in the world; {} when the vehicle isn't drawn or the row is no part of its own.
 func part_anchor(uid: int, row: int) -> Dictionary:
 	var car: Car = _cars.get(uid)
-	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
+	if car == null or car.node == null or car.veh == null or _world == null or not is_instance_valid(_world):
 		return {}
-	var a := PartSpot.anchor(car.veh, _snap, _world.tables, row)
-	if a.is_empty():
+	var a: Dictionary = _spots(car).get(row, {})
+	return _in_world(a, car.node.global_transform) if not a.is_empty() else {}
+
+
+## part_anchor for every part of vehicle `uid`: {row: {point, normal, size}} in the world; {} when it isn't drawn.
+## Worked out once per snapshot in its mount grid, only carried to where it is drawn now per call (VR hands, often).
+func part_anchors(uid: int) -> Dictionary:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or car.veh == null or _world == null or not is_instance_valid(_world):
 		return {}
 	var xf := car.node.global_transform
+	var out := {}
+	var spots := _spots(car)
+	for row: int in spots:
+		out[row] = _in_world(spots[row], xf)
+	return out
+
+
+func _spots(car: Car) -> Dictionary:
+	if car.spots == null:
+		car.spots = PartSpot.anchors(car.veh, _snap, _world.tables)
+	return car.spots
+
+
+static func _in_world(a: Dictionary, xf: Transform3D) -> Dictionary:
 	return {"point": xf * (a["point"] as Vector3), "normal": (xf.basis * (a["normal"] as Vector3)).normalized(),
 			"size": a["size"]}
 

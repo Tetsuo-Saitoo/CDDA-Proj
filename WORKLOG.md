@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-23 — VR: a car's hood opens and shuts by its handle, like the trunk lids (lead-vr; first piece of hands-on vehicle work). Not tried in a headset yet.
+- 2026-11-23 — Vehicle work view: where every part of a car is, for VR hands, is worked out once per update instead of per part and per look.
 - 2026-11-23 — TASKS.md: the C6 vehicle work entry had been pasted into one line nine times over by merges; now one entry with the newest of each part (bridge done, hood and framing, the work view's install, mend and refill), and what is still to be tried live.
 - 2026-11-23 — Bridge: the last two pieces of hands-on car work (C6): mending a fault and refilling a tank or fuel store. The game shows its own list of fixes, or asks what to refill from, and does the work as it always does. Passes on Windows and Linux.
 - 2026-11-23 — Vehicle work view: an engine bay without a roof gets a hood that opens; a square can be highlighted and looked at for installing a part (also one beside the car); the work camera stays in front of walls, and what it looks at sits left of the work panel.
