@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-23 — Vehicle work view: an engine bay without a roof gets a hood that opens; a square can be highlighted and looked at for installing a part (also one beside the car); the work camera stays in front of walls, and what it looks at sits left of the work panel.
 - 2026-11-23 — Tester AppImage test-2026-11-23 (private test repo, pre-release, not a release) from main b229a7c + fork e338545, after the QA lead's GO (smoke, nine Linux live suites, personal-strings check): cars, car storage, VR driving by hand, vehicle work (repair/remove). Nothing tried in a headset.
 - 2026-11-23 — Bridge: installing a car part is only looked at for squares on the car or right next to it. Passes on Windows and Linux.
 - 2026-11-23 — Bridge: looking at a jumper cable in the car work view no longer touches the battery at the cable's other end. Passes on Windows and Linux.

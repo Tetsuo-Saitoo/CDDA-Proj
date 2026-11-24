@@ -491,8 +491,9 @@ func part_anchor(uid: int, row: int) -> Dictionary:
 			"size": a["size"]}
 
 
-## Where the work camera (WorkCamera) stands for `what` ("part" with `row`, or one of PartSpot.VIEWS): [eye, at] in
-## vehicle `uid`'s mount grid (drawn() carries it to the world); [] when it isn't drawn or there's nothing to see.
+## Where the work camera (WorkCamera) stands for `what` ("part" with `row`, or one of PartSpot.VIEWS): [eye, at,
+## exit] in vehicle `uid`'s mount grid (PartSpot.work_pose; drawn() carries it to the world); [] when it isn't drawn
+## or there's nothing to see.
 func work_pose(uid: int, what: String, row := -1) -> Array:
 	var car: Car = _cars.get(uid)
 	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
@@ -500,11 +501,36 @@ func work_pose(uid: int, what: String, row := -1) -> Array:
 	return PartSpot.work_pose(car.veh, _snap, _world.tables, what, row)
 
 
+## work_pose for square `mount` of vehicle `uid` (C6 install mode; PartSpot.square_pose).
+func work_square_pose(uid: int, mount: Vector2i) -> Array:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null:
+		return []
+	return PartSpot.square_pose(car.veh, mount)
+
+
 ## C6: shows part `row` of vehicle `uid` (a see-through tint over where it is drawn, seen through what is in front
-## of it; it follows the vehicle and is placed again with each snapshot); -1: none.
+## of it; it follows the vehicle and is placed again with each snapshot); -1: none. One highlight: this and
+## highlight_square replace each other.
 func highlight(uid: int, row: int) -> void:
 	_highlight = [uid, row] if row >= 0 else []
 	_place_highlight()
+
+
+## C6 install mode: shows square `mount` of vehicle `uid` (its mount grid; it may hold no part yet, as beside the
+## vehicle), from the floor to the roof line; Vector2i.MAX: none.
+func highlight_square(uid: int, mount: Vector2i) -> void:
+	_highlight = [uid, mount] if mount != Vector2i.MAX and PartSpot.near_enough(mount) else []
+	_place_highlight()
+
+
+## C6: opens or closes the hood over vehicle `uid`'s engine bay (CarInterior.hood_of; the client's own); false when
+## none is drawn (no open bay, or the vehicle is too far for its interior).
+func open_hood(uid: int, open: bool) -> bool:
+	var car: Car = _cars.get(uid)
+	if car == null or car.interior == null or not is_instance_valid(car.interior):
+		return false
+	return car.interior.open_lid(CarInterior.HOOD, open)
 
 
 func _place_highlight() -> void:
@@ -518,7 +544,8 @@ func _place_highlight() -> void:
 	var car: Car = _cars.get(_highlight[0])
 	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
 		return
-	var a := PartSpot.anchor(car.veh, _snap, _world.tables, _highlight[1])
+	var a := PartSpot.square_anchor(car.veh, _highlight[1]) if _highlight[1] is Vector2i \
+			else PartSpot.anchor(car.veh, _snap, _world.tables, _highlight[1])
 	if a.is_empty():
 		return
 	var box: AABB = (a["box"] as AABB).grow(0.03)

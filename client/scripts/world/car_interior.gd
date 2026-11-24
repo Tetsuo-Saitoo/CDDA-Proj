@@ -5,7 +5,8 @@ extends Node3D
 ## on its floor). From CDDA's own parts: at the first controls drawn, the steering wheel (turned by how far CDDA
 ## steers) and the instrument cluster (CarDash); on each lockable, covered container drawn as a box or a half board
 ## (has_lid: trunks, boxes, a bin), a hinged lid over a dark opening, hinged on the side toward the vehicle's middle;
-## on a glovebox, a door in the dashboard behind its square (glove_doors). No contents yet. lead-vr's anchors (anchors()): "Wheel" with "WheelSpin" (spins about its local z; meta radius_m,
+## on a glovebox, a door in the dashboard behind its square (glove_doors); a hood over an open engine bay (hood_of,
+## "Hood" with "Lid", the same meta; C6). No contents yet. lead-vr's anchors (anchors()): "Wheel" with "WheelSpin" (spins about its local z; meta radius_m,
 ## part), "Dash", "Cargo_<part>" with "Lid" (the pivot on the hinge; meta part, square, hinge_axis, open_deg, handle,
 ## cdda_open, opening: the space hands reach into, an AABB in the Cargo node's frame, opening_out: its open face's
 ## outward normal there). Nothing here moves a WheelSpin or Lid whose meta "held" is true (a VR hand has it). A lid of a part
@@ -42,6 +43,13 @@ const GLOVE_H := 0.17         # and up
 const GLOVE_Y := 0.95         # its bottom edge (the hinge) above the floor
 const GLOVE_T := 0.02         # its thickness
 const GLOVE_OPEN := 80.0      # degrees: down to a shelf
+## C6: the hood over an engine bay (CDDA 0.I has no hood part: the client's own, like the lids): a panel just over
+## the engine's top across the bay, hinged on its edge toward the vehicle's middle. In `lids` under the key HOOD.
+const HOOD := -1
+const HOOD_UP := VehicleView.DECK + 0.62   # m: its underside, just over an engine's top
+const HOOD_T := 0.03
+const HOOD_OPEN := 70.0
+const MAX_BAY := 64           # cells a bay reaches across its row at most
 
 static var _wheel_mesh: ArrayMesh
 
@@ -172,7 +180,45 @@ static func layout_key(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, 
 	key.append(at.call(p[0]) if p[0] >= 0 else [])
 	for e: Array in p[1]:
 		key.append(at.call(e[0]) + [e[1]])
+	key.append(hood_of(veh, snap, tables, z_max))
 	return key
+
+
+## The engine bay a hood covers (mount grid; its underside at HOOD_UP): the cells of engines no roof covers and the
+## uncovered cells beside them across their row, as one box; AABB() when there is none. Parts above `z_max` and gap
+## fillers are left out.
+static func hood_of(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max: int) -> AABB:
+	var cells := {}
+	var roofed := {}
+	var engines := []
+	for i in veh.part_count():
+		var j := i * Snapshot.VPART_STRIDE
+		var state := veh.parts[j + 4]
+		if veh.pos.z + veh.parts[j + 7] > z_max or (state & Snapshot.VPART_FILLER) != 0:
+			continue
+		var m := Vector2i(veh.parts[j], veh.parts[j + 1])
+		cells[m] = true
+		var kind := VehicleView.kind_of(VehicleView.def_of(tables, snap, veh.parts[j + 2]), state)
+		if kind == VehicleView.Kind.ROOF:
+			roofed[m] = true
+		elif kind == VehicleView.Kind.ENGINE:
+			engines.append(m)
+	var lo := Vector2i.MAX
+	var hi := Vector2i.MIN
+	for e: Vector2i in engines:
+		if roofed.has(e):
+			continue
+		for d: int in [1, -1]:   # the bay across the engine's row
+			var n := 0
+			var m := e
+			while n < MAX_BAY and cells.has(m) and not roofed.has(m):
+				lo = Vector2i(mini(lo.x, m.x), mini(lo.y, m.y))
+				hi = Vector2i(maxi(hi.x, m.x), maxi(hi.y, m.y))
+				m += Vector2i(0, d)
+				n += 1
+	if lo == Vector2i.MAX:
+		return AABB()
+	return AABB(Vector3(lo.x - 0.5, HOOD_UP, lo.y - 0.5), Vector3(hi.x - lo.x + 1, HOOD_T, hi.y - lo.y + 1))
 
 
 ## All layout_key reads from (cheap to compare): while it is the same, so is layout_key. `own`: with a copy of the
@@ -199,6 +245,9 @@ static func build(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, z_max
 		var def := VehicleView.def_of(tables, snap, veh.parts[j + 2])
 		var col := paint if e[1] == VehicleView.Kind.HALF else VehicleView.color_of(e[1], def, veh.parts[j + 3], veh.parts[j + 4])
 		it._add_lid(veh, e[0], e[1], def != null and def.flags.has("OPENABLE"), mid, col)
+	var bay := hood_of(veh, snap, tables, z_max)
+	if bay.size != Vector3.ZERO:
+		it._add_hood(bay, mid, paint)
 	it.set_states(veh, true)
 	return it
 
@@ -417,6 +466,34 @@ func _add_glovebox(veh: Snapshot.Vehicle, part: int, col: Color) -> void:
 	lid_at[Vector2i(veh.parts[j], veh.parts[j + 1])] = part
 	_lid_goal[part] = 0.0
 	_lid_set[part] = 0.0
+
+
+## The hood over engine bay `bay` (hood_of), in the body's paint: "Hood" (meta hinge_axis, open_deg, handle in the
+## Lid's frame, cdda_open false) with its "Lid" on the hinge, the edge toward the middle `mid` (an engine ahead of
+## the middle: its back edge, so the front lifts). Kept in `lids` under HOOD: open_lid / lid_deg / step move it.
+func _add_hood(bay: AABB, mid: Vector3, col: Color) -> void:
+	var c := bay.get_center()
+	var s := 1.0 if c.x >= mid.x else -1.0
+	var h := Node3D.new()
+	h.name = "Hood"
+	h.position = Vector3(c.x - s * 0.5 * bay.size.x, 0.0, c.z)   # the hinge line's middle, on the floor
+	h.set_meta("hinge_axis", Vector3(0.0, 0.0, s))
+	h.set_meta("open_deg", HOOD_OPEN)
+	h.set_meta("handle", Vector3(s * (bay.size.x - 0.06), HOOD_T + 0.01, 0.0))
+	h.set_meta("cdda_open", false)
+	var lid := Node3D.new()
+	lid.name = "Lid"
+	lid.position = Vector3(0.0, bay.position.y, 0.0)
+	lid.set_meta("held", false)
+	var tris := []
+	VehicleView._box(tris, Transform3D(Basis.from_scale(Vector3(bay.size.x - 0.04, HOOD_T, bay.size.z - 0.04)),
+			Vector3(s * 0.5 * bay.size.x, 0.5 * HOOD_T, 0.0)), col)
+	lid.add_child(_mesh_node("hood", tris))
+	h.add_child(lid)
+	add_child(h)
+	lids[HOOD] = h
+	_lid_goal[HOOD] = 0.0
+	_lid_set[HOOD] = 0.0
 
 
 static func _mesh_node(n: String, tris: Array) -> MeshInstance3D:

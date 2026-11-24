@@ -231,6 +231,10 @@ func _ready() -> void:
 	work_cam = WorkCamera.new(vehicles_view)   # C6: the work view's camera (lead-world's; flat screen)
 	add_child(work_cam)
 	world.coords.origin_shifted.connect(work_cam.shift)
+	work_cam.blocked = func(from: Vector3, to: Vector3, vehicle: int) -> float:   # it stands in front of walls
+		if look_ray == null:
+			look_ray = LookRay.new(world)
+		return WorkCamera.free_way(look_ray, from, to, vehicle)
 	fp.ride = func() -> Transform3D: return vehicles_view.ride_transform(world.snapshot)
 	creature_view.seat = func(sq: Vector3i) -> Transform3D: return vehicles_view.seat_transform(world.snapshot, sq)
 	view_cam.car = func() -> Variant: return vehicles_view.chase_target(world.snapshot)
