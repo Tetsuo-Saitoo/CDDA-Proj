@@ -21,6 +21,8 @@ signal view_chosen(view: String)
 signal install_asked(mount: Vector2i, vpart: int)
 ## The type the read says can be installed now on square `mount`.
 signal install_chosen(vpart: int, mount: Vector2i)
+## Install mode ended (Esc, or the install started): back on the parts list.
+signal install_ended
 
 const BACK := Color(0.05, 0.06, 0.07, 0.94)
 const HEAD := Color(0.95, 0.85, 0.55)
@@ -313,6 +315,7 @@ func end_install() -> void:
 	selected = -1
 	select(keep if _row_buttons.has(keep) else (_order[0] if not _order.is_empty() else -1))
 	_show_part()
+	install_ended.emit()
 
 
 ## Picks type `vpart` in install mode (it must be listed) and asks for its requirement lines.
@@ -484,7 +487,7 @@ func _build_list() -> void:
 	var last := Vector2i.MAX
 	for i in idx:
 		var p: Dictionary = parts[i]
-		var b := _row_button(_row_text(p), _row_color(p), p["row"] == selected)
+		var b := _row_button(VehicleWorkData.row_text(p), _row_color(p), p["row"] == selected)
 		b.pressed.connect(select.bind(p["row"]))
 		if p["mount"] != last and last != Vector2i.MAX:
 			_list.add_child(HSeparator.new())
@@ -506,8 +509,7 @@ func _build_types() -> void:
 		_list.add_child(_label("Asking the game...", DIM))
 		return
 	for t: Dictionary in VehicleWorkData.install_rows(_inst, type_name, show_all):
-		var tail := ("" if t["have"] else "  (missing items)") + ("" if t["fits"] else "  (doesn't fit here)")
-		var b := _row_button(t["name"] + tail, GOOD if t["have"] and t["fits"] else DIM, t["vpart"] == install_pick)
+		var b := _row_button(VehicleWorkData.type_text(t),GOOD if t["have"] and t["fits"] else DIM, t["vpart"] == install_pick)
 		b.pressed.connect(pick_type.bind(t["vpart"]))
 		_list.add_child(b)
 		_type_order.append(t["vpart"])
@@ -540,34 +542,10 @@ static func _row_button(text: String, col: Color, pressed: bool) -> Button:
 	return b
 
 
-static func _row_text(p: Dictionary) -> String:
-	var f: int = p["flags"]
-	var s := "%s  %d%%" % [p["name"], p["hp"]]
-	if (f & VehicleWorkData.BROKEN) != 0:
-		s += "  broken"
-	if not (p["faults"] as PackedStringArray).is_empty():
-		s += "  (" + ", ".join(p["faults"]) + ")"
-	var fill := VehicleWorkData.fill_text(p.get("fill", {}))
-	if not fill.is_empty():
-		s += "  " + fill
-	return s
-
-
 static func _row_color(p: Dictionary) -> Color:
 	if (int(p["flags"]) & VehicleWorkData.BROKEN) != 0:
 		return BAD
 	return GOOD if p["hp"] >= 100 and (p["faults"] as PackedStringArray).is_empty() else WARN
-
-
-## The install square in words: the parts already on it, or that it is empty.
-static func _square_text(r: Dictionary, at: Vector2i) -> String:
-	var names := PackedStringArray()
-	for p: Dictionary in r.get("parts", []):
-		if p["mount"] == at:
-			names.append(p["name"])
-	if names.is_empty():
-		return "Install on an empty square"
-	return "Install with: " + ", ".join(names.slice(0, 3)) + (" ..." if names.size() > 3 else "")
 
 
 func _show_part() -> void:
@@ -608,7 +586,7 @@ func _show_part() -> void:
 func _show_install() -> void:
 	var c := _install_cmd()
 	var pick: Dictionary = _type_rows.get(install_pick, {})
-	_part_title.text = _square_text(result, install_at) + ("\n> " + pick["name"] if not pick.is_empty() else "")
+	_part_title.text = VehicleWorkData.square_text(result, install_at) + ("\n> " + pick["name"] if not pick.is_empty() else "")
 	for k: String in KEYS:
 		var b: Button = _buttons[k]
 		b.disabled = k != "i" or c.is_empty() or not c["ok"]
