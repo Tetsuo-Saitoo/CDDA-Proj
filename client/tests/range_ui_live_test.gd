@@ -1192,6 +1192,13 @@ func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, 
 		print("  (vehicle work: this game sends no install list (the view says \"%s\"): installing not tried)" % why.text)
 		wv.call("end_install")
 		return
+	if _main.vehicles_view.has_method("highlight_square"):   # lead-world's: the square is tinted, the camera on it
+		var lit_sq: Variant = _main.vehicles_view.get("_highlight")
+		var cam_now: Variant = _main.get("work_cam")
+		_check(lit_sq is Array and lit_sq == [uid, old["mount"]] and is_instance_valid(_main.vehicles_view.get("_lit"))
+				and cam_now != null and cam_now.active == true and root.get_camera_3d() == cam_now,
+				"work camera: install mode tints its square %s and the work camera stays the view's camera (tinted %s)"
+				% [old["mount"], lit_sq])
 	var shown: int = (wv.get("_type_order") as Array).size()
 	wv.call("toggle_all")
 	var all_types: int = (wv.get("_type_order") as Array).size()
@@ -1250,10 +1257,13 @@ func _work_camera_live(wv: Variant, wc: Variant, uid: int, row: int, turn0: int)
 		seen = not cam.is_position_behind(point) and Rect2(size * 0.2, size * 0.6).has_point(on_screen)
 	var off: float = cam.global_position.distance_to(point) if cam != null else -1.0
 	var tint: Variant = vv.get("_lit")
-	_check(cam == wc and wc.active == true and seen and off > 0.8 and off < 9.0 and vv.get("_highlight") == [uid, row]
+	var across: Variant = wc.get("frame_x")   # where it puts the part across the screen (left of the view's panel); null: the middle
+	var want_x: float = float(across) if across is float else 0.5
+	var framed: bool = absf(on_screen.x / size.x - want_x) < 0.08
+	_check(cam == wc and wc.active == true and seen and framed and off > 0.8 and off < 9.0 and vv.get("_highlight") == [uid, row]
 			and tint is Node3D and is_instance_valid(tint),
-			"work camera: with a part selected it is the view's camera and looks at that part (%.1f m off, the part at %s on a %s screen), and the part is tinted (%s)"
-			% [off, on_screen, size, vv.get("_highlight")])
+			"work camera: with a part selected it is the view's camera and looks at that part (%.1f m off, the part at %s on a %s screen: %.2f across, wanted %.2f), and the part is tinted (%s)"
+			% [off, on_screen, size, on_screen.x / size.x, want_x, vv.get("_highlight")])
 	var ground: float = _main.world.coords.ms_center_to_world(_main.world.snapshot.player_pos).y
 	var eyes: Array[Vector3] = []
 	for code: Key in [KEY_1, KEY_2, KEY_3]:
@@ -1266,6 +1276,25 @@ func _work_camera_live(wv: Variant, wc: Variant, uid: int, row: int, turn0: int)
 			and wv.selected == row and _main.world.snapshot.turn == turn0,
 			"work camera: 1, 2 and 3 take it around the car (%.1f m up), over its engine (%.1f m up) and low beside it (%.1f m up); the view stays open on the same part and no turn passes"
 			% [eyes[0].y - ground, eyes[1].y - ground, eyes[2].y - ground])
+	# the hood (lead-world's own lid over the engine bay; said so where none is drawn): the hood view opens it, the next shuts it
+	var hood_deg := func() -> float:
+		var anchors: Variant = vv.call("interior", uid)
+		var hood: Variant = (anchors as Dictionary).get("Hood") if anchors is Dictionary else null
+		var lid := (hood as Node3D).get_node_or_null("Lid") as Node3D if hood is Node3D else null
+		return absf(rad_to_deg(lid.rotation.z)) if lid != null else -1.0
+	if float(hood_deg.call()) < 0.0:
+		print("  (work camera: no hood is drawn on this car: not checked)")
+	else:
+		await _tap(KEY_2)
+		var up := func() -> bool: return float(hood_deg.call()) > 30.0
+		var opened: bool = await _until(up, 4000)
+		var open_deg: float = hood_deg.call()
+		await _tap(KEY_3)
+		var down := func() -> bool: return float(hood_deg.call()) < 5.0
+		var shut: bool = await _until(down, 4000)
+		_check(opened and shut and wv.visible and _main.world.snapshot.turn == turn0,
+				"work camera: the hood view lifts the hood (%d degrees) and the next view shuts it again (%d)"
+				% [roundi(open_deg), roundi(float(hood_deg.call()))])
 
 
 ## lead-ui's vehicle work view (C6; said so on a client without it). The player stands on `by`, next to
