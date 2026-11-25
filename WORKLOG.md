@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-24 — Bridge: the game's list of car part types now says which item each one is made from, so VR can offer to install the part you are holding. Passes on Windows and Linux.
 - 2026-11-24 — Tester AppImage test-2026-11-24 (private test repo, pre-release, not a release) from main b0886a6 + fork c7ed127, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): vehicle work install/mend/refill, work camera and hood, VR hood, part picking and work wheel. Nothing tried in a headset; mend, refill and repair not yet run in a live game.
 - 2026-11-24 — VR vehicle work, remove by hand (lead-vr): grip a car's part and pull it out of its spot; past a hand's width the game is asked to remove it. If the game says no, the part goes back with its reason; if it starts, the part stays in the hand while the work runs. Shows once lead-world's part copies are in; not tried in a headset yet.
 - 2026-11-24 — VR vehicle work, repair by tool (lead-vr): holding an item to a car's part lights it; the trigger asks the game to repair that part, and the game decides (it looks through the whole inventory for tools). Not tried in a headset yet.
