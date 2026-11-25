@@ -146,6 +146,8 @@ var work := VrWork.new()
 var work_menu := VrWorkMenu.new()
 var work_session: VehicleWorkSession = null: set = _set_work_session
 var _work_mine := false   # the session was opened from here: what it says is flashed
+var _repair := {}         # C6 repair by tool: {uid, row, hand, until} waiting on that part's read; {} none
+const REPAIR_WAIT_MS := 5000   # ... this long at most
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -666,7 +668,11 @@ func update_hands(delta: float, all_hands := false) -> void:
 					looks and t.is_empty() and pt.is_empty() and tt.is_empty() and not drive.holds(i), pointing, world.snapshot)
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
-		work.update(i, c.global_position, Vector3.ZERO, false, false, world.snapshot)
+		# C6 repair by tool: an item in the hand (not a gun, not flying in) on a vehicle's part lights it (VrWork)
+		var tool_at := _tool_point(i)
+		work.update(i, tool_at, Vector3.ZERO, held.get("kind") == "item" and tool_at.is_finite() and _fly_t[i] < 0.0
+				and pack.hand != i and not _gun_hand(i) and not ui_open() and (all_hands or c.get_is_active()), false,
+				world.snapshot)
 		_show_pull_ray(i, {})
 		_pointed[i] = {}
 		_ray_wait[i] = 0.0
@@ -829,6 +835,49 @@ func open_work(c: XRController3D) -> bool:
 	return true
 
 
+## C6 repair by tool: trigger on controller c holding an item on a part VrWork lit: the session opens on its vehicle
+## (CDDA's reach, else its note and a buzz) and reads that part; when the read comes, its repair goes if the read
+## allows it (CDDA checks it all again; its questions come as prompts), else CDDA's reason and a buzz. The item is
+## only the cue: CDDA looks through the whole inventory for tools. False when the hand holds nothing or lit no part.
+func work_tool(c: XRController3D) -> bool:
+	var i := 0 if c == left else 1
+	var w: Dictionary = work.picked[i]
+	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() \
+			or hands.holding(hand_id(c)).is_empty():
+		return false
+	var s := work_session
+	if s.uid != w["uid"] and not s.open(w["uid"]):
+		busy.flash(s.note)
+		feel(c, 0.3)
+		return true
+	_work_mine = true
+	_repair = {"uid": w["uid"], "row": w["row"], "hand": i, "until": Time.get_ticks_msec() + REPAIR_WAIT_MS}
+	s.select(w["row"])   # its read comes as `result` (_on_work_read): at once from the stand-in without the game
+	return true
+
+
+## Where hand i's held item touches from: its copy's middle, else the hand.
+func _tool_point(i: int) -> Vector3:
+	var p: Node3D = hands.proxy(HAND_IDS[i]) if hands != null else null
+	return p.global_position if p != null and p.is_inside_tree() else _ctrl(i).global_position
+
+
+## A read for the session (VehicleWorkSession.result): a repair by tool waiting on that part goes, or says why not.
+func _on_work_read(r: Dictionary) -> void:
+	if _repair.is_empty() or not VrWorkMenu.is_for(r, _repair["uid"], _repair["row"]):
+		return
+	var p := _repair
+	_repair = {}
+	if Time.get_ticks_msec() > p["until"]:
+		return   # too late: the hand has long moved on
+	var c := _ctrl(p["hand"])
+	if not VrWorkMenu.lets(r, "r"):
+		busy.flash(VrWorkMenu.reason(r, "r"))
+		feel(c, 0.3)
+	elif not work_session.send("r", p["row"]):
+		feel(c, 0.3)   # `said` tells why nothing went
+
+
 ## The work wheel's trigger let go on hand `i`: a command the read allows goes to CDDA (VehicleWorkSession.send; the
 ## wheel closes), a greyed one says why and buzzes, the middle keeps it up. False when it isn't that hand's.
 func work_release(i: int) -> bool:
@@ -861,13 +910,16 @@ func close_work() -> void:
 func _set_work_session(s: VehicleWorkSession) -> void:
 	if work_session != null and work_session.result.is_connected(work_menu.set_read):
 		work_session.result.disconnect(work_menu.set_read)
+		work_session.result.disconnect(_on_work_read)
 		work_session.said.disconnect(_on_work_said)
 		work_session.closed.disconnect(_on_work_closed)
 		work_session.started.disconnect(_on_work_started)
 	work_session = s
 	_work_mine = false
+	_repair = {}
 	if s != null:
 		s.result.connect(work_menu.set_read)
+		s.result.connect(_on_work_read)
 		s.said.connect(_on_work_said)
 		s.closed.connect(_on_work_closed)
 		s.started.connect(_on_work_started)
@@ -881,7 +933,8 @@ func _on_work_said(text: String) -> void:
 ## The session closed (another vehicle opened, the vehicle went or is out of reach): the wheel goes, saying why when
 ## it was up; the hand's pick lit again (main's _on_work_closed put the light out).
 func _on_work_closed(_vehicle: int, why: String) -> void:
-	var shown := work_menu.is_open()
+	var shown := work_menu.is_open() or not _repair.is_empty()
+	_repair = {}
 	close_work()
 	if _work_mine and shown and not why.is_empty():
 		busy.flash(why)
@@ -2254,6 +2307,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 	if n == "trigger_click" and hands != null and hands.holding(hand_id(c)).is_empty() \
 			and wheel.press(ci, c.global_position):
 		return   # radial menus: the furniture the hand is on, used in CDDA (a tap: its default; held: the wheel)
+	if n == "trigger_click" and work_tool(c):
+		return   # C6: an item in the hand on a part it lit: CDDA's repair of that part, when its read allows it
 	if n == "trigger_click":   # main hand: pointed stairs first; both hands: the pull; nothing pointed: one buzz
 		var s := pointed_stair(c) if c == main_ctrl() else {}
 		if not s.is_empty():

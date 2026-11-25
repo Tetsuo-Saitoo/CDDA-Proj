@@ -87,15 +87,20 @@ func close() -> void:
 
 ## The session's read (VehicleWorkSession.result): kept when it is for this vehicle and part, else ignored.
 func set_read(r: Dictionary) -> void:
+	if is_open() and is_for(r, uid, row):
+		read = r
+		_paint()
+
+
+## Whether read `r` is for part `part_row` of vehicle `vehicle`: that part's read, or a refusal for that vehicle (the
+## list's read, another part's, another vehicle's or junk: not).
+static func is_for(r: Dictionary, vehicle: int, part_row: int) -> bool:
 	var v: Variant = r.get("vehicle")
-	if not is_open() or not v is int or v != uid:
-		return
+	if not v is int or v != vehicle:
+		return false
 	var sel: Variant = r.get("selected")
 	var at: Variant = (sel as Dictionary).get("row") if sel is Dictionary else null
-	if _ok(r) and not (at is int and at == row):
-		return   # the list's read, or another part's
-	read = r
-	_paint()
+	return not _ok(r) or (at is int and at == part_row)
 
 
 ## Points from the hand at world point `p` (its offset from the middle in the wheel's plane), or its stick `stick`.
@@ -125,7 +130,12 @@ func point(p: Vector3, stick := Vector2.ZERO) -> void:
 
 ## Whether the read lets command `cmd` go (CDDA's checks run again when it does).
 func allowed(cmd: String) -> bool:
-	return _ok(VehicleWorkData.command_of(read, cmd)) if _ok(read) else false
+	return lets(read, cmd)
+
+
+## Whether read `r` lets command `cmd` go.
+static func lets(r: Dictionary, cmd: String) -> bool:
+	return _ok(VehicleWorkData.command_of(r, cmd)) if _ok(r) else false
 
 
 static func _ok(d: Dictionary) -> bool:
@@ -135,11 +145,16 @@ static func _ok(d: Dictionary) -> bool:
 
 ## Why `cmd` can't go, in CDDA's words ("" when it can).
 func why_not(cmd: String) -> String:
-	if read.is_empty():
+	return reason(read, cmd)
+
+
+## Why read `r` doesn't let `cmd` go, in CDDA's words ("" when it does).
+static func reason(r: Dictionary, cmd: String) -> String:
+	if r.is_empty():
 		return "Checking the part..."
-	if not _ok(read):
-		return str(read.get("text", read.get("error", "Not possible now.")))
-	return VehicleWorkData.refusal(VehicleWorkData.command_of(read, cmd))
+	if not _ok(r):
+		return str(r.get("text", r.get("error", "Not possible now.")))
+	return VehicleWorkData.refusal(VehicleWorkData.command_of(r, cmd))
 
 
 func panel_text() -> String:
