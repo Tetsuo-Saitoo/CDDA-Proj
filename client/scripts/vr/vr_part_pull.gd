@@ -93,4 +93,5 @@ func settle(busy: bool) -> void:
 		return   # (a part of that car in the hand now: its own hide wins until let go)
 	if hide_part.is_valid():
 		hide_part.call(_hidden[0], _hidden[1], false)
+		hide_part.call(_hidden[0], -1, false)   # lead-world's 50653fa: whatever is still hidden there (rows moved)
 	_hidden = []
