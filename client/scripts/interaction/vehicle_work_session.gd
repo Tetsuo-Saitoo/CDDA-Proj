@@ -18,6 +18,8 @@ signal closed(vehicle: int, why: String)
 signal started(cmd: String)
 ## The action's part wasn't there any more: the presenter drops its selection (a new read comes).
 signal moved
+## CDDA refused the action in flight (`text` as said tells it; also when its part moved): VR puts the part back.
+signal refused(cmd: String, text: String)
 ## The presenter shows part `row` (-1 none) / install square `at`: highlight it, point the work camera at it.
 signal part_focused(row: int)
 signal square_focused(at: Vector2i)
@@ -227,6 +229,7 @@ func on_events(events: Array) -> void:
 			_tell("%s started." % VehicleWorkData.COMMAND_NAMES.get(_cmd, "Work"))
 		else:
 			_tell(r["text"] if not (r["text"] as String).is_empty() else "Not started.")
+			refused.emit(_cmd, note)
 			if gone:
 				selected = -1
 				moved.emit()

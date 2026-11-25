@@ -470,6 +470,7 @@ func _test_session(data: Variant) -> void:
 	s.part_focused.connect(func(row: int) -> void: seen.append("part %d" % row))
 	s.started.connect(func(cmd: String) -> void: seen.append("started " + cmd))
 	s.moved.connect(func() -> void: seen.append("moved"))
+	s.refused.connect(func(cmd: String, t: String) -> void: seen.append("refused %s: %s" % [cmd, t]))
 	# no bridge: the snapshot's stand-in, nothing sent
 	w.snapshot = _with_car(data, true)
 	var refused: bool = not s.open(UID) and s.note == "The vehicle is out of reach." and not s.open(UID + 1) \
@@ -513,13 +514,18 @@ func _test_session(data: Variant) -> void:
 	var again: bool = s.send("r", 9) and sim.queued.size() == 2
 	s.on_events([{"kind": "work_result", "uid": UID, "amount": 0, "detail": sim.queued[-1]["tag"],
 			"text": VehicleWorkData.MOVED}])
-	var gone: bool = seen[-1] == "moved" and said[-1] == VehicleWorkData.MOVED and sim.asked.size() == n + 2 \
-			and s.selected == -1
+	var gone: bool = seen.slice(-2) == ["refused r: " + VehicleWorkData.MOVED, "moved"] and said[-1] == VehicleWorkData.MOVED \
+			and sim.asked.size() == n + 2 and s.selected == -1 and str(seen).count("refused") == 1
+	sim.results[sim.next] = JSON.stringify(_sample(sim.next))
+	ls._poll_vehicle_work()
+	var plain: bool = s.send("m", 9) and sim.queued.size() == 3
+	s.on_events([{"kind": "work_result", "uid": UID, "amount": 0, "detail": sim.queued[-1]["tag"], "text": ""}])
+	plain = plain and seen[-1] == "refused m: Not started." and said[-1] == "Not started."
 	s.close()
 	ls._sim = null
 	ls.free()
 	_check.call(stand and away and opened and asked_part and sent and once and began and held and reread and again
-			and gone and shut[-1] == [UID, ""] and s.uid == 0,
+			and gone and plain and shut[-1] == [UID, ""] and s.uid == 0,
 			"vehicle work session: stand-in without a bridge; the read for what is shown, an action from it, one at a "
 			+ "time, held while busy and read again after; started and moved handled; closed out of reach (%s; %s; %s)"
 			% [said, seen, shut])
