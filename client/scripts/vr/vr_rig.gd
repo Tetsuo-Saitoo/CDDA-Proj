@@ -827,9 +827,9 @@ func open_tray(c: XRController3D) -> bool:
 func open_work(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var w: Dictionary = work.picked[i]
-	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
-			or not hands.holding(hand_id(c)).is_empty():
-		return false
+	if not w.has("row") or work_session == null or hands == null or world.snapshot == null or ui_open() \
+			or pull.hand >= 0 or not hands.holding(hand_id(c)).is_empty():
+		return false   # (a square's pick, {uid, at}, lingers up to PICK_MS after an item leaves the hand)
 	var s := work_session
 	if s.uid != w["uid"] and not s.open(w["uid"]):
 		busy.flash(s.note)
@@ -856,6 +856,8 @@ func work_tool(c: XRController3D) -> bool:
 		return false
 	if w.has("at"):
 		return _install_at(c, w)
+	if not w.has("row"):
+		return false
 	var s := work_session
 	if s.uid != w["uid"] and not s.open(w["uid"]):
 		busy.flash(s.note)
@@ -874,9 +876,9 @@ func work_tool(c: XRController3D) -> bool:
 func grip_part(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var w: Dictionary = work.picked[i]
-	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
-			or not hands.holding(hand_id(c)).is_empty():
-		return false
+	if not w.has("row") or work_session == null or hands == null or world.snapshot == null or ui_open() \
+			or pull.hand >= 0 or not hands.holding(hand_id(c)).is_empty():
+		return false   # (a square's pick lingers up to PICK_MS after an item leaves the hand)
 	var s := work_session
 	if s.uid != w["uid"] and not s.open(w["uid"]):
 		busy.flash(s.note)
@@ -2105,9 +2107,11 @@ func update_wheel() -> void:
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
 	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() and menus_by_eye else {})
 	if work_menu.is_open():   # C6: the work wheel points with its hand or stick; it goes with the hand, a menu or the session
-		var c := left if work_menu.hand == 0 else right
+		var c := left if work_menu.hand == 0 else right   # (the wheel is for an empty hand; the install list for the
+		# hand holding the part's item: either closes when that changes)
 		if work_session == null or work_session.uid != work_menu.uid or world.snapshot == null or hands == null \
-				or menu_open() or panel.shown or not hands.holding(HAND_IDS[work_menu.hand]).is_empty() \
+				or menu_open() or panel.shown \
+				or hands.holding(HAND_IDS[work_menu.hand]).is_empty() != work_menu.items.is_empty() \
 				or c.global_position.distance_to(work_menu.center) > VrWorkMenu.AWAY_M:
 			close_work()
 		else:

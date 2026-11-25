@@ -535,12 +535,16 @@ func _test_rig_install(root: Node, snap: Snapshot) -> void:
 	rig.busy.flash("-")
 	s.result.emit({"ok": true, "vehicle": UID, "install": INST.merged({"mount": Vector2i(0, 0)}, true)})
 	var other: bool = rig.busy.get("_flash") == "-" and not rig.get("_install").is_empty()
+	var it := ItemRef.new()   # the list is for the hand holding the part's item: it stays up while held
+	it.type = 9
+	hands.hand("vr_r").held = {"kind": "item", "item": it}
 	_ask([3, 5])
 	s.result.emit(r)
 	var m := rig.work_menu
 	var listed: bool = m.is_open() and m.items.size() == 2 and w.hold and rig.get("_install").get("listing") == true
 	rig.right.global_position = m.center + Vector3(0.0, -0.03, 0.0)
 	rig.update_wheel()
+	var kept: bool = m.is_open() and m.choice == 1 and not rig.get("_install").is_empty()
 	rig.press(rig.right, "trigger_click")
 	rig.release(rig.right, "trigger_click")
 	var picked: bool = m.choice == -1 and not m.is_open() and rig.busy.get("_flash") == not_yet \
@@ -549,15 +553,18 @@ func _test_rig_install(root: Node, snap: Snapshot) -> void:
 	s.result.emit(r)
 	rig.press(rig.right, "by_button")
 	var closed: bool = not m.is_open() and rig.get("_install").is_empty()
+	_ask([3, 5])
+	s.result.emit(r)
+	hands.hand("vr_r").held = {}   # the item gone from the hand: the list goes too
+	rig.update_wheel()
+	var dropped: bool = not m.is_open() and rig.get("_install").is_empty() and not w.hold
+	hands.hand("vr_r").held = {"kind": "item", "item": it}
 	var t := IdTables.new()   # the trigger with a part's item on a lit square asks CDDA's install read (here: no game)
 	for k in 10:
 		t.vpart.append(IdTables.Def.new())
 	t.vpart[3].item = 9
 	world.tables = t
 	w.square = func(uid: int, _p: Vector3) -> Variant: return Vector2i(1, 0) if uid == UID else Vector2i.MAX
-	var it := ItemRef.new()
-	it.type = 9
-	hands.hand("vr_r").held = {"kind": "item", "item": it}
 	rig.right.global_position = Vector3(1.0, 1.1, 0.0)
 	rig.update_hands(0.016, true)
 	var b0: int = rig.buzzes[1]
@@ -565,7 +572,10 @@ func _test_rig_install(root: Node, snap: Snapshot) -> void:
 	var trigger: bool = w.picked[1] == {"uid": UID, "at": Vector2i(1, 0)} and rig.buzzes[1] == b0 + 1 \
 			and rig.busy.get("_flash") == VehicleWorkSession.NO_INSTALL.left(VrBusy.MAX_CHARS) \
 			and rig.get("_install").is_empty()   # (the flash is capped)
-	hands.hand("vr_r").held = {}
+	hands.hand("vr_r").held = {}   # a square's pick left a moment after the item goes: no wheel, no grip on a part
+	w.picked[1] = {"uid": UID, "at": Vector2i(1, 0)}
+	var lingers: bool = not rig.open_work(rig.right) and not rig.grip_part(rig.right) and not m.is_open() \
+			and rig.pull.hand == -1
 	_rig = null
 	rig.work_session = null
 	rig.hands = null
@@ -573,9 +583,10 @@ func _test_rig_install(root: Node, snap: Snapshot) -> void:
 	if is_instance_valid(hands):
 		hands.free()
 	world.free()
-	_check.call(one and none and cdda_why and refused and other and listed and picked and closed and trigger,
-			"vr work rig install: one type left installs, several go on the wheel's list (let go on one installs it), none fits or a refused read says why, another square's read is ignored (%s)"
-			% [[one, none, cdda_why, refused, other, listed, picked, closed, trigger]])
+	_check.call(one and none and cdda_why and refused and other and listed and kept and picked and closed and dropped \
+			and trigger and lingers,
+			"vr work rig install: one type left installs, several go on the wheel's list while the item is held (let go on one installs it), none fits or a refused read says why, another square's read is ignored, a square's pick opens no wheel or grip (%s)"
+			% [[one, none, cdda_why, refused, other, listed, kept, picked, closed, dropped, trigger, lingers]])
 
 
 var _rig: VrRig
