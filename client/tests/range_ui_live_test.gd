@@ -1055,6 +1055,8 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		print("  (vehicle work: with the kit the game allows removing none of %s: the work not tried; the last one says: %s)"
 				% [tried, str(wv.call("detail_text")).left(300)])
 		return
+	_part_item_live(int(old.get("vpart", -1)), picked)
+	var hid: Variant = await _part_pull_live(uid, pick, picked)   # true: left hidden for the removal below
 	var veh0 := _vehicle(uid)
 	var rows0: int = veh0.part_count() if veh0 != null else -1
 	var listed0: int = (wv.get("_order") as Array).size()
@@ -1098,6 +1100,13 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		_answer_prompt()
 		await process_frame
 	var done: bool = began and fewer.call()
+	if hid == true:   # the part hidden for a hand: the hide ends by itself with the part
+		await _frames(3)
+		var car_now: Variant = (_main.vehicles_view.get("_cars") as Dictionary).get(uid)
+		var left: Variant = (car_now as Object).get("hidden") if car_now is Object else null
+		_check(done and left is Array and (left as Array).is_empty(),
+				"carried part: the %s hidden for a hand is no longer held hidden once CDDA's removal took it (hidden now: %s)"
+				% [picked, left])
 	var gate: Variant = _work_hold()
 	var old_then: Variant = gate.get("stale") if gate != null else null
 	root.push_input(o.duplicate())   # right after the work ended: the list on screen may still be the old one
@@ -1192,6 +1201,65 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 ## came off) is installed back on its square. Install mode on that square lists the types the game allows there, the
 ## removed part's type among them; picked, i starts CDDA's own work; when the activity is over the car has `rows0`
 ## part rows again, the view lists `listed0` parts and a part of that name is on that square.
+## The item a part type is made from, as the game's id tables give it (lead-bridge's `item` on vpart rows) and the
+## client reads it (lead-world's IdTables.Def.item); skipped until both are in. Part type `vpart` (a table index) of
+## the part called `picked` names an item of the item table; a seatbelt's is the seatbelt.
+func _part_item_live(vpart: int, picked: String) -> void:
+	var tables: Object = _main.world.tables
+	var parts: Array = tables.get("vpart") if tables != null else []
+	var def: Variant = parts[vpart] if vpart > 0 and vpart < parts.size() else null
+	var at: Variant = (def as Object).get("item") if def is Object else null
+	if not at is int or at <= 0:
+		print("  (part item: not checked, the tables give part type %d no item (%s): the bridge or the reader isn't in this build)"
+				% [vpart, at])
+		return
+	var items: Array = tables.get("itype")
+	var item: Variant = items[at] if at < items.size() else null
+	var id := str((item as Object).get("id")) if item is Object else ""
+	_check(not id.is_empty() and (picked != "seatbelt" or id == "seatbelt"),
+			"part item: the game's tables name the item the %s is made from, and the client reads it: item %d of %d, \"%s\""
+			% [picked, at, items.size(), id])
+
+
+## lead-vr's pulled part (VrPartPull) on lead-world's real copy (VehicleView.part_copy / hide_part), wired as main
+## does for VR; skipped until both are in. Gripped, part `row`'s copy stands where the part is drawn and the part is
+## out of its car's drawing; the copy follows the hand and asks for the removal once, 15 cm out; let go, the part
+## is back. Then the part is hidden again (true) for the removal that follows, to see the hide end with the part.
+func _part_pull_live(uid: int, row: int, picked: String) -> Variant:
+	var vv: Object = _main.vehicles_view
+	var path := "res://scripts/vr/vr_part_pull.gd"
+	if not ResourceLoader.exists(path) or not vv.has_method("part_copy") or not vv.has_method("hide_part"):
+		print("  (carried part: not checked, VrPartPull or VehicleView.part_copy isn't in this build)")
+		return null
+	var car: Variant = (vv.get("_cars") as Dictionary).get(uid)
+	var spot: Variant = (vv.call("part_anchors", uid) as Dictionary).get(row)
+	if not car is Object or not spot is Dictionary or not (spot as Dictionary).get("point") is Vector3:
+		_check(false, "carried part: the car and the %s's spot are drawn (car %s, spot %s)" % [picked, car, spot])
+		return null
+	var pull: Object = (load(path) as GDScript).new()
+	pull.set("part_copy", func(u: int, r: int) -> Variant: return vv.call("part_copy", u, r))
+	pull.set("hide_part", func(u: int, r: int, h: bool) -> Variant: return vv.call("hide_part", u, r, h))
+	var at: Vector3 = (spot as Dictionary)["point"]
+	var hand := Transform3D(Basis(), at + Vector3(0.0, 0.0, 0.05))
+	var got: bool = pull.call("grip", 1, hand, uid, row, _main) == true
+	var copy: Variant = pull.get("copy")
+	var off: float = (copy as Node3D).global_position.distance_to(at) if copy is Node3D and got else -1.0
+	var hidden: Variant = (car as Object).get("hidden")
+	var near: bool = pull.call("follow", hand.translated(Vector3(0.0, 0.05, 0.0))) == false
+	var went: float = (copy as Node3D).global_position.distance_to(at + Vector3(0.0, 0.05, 0.0)) if copy is Node3D and got else -1.0
+	var asks: bool = pull.call("follow", hand.translated(Vector3(0.0, 0.2, 0.0))) == true \
+			and pull.call("follow", hand.translated(Vector3(0.0, 0.25, 0.0))) == false
+	pull.call("end")
+	await _frames(2)
+	var car_then: Variant = (vv.get("_cars") as Dictionary).get(uid)
+	var back: Variant = (car_then as Object).get("hidden") if car_then is Object else null
+	_check(got and off >= 0.0 and off < 0.05 and hidden is Array and (hidden as Array).size() == 2 and near and went >= 0.0
+			and went < 0.05 and asks and back is Array and (back as Array).is_empty() and not is_instance_valid(copy),
+			"carried part: gripped, the %s's copy stands where the part is drawn (%.3f m off) and the part is out of the car's drawing (%s); it follows the hand (%.3f m off) and asks for the removal once, 15 cm out (%s); let go, the copy is gone and the part is back (hidden %s)"
+			% [picked, off, hidden, went, asks, back])
+	return vv.call("hide_part", uid, row, true) == true
+
+
 func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, rows0: int, listed0: int) -> void:
 	if not wv.has_method("begin_install") or not old.get("mount") is Vector2i or int(old.get("vpart", -1)) < 1:
 		return
@@ -1205,7 +1273,7 @@ func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, 
 	if _main.vehicles_view.has_method("highlight_square"):   # lead-world's: the square is tinted, the camera on it
 		var lit_sq: Variant = _main.vehicles_view.get("_highlight")
 		var cam_now: Variant = _main.get("work_cam")
-		_check(lit_sq is Array and lit_sq == [uid, old["mount"]] and is_instance_valid(_main.vehicles_view.get("_lit"))
+		_check(lit_sq is Array and (lit_sq as Array).slice(0, 2) == [uid, old["mount"]] and is_instance_valid(_main.vehicles_view.get("_lit"))
 				and cam_now != null and cam_now.active == true and root.get_camera_3d() == cam_now,
 				"work camera: install mode tints its square %s and the work camera stays the view's camera (tinted %s)"
 				% [old["mount"], lit_sq])
