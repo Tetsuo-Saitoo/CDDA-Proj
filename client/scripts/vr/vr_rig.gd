@@ -147,6 +147,9 @@ var work_menu := VrWorkMenu.new()
 var work_session: VehicleWorkSession = null: set = _set_work_session
 var _work_mine := false   # the session was opened from here: what it says is flashed
 var _repair := {}         # C6 repair by tool: {uid, row, hand, until} waiting on that part's read; {} none
+## C6 remove by hand (VrPartPull): a picked part gripped and pulled out of its spot. main.gd gives it part_copy and
+## hide_part.
+var pull := VrPartPull.new()
 const REPAIR_WAIT_MS := 5000   # ... this long at most
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
@@ -534,6 +537,7 @@ func _process(delta: float) -> void:
 	fire.update(delta, [left.global_position, right.global_position], [held_item(0), held_item(1)],
 			world.snapshot != null and not ui_open())
 	update_wheel()
+	update_pull()
 	looking.update(delta, world, look() if looking.held else {}, not ui_open(), cheats_allowed)
 	zoom.update(delta, look() if zoom.held else {}, not menu_open() and not panel.shown)
 	label.update(delta, world, look() if label.enabled else {}, not ui_open() and not looking.held)
@@ -642,8 +646,8 @@ func update_hands(delta: float, all_hands := false) -> void:
 			var tt := {}
 			var pointing := false
 			var looks := false   # the hand is free for a vehicle's part (VrWork): nothing else of the rig's under it
-			if pack.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null and not ui_open() \
-					and not _supports(i, drawn[1 - i]):
+			if pack.hand != i and pull.hand != i and (all_hands or c.get_is_active()) and world.snapshot != null \
+					and not ui_open() and not _supports(i, drawn[1 - i]):
 				pt = pack.target_at(c.global_position)
 				tt = tray.target_at(c.global_position) if pt.is_empty() else {}
 				var st := slot_take(i, pt, tt)
@@ -818,7 +822,7 @@ func open_tray(c: XRController3D) -> bool:
 func open_work(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var w: Dictionary = work.picked[i]
-	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() \
+	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
 			or not hands.holding(hand_id(c)).is_empty():
 		return false
 	var s := work_session
@@ -842,7 +846,7 @@ func open_work(c: XRController3D) -> bool:
 func work_tool(c: XRController3D) -> bool:
 	var i := 0 if c == left else 1
 	var w: Dictionary = work.picked[i]
-	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() \
+	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
 			or hands.holding(hand_id(c)).is_empty():
 		return false
 	var s := work_session
@@ -856,6 +860,64 @@ func work_tool(c: XRController3D) -> bool:
 	return true
 
 
+## C6 remove by hand: grip on controller c with an empty hand on a part VrWork picked: the session opens on its vehicle
+## (CDDA's reach, else its note and a buzz) and reads that part, and the part's copy comes into the hand (VrPartPull;
+## the original hidden). Pulled out VrPartPull.PULL_M, CDDA's removal is asked for (update_pull). False when the hand
+## picked nothing or no copy is drawn.
+func grip_part(c: XRController3D) -> bool:
+	var i := 0 if c == left else 1
+	var w: Dictionary = work.picked[i]
+	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
+			or not hands.holding(hand_id(c)).is_empty():
+		return false
+	var s := work_session
+	if s.uid != w["uid"] and not s.open(w["uid"]):
+		busy.flash(s.note)
+		feel(c, 0.3)
+		return true
+	if not pull.grip(i, c.global_transform, w["uid"], w["row"], self):
+		return false
+	_work_mine = true
+	work.hold = true
+	feel(c, 0.2, 0.04)
+	s.select(w["row"])   # its read (_on_work_read): a removal CDDA refuses snaps back at once with its reason
+	return true
+
+
+## Per frame: a gripped part follows its hand; pulled out, CDDA's removal is asked for (nothing sent: it snaps back);
+## the work over, or the session gone, it goes. A part left hidden shows again when the work stops (VrPartPull.settle).
+func update_pull() -> void:
+	var s := work_session
+	pull.settle(s != null and s.busy())
+	if pull.hand < 0:
+		return
+	var c := _ctrl(pull.hand)
+	if s == null or s.uid != pull.uid or world.snapshot == null or hands == null \
+			or (pull.state == "held" and ui_open()):
+		let_part()
+	elif pull.state == "started" and not s.busy():
+		let_part()   # CDDA's removal is over: the part is in cargo or on the floor
+	elif pull.follow(c.global_transform) and not s.send("o", pull.row):
+		feel(c, 0.3)   # `said` tells why
+		let_part()
+
+
+## The gripped part goes from the hand (it snaps back unless CDDA's removal started); the hands pick parts again.
+func let_part() -> void:
+	if pull.hand < 0:
+		return
+	pull.end()
+	work.hold = work_menu.is_open()
+	work.relight()
+
+
+## VehicleWorkSession.refused (lead-ui): CDDA refused the action in flight; a part pulled out for it snaps back.
+func _on_work_refused(cmd: String, _text: String) -> void:
+	if cmd == "o" and pull.state == "asked":
+		feel(_ctrl(pull.hand), 0.3)
+		let_part()   # `said` flashed CDDA's reason
+
+
 ## Where hand i's held item touches from: its copy's middle, else the hand.
 func _tool_point(i: int) -> Vector3:
 	var p: Node3D = hands.proxy(HAND_IDS[i]) if hands != null else null
@@ -864,6 +926,10 @@ func _tool_point(i: int) -> Vector3:
 
 ## A read for the session (VehicleWorkSession.result): a repair by tool waiting on that part goes, or says why not.
 func _on_work_read(r: Dictionary) -> void:
+	if pull.state == "held" and VrWorkMenu.is_for(r, pull.uid, pull.row) and not VrWorkMenu.lets(r, "o"):
+		busy.flash(VrWorkMenu.reason(r, "o"))   # CDDA won't let it come out: back in its spot before it is pulled
+		feel(_ctrl(pull.hand), 0.3)
+		let_part()
 	if _repair.is_empty() or not VrWorkMenu.is_for(r, _repair["uid"], _repair["row"]):
 		return
 	var p := _repair
@@ -914,6 +980,8 @@ func _set_work_session(s: VehicleWorkSession) -> void:
 		work_session.said.disconnect(_on_work_said)
 		work_session.closed.disconnect(_on_work_closed)
 		work_session.started.disconnect(_on_work_started)
+		if work_session.has_signal("refused") and work_session.is_connected("refused", _on_work_refused):
+			work_session.disconnect("refused", _on_work_refused)
 	work_session = s
 	_work_mine = false
 	_repair = {}
@@ -923,6 +991,8 @@ func _set_work_session(s: VehicleWorkSession) -> void:
 		s.said.connect(_on_work_said)
 		s.closed.connect(_on_work_closed)
 		s.started.connect(_on_work_started)
+		if s.has_signal("refused"):   # lead-ui's d6e2ca2
+			s.connect("refused", _on_work_refused)
 
 
 func _on_work_said(text: String) -> void:
@@ -933,16 +1003,19 @@ func _on_work_said(text: String) -> void:
 ## The session closed (another vehicle opened, the vehicle went or is out of reach): the wheel goes, saying why when
 ## it was up; the hand's pick lit again (main's _on_work_closed put the light out).
 func _on_work_closed(_vehicle: int, why: String) -> void:
-	var shown := work_menu.is_open() or not _repair.is_empty()
+	var shown := work_menu.is_open() or not _repair.is_empty() or pull.hand >= 0
 	_repair = {}
+	let_part()
 	close_work()
 	if _work_mine and shown and not why.is_empty():
 		busy.flash(why)
 	_work_mine = false
 
 
-func _on_work_started(_cmd: String) -> void:
+func _on_work_started(cmd: String) -> void:
 	close_work()   # CDDA's activity runs: after "i" or "o" the rows move
+	if cmd == "o":
+		pull.started()   # the part in the hand goes with CDDA's removal
 
 
 ## Car storage: trigger on controller c with an empty hand in a cargo space it can reach (VrDrive.cargo_at: an open
@@ -1245,6 +1318,10 @@ func release(c: XRController3D, n: String) -> void:
 	if drive.holds(0 if c == left else 1):
 		if settings["grip"] != "toggle":
 			drive.let_go(0 if c == left else 1)
+		return
+	if pull.hand == (0 if c == left else 1):
+		if settings["grip"] != "toggle":
+			let_part()
 		return
 	if gun.release(c):
 		return   # the end of a rack (VrGun)
@@ -1920,7 +1997,8 @@ func update_wheel() -> void:
 	var free: Array[bool] = [false, false]
 	for i in 2:
 		free[i] = hands != null and world.snapshot != null and hands.holding(HAND_IDS[i]).is_empty() \
-				and not menu_open() and not panel.shown and not work_menu.is_open() and fire.target_at(at[i], null).is_empty()
+				and not menu_open() and not panel.shown and not work_menu.is_open() and pull.hand != i \
+				and fire.target_at(at[i], null).is_empty()
 	var sticks: Array[Vector2] = [_stick(left), _stick(right)]
 	wheel.update(at, sticks, free, camera.global_transform, look() if wheel.active() and menus_by_eye else {})
 	if work_menu.is_open():   # C6: the work wheel points with its hand or stick; it goes with the hand, a menu or the session
@@ -2323,11 +2401,15 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 			if settings["grip"] == "toggle":
 				drive.let_go(ci)
 			return
+		if pull.hand == ci:   # ... or of a vehicle's part
+			if settings["grip"] == "toggle":
+				let_part()
+			return
 		var holds := hands != null and (not hands.holding(hand_id(c)).is_empty() or pack.hand == ci)
 		if holds and settings["grip"] == "toggle":
 			let_go(c)
-		elif not holds and not gun.grip(c) and not drive.grip(ci, c.global_position, world.snapshot):
-			grab_with(c)   # the off hand on the gun's magazine or slide first, then the wheel's rim or a lid's handle
+		elif not holds and not gun.grip(c) and not drive.grip(ci, c.global_position, world.snapshot) and not grip_part(c):
+			grab_with(c)   # the off hand on the gun's magazine or slide first, the wheel's rim or a lid's handle, a part
 		return
 	if current_layout() == "vive":
 		if c == right and n == "menu_button":

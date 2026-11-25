@@ -152,8 +152,13 @@ func why_not(cmd: String) -> String:
 static func reason(r: Dictionary, cmd: String) -> String:
 	if r.is_empty():
 		return "Checking the part..."
-	if not _ok(r):
-		return str(r.get("text", r.get("error", "Not possible now.")))
+	if not _ok(r):   # CDDA's sentence, else the bridge's word as the flat view says it
+		var t: Variant = r.get("text")
+		var e: Variant = r.get("error")
+		if t is String and not (t as String).is_empty():
+			return (t as String).left(MAX_PANEL)
+		return "The game couldn't answer (%s)." % (e as String).left(80) if e is String and not (e as String).is_empty() \
+				else "Not possible now."
 	return VehicleWorkData.refusal(VehicleWorkData.command_of(r, cmd))
 
 

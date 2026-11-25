@@ -130,7 +130,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    bed, lays it out again); let go of an item over an open trunk to put it in. Next to a car, an empty hand on one of
    its parts lights it; the trigger there opens a wheel of the game's work on it (up repair, right remove, down mend,
    left refill; greyed ones say why): move the hand or stick to one and let go to start it, B / Y to close. An item
-   held to a part lights it too; the trigger then asks the game to repair it. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
+   held to a part lights it too; the trigger then asks the game to repair it. Grip a lit part and pull it out of
+   its spot to ask the game to remove it. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
    from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=
