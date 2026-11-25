@@ -147,6 +147,7 @@ var work_menu := VrWorkMenu.new()
 var work_session: VehicleWorkSession = null: set = _set_work_session
 var _work_mine := false   # the session was opened from here: what it says is flashed
 var _repair := {}         # C6 repair by tool: {uid, row, hand, until} waiting on that part's read; {} none
+var _install := {}        # C6 install by hand: {uid, at, hand, types, until, listing} waiting on the square's read
 ## C6 remove by hand (VrPartPull): a picked part gripped and pulled out of its spot. main.gd gives it part_copy and
 ## hide_part.
 var pull := VrPartPull.new()
@@ -672,11 +673,15 @@ func update_hands(delta: float, all_hands := false) -> void:
 					looks and t.is_empty() and pt.is_empty() and tt.is_empty() and not drive.holds(i), pointing, world.snapshot)
 			continue
 		hands.hover(id, {})   # a held door stays lit; it lights again as a hover after it is let go
-		# C6 repair by tool: an item in the hand (not a gun, not flying in) on a vehicle's part lights it (VrWork)
+		# C6 by hand: an item in the hand (not a gun, not flying in) lights the vehicle square it would be installed
+		# on when it is a part's item (VrInstall), else the part it is on (repair by tool); VrWork
 		var tool_at := _tool_point(i)
-		work.update(i, tool_at, Vector3.ZERO, held.get("kind") == "item" and tool_at.is_finite() and _fly_t[i] < 0.0
-				and pack.hand != i and not _gun_hand(i) and not ui_open() and (all_hands or c.get_is_active()), false,
-				world.snapshot)
+		var tool_free: bool = held.get("kind") == "item" and tool_at.is_finite() and _fly_t[i] < 0.0 \
+				and pack.hand != i and not _gun_hand(i) and not ui_open() and (all_hands or c.get_is_active())
+		if not _installs(i).is_empty():
+			work.update_square(i, tool_at, tool_free, world.snapshot)
+		else:
+			work.update(i, tool_at, Vector3.ZERO, tool_free, false, world.snapshot)
 		_show_pull_ray(i, {})
 		_pointed[i] = {}
 		_ray_wait[i] = 0.0
@@ -849,6 +854,8 @@ func work_tool(c: XRController3D) -> bool:
 	if w.is_empty() or work_session == null or hands == null or world.snapshot == null or ui_open() or pull.hand >= 0 \
 			or hands.holding(hand_id(c)).is_empty():
 		return false
+	if w.has("at"):
+		return _install_at(c, w)
 	var s := work_session
 	if s.uid != w["uid"] and not s.open(w["uid"]):
 		busy.flash(s.note)
@@ -918,6 +925,89 @@ func _on_work_refused(cmd: String, _text: String) -> void:
 		let_part()   # `said` flashed CDDA's reason
 
 
+## C6 install by hand: the trigger with a part's item on a square VrWork lit for it: the session opens on that
+## vehicle (CDDA's reach) and asks CDDA's install read for the square (without the game: NO_INSTALL). When it comes
+## (_on_install_read), the one type that fits and the item serves is installed, several are offered as a list, none
+## says why. False when the item serves no part type.
+func _install_at(c: XRController3D, w: Dictionary) -> bool:
+	var i := 0 if c == left else 1
+	var types := _installs(i)
+	if types.is_empty():
+		return false
+	var s := work_session
+	if s.uid != w["uid"] and not s.open(w["uid"]):
+		busy.flash(s.note)
+		feel(c, 0.3)
+		return true
+	_work_mine = true
+	_install = {"uid": w["uid"], "at": w["at"], "hand": i, "types": types, "until": Time.get_ticks_msec() + REPAIR_WAIT_MS}
+	if not s.show_install(w["at"]):
+		_install = {}
+		busy.flash(VehicleWorkSession.NO_INSTALL)
+		feel(c, 0.3)
+	return true
+
+
+## The part types the item in hand i installs as (VrInstall.types_for); [] none.
+func _installs(i: int) -> PackedInt32Array:
+	var it := held_item(i)
+	return VrInstall.types_for(world.tables, it.type) if it != null and world != null else PackedInt32Array()
+
+
+## The install read for the asked square: of the types the item serves, the one that fits is installed, several go on
+## a list (VrWorkMenu.open_list; the trigger let go on one installs it), none: CDDA's reason or that it doesn't fit.
+func _on_install_read(r: Dictionary) -> void:
+	var p := _install
+	_install = {}
+	var s := work_session
+	var c := _ctrl(p["hand"])
+	if Time.get_ticks_msec() > p["until"]:
+		s.end_install()
+		return
+	if not VrWorkMenu.is_ok(r):
+		busy.flash(VrWorkMenu.reason(r, "i"))
+		feel(c, 0.3)
+		s.end_install()
+		return
+	var inst: Dictionary = r["install"]
+	var rows := VrInstall.choices(inst, p["types"], _vpart_name)
+	if rows.is_empty():
+		var why := VehicleWorkData.install_refusal(inst)
+		var sel: Dictionary = inst.get("selected", {})
+		if why.is_empty() and not sel.is_empty():
+			why = VehicleWorkData.refusal(sel)
+		if why.is_empty() and not p.get("why", false):   # ask once more with one of its types: CDDA's own reason
+			p["why"] = true
+			p["until"] = Time.get_ticks_msec() + REPAIR_WAIT_MS
+			_install = p
+			if s.show_install(p["at"], (p["types"] as PackedInt32Array)[0]):
+				return
+			_install = {}
+		busy.flash(why if not why.is_empty() else "That doesn't fit there.")
+		feel(c, 0.3)
+		s.end_install()
+	elif rows.size() == 1:
+		s.end_install()
+		if not s.install(rows[0]["vpart"], p["at"]):
+			feel(c, 0.3)   # `said` tells why
+	else:
+		var list: Array = []
+		for row: Dictionary in rows:
+			list.append({"text": row["name"] + ("" if row["have"] else " (missing parts or tools)"), "value": row["vpart"]})
+		work_menu.open_list(p["hand"], c.global_position, camera.global_transform, p["uid"], list, "Install as:")
+		if not work_menu.is_open():
+			s.end_install()
+			return
+		p["listing"] = true
+		_install = p
+		work.hold = true
+
+
+func _vpart_name(vp: int) -> String:
+	var d := VehicleView.def_of(world.tables, world.snapshot, vp)
+	return d.name if d != null else ""
+
+
 ## Where hand i's held item touches from: its copy's middle, else the hand.
 func _tool_point(i: int) -> Vector3:
 	var p: Node3D = hands.proxy(HAND_IDS[i]) if hands != null else null
@@ -926,6 +1016,8 @@ func _tool_point(i: int) -> Vector3:
 
 ## A read for the session (VehicleWorkSession.result): a repair by tool waiting on that part goes, or says why not.
 func _on_work_read(r: Dictionary) -> void:
+	if not _install.is_empty() and not _install.get("listing", false) and VrInstall.is_for(r, _install["uid"], _install["at"]):
+		_on_install_read(r)
 	if pull.state == "held" and VrWorkMenu.is_for(r, pull.uid, pull.row) and not VrWorkMenu.lets(r, "o"):
 		busy.flash(VrWorkMenu.reason(r, "o"))   # CDDA won't let it come out: back in its spot before it is pulled
 		feel(_ctrl(pull.hand), 0.3)
@@ -950,6 +1042,13 @@ func work_release(i: int) -> bool:
 	if not work_menu.is_open() or work_menu.hand != i or not work_menu.armed:
 		return false
 	work_menu.armed = false
+	if not work_menu.items.is_empty():   # list mode: install the type picked
+		var v: Variant = work_menu.choice_value()
+		var p := _install
+		close_work()
+		if v is int and not p.is_empty() and work_session != null and not work_session.install(v, p["at"]):
+			feel(_ctrl(i), 0.3)   # `said` tells why
+		return true
 	var cmd := work_menu.pointed
 	if cmd.is_empty():
 		return true
@@ -968,6 +1067,10 @@ func work_release(i: int) -> bool:
 ## The work wheel goes; the hands pick parts again, the light back on the hand's pick (the session's select may have
 ## moved it to the other hand's part). The session stays open for what CDDA answers.
 func close_work() -> void:
+	if _install.get("listing", false):
+		_install = {}
+		if work_session != null:
+			work_session.end_install()
 	work_menu.close()
 	work.hold = false
 	work.relight()
@@ -980,19 +1083,18 @@ func _set_work_session(s: VehicleWorkSession) -> void:
 		work_session.said.disconnect(_on_work_said)
 		work_session.closed.disconnect(_on_work_closed)
 		work_session.started.disconnect(_on_work_started)
-		if work_session.has_signal("refused") and work_session.is_connected("refused", _on_work_refused):
-			work_session.disconnect("refused", _on_work_refused)
+		work_session.refused.disconnect(_on_work_refused)
 	work_session = s
 	_work_mine = false
 	_repair = {}
+	_install = {}
 	if s != null:
 		s.result.connect(work_menu.set_read)
 		s.result.connect(_on_work_read)
 		s.said.connect(_on_work_said)
 		s.closed.connect(_on_work_closed)
 		s.started.connect(_on_work_started)
-		if s.has_signal("refused"):   # lead-ui's d6e2ca2
-			s.connect("refused", _on_work_refused)
+		s.refused.connect(_on_work_refused)
 
 
 func _on_work_said(text: String) -> void:
@@ -1003,8 +1105,9 @@ func _on_work_said(text: String) -> void:
 ## The session closed (another vehicle opened, the vehicle went or is out of reach): the wheel goes, saying why when
 ## it was up; the hand's pick lit again (main's _on_work_closed put the light out).
 func _on_work_closed(_vehicle: int, why: String) -> void:
-	var shown := work_menu.is_open() or not _repair.is_empty() or pull.hand >= 0
+	var shown := work_menu.is_open() or not _repair.is_empty() or pull.hand >= 0 or not _install.is_empty()
 	_repair = {}
+	_install = {}
 	let_part()
 	close_work()
 	if _work_mine and shown and not why.is_empty():

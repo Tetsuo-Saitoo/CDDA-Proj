@@ -6,6 +6,8 @@ extends Node3D
 ## the part (VehicleWorkData.row_text), then for the command pointed at CDDA's reason, or its requirement lines met
 ## (+) or not (-). The hand moved off the middle, or its stick, points. VrRig sends what the trigger lets go on
 ## (VehicleWorkSession.send) and closes it; CDDA checks it all again. Only the read is shown; nothing decides here.
+## List mode (open_list; install by hand, VrInstall): CDDA's types for a square in rows over the hand instead of the
+## wheel; the hand moved down a row (ROW_M), or the stick, picks one; the trigger let go on it installs it (VrRig).
 
 const CMDS: Array[String] = ["r", "o", "m", "f"]   # up, right, down, left
 const DIRS: Array[Vector2] = [Vector2(0, 1), Vector2(1, 0), Vector2(0, -1), Vector2(-1, 0)]
@@ -19,6 +21,7 @@ const PANEL_UP := 0.2          # m: the panel's middle over the wheel's
 const OK_COLOR := Color(1.0, 1.0, 1.0)
 const OFF_COLOR := Color(0.5, 0.5, 0.5)
 const POINTED := Color(1.0, 0.85, 0.3)
+const ROW_M := 0.03            # list mode: the hand this much lower picks the next row
 
 var hand := -1                 # the hand whose trigger opened it; -1 closed
 var armed := false             # its trigger is down: letting go picks (VrRig)
@@ -27,6 +30,11 @@ var row := -1
 var read := {}                 # the session's read for that part (VehicleWorkData.clean)
 var pointed := ""              # the command pointed at; "" none
 var center := Vector3.ZERO     # where it opened (world)
+var items: Array = []          # list mode: [{text, value}]; [] the wheel
+var title := ""                # list mode: the line over the rows
+var choice := -1               # list mode: the row picked
+var _hand_k := -1              # ... the row the hand was on last
+var _stick_held := false       # ... the stick past STICK_ON (one row a push)
 var _labels := {}              # cmd -> Label3D
 var _panel: Label3D
 
@@ -63,6 +71,10 @@ func open(i: int, at: Vector3, head: Transform3D, vehicle: int, part_row: int, r
 	read = {}
 	pointed = ""
 	center = at
+	items = []
+	choice = -1
+	for l: Label3D in _labels.values():
+		l.visible = true
 	var to_head := head.origin - at
 	to_head.y = 0.0
 	var b := Basis.looking_at(-to_head.normalized(), Vector3.UP) if to_head.length() > 0.01 else Basis()
@@ -75,6 +87,30 @@ func open(i: int, at: Vector3, head: Transform3D, vehicle: int, part_row: int, r
 	set_read(r)
 
 
+## Opens in list mode for hand `i` at `at` facing `head`, on vehicle `vehicle`: rows `list` ([{text, value}], at most
+## VrInstall.MAX_LIST) under `heading`, the first picked; not armed (the trigger that asked is up by now).
+func open_list(i: int, at: Vector3, head: Transform3D, vehicle: int, list: Array, heading: String) -> void:
+	if list.is_empty():
+		return
+	open(i, at, head, vehicle, -1)
+	if not is_open():
+		return
+	armed = false
+	items = list.slice(0, VrInstall.MAX_LIST)
+	title = heading.left(MAX_PANEL)
+	choice = 0
+	_hand_k = 0
+	_stick_held = false
+	for l: Label3D in _labels.values():
+		l.visible = false
+	_paint()
+
+
+## The picked row's value (list mode), else null.
+func choice_value() -> Variant:
+	return items[choice].get("value") if choice >= 0 and choice < items.size() and items[choice] is Dictionary else null
+
+
 func close() -> void:
 	hand = -1
 	armed = false
@@ -82,12 +118,14 @@ func close() -> void:
 	row = -1
 	read = {}
 	pointed = ""
+	items = []
+	choice = -1
 	visible = false
 
 
 ## The session's read (VehicleWorkSession.result): kept when it is for this vehicle and part, else ignored.
 func set_read(r: Dictionary) -> void:
-	if is_open() and is_for(r, uid, row):
+	if is_open() and items.is_empty() and is_for(r, uid, row):
 		read = r
 		_paint()
 
@@ -100,12 +138,15 @@ static func is_for(r: Dictionary, vehicle: int, part_row: int) -> bool:
 		return false
 	var sel: Variant = r.get("selected")
 	var at: Variant = (sel as Dictionary).get("row") if sel is Dictionary else null
-	return not _ok(r) or (at is int and at == part_row)
+	return not is_ok(r) or (at is int and at == part_row)
 
 
 ## Points from the hand at world point `p` (its offset from the middle in the wheel's plane), or its stick `stick`.
 func point(p: Vector3, stick := Vector2.ZERO) -> void:
 	if not is_open():
+		return
+	if not items.is_empty():
+		_point_list(p, stick)
 		return
 	var v := Vector2.ZERO
 	if stick.is_finite() and stick.length() > STICK_ON:
@@ -135,10 +176,11 @@ func allowed(cmd: String) -> bool:
 
 ## Whether read `r` lets command `cmd` go.
 static func lets(r: Dictionary, cmd: String) -> bool:
-	return _ok(VehicleWorkData.command_of(r, cmd)) if _ok(r) else false
+	return is_ok(VehicleWorkData.command_of(r, cmd)) if is_ok(r) else false
 
 
-static func _ok(d: Dictionary) -> bool:
+## Whether a read or command `d` says ok (a bool true; anything else: no).
+static func is_ok(d: Dictionary) -> bool:
 	var ok: Variant = d.get("ok")
 	return ok is bool and ok
 
@@ -152,7 +194,7 @@ func why_not(cmd: String) -> String:
 static func reason(r: Dictionary, cmd: String) -> String:
 	if r.is_empty():
 		return "Checking the part..."
-	if not _ok(r):   # CDDA's sentence, else the bridge's word as the flat view says it
+	if not is_ok(r):   # CDDA's sentence, else the bridge's word as the flat view says it
 		var t: Variant = r.get("text")
 		var e: Variant = r.get("error")
 		if t is String and not (t as String).is_empty():
@@ -166,7 +208,35 @@ func panel_text() -> String:
 	return _panel.text
 
 
+## List mode: the hand's row below the middle when it changes rows, else a stick push one row up or down.
+func _point_list(p: Vector3, stick: Vector2) -> void:
+	var k := choice
+	if stick.is_finite() and absf(stick.y) > STICK_ON:
+		if not _stick_held:
+			k += -1 if stick.y > 0.0 else 1
+		_stick_held = true
+	else:
+		_stick_held = false
+	if p.is_finite():
+		var l := to_local(p) if is_inside_tree() else transform.affine_inverse() * p
+		var hk := clampi(roundi(-l.y / ROW_M), 0, items.size() - 1)
+		if hk != _hand_k:
+			_hand_k = hk
+			k = hk
+	k = clampi(k, 0, items.size() - 1)
+	if k != choice:
+		choice = k
+		_paint()
+
+
 func _paint() -> void:
+	if not items.is_empty():
+		var rows := PackedStringArray([title])
+		for k in items.size():
+			var t: Variant = (items[k] as Dictionary).get("text") if items[k] is Dictionary else ""
+			rows.append(("> " if k == choice else "  ") + str(t).left(VehicleWorkData.MAX_NAME + 40))
+		_panel.text = "\n".join(rows).left(MAX_PANEL)
+		return
 	for cmd: String in CMDS:
 		var l: Label3D = _labels[cmd]
 		l.text = VehicleWorkData.COMMAND_NAMES[cmd]
