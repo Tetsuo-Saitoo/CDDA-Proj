@@ -31,6 +31,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_rig(root, snap)
 	_test_menu(snap)
 	_test_rig_menu(root, snap, veh)
+	_test_rig_tool(root, snap)
 
 
 static func _snap(veh: Snapshot.Vehicle, at: Vector3i, driving: bool) -> Snapshot:
@@ -255,3 +256,55 @@ func _test_rig_menu(root: Node, snap: Snapshot, veh: Snapshot.Vehicle) -> void:
 	_check.call(opened and stays and greyed and sent and away and cancel and gone and refused and unwired,
 			"vr work rig: the trigger on a picked part opens the wheel on main's session; let go in the middle it stays, on a greyed command it says why, on an allowed one it sends and closes; B, moving away or the session closing close it (%s)"
 			% [[opened, stays, greyed, sent, away, cancel, gone, refused, unwired]])
+
+
+## Repair by tool: an item in the hand on a part lights it; the trigger opens the session on it and, the part's read
+## allowing repair, sends it (not connected here: said and flashed); an undamaged part: CDDA's reason and a buzz; a
+## read come too late: nothing; an empty hand: the wheel's way, not this.
+func _test_rig_tool(root: Node, snap: Snapshot) -> void:
+	var hurt := Snapshot.Vehicle.new()   # the same car, its first part damaged
+	hurt.uid = UID
+	hurt.pos = Vector3i(10, 10, 0)
+	hurt.parts = PackedInt32Array([0, 0, 1, 128, 0, 0, 0, 0, 1, 0, 1, 255, 0, 1, 0, 0])
+	var damaged := _snap(hurt, Vector3i(9, 10, 0), false)
+	var world := WorldView.new()
+	world.snapshot = damaged
+	var hands := Hands.new(world, ItemActions.new())
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.hands = hands
+	var w := _work()
+	rig.work = w
+	var s := VehicleWorkSession.new()
+	s.world = world
+	rig.work_session = s
+	_lights.clear()
+	rig.right.global_position = Vector3(0.0, 1.1, 0.0)
+	rig.left.global_position = Vector3(0.0, -4.0, 0.0)
+	hands.hand("vr_r").held = {"kind": "item", "item": ItemRef.new()}
+	rig.update_hands(0.016, true)
+	var lit: bool = w.picked[1] == {"uid": UID, "row": 0} and _lights == [[UID, 0]]
+	var b0: int = rig.buzzes[1]
+	rig.press(rig.right, "trigger_click")
+	var sent: bool = s.uid == UID and s.selected == 0 and s.note == "Repair isn't connected to the game yet." \
+			and rig.busy.get("_flash") == s.note and rig.get("_repair").is_empty() and not rig.work_menu.is_open()
+	world.snapshot = snap   # repaired meanwhile
+	rig.press(rig.right, "trigger_click")
+	var why := VrWorkMenu.reason(VehicleWorkData.stand_in(snap, null, UID, 0), "r")
+	var refused: bool = not why.is_empty() and rig.busy.get("_flash") == why and rig.buzzes[1] == b0 + 2
+	world.snapshot = damaged
+	rig.busy.flash("-")
+	rig.set("_repair", {"uid": UID, "row": 0, "hand": 1, "until": 0})
+	rig.call("_on_work_read", VehicleWorkData.stand_in(damaged, null, UID, 0))
+	var late: bool = rig.busy.get("_flash") == "-" and rig.get("_repair").is_empty()
+	hands.hand("vr_r").held = {}
+	var empty: bool = not rig.work_tool(rig.right)
+	rig.work_session = null
+	rig.hands = null
+	rig.free()
+	if is_instance_valid(hands):
+		hands.free()
+	world.free()
+	_check.call(lit and sent and refused and late and empty,
+			"vr work tool: an item in the hand on a part lights it; the trigger asks CDDA to repair it when its read allows, else says why and buzzes; a late read does nothing (%s)"
+			% [[lit, sent, refused, late, empty]])

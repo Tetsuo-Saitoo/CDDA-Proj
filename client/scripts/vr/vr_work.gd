@@ -1,7 +1,7 @@
 class_name VrWork
 extends RefCounted
-## C6 vehicle work by hand, slice 1 (lead-vr; TASKS C6 (e)): which part of a vehicle next to the player each empty
-## hand is on. A hand inside a part's drawn spot (VehicleView.part_anchors: its middle and size, worked out once a
+## C6 vehicle work by hand (lead-vr; TASKS C6 (e)): which part of a vehicle next to the player each empty hand, or
+## item held in a hand (repair by tool, VrRig.work_tool), is on. A hand inside a part's drawn spot (VehicleView.part_anchors: its middle and size, worked out once a
 ## snapshot) picks it, the one it is most in for its size; with nothing touched and the trigger half pressed, the
 ## pull ray picks the part nearest where it meets the vehicle. The picked part is lit (VehicleView.highlight, one at a
 ## time: the right hand's, else the left's). Nothing goes to CDDA here; the trigger on a picked part opens the command
