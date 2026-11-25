@@ -102,7 +102,11 @@ func _test_hide(view: VehicleView, world: WorldView, snap: Snapshot, gone: Snaps
 	var back: int = mesh_of.call()
 	view.hide_part(UID, engine, true)
 	view.hide_part(UID, engine, false)   # refused: snaps back
-	_check.call(hid and without == full - 36 and kept == without and back == full and mesh_of.call() == full
+	var shown: int = mesh_of.call()
+	view.hide_part(UID, engine, true)
+	var any := view.hide_part(UID, -1, false)   # whatever is hidden on it (a row kept from before)
+	_check.call(hid and without == full - 36 and kept == without and back == full and shown == full and any
+			and mesh_of.call() == full and not view.hide_part(UID, -1, true) and not view.hide_part(UID, -2, false)
 			and not view.hide_part(UID, 9999, true) and not view.hide_part(UID + 7, engine, true),
 			"carried part: the original is hidden while carried, with each snapshot, until CDDA removes it or it is put back (%d, %d, %d, %d)" % [full, without, kept, back])
 	# in the interior: a box's lid, the controls' wheel and dash; also when the interior is built while carried

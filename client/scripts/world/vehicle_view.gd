@@ -595,17 +595,21 @@ func part_copy_of(vpart: int) -> Node3D:
 ## C6 (lead-vr's hands): hides part `row` of vehicle `uid` where it is drawn (in its vehicle's mesh, and its node in
 ## the interior: a lid, the controls' wheel and dash) while a hand carries its copy (part_copy), or shows it again.
 ## One part a vehicle. Kept with each snapshot by its square and type (rows move) until a snapshot no longer has it
-## (CDDA removed it) or the vehicle goes. False when the vehicle isn't drawn or the row is no part of its own.
+## (CDDA removed it) or the vehicle goes. Row -1 with `hidden` false shows whatever is hidden on it (a caller whose
+## row has moved since). False when the vehicle isn't drawn or the row is no part of its own.
 func hide_part(uid: int, row: int, hidden: bool) -> bool:
 	var car: Car = _cars.get(uid)
-	if car == null or car.veh == null or _snap == null or _world == null or not is_instance_valid(_world) \
-			or row < 0 or row >= car.veh.part_count():
+	if car == null or car.veh == null or _snap == null or _world == null or not is_instance_valid(_world):
 		return false
-	var j := row * Snapshot.VPART_STRIDE
-	if car.veh.parts[j + 4] & Snapshot.VPART_FILLER != 0:
-		return false
-	var which := [Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), car.veh.parts[j + 2]]
-	var want: Array = which if hidden else ([] if car.hidden == which else car.hidden)
+	var want: Array = []
+	if row != -1 or hidden:
+		if row < 0 or row >= car.veh.part_count():
+			return false
+		var j := row * Snapshot.VPART_STRIDE
+		if car.veh.parts[j + 4] & Snapshot.VPART_FILLER != 0:
+			return false
+		var which := [Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), car.veh.parts[j + 2]]
+		want = which if hidden else ([] if car.hidden == which else car.hidden)
 	if want != car.hidden:
 		car.hidden = want
 		var look := _vehicle(car.veh, _snap, _world, car.hidden)

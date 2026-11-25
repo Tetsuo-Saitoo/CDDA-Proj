@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
 - 2026-11-24 — Vehicle work: a car part can be shown on its own, for a VR hand to carry while the original is hidden until the game removes it or it is put back; install mode can show the part about to be installed on its square.
 - 2026-11-24 — Tester AppImage test-2026-11-24 (private test repo, pre-release, not a release) from main b0886a6 + fork c7ed127, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): vehicle work install/mend/refill, work camera and hood, VR hood, part picking and work wheel. Nothing tried in a headset; mend, refill and repair not yet run in a live game.
 - 2026-11-24 — VR vehicle work, repair by tool (lead-vr): holding an item to a car's part lights it; the trigger asks the game to repair that part, and the game decides (it looks through the whole inventory for tools). Not tried in a headset yet.
