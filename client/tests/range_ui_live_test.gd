@@ -1010,6 +1010,14 @@ func _glove_door_live(uid: int, part: int, sq: Vector3i) -> void:
 				((door.get_parent() as Node3D).get_parent().get_parent() as Node3D).global_position, hit.get("what", "")])
 
 
+## The hold on the work view's actions (VehicleWorkData.Gate): main's own, or its work session's (lead-ui's
+## VehicleWorkSession, main.work); null on a client with neither.
+func _work_hold() -> Variant:
+	var own: Variant = _main.get("_work_gate")
+	var session: Variant = _main.get("work")
+	return own if own != null else ((session as Object).get("_gate") if session is Object else null)
+
+
 ## lead-bridge's vehicle_work action through lead-ui's view (the view open on vehicle `uid`, on the game's own read).
 ## With the test kit's tools, a small part the read allows removing (a seatbelt, a headlight, ...) is removed: o
 ## pressed twice at once sends one action and the second says so; CDDA starts the work; when the activity is over the
@@ -1090,7 +1098,7 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		_answer_prompt()
 		await process_frame
 	var done: bool = began and fewer.call()
-	var gate: Variant = _main.get("_work_gate")
+	var gate: Variant = _work_hold()
 	var old_then: Variant = gate.get("stale") if gate != null else null
 	root.push_input(o.duplicate())   # right after the work ended: the list on screen may still be the old one
 	await _frames(2)
@@ -1143,7 +1151,9 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 				% [picked, old["row"], mine.get("text", ""), holds, tag > 0, got, veh3.part_count() if veh3 != null else -1])
 	# A list marked old with no read out (as after an answer that never came: set by hand here), on a part o is
 	# allowed for: o says so, asks again by itself, and the list is good again; nothing starts.
-	var gate2: Variant = _main.get("_work_gate")
+	var gate2: Variant = _work_hold()
+	if gate2 == null:
+		print("  (vehicle work: no hold on the actions found in this client: an old list not tried)")
 	var again := -1
 	for q: Dictionary in (wv.result as Dictionary).get("parts", []):
 		if again < 0 and str(q["name"]) == picked:

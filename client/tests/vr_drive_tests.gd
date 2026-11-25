@@ -20,6 +20,7 @@ var _sq: Variant = null         # what the ride_square stub answers
 var _reach := true              # what the can_reach stub answers
 var _cell: Variant = null       # what the square_at stub answers
 var _changed: Array = []        # lid_changed calls
+var _hoods: Array = []          # open_hood calls
 
 
 func run(root: Node, check: Callable) -> void:
@@ -38,11 +39,13 @@ func run(root: Node, check: Callable) -> void:
 	car.add_child(_ci)
 	_ci._add_controls(veh, 0)
 	_ci._add_lid(veh, 1, VehicleView.Kind.CARGO, false, Vector3.ZERO, Color.GRAY)
+	_ci._add_hood(AABB(Vector3(0.6, CarInterior.HOOD_UP, -0.5), Vector3(1.0, 0.1, 1.0)), Vector3.ZERO, Color.GRAY)
 	var snap := _snap(veh, true, 0.0)
 	var d := _drive()
 	_test_wheel(d, snap, veh)
 	_test_pedals(d, snap, veh)
 	_test_lids(d, veh)
+	_test_hood(d, veh)
 	_test_cargo(d, veh)
 	_test_glovebox(root, d)
 	_test_rig(root, snap)
@@ -61,6 +64,9 @@ func _drive() -> VrDrive:
 		return _ci.open_lid(part, open)
 	d.paused = func() -> String: return _note
 	d.flash = func(n: String) -> void: _flashes.append(n)
+	d.open_hood = func(uid: int, open: bool) -> bool:
+		_hoods.append([uid, open])
+		return _ci.open_lid(CarInterior.HOOD, open)
 	return d
 
 
@@ -229,6 +235,33 @@ func _test_lids(d: VrDrive, veh: Snapshot.Vehicle) -> void:
 
 static func _trunk_row(items: PackedInt64Array) -> Array[Dictionary]:
 	return [{"part": 1, "used_ml": 250, "capacity_ml": 1000, "more": 0, "items": items}] as Array[Dictionary]
+
+
+## The hood (C6) by its handle: swung about its hinge with the hand; let go past LID_SNAP, VehicleView.open_hood opens
+## it, else shuts it; never a cargo lid's open_lid or lid_changed.
+func _test_hood(d: VrDrive, veh: Snapshot.Vehicle) -> void:
+	var walking := _snap(veh, false, 0.0)
+	var c: Node3D = _ci.lids[CarInterior.HOOD]
+	var lid: Node3D = c.get_node("Lid")
+	var axis: Vector3 = c.get_meta("hinge_axis")
+	var handle: Vector3 = c.get_meta("handle")
+	var at := func(deg: float) -> Vector3: return c.global_transform * (lid.position + Basis(axis, deg_to_rad(deg)) * handle)
+	_hoods.clear()
+	var lids_before := _lids.size()
+	var took: bool = d.grip(1, at.call(0.0), walking) and d.holds_lid(1) and lid.get_meta("held") == true
+	d.update([Vector3.ZERO, at.call(50.0)], walking, 0)
+	var swung := absf(_ci.lid_deg(CarInterior.HOOD) - 50.0) < 0.5
+	var opens: bool = d.let_go(1) and lid.get_meta("held") == false and _hoods == [[UID, true]]
+	_ci.step(1.0)
+	var open := absf(_ci.lid_deg(CarInterior.HOOD) - CarInterior.HOOD_OPEN) < 0.5
+	d.grip(1, at.call(CarInterior.HOOD_OPEN), walking)
+	d.update([Vector3.ZERO, at.call(20.0)], walking, 0)
+	d.let_go(1)
+	var shuts: bool = _hoods.size() == 2 and _hoods[1] == [UID, false] and _lids.size() == lids_before
+	_ci.step(2.0)
+	_check.call(took and swung and opens and open and shuts,
+			"vr drive hood: its handle taken swings it with the hand; let go past %d it opens, else shuts (open_hood, not a cargo lid's) (%s)"
+			% [int(VrDrive.LID_SNAP), [took, swung, opens, open, shuts]])
 
 
 ## Car storage by hand: the cargo space a hand is in (an open lid's opening while can_reach allows it; asked, any

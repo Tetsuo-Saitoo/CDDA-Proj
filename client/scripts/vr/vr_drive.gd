@@ -12,6 +12,7 @@ extends RefCounted
 ## A grip on the handle of a lid (any drawn interior's "Cargo_<part>" > "Lid") swings it about its hinge with the hand,
 ## 0 to its open_deg; let go, it opens fully past LID_SNAP, else shuts (VehicleView.open_lid: the client's own, CDDA
 ## has no lids; hands reach in from CarInterior.LID_REACH, VehicleView.can_reach). Nothing is sent for a lid.
+## The hood (C6; CarInterior's "Hood", no CDDA part) by its handle the same way: let go, VehicleView.open_hood.
 ## Car storage by hand: `lid_changed` tells the rig when a hand lets a lid go open (its cargo laid out in the tray, as
 ## the flat screen's E does) or shut, or swings a held one under LID_REACH (the tray on it goes); `cargo_at` is the
 ## cargo space a hand is in (an open lid's opening; with `cells` any reachable cargo square under it).
@@ -35,6 +36,7 @@ const MAX_SENT := 16
 
 var interior := Callable()      # (uid) -> Dictionary: VehicleView.interior (main.gd); unset: no wheel, no lids
 var open_lid := Callable()      # (uid, part, open) -> bool: VehicleView.open_lid (main.gd)
+var open_hood := Callable()     # (uid, open) -> bool: VehicleView.open_hood (main.gd)
 var queue_action := Callable()  # (act) -> bool: CDDA's action (main.gd's _queue_act); false: not sent
 var paused := Callable()        # () -> String: the note to show while real time is paused, "" while it runs
 var flash := Callable()         # (note) -> void: shows a note low in the view (VrBusy.flash)
@@ -149,20 +151,21 @@ func _grip_lid(i: int, at: Vector3, snap: Snapshot) -> bool:
 		if not a is Dictionary:
 			continue
 		for k: Variant in a:
-			if not k is String or not (k as String).begins_with("Cargo_"):
+			var hood: bool = k is String and k == "Hood"   # the hood: no CDDA part, found by its name
+			if not hood and (not k is String or not (k as String).begins_with("Cargo_")):
 				continue
 			var c: Variant = a[k]
 			if not c is Node3D or not is_instance_valid(c) or not (c as Node3D).is_inside_tree():
 				continue
 			var lid := (c as Node3D).get_node_or_null("Lid") as Node3D
 			var h: Variant = _meta(c, "handle")
-			var part: Variant = _meta(c, "part")
+			var part: Variant = CarInterior.HOOD if hood else _meta(c, "part")
 			if lid == null or not h is Vector3 or not part is int or lid.get_meta("held", false):
 				continue
 			var d := (lid.global_transform * (h as Vector3)).distance_to(at)
 			if d < best_d:
 				best_d = d
-				best = {"uid": veh.uid, "part": part, "cargo": c, "lid": lid,
+				best = {"uid": veh.uid, "part": part, "cargo": c, "lid": lid, "hood": hood,
 						"reach": _lid_deg(c, lid) >= CarInterior.LID_REACH - 0.01}
 	if best.is_empty():
 		return false
@@ -192,9 +195,13 @@ func let_go(i: int) -> bool:
 	if is_instance_valid(lid):
 		(lid as Node3D).set_meta("held", false)
 		var deg := _lid_deg(c, lid) if is_instance_valid(c) else 0.0
-		if open_lid.is_valid():
-			open_lid.call(g["uid"], g["part"], deg >= LID_SNAP)
-		_tell(g, deg >= LID_SNAP)
+		if g.get("hood", false):
+			if open_hood.is_valid():
+				open_hood.call(g["uid"], deg >= LID_SNAP)
+		else:
+			if open_lid.is_valid():
+				open_lid.call(g["uid"], g["part"], deg >= LID_SNAP)
+			_tell(g, deg >= LID_SNAP)
 	return true
 
 

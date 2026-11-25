@@ -29,6 +29,12 @@ class WorkSim:
 		return results.get(id, "")
 
 
+## main's WorldView as VehicleWorkSession reads it.
+class FakeWorld:
+	var snapshot: Snapshot
+	var tables: IdTables
+
+
 func run(root: Node, check: Callable, data: Variant) -> void:
 	_check = check
 	_test_parse()
@@ -40,6 +46,7 @@ func run(root: Node, check: Callable, data: Variant) -> void:
 	_test_install(root)
 	_test_mend_refill()
 	_test_frame()
+	_test_session(data)
 
 
 ## The mock with a car next to the player: part 0 a frame and 1 another part on the square east of the player
@@ -164,7 +171,7 @@ func _test_view(root: Node, data: Variant) -> void:
 	v.handle_key(_key(KEY_O))
 	v.handle_key(_key(KEY_2))
 	v.blocked = func() -> bool: return true
-	var held := not v.handle_key(_key(KEY_DOWN)) and v.selected == moved
+	var held: bool = not v.handle_key(_key(KEY_DOWN)) and v.selected == moved
 	v.blocked = Callable()
 	var far := {"ok": false, "vehicle": UID, "error": "too far"}
 	v.set_result(far)
@@ -389,7 +396,7 @@ func _test_install(root: Node) -> void:
 	v.move(1)
 	v.set_result(VehicleWorkData.parse_result(JSON.stringify(_install_sample(5, 212)), 5))
 	var detail := v.detail_text()
-	var sent := v.choose("i")
+	var sent: bool = v.choose("i")
 	v.toggle_all()
 	var listed_all := v.list_text()
 	var key := InputEventKey.new()
@@ -443,3 +450,76 @@ func _test_frame() -> void:
 	_check.call(absf(at[0] - 0.265) < 0.01 and absf(at[1] - 0.2906) < 0.01 and absf(at[2] - 0.3604) < 0.01
 			and left_of_view and VehicleWorkView.free_center(0.0) == 0.3,
 			"vehicle work camera frame: the part centred left of the view (%s)" % [at])
+
+
+## VehicleWorkSession (main.work, shared with VR's panel): the stand-in without a bridge; with one, the read for what
+## the presenter shows, an action from the last read, one at a time, held while busy, its work_result (started,
+## or the part moved), and closing when the vehicle is out of reach.
+func _test_session(data: Variant) -> void:
+	var w := FakeWorld.new()
+	w.snapshot = _with_car(data)
+	var s := VehicleWorkSession.new()
+	s.world = w
+	var got: Array = []
+	var said: Array = []
+	var shut: Array = []
+	var seen: Array = []
+	s.result.connect(func(r: Dictionary) -> void: got.append(r))
+	s.said.connect(func(t: String) -> void: said.append(t))
+	s.closed.connect(func(v: int, why: String) -> void: shut.append([v, why]))
+	s.part_focused.connect(func(row: int) -> void: seen.append("part %d" % row))
+	s.started.connect(func(cmd: String) -> void: seen.append("started " + cmd))
+	s.moved.connect(func() -> void: seen.append("moved"))
+	# no bridge: the snapshot's stand-in, nothing sent
+	w.snapshot = _with_car(data, true)
+	var refused: bool = not s.open(UID) and s.note == "The vehicle is out of reach." and not s.open(UID + 1) \
+			and s.note == "The vehicle is gone." and got.is_empty() and shut.is_empty()
+	w.snapshot = _with_car(data)
+	var stand: bool = refused and s.open(UID) and s.note == "" and got.size() == 1 and got[0].get("stand_in") == true
+	s.select(1)
+	stand = stand and got.size() == 2 and got[1]["selected"]["row"] == 1 and not s.send("o", 1) \
+			and said == ["Remove isn't connected to the game yet."] and not s.show_install(Vector2i.ZERO)
+	s.follow(_with_car(data, true))
+	var away: bool = s.uid == 0 and shut == [[UID, "The vehicle is out of reach."]]
+	# with the bridge
+	var sim := WorkSim.new()
+	var ls := LiveSession.new()
+	ls.state = "running"
+	ls._sim = sim
+	ls.vehicle_work.connect(s.on_read)
+	s.live = ls
+	got.clear()
+	said.clear()
+	seen.clear()
+	var opened: bool = s.open(UID) and sim.asked[-1] == {"vehicle": UID}
+	sim.results[sim.next] = JSON.stringify(_sample(sim.next))
+	ls._poll_vehicle_work()
+	s.select(9)
+	var asked_part: bool = sim.asked[-1] == {"vehicle": UID, "part": 9}
+	sim.results[sim.next] = JSON.stringify(_sample(sim.next))
+	ls._poll_vehicle_work()
+	var sent: bool = s.send("o", 9) and sim.queued.size() == 1 and sim.queued[0]["part"] == 9 \
+			and sim.queued[0]["vpart"] == 630 and sim.queued[0]["mount"] == [1, -1] and sim.queued[0]["cmd"] == "o"
+	var tag: int = sim.queued[0]["tag"] if not sim.queued.is_empty() else 0
+	var once: bool = not s.send("o", 9) and sim.queued.size() == 1 and said.slice(-2) == ["Starting...", "Still starting the last one."]
+	s.on_events([{"kind": "message"}, {"kind": "work_result", "uid": UID, "amount": 1, "detail": tag, "text": ""}])
+	var began: bool = seen.has("started o") and said[-1] == "Remove started." and s.selected == -1 and s.busy()
+	var held: bool = not s.send("r", 9) and sim.queued.size() == 1 and said[-1] == "Not while you're busy."
+	var n := sim.asked.size()
+	s.follow(w.snapshot)   # the next snapshot: no longer busy, the list is read again before anything goes out
+	var reread: bool = not s.busy() and sim.asked.size() == n + 1
+	sim.results[sim.next] = JSON.stringify(_sample(sim.next))
+	ls._poll_vehicle_work()
+	var again: bool = s.send("r", 9) and sim.queued.size() == 2
+	s.on_events([{"kind": "work_result", "uid": UID, "amount": 0, "detail": sim.queued[-1]["tag"],
+			"text": VehicleWorkData.MOVED}])
+	var gone: bool = seen[-1] == "moved" and said[-1] == VehicleWorkData.MOVED and sim.asked.size() == n + 2 \
+			and s.selected == -1
+	s.close()
+	ls._sim = null
+	ls.free()
+	_check.call(stand and away and opened and asked_part and sent and once and began and held and reread and again
+			and gone and shut[-1] == [UID, ""] and s.uid == 0,
+			"vehicle work session: stand-in without a bridge; the read for what is shown, an action from it, one at a "
+			+ "time, held while busy and read again after; started and moved handled; closed out of reach (%s; %s; %s)"
+			% [said, seen, shut])
