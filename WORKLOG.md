@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-25 — TASKS.md: the C6 vehicle work entry split into a short line and sub-bullets per piece (bridge, work view, camera and hood, VR slices 1 and 2, still to try, the visual lift).
 - 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
 - 2026-11-24 — Bridge: the game's list of car part types now says which item each one is made from, so VR can offer to install the part you are holding. Passes on Windows and Linux.
 - 2026-11-24 — Live checks under the VR vehicle work (lead-qa): the range test now reads a part type's item from the running game's tables, grips a seatbelt with the VR pull on the real part copy (the part leaves the car's drawing, comes back when let go, and stays gone once the game removes it), and runs the VR install's choice of part types on the game's own install answer. The VR rig itself can't run without a headset, so the hand side stays on unit checks.
