@@ -70,6 +70,7 @@ class Def:
 	var examine := ""
 	var category := ""       # itype
 	var location := ""       # vpart: CDDA's mount location ("structure", "center", "on_roof", "under", ...); "" none
+	var item := 0            # vpart: the itype index of its base item; 0 none (not sent, or not a valid itype row)
 	var phase := ""          # itype: one of PHASES; "" when not sent (an older bridge), not set or unknown
 	var gun_ammo := ""       # itype, guns: the first ammo type (9mm, 223, shot, arrow, ...)
 	var gunmod_location := ""   # itype, gunmods: CDDA's location it goes on ("sights", "stock mount", ...); "" none
@@ -313,6 +314,7 @@ func _read_table(table: String, v: Variant) -> void:
 			var loc := _str(r.get("location"), MAX_FLAG_LEN, what + ".location")
 			def.location = loc if _is_word(loc) else ""
 			def.flags = _flags(r.get("flags"), what + ".flags")
+			def.item = _itype_index(r.get("item"))
 		elif table == "mtype":
 			def.size = _int(r.get("size"), 0, 5, what + ".size")
 			def.species = _flags(r.get("species"), what + ".species")
@@ -326,6 +328,15 @@ func _read_table(table: String, v: Variant) -> void:
 				return
 			names[def.id] = i
 		list.append(def)
+
+
+## An itype row (vpart.item, a part's base item): a whole number 0..itype rows - 1 (itype is read before vpart);
+## anything else (missing, not a number, fractional, out of range) 0, never a failed table.
+func _itype_index(v: Variant) -> int:
+	if not (v is int or v is float):
+		return 0
+	var f := float(v)
+	return int(f) if f == floorf(f) and f >= 0.0 and f < float(itype.size()) else 0
 
 
 func _index_roofs() -> void:

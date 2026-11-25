@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-24 — Vehicle work: a car part can be shown on its own, for a VR hand to carry while the original is hidden until the game removes it or it is put back; install mode can show the part about to be installed on its square.
 - 2026-11-23 — Vehicle work view: where every part of a car is, for VR hands, is worked out once per update instead of per part and per look.
 - 2026-11-23 — TASKS.md: the C6 vehicle work entry had been pasted into one line nine times over by merges; now one entry with the newest of each part (bridge done, hood and framing, the work view's install, mend and refill), and what is still to be tried live.
 - 2026-11-23 — Bridge: the last two pieces of hands-on car work (C6): mending a fault and refilling a tank or fuel store. The game shows its own list of fixes, or asks what to refill from, and does the work as it always does. Passes on Windows and Linux.

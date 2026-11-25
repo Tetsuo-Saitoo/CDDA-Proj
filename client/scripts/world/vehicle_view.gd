@@ -110,6 +110,7 @@ class Car:
 	var paint := DEFAULT_COLOR   # its body's colour
 	var interior: CarInterior    # a child of node while near the camera (interiors()); null else
 	var spots: Variant = null    # PartSpot.anchors of veh (mount grid), worked out when first asked; null: not yet
+	var hidden: Array = []       # [mount, vpart] of the part a hand carries a copy of (hide_part): not drawn; []: none
 
 
 var view_z_max := CddaCoords.Z_LIMIT   # levels above are hidden: WorldView.things_z_max() (main.gd, refresh)
@@ -264,11 +265,13 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			if fresh:
 				car = Car.new()
 				car.moved_ms = now
-			var key := [veh.parts, veh.pos.z, view_z_max, world.tables, snap.ids_generation]
+			if not car.hidden.is_empty() and PartCopy.row_of(veh, car.hidden) < 0:
+				car.hidden = []   # no longer on the vehicle (CDDA removed it): nothing left to hide
+			var key := _key_of(veh, snap, world, car.hidden)
 			if car.key == key and total >= max_verts:
 				_drop(car)   # kept, but no room for it now: built again when there is
 			if car.key != key and total < max_verts:
-				var look := _vehicle(veh, snap, world)
+				var look := _vehicle(veh, snap, world, car.hidden)
 				car.key = key
 				car.local = look[0]
 				car.small = look[1]
@@ -290,6 +293,7 @@ func apply(snap: Snapshot, world: WorldView) -> void:
 			cars[veh.uid] = car
 			_show_marks(car)
 			_check_interior(car, snap, world)
+			_hide_inside(car)
 	for uid: int in _cars:
 		if not cars.has(uid):
 			var gone: Car = _cars[uid]
@@ -541,9 +545,10 @@ func highlight(uid: int, row: int) -> void:
 
 
 ## C6 install mode: shows square `mount` of vehicle `uid` (its mount grid; it may hold no part yet, as beside the
-## vehicle), from the floor to the roof line; Vector2i.MAX: none.
-func highlight_square(uid: int, mount: Vector2i) -> void:
-	_highlight = [uid, mount] if mount != Vector2i.MAX and PartSpot.near_enough(mount) else []
+## vehicle), from the floor to the roof line; with `vpart` (a vpart id-table index: the type about to be installed)
+## that part's shapes on the square instead (PartCopy). Vector2i.MAX: none.
+func highlight_square(uid: int, mount: Vector2i, vpart := -1) -> void:
+	_highlight = [uid, mount, vpart] if mount != Vector2i.MAX and PartSpot.near_enough(mount) else []
 	_place_highlight()
 
 
@@ -554,6 +559,92 @@ func open_hood(uid: int, open: bool) -> bool:
 	if car == null or car.interior == null or not is_instance_valid(car.interior):
 		return false
 	return car.interior.open_lid(CarInterior.HOOD, open)
+
+
+## C6 (lead-vr's hands): a copy of part `row` of vehicle `uid` as drawn (PartCopy) to carry: a new node, not in the
+## tree, its origin at the part's anchor point (part_anchors), placed where the part is in the world now (as a child
+## of the root); the caller frees it. null when the vehicle isn't drawn or the row is no part of its own.
+func part_copy(uid: int, row: int) -> Node3D:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or car.veh == null or _world == null or not is_instance_valid(_world):
+		return null
+	var a: Dictionary = _spots(car).get(row, {})
+	if a.is_empty():
+		return null
+	var j := row * Snapshot.VPART_STRIDE
+	var by_look := PartCopy.boxes(def_of(_world.tables, _snap, car.veh.parts[j + 2]), car.veh.parts[j + 3],
+			car.veh.parts[j + 4], PartSpot.cells_of(car.veh), a["cell"])
+	var n := PartCopy.node_of(by_look, a["point"])
+	n.transform = car.node.global_transform * Transform3D(Basis(), a["point"])
+	return n
+
+
+## C6 (lead-vr, install mode): a copy of a part of type `vpart` (a vpart id-table index) on no vehicle, whole: a new
+## node, not in the tree, its origin at its middle, facing as on a vehicle heading along +x; the caller frees it.
+## null for a type the tables don't hold.
+func part_copy_of(vpart: int) -> Node3D:
+	if _world == null or not is_instance_valid(_world):
+		return null
+	var def := def_of(_world.tables, _snap, vpart)
+	if def == null:
+		return null
+	var by_look := PartCopy.boxes(def, 255, 0, {}, Vector2i.ZERO)
+	return PartCopy.node_of(by_look, PartCopy.bounds(by_look).get_center())
+
+
+## C6 (lead-vr's hands): hides part `row` of vehicle `uid` where it is drawn (in its vehicle's mesh, and its node in
+## the interior: a lid, the controls' wheel and dash) while a hand carries its copy (part_copy), or shows it again.
+## One part a vehicle. Kept with each snapshot by its square and type (rows move) until a snapshot no longer has it
+## (CDDA removed it) or the vehicle goes. False when the vehicle isn't drawn or the row is no part of its own.
+func hide_part(uid: int, row: int, hidden: bool) -> bool:
+	var car: Car = _cars.get(uid)
+	if car == null or car.veh == null or _snap == null or _world == null or not is_instance_valid(_world) \
+			or row < 0 or row >= car.veh.part_count():
+		return false
+	var j := row * Snapshot.VPART_STRIDE
+	if car.veh.parts[j + 4] & Snapshot.VPART_FILLER != 0:
+		return false
+	var which := [Vector2i(car.veh.parts[j], car.veh.parts[j + 1]), car.veh.parts[j + 2]]
+	var want: Array = which if hidden else ([] if car.hidden == which else car.hidden)
+	if want != car.hidden:
+		car.hidden = want
+		var look := _vehicle(car.veh, _snap, _world, car.hidden)
+		car.key = _key_of(car.veh, _snap, _world, car.hidden)
+		car.local = look[0]
+		car.small = look[1]
+		car.paint = look[2]
+		_mesh(car)
+		_hide_inside(car)
+	return true
+
+
+## C6 (lead-vr, install mode): the square of vehicle `uid`'s mount grid under world point `p` (x and z rounded in its
+## frame as drawn now), also beside it where no part is yet; Vector2i.MAX when it isn't drawn or the square is out of
+## reach (PartSpot.near_enough).
+func mount_at(uid: int, p: Vector3) -> Vector2i:
+	var car: Car = _cars.get(uid)
+	if car == null or car.node == null or not p.is_finite():
+		return Vector2i.MAX
+	var l := car.node.global_transform.affine_inverse() * p
+	if not l.is_finite() or absf(l.x) > PartSpot.MAX_MOUNT + 1.0 or absf(l.z) > PartSpot.MAX_MOUNT + 1.0:
+		return Vector2i.MAX
+	var m := Vector2i(roundi(l.x), roundi(l.z))
+	return m if PartSpot.near_enough(m) else Vector2i.MAX
+
+
+## What a vehicle's mesh is built from: built again when it changes.
+func _key_of(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView, hidden: Array) -> Array:
+	return [veh.parts, veh.pos.z, view_z_max, world.tables, snap.ids_generation, hidden]
+
+
+## The interior's nodes of the part a hand carries (hide_part) hidden, the rest shown.
+func _hide_inside(car: Car) -> void:
+	if car.interior == null or not is_instance_valid(car.interior) or car.veh == null:
+		return
+	var row := PartCopy.row_of(car.veh, car.hidden) if not car.hidden.is_empty() else -1
+	for n: Variant in car.interior.anchors().values():
+		if n is Node3D and (n as Node3D).has_meta("part"):
+			(n as Node3D).visible = row < 0 or (n as Node3D).get_meta("part") != row
 
 
 func _place_highlight() -> void:
@@ -567,18 +658,28 @@ func _place_highlight() -> void:
 	var car: Car = _cars.get(_highlight[0])
 	if car == null or car.node == null or _world == null or not is_instance_valid(_world):
 		return
-	var a := PartSpot.square_anchor(car.veh, _highlight[1]) if _highlight[1] is Vector2i \
-			else PartSpot.anchor(car.veh, _snap, _world.tables, _highlight[1])
-	if a.is_empty():
-		return
-	var box: AABB = (a["box"] as AABB).grow(0.03)
-	var mesh := BoxMesh.new()
-	mesh.size = box.size
-	mesh.material = _highlight_material()
+	var mesh: Mesh = null
+	var at := Vector3.ZERO
+	var def: IdTables.Def = def_of(_world.tables, _snap, _highlight[2]) if _highlight.size() > 2 and _highlight[2] >= 0 \
+			else null
+	if def != null:   # the part about to be installed, on its square
+		mesh = PartCopy.mesh_of(PartCopy.boxes(def, 255, 0, PartSpot.cells_of(car.veh), _highlight[1]), Vector3.ZERO,
+				_highlight_material())
+	else:
+		var a := PartSpot.square_anchor(car.veh, _highlight[1]) if _highlight[1] is Vector2i \
+				else PartSpot.anchor(car.veh, _snap, _world.tables, _highlight[1])
+		if a.is_empty():
+			return
+		var box: AABB = (a["box"] as AABB).grow(0.03)
+		var bm := BoxMesh.new()
+		bm.size = box.size
+		bm.material = _highlight_material()
+		mesh = bm
+		at = box.get_center()
 	_lit = MeshInstance3D.new()
 	_lit.name = "Highlight"
 	_lit.mesh = mesh
-	_lit.position = box.get_center()
+	_lit.position = at
 	_lit.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	car.node.add_child(_lit)
 
@@ -633,6 +734,7 @@ func interiors(delta: float, eye := Vector3.INF) -> void:
 				car.node.add_child(car.interior)
 				if ride:
 					car.interior.set_reading(_ride)
+				_hide_inside(car)
 				builds += 1
 			elif car.interior != null and d > INTERIOR_FAR and not ride:
 				_free_interior(car)
@@ -827,7 +929,7 @@ static func tilt_of(pts: Array) -> Transform3D:
 ## One vehicle's look in its mount grid (x ahead, y up, z right, a cell per square): [{Look -> body [vertices, normals,
 ## colours]}, {Look -> [[transform, colour], ...]} of the small parts, the body's colour]. Parts above the cutaway and
 ## gap fillers are left out. A seat in the controls' row (beside them) gets a dashboard in front of it.
-func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
+func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView, hide: Array = []) -> Array:
 	var cells := {}   # Vector3i(mount x, mount y, 0) -> {floor, low, high, glass, roof: [hp_frac, state], then Color}
 	var small := []   # [kind, colour, cell, broken]
 	var bases := {}   # CDDA colour of the body's parts -> votes
@@ -836,6 +938,8 @@ func _vehicle(veh: Snapshot.Vehicle, snap: Snapshot, world: WorldView) -> Array:
 		var state := veh.parts[j + 4]
 		if veh.pos.z + veh.parts[j + 7] > view_z_max or (state & Snapshot.VPART_FILLER) != 0:
 			continue
+		if not hide.is_empty() and veh.parts[j + 2] == hide[1] and Vector2i(veh.parts[j], veh.parts[j + 1]) == hide[0]:
+			continue   # a hand carries its copy
 		var def := def_of(world.tables, snap, veh.parts[j + 2])
 		var kind := kind_of(def, state)
 		if kind == Kind.NONE:

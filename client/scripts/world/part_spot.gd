@@ -86,8 +86,7 @@ static func _anchor(veh: Snapshot.Vehicle, snap: Snapshot, tables: IdTables, row
 	elif kind in OPEN_ABOVE:
 		above = true
 	if kind == K.WHEEL:   # on the body's side, as VehicleView draws it
-		var side := 1.0 if not cells.has(m + Vector2i(0, 1)) else (-1.0 if not cells.has(m - Vector2i(0, 1)) else 0.0)
-		box.position.z += side * VehicleView.WHEEL_OUT
+		box.position.z += wheel_side(cells, m) * VehicleView.WHEEL_OUT
 	box.position += Vector3(m.x, 0.0, m.y)
 	var roof: bool = (roofs as Dictionary).has(m) if roofs is Dictionary else covered(veh, snap, tables, m)
 	var up := above and (kind in FROM_ABOVE or not roof)
@@ -105,6 +104,12 @@ static func spot_of(def: IdTables.Def) -> Array:
 		if def.flags.has(f[0]):
 			return f[1]
 	return INSIDE
+
+
+## The side a wheel on square `m` of a vehicle with `cells` stands out to, as VehicleView draws it: 1 right where
+## nothing is to its right, else -1 left where nothing is to its left, else 0 (under the body).
+static func wheel_side(cells: Dictionary, m: Vector2i) -> float:
+	return 1.0 if not cells.has(m + Vector2i(0, 1)) else (-1.0 if not cells.has(m - Vector2i(0, 1)) else 0.0)
 
 
 ## The mounts of a vehicle's own cells (not its gap fillers) -> true.
