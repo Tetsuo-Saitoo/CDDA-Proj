@@ -234,6 +234,13 @@ The result is the usual one (`parts` and the rest) with `install` in place of `s
 | `types_more` | Types left out beyond that, or to stay within the byte limit (they go last, after the parts and the lines). |
 | `selected` | Only with `vpart`: like a command (`cmd` `"i"`, `ok`, `reason`, `text`, `time_s`, `lines`), with `vpart`. `text` is CDDA's sentence when it refuses outright: the square's sentences above, "Unracking is required before installing any parts here.", "Only one … powered engine can be installed.", "This vehicle cannot be modified in this way.", "This part cannot be installed.", "Funnels need to be installed over a tank.", "Can't install turret on another turret.". A type CDDA doesn't list for the square (no such index, a hidden type, an appliance): `ok` false, `reason` 1, "That can't be installed here.". `lines`: time, skills, components, tools, additional requirements (skill for a further engine or steering axle, lifting or jacking), "Cannot install due to:" with CDDA's reason when the square doesn't take it, then the description. |
 
+**From an item in hand.** Each row of the `vpart` id table has `item`: the `itype` index of the item that part
+type is made from (CDDA's base item: installing the part uses one up, removing it yields one; 0 none; added
+2026-11-24, older tables lack it). A carried item's `type` is the same index, so the part types an item can be
+installed as are the `vpart` rows whose `item` equals it. That is not one to one: some items serve several part
+types (87 of the base game's items do, among 702 part types). For a square, intersect them with this read's `types`: bit 2 says
+which fit there. One left: it can be sent as `cmd` `"i"`; several: let the player choose.
+
 Refused (0): `install` together with `part`, `vpart` without `install`, an `install` that isn't two ints, anything
 out of range. Errors are the read's.
 
