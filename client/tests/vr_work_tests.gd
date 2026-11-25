@@ -11,6 +11,7 @@ var _anchors := {}       # what the part_anchors stub answers for UID
 var _lights: Array = []  # highlight calls
 var _hit: Variant = {}   # what the ray stub answers
 var _rays := 0
+var _hides: Array = []   # hide_part calls
 
 
 func run(root: Node, check: Callable) -> void:
@@ -32,6 +33,8 @@ func run(root: Node, check: Callable) -> void:
 	_test_menu(snap)
 	_test_rig_menu(root, snap, veh)
 	_test_rig_tool(root, snap)
+	_test_pull(root)
+	_test_rig_pull(root, snap)
 
 
 static func _snap(veh: Snapshot.Vehicle, at: Vector3i, driving: bool) -> Snapshot:
@@ -172,7 +175,7 @@ func _test_menu(snap: Snapshot) -> void:
 	m.point(Vector3(NAN, 0.0, 0.0), Vector2(NAN, 0.0))
 	var bad: bool = m.pointed == ""
 	m.set_read({"ok": false, "vehicle": UID, "error": "busy"})
-	var refused: bool = not m.allowed("o") and m.why_not("o") == "busy"
+	var refused: bool = not m.allowed("o") and m.why_not("o") == "The game couldn't answer (busy)."
 	m.close()
 	m.set_read(VehicleWorkData.stand_in(snap, null, UID, 0))
 	var closed: bool = not m.is_open() and m.read.is_empty() and not m.visible
@@ -308,3 +311,118 @@ func _test_rig_tool(root: Node, snap: Snapshot) -> void:
 	_check.call(lit and sent and refused and late and empty,
 			"vr work tool: an item in the hand on a part lights it; the trigger asks CDDA to repair it when its read allows, else says why and buzzes; a late read does nothing (%s)"
 			% [[lit, sent, refused, late, empty]])
+
+
+func _pull(p: VrPartPull, made: Array) -> void:
+	p.part_copy = func(uid: int, row: int) -> Variant:
+		if uid != UID or row > 1:
+			return null
+		var n := Node3D.new()
+		n.transform = Transform3D(Basis(), Vector3(row, 1.0, 0.0))
+		made.append(n)
+		return n
+	p.hide_part = func(uid: int, row: int, hidden: bool) -> bool:
+		_hides.append([uid, row, hidden])
+		return true
+
+
+## Remove by hand: a gripped part's copy follows the hand with the original hidden; pulled PULL_M out it asks once;
+## ended before CDDA started, it shows again at once; after, only when the work stops; no copy or a bad pose: nothing.
+func _test_pull(root: Node) -> void:
+	var p := VrPartPull.new()
+	var made: Array = []
+	_pull(p, made)
+	_hides.clear()
+	var parent := Node3D.new()
+	root.add_child(parent)
+	var hand := Transform3D(Basis(), Vector3(0.0, 1.1, 0.0))
+	var none: bool = not p.grip(1, hand, UID, 5, parent) and not p.grip(1, Transform3D(Basis(), Vector3(NAN, 0.0, 0.0)), UID, 0, parent) \
+			and _hides.is_empty() and p.hand == -1
+	var gripped: bool = p.grip(1, hand, UID, 0, parent) and p.state == "held" and p.copy.is_inside_tree() and p.copy.top_level \
+			and p.copy.global_position.is_equal_approx(Vector3(0.0, 1.0, 0.0)) and _hides == [[UID, 0, true]] \
+			and not p.grip(0, hand, UID, 1, parent)
+	var near: bool = not p.follow(hand.translated(Vector3(0.0, 0.0, 0.1))) and p.state == "held" \
+			and p.copy.global_position.is_equal_approx(Vector3(0.0, 1.0, 0.1))
+	var out: bool = p.follow(hand.translated(Vector3(0.0, 0.0, 0.2))) and p.state == "asked" \
+			and not p.follow(hand.translated(Vector3(0.0, 0.0, 0.3)))
+	p.end()   # refused: back in its spot
+	var back: bool = p.hand == -1 and p.state == "" and _hides.back() == [UID, 0, false] and (made[0] as Node).is_queued_for_deletion()
+	p.grip(1, hand, UID, 0, parent)
+	p.follow(hand.translated(Vector3(0.0, 0.0, 0.2)))
+	p.started()
+	var n := _hides.size()
+	p.end()
+	p.settle(true)
+	var kept: bool = _hides.size() == n and p.hand == -1
+	p.settle(false)
+	p.settle(false)
+	var shown: bool = _hides.size() == n + 1 and _hides.back() == [UID, 0, false]
+	parent.free()
+	_check.call(none and gripped and near and out and back and kept and shown,
+			"vr work pull: a gripped part's copy follows the hand, the original hidden; pulled %d cm out it asks once; let go before CDDA starts it shows again, after only when the work stops (%s)"
+			% [roundi(VrPartPull.PULL_M * 100.0), [none, gripped, near, out, back, kept, shown]])
+
+
+## The rig: the grip on a picked part takes it into the hand on main's session; pulled out it asks for the removal
+## (not connected here: it snaps back with the session's sentence); let go, refused or a read refusing it: back;
+## started: it stays in the hand while the work runs, the original shown again once it stops.
+func _test_rig_pull(root: Node, snap: Snapshot) -> void:
+	var world := WorldView.new()
+	world.snapshot = snap
+	var hands := Hands.new(world, ItemActions.new())
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.hands = hands
+	rig.settings["grip"] = "hold"
+	var w := _work()
+	rig.work = w
+	var s := VehicleWorkSession.new()
+	s.world = world
+	rig.work_session = s
+	_pull(rig.pull, [])
+	_hides.clear()
+	var at := Vector3(0.0, 1.1, 0.0)
+	rig.right.global_position = at
+	rig.left.global_position = Vector3(0.0, -4.0, 0.0)
+	rig.update_hands(0.016, true)
+	rig.press(rig.right, "grip_click")
+	var gripped: bool = rig.pull.hand == 1 and s.uid == UID and s.selected == 0 and w.hold and _hides == [[UID, 0, true]]
+	rig.right.global_position = at + Vector3(0.0, 0.0, 0.1)
+	rig.update_pull()
+	var held: bool = rig.pull.state == "held" and rig.pull.copy.global_position.is_equal_approx(Vector3(0.0, 1.0, 0.1))
+	rig.right.global_position = at + Vector3(0.0, 0.0, 0.2)
+	rig.update_pull()
+	var sent: bool = rig.pull.hand == -1 and not w.hold and _hides.back() == [UID, 0, false] \
+			and s.note == "Remove isn't connected to the game yet." and rig.busy.get("_flash") == s.note
+	rig.right.global_position = at
+	rig.press(rig.right, "grip_click")
+	rig.release(rig.right, "grip_click")
+	var let_go: bool = rig.pull.hand == -1 and _hides.back() == [UID, 0, false] and _hides.size() == 4
+	rig.press(rig.right, "grip_click")
+	rig.call("_on_work_read", {"ok": false, "vehicle": UID, "error": "busy"})
+	var read_no: bool = rig.pull.hand == -1 and rig.busy.get("_flash") == "The game couldn't answer (busy)."
+	rig.press(rig.right, "grip_click")
+	rig.pull.state = "asked"
+	rig.call("_on_work_refused", "o", "No.")
+	var refused: bool = rig.pull.hand == -1 and _hides.back() == [UID, 0, false]
+	rig.press(rig.right, "grip_click")
+	rig.pull.state = "asked"
+	s.started.emit("o")
+	snap.activity_id = "ACT_VEHICLE"
+	rig.update_pull()
+	var n := _hides.size()
+	var runs: bool = rig.pull.hand == 1 and rig.pull.state == "started"
+	snap.activity_id = ""
+	rig.update_pull()
+	var over: bool = rig.pull.hand == -1 and _hides.size() == n
+	rig.update_pull()
+	var shown: bool = _hides.size() == n + 1 and _hides.back() == [UID, 0, false]
+	rig.work_session = null
+	rig.hands = null
+	rig.free()
+	if is_instance_valid(hands):
+		hands.free()
+	world.free()
+	_check.call(gripped and held and sent and let_go and read_no and refused and runs and over and shown,
+			"vr work rig pull: the grip on a picked part takes it into the hand; pulled out it asks CDDA to remove it; let go, refused or a read refusing it: back; started: it stays in the hand while the work runs (%s)"
+			% [[gripped, held, sent, let_go, read_no, refused, runs, over, shown]])

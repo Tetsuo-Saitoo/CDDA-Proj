@@ -751,6 +751,9 @@ func _start_vr() -> void:
 	vr.work.highlight = vehicles_view.highlight
 	vr.work.ray = func(o: Vector3, d: Vector3, m: float) -> Dictionary: return hands.look_ray.cast(o, d, m, false)
 	vr.work_session = work   # ... and the trigger on it: CDDA's commands on a wheel (VrWorkMenu)
+	# ... and the grip on it: the part pulled out by hand (VrPartPull; lead-world's calls, through call_if until in)
+	vr.pull.part_copy = func(u: int, r: int) -> Variant: return call_if(vehicles_view, "part_copy", [u, r])
+	vr.pull.hide_part = func(u: int, r: int, h: bool) -> Variant: return call_if(vehicles_view, "hide_part", [u, r, h])
 	vr.drive.can_reach = vehicles_view.can_reach   # car storage by hand: the tray on an open trunk (VrDrive.cargo_at)
 	vr.drive.square_at = vehicles_view.square_at
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
