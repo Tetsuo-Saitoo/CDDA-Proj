@@ -1055,6 +1055,7 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 		print("  (vehicle work: with the kit the game allows removing none of %s: the work not tried; the last one says: %s)"
 				% [tried, str(wv.call("detail_text")).left(300)])
 		return
+	_part_item_live(int(old.get("vpart", -1)), picked)
 	var hid: Variant = await _part_pull_live(uid, pick, picked)   # true: left hidden for the removal below
 	var veh0 := _vehicle(uid)
 	var rows0: int = veh0.part_count() if veh0 != null else -1
@@ -1200,6 +1201,26 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 ## came off) is installed back on its square. Install mode on that square lists the types the game allows there, the
 ## removed part's type among them; picked, i starts CDDA's own work; when the activity is over the car has `rows0`
 ## part rows again, the view lists `listed0` parts and a part of that name is on that square.
+## The item a part type is made from, as the game's id tables give it (lead-bridge's `item` on vpart rows) and the
+## client reads it (lead-world's IdTables.Def.item); skipped until both are in. Part type `vpart` (a table index) of
+## the part called `picked` names an item of the item table; a seatbelt's is the seatbelt.
+func _part_item_live(vpart: int, picked: String) -> void:
+	var tables: Object = _main.world.tables
+	var parts: Array = tables.get("vpart") if tables != null else []
+	var def: Variant = parts[vpart] if vpart > 0 and vpart < parts.size() else null
+	var at: Variant = (def as Object).get("item") if def is Object else null
+	if not at is int or at <= 0:
+		print("  (part item: not checked, the tables give part type %d no item (%s): the bridge or the reader isn't in this build)"
+				% [vpart, at])
+		return
+	var items: Array = tables.get("itype")
+	var item: Variant = items[at] if at < items.size() else null
+	var id := str((item as Object).get("id")) if item is Object else ""
+	_check(not id.is_empty() and (picked != "seatbelt" or id == "seatbelt"),
+			"part item: the game's tables name the item the %s is made from, and the client reads it: item %d of %d, \"%s\""
+			% [picked, at, items.size(), id])
+
+
 ## lead-vr's pulled part (VrPartPull) on lead-world's real copy (VehicleView.part_copy / hide_part), wired as main
 ## does for VR; skipped until both are in. Gripped, part `row`'s copy stands where the part is drawn and the part is
 ## out of its car's drawing; the copy follows the hand and asks for the removal once, 15 cm out; let go, the part
