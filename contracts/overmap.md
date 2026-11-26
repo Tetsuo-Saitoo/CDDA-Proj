@@ -50,19 +50,19 @@ no overmap yet: a page over it answers `ok` with every cell unseen, and no overm
 |---|---|
 | `origin` | The page asked for. |
 | `turn` | The game turn the page was read at. |
-| `looks` | What is drawn on this page, at most 256 entries. A look is what CDDA's own map screen draws for a cell at the vision level the player has of it: `name` (plain text, ≤ 60 columns), `sym` (CDDA's map symbol, a short UTF-8 string; roads and the like are box-drawing characters) and `color` (a CDDA colour name, `c_green`). Look 0 is always the unseen cell, three empty strings. Two cells share a look when CDDA draws them the same, so cells of different real kinds that look alike from afar can't be told apart; the terrain's id is not sent at any vision level. |
+| `looks` | What is drawn on this page, at most 256 entries. A look is what CDDA's own map screen draws for a cell at the vision level the player has of it: `name` (plain text, ≤ 60 columns), `sym` (CDDA's map symbol, a short UTF-8 string; roads and the like are box-drawing characters) and `color` (a CDDA colour name, `c_green`). Look 0 is always the unseen cell, three empty strings. Two cells share a look when CDDA draws them the same, so cells of different real kinds that look alike from afar can't be told apart; the terrain's id is not sent at any vision level. Some terrains blend into their surroundings until they are seen better (a campsite in a forest, from afar): such a cell comes with the look CDDA draws for it, the commonest of its seen neighbours. |
 | `look` | 1024 ints, a cell's index into `looks`. Cell index = `(y − origin.y) * 32 + (x − origin.x)`: row by row from the north-west. |
 | `vision` | 1024 ints, CDDA's `om_vision_level` for the cell: 0 unseen, 1 vague, 2 outlines, 3 details, 4 full. |
-| `flags` | 1024 ints, bits: 1 the player's explored mark, 2 a vehicle the player tracks, 4 a camp, 8 the active mission's target. More bits may be added: ignore unknown ones. |
-| `notes` | The notes on cells of this page, at most 256, in cell order: `at` `[x, y]`; `sym` (one character) and `color` as CDDA parses them from the note's own prefix (CDDA's `get_note_display_info`); `text`, the note without that prefix (plain text, ≤ 450 columns); `danger` and `radius`, CDDA's danger mark and its radius in cells (0 when not dangerous). Notes CDDA writes itself for map extras are notes like any other. |
+| `flags` | 1024 ints, bits: 1 the player's explored mark, 2 a vehicle the player tracks, 4 a camp, 8 the active mission's target. On a cell the player hasn't seen (`vision` 0) only bit 8 is told, as on CDDA's map. More bits may be added: ignore unknown ones. |
+| `notes` | The notes on cells of this page, at most 256, in cell order: `at` `[x, y]`; `sym` (one character) and `color` as CDDA parses them from the note's own prefix (CDDA's `get_note_display_info`); `text`, the note without that prefix (plain text, ≤ 450 columns); `danger` and `radius`, CDDA's danger mark and its radius in cells (0 when not dangerous, at most 180). Notes CDDA writes itself for map extras are notes like any other. |
 | `notes_more` | Notes left out: beyond 256, or to stay within the byte limit. |
 | `path` | Only with `path: true` and only while the player has a destination: `to` `[x, y, z]`, the destination; `cells`, a flat list of three ints a cell from the player's end toward the destination, at most 2048 cells; `more`, cells left out at the far end. |
-| `truncated` | Something was left out: looks beyond 256 (those cells have look 0 with their real `vision`), notes, or path cells. |
+| `truncated` | Something was left out: looks beyond 256 or dropped to fit (those cells have look 0 with their real `vision`), notes, or path cells. |
 
 All text is game data, and a note's text is written by players (saves can come from other people): colour tags,
 line breaks and control characters are removed and lengths capped by columns and bytes. Show it as plain text.
 
-Over the 64 KB limit the path's far cells go first, then notes from the end.
+Over the 64 KB limit the path's far cells go first, then notes from the end, then looks from the end.
 
 Not sent: anything CDDA's map screen hides. Cells not seen have no look; hordes and other characters are not
 part of this read.
