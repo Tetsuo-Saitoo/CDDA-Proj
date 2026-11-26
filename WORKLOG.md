@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — VR map (lead-vr): the map now opens as a sheet in your off hand (left stick click or the menu's Map row); point at it with the other hand to read a place's name, drag it with that trigger to scroll, and use the sticks to pan, zoom and change level. It shows the game's map once the screen map's drawing is in. Not tried in a headset yet.
 - 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
 - 2026-11-24 — Bridge: the game's list of car part types now says which item each one is made from, so VR can offer to install the part you are holding. Passes on Windows and Linux.
 - 2026-11-24 — Live checks under the VR vehicle work (lead-qa): the range test now reads a part type's item from the running game's tables, grips a seatbelt with the VR pull on the real part copy (the part leaves the car's drawing, comes back when let go, and stays gone once the game removes it), and runs the VR install's choice of part types on the game's own install answer. The VR rig itself can't run without a headset, so the hand side stays on unit checks.

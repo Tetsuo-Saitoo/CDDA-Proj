@@ -151,7 +151,9 @@ var _install := {}        # C6 install by hand: {uid, at, hand, types, until, li
 ## C6 remove by hand (VrPartPull): a picked part gripped and pulled out of its spot. main.gd gives it part_copy and
 ## hide_part.
 var pull := VrPartPull.new()
+var map := VrMap.new()   # G5 map slice 1: CDDA's overmap on a sheet in the off hand (toggle_map, update_map)
 const REPAIR_WAIT_MS := 5000   # ... this long at most
+const NO_MAP := "The map isn't connected yet."   # (VrBusy caps a flash at 40 characters)
 var _glove_key := "-"     # body.key the hand colours were taken from
 var compass: VrCompass    # wrist rose / belt ring (place_compass)
 var hud: VrHud            # HUD panel inside the off forearm (place_hud); main.gd sets its data
@@ -404,6 +406,7 @@ func _build() -> void:
 	wheel.world = world
 	add_child(wheel)
 	add_child(work_menu)
+	add_child(map)
 	looking = VrLook.new()
 	add_child(looking)
 	zoom = VrZoom.new()
@@ -521,6 +524,7 @@ func _process(delta: float) -> void:
 	ride_along()
 	step(delta, inp)
 	follow_ground(delta)
+	update_map(delta)
 	update_pointer()
 	track_hands(delta)
 	drive.update([left.global_position, right.global_position], world.snapshot)
@@ -1410,6 +1414,8 @@ func release(c: XRController3D, n: String) -> void:
 		looking.held = false
 		looking.hide_look()
 		return
+	if n == "trigger_click" and map.hand != (0 if c == left else 1) and map.release():
+		return   # G5: a click on the map, or the end of a drag
 	if n == "trigger_click" and drive.unpedal(0 if c == left else 1):
 		return   # a pedal let go
 	if n == "trigger_click" and work_release(0 if c == left else 1):
@@ -1829,6 +1835,13 @@ func step(delta: float, inp: Dictionary) -> void:
 		panel.nav(inp.get("move", Vector2.ZERO), inp.get("turn", Vector2.ZERO), delta)
 	elif wheel.active() or work_menu.is_open():
 		pass   # a wheel around the hand: its stick points (update_wheel), no moving
+	elif map.is_open():   # G5: reading the map: no walking (the off hand's stick pans it); the turn stick turns unless
+		# it is the off hand's or its hand's ray is on the sheet (then that stick zooms)
+		var tv: Vector2 = inp.get("turn", Vector2.ZERO)
+		if _turn_ctrl() == _ctrl(map.hand) or map.pointing:
+			tv = Vector2.ZERO
+		if _turn(Vector2(tv.x, 0.0), delta):
+			moving = true
 	elif VrDrive.driving_uid(world.snapshot) != 0:   # driving: no walking or teleport; the turn stick's y is a pedal
 		var tv: Vector2 = inp.get("turn", Vector2.ZERO)
 		stick = tv.y if absf(tv.y) > absf(tv.x) else 0.0
@@ -2090,7 +2103,8 @@ func update_panel(delta: float) -> void:
 ## The settings menu or a CDDA menu / prompt (panel, or a wheel around the hand) is up: the triggers and sticks
 ## work it, not the world.
 func ui_open() -> bool:
-	return menu_open() or (panel != null and panel.shown) or (wheel != null and wheel.active()) or work_menu.is_open()
+	return menu_open() or (panel != null and panel.shown) or (wheel != null and wheel.active()) or work_menu.is_open() \
+			or map.is_open()
 
 
 ## Radial menus, per frame: the wheel's drawing and pointing (the stick of the hand that opened it, or that hand's
@@ -2157,6 +2171,10 @@ func _menu_action(key: String) -> void:
 		toggle_time()
 	elif key == "report":
 		report_bug()
+	elif key == "map":
+		if menu_open():
+			toggle_menu()
+		toggle_map()
 	elif VrSettings.UI_ROWS.has(key):
 		if menu_open():
 			toggle_menu()
@@ -2166,6 +2184,52 @@ func _menu_action(key: String) -> void:
 			toggle_menu()   # its questions come on the panel: the laser is free for them
 		if not queue_cdda(VrSettings.CDDA_ROWS[key]):
 			_feel(left)
+
+
+## G5 map slice 1: the left stick click, the menu's Map row or CDDA's map key (main.gd): CDDA's overmap on a sheet in the off hand (VrMap,
+## showing a canvas main gives on its MapData), or put away when it is out. Not with a menu, the panel or a wheel
+## up, or with something in the off hand (a buzz); no canvas: a note. The first time, the hint says how to drag it.
+func toggle_map() -> bool:
+	if map.is_open():
+		close_map()
+		return true
+	var oi := 0 if off_ctrl() == left else 1
+	if world.snapshot == null or hands == null or ui_open() or pull.hand >= 0 or pack.hand == oi or drive.holds(oi) \
+			or not hands.holding(HAND_IDS[oi]).is_empty():
+		_feel(main_ctrl())
+		return false
+	var cv: Variant = map.make_canvas.call() if map.make_canvas.is_valid() else null
+	if not cv is Control:
+		busy.flash(NO_MAP)
+		_feel(main_ctrl())
+		return false
+	if not map.open(oi, cv):
+		if not (cv as Control).is_inside_tree():
+			(cv as Control).free()
+		_feel(main_ctrl())
+		return false
+	if hint != null and hint.source != null:
+		hint.source.trigger("vr_map")
+	return true
+
+
+func close_map() -> void:
+	map.close()
+
+
+## G5, per frame: the map follows the off hand and takes both sticks; it is put away when that hand holds something,
+## a menu or the game's panel shows, or the snapshot or hands are gone. `all_hands`: count untracked hands (tests).
+func update_map(delta: float, all_hands := false) -> void:
+	if not map.is_open():
+		return
+	var off := _ctrl(map.hand)
+	if world.snapshot == null or hands == null or menu_open() or (panel != null and panel.shown) \
+			or not hands.holding(HAND_IDS[map.hand]).is_empty() or not (all_hands or off.get_is_active()):
+		close_map()
+		return
+	map.place(off.global_transform)
+	map.sticks(_stick(off), _stick(_ctrl(1 - map.hand)), delta)
+	map.step(delta)
 
 
 ## Menu row "Time": the menu goes and real time pauses or goes on (main's toggle_time_pause); its note shows low in
@@ -2387,13 +2451,26 @@ func update_pointer(all_hands := false) -> void:
 	var live := is_inside_tree() and (all_hands or c.get_is_active()) and c.global_transform.is_finite()
 	var on_menu := menu_open() and live
 	var on_panel := not menu_open() and panel.shown and live
-	pointer.visible = on_menu or on_panel
+	var on_map := not on_menu and not on_panel and map.is_open() and live and c != _ctrl(map.hand)
+	pointer.visible = on_menu or on_panel or on_map
 	pointer_dot.visible = false
 	if menu != null and not on_menu:
 		menu.hover(null)
 	if not on_panel:
 		panel.point(null)
+	if not on_map:
+		map.point(null)
 	if not pointer.visible:
+		return
+	if on_map:   # G5: the free hand's ray on the map's plane (no eyes: nothing acts on gaze)
+		var mp: Variant = ray_on_plane(map.global_transform, c.global_position, -c.global_basis.z, VrMap.RAY_M)
+		map.point(mp)
+		var on := VrMap.covers(mp) or (map.dragging and mp != null)
+		var mto: Vector3 = map.global_transform * (mp as Vector3) if on \
+				else c.global_position - c.global_basis.z.normalized() * POINTER_LEN
+		pointer.global_transform = _segment(c.global_position, mto, POINTER_R)
+		pointer_dot.global_position = mto
+		pointer_dot.visible = on
 		return
 	var plane := menu.global_transform if on_menu else panel.global_transform
 	var p: Variant = pointer_at(c) if on_menu 			else ray_on_plane(plane, c.global_position, -c.global_basis.z, POINTER_MAX)
@@ -2459,6 +2536,19 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		elif n == "by_button" or (n == "menu_button" and c == right):
 			close_work()
 		return
+	if map.is_open():   # G5: the map in the off hand: the free hand's trigger works it (off it: nothing), the off
+		# hand's stick click centres it on the player, B / Y put it away
+		var mi := 0 if c == left else 1
+		if n == "by_button" or (n == "menu_button" and c == right):
+			close_map()
+			return
+		if n == "primary_click" and mi == map.hand:
+			map.centre()
+			return
+		if n == "trigger_click":
+			if mi == map.hand or not map.press():
+				_feel(c)
+			return
 	if world.snapshot == null:
 		return
 	if looking.held and n == "trigger_click":   # the look ring up: the main trigger teleports there (cheat), else a buzz
@@ -2542,6 +2632,8 @@ func press(c: XRController3D, n: String, pad := Vector2.INF) -> void:
 		"primary_click":
 			if c == right:   # held: zoom (VrZoom)
 				zoom.held = true
+			else:   # G5: the map in the off hand
+				toggle_map()
 		"secondary_click":   # WMR / Index trackpads
 			if c == left:
 				go_to_player(body_square())
