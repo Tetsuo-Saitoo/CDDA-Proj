@@ -113,6 +113,11 @@ func _ready() -> void:
 	_mat.albedo_texture = viewport.get_texture()
 
 
+## Freed (or taken out of the tree) with the sheet out: put away, so MapData keeps no user for good.
+func _exit_tree() -> void:
+	close()
+
+
 func is_open() -> bool:
 	return hand >= 0
 
