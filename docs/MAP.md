@@ -10,17 +10,44 @@ The client only shows that and sends the player's choices. The HUD-in-view rule 
 - **MapData** (`client/scripts/map/map_data.gd`, lead-ui) is the one shared data layer. It holds the pages it has
   read, the notes, the destination and the selection, and emits `changed`.
 - **The canvas** is `ui/map_canvas.gd` (lead-ui), the one painter for both views. It is a Control that reads only
-  MapData, and its `cell_at(local_px) -> Vector2i` gives the cell under a point.
+  MapData. Its `cell_at(local_px) -> Vector2i` gives the cell under a point, and `pan_px(delta)` moves the map
+  by pixels, keeping the part of a cell (VR's 1:1 drag, the screen view's mouse drag).
 - **The screen view** is `ui/map_view.gd` (lead-ui): a full-screen panel holding the canvas, on CDDA's map key.
 - **The VR view** is `vr/vr_map.gd` (lead-vr; agreed 2026-11-26): the canvas in a SubViewport on a sheet held in
   the off hand, as VrPanel shows flat UI, like a paper map.
   - The off hand is the left one, or the right one if the rig is left-handed.
   - The map opens from a controller binding or from CDDA's map key. It is put away when that hand grips something
     or the map is closed.
-  - That hand's stick pans and zooms, and a stick click changes the level. A two-hand pull to zoom can come later.
-  - vr_map.gd owns the hold, the pointing (where the hand's ray meets the sheet gives the cell, through
-    `cell_at`), the name label and the wheel.
-  - Pointing at a cell shows its name. Only the trigger opens the wheel, and nothing acts on gaze.
+  - vr_map.gd owns the hold, the free hand's ray and drag, the name label, the wheel and the scroll marker
+    (user, 2026-11-26: the map is scrolled by dragging it with the free hand, with a marker showing it scrolls).
+  - The free hand works the sheet with its ray. The ray meets the sheet's plane, as VrPanel's laser does, so it
+    works the same up close.
+    - Its trigger does two things:
+      - Pressed and let go without moving, it is a click. A click on a cell opens the wheel for that cell.
+      - Pressed and moved more than 12 mm on the sheet, it drags. The distance is measured in the sheet's own
+        frame, so the off hand shaking doesn't count.
+    - A drag is 1:1 (the canvas's `pan_px`): the spot under the ray when the trigger closed stays under the ray,
+      like sliding paper.
+    - Off the sheet, the drag keeps going on its plane, as VrPanel's does. There is no fling or momentum. Letting
+      go ends it.
+    - While dragging, no cell name shows and no wheel opens. New pages are read as they scroll in (MapData).
+  - Scroll marker: four small chevrons, one inside each edge of the sheet, plus a drag icon (a hand with four
+    arrows) in the sheet's lower corner. vr_map.gd draws them on the sheet, not on the canvas, so the screen view
+    is unchanged.
+    - They show each time the map is opened.
+    - After the first drag of that opening they fade out over 0.5 s, and they come back the next time it is
+      opened.
+    - The first time the map is opened in VR, a Hints entry also says "Drag the map with your other hand's
+      trigger."
+  - The off hand's stick still pans, as a second way to do it. While the map is held, that stick pans the map and
+    doesn't walk the player: you stand to read it, as in PZ.
+    - Its click brings the map back to the player's cell and level.
+  - Zoom: while the free hand's ray is on the sheet, its stick up and down zooms, centred on the cell it points at.
+    Left and right change the level, one level per push. Snap turn is off only while the ray is on the sheet.
+    - A two-hand pull to zoom can come later.
+  - Pointing at a cell shows its name. Only a click opens the wheel, and nothing acts on gaze.
+  - Comfort: dragging, panning and zooming move only the map on the sheet. The sheet stays in the off hand, and
+    the player's view and body never move.
 - Both views exist from slice 1.
 
 ## Slices (smallest useful first)
@@ -37,6 +64,9 @@ The client only shows that and sends the player's choices. The HUD-in-view rule 
        read back, and a page over ground with no overmap yet reads as unseen and creates none.
      - A live test on the game's own read, like range_ui_live_test: the player's cell matches CDDA's `ter` there,
        and a far cell the player hasn't seen reads as unseen.
+     - VR (lead-vr): a click under 12 mm opens the wheel and pans nothing; a drag of 3 cells moves the map
+       exactly 3 cells; the chevrons fade after a drag and are back on the next opening; the off hand's stick
+       pans and the player doesn't move.
 2. **Notes.**
    - Add, edit and delete a note on a cell: text, CDDA's symbol and colour, and the danger mark with its radius.
      Refused notes come back with CDDA's sentence.

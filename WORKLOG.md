@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — Map plan: the VR map scrolls by dragging it with the free hand's trigger (1:1), with chevrons showing it scrolls (lead-vr's text, the user's ask).
 - 2026-11-26 — Map plan: the user's answers in (CDDA's symbols first; routes with several stops, each leg CDDA's own travel, the stop list in the client).
 - 2026-11-26 — Map (G5): plan written in docs/MAP.md (slices, bridge read and commands, VR view, security, PZ notes), agreed with lead-bridge and lead-vr; waiting for the user.
 - 2026-11-26 — Tester AppImage test-2026-11-26 (private test repo, pre-release, not a release) from main 440cd5d + fork 80c6d91, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): C6 VR slice 2 (repair by touch, pull a part out, install by holding its item). Nothing tried in a headset.
