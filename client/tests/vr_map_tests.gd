@@ -163,13 +163,16 @@ func _test_marker(root: Node) -> void:
 	m.step(VrMap.FADE_S)
 	var gone: bool = m.marker == 0.0 and not mk.visible
 	m.close()
-	m.open(1, Canvas.new())
+	var cv := Canvas.new()
+	m.open(1, cv)
 	m.step(0.5)
 	var back: bool = m.marker == 1.0 and mk.visible
+	root.remove_child(m)   # taken out (or freed) with the sheet out: MapData's user goes too
+	var left: bool = not m.is_open() and cv.data.opens == 1 and cv.data.closes == 1 and cv.shown == 0
 	m.free()
-	_check.call(stays and half and gone and back,
-			"vr map marker: four chevrons and a drag icon until the first drag, then faded over 0.5 s; back on the next opening (%s)"
-			% [[stays, half, gone, back]])
+	_check.call(stays and half and gone and back and left,
+			"vr map marker: four chevrons and a drag icon until the first drag, then faded over 0.5 s; back on the next opening; leaving the tree puts the sheet away (%s)"
+			% [[stays, half, gone, back, left]])
 
 
 ## The off hand's stick pans; the free hand's, only while its ray is on the sheet, zooms on the pointed cell (y)

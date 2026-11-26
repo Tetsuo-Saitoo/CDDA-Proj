@@ -133,7 +133,7 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    held to a part lights it too; the trigger then asks the game to repair it. Grip a lit part and pull it out of
    its spot to ask the game to remove it. Hold a part's item to a car: the square under it lights, and the trigger
    installs it there (several kinds: pick one from a short list, hand lower or stick, and let go). The left stick
-   click (or the menu's Map row) opens the map in your off hand: point at it with the other hand to read a place's
+   click or the menu's Map row (on Vive wands the row, or M) opens the map in your off hand: point at it with the other hand to read a place's
    name; drag it with that trigger to scroll (a click opens a small wheel); its stick zooms (up / down) and changes
    level (left / right) while pointing at the map; the off hand's stick pans and its click comes back to you; B / Y
    puts it away. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
