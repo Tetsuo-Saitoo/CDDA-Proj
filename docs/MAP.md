@@ -167,7 +167,7 @@ The client only shows that and sends the player's choices. The HUD-in-view rule 
     FP3D-marked function.
     - It finds nothing for an unseen destination or one on another level, and its search radius is four
       overmaps (720 cells).
-    - lead-bridge checks whether that search can create overmaps and bounds it if so.
+    - The search must not create overmaps; it is bounded so it can't (lead-bridge, with slice 3).
   - `travel` is CDDA's second step; on its own it works out the path itself. It runs
     `try_travel_to_destination`'s steps.
     - Its one question comes as a yes/no `popup` request: "Travel to / Drive to this point?", overburdened, or
