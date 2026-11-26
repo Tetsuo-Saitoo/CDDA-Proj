@@ -19,8 +19,8 @@ extends RefCounted
 ## Each facing scores the tiles' fronts and backs, summed over the run or block; the best wins (ties: a
 ## hash of the piece). CDDA's hint counts most: a neighbour in one of the prop's `rotates_to` groups
 ## (racks face the room, street lights the road), and for seats (ALIGN_WORKBENCH, or a plain chair,
-## stool or bench) a table or counter. Then the front onto walkable floor (not a wall, window, door or
-## blocking furniture) and the back to a wall. Runs over MAX_RUN and blocks over MAX_BLOCK tiles: each
+## stool or bench) a table or counter. Then the front onto walkable floor (not a wall, window or blocking
+## furniture), else onto a door (a stall's toilet faces its door, not a side wall), and the back to a wall. Runs over MAX_RUN and blocks over MAX_BLOCK tiles: each
 ## tile on its own. `random_yaw` props turn freely. Item piles show up to MAX_SHOWN items
 ## (the four largest from the snapshot, small clutter for the rest) at sub-tile slots (4 x 4 per tile)
 ## picked by a hash of the square, so a pile looks the same every rebuild. A pile whose tile has item
@@ -395,7 +395,7 @@ func _best(tiles: Array, prop: PropCatalog.Prop, dirs: Array, anchor: Vector3i) 
 
 
 ## How well the tile's front faces DIRS[d]: CDDA's hints (rotates_to, seats to a table), the front onto
-## walkable floor, the back to a wall. Neighbours laid out with the tile count for nothing.
+## walkable floor or a door, the back to a wall. Neighbours laid out with the tile count for nothing.
 func _score(t: Vector3i, prop: PropCatalog.Prop, d: int) -> int:
 	var s := 0
 	var n := t + DIRS[d]
@@ -407,7 +407,9 @@ func _score(t: Vector3i, prop: PropCatalog.Prop, d: int) -> int:
 			s += 8
 		var ts := _ter_style(n)
 		if ts != null:
-			if ts.kind in WALLISH:
+			if ts.kind == K.DOOR:
+				s += 2   # a way out: less than open floor, never a wall (a stall's toilet faces its door)
+			elif ts.kind in WALLISH:
 				s -= 3
 			elif nf != null and nf.blocks:
 				s -= 2
