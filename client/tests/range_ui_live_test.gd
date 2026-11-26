@@ -1201,6 +1201,30 @@ func _work_remove_live(wv: Variant, uid: int) -> void:
 ## came off) is installed back on its square. Install mode on that square lists the types the game allows there, the
 ## removed part's type among them; picked, i starts CDDA's own work; when the activity is over the car has `rows0`
 ## part rows again, the view lists `listed0` parts and a part of that name is on that square.
+## lead-vr's install by hand (VrInstall) on the running game's data; skipped until it and the tables' part item are
+## in. The item the removed part's type is made from serves that type (types_for, on the game's id tables), and of
+## the game's install read `inst` for its square, the types that item serves and that fit there (choices, the list
+## a hand would get) hold it, with what it needs at hand.
+func _install_by_item_live(inst: Dictionary, vpart: int, picked: String) -> void:
+	var path := "res://scripts/vr/vr_install.gd"
+	var tables: Object = _main.world.tables
+	var defs: Array = tables.get("vpart") if tables != null else []
+	var def: Variant = defs[vpart] if vpart > 0 and vpart < defs.size() else null
+	var item: Variant = (def as Object).get("item") if def is Object else null
+	if not ResourceLoader.exists(path) or not item is int or item <= 0:
+		print("  (install by item: not checked, VrInstall or the tables' part item isn't in this build)")
+		return
+	var vi: GDScript = load(path)
+	var types: PackedInt32Array = vi.call("types_for", tables, item)
+	var name_of := func(vp: int) -> String:
+		return str((defs[vp] as Object).get("name")) if vp >= 0 and vp < defs.size() and defs[vp] is Object else ""
+	var rows: Array = vi.call("choices", inst, types, name_of)
+	var mine: Array = rows.filter(func(r: Dictionary) -> bool: return r.get("vpart") == vpart)
+	_check(types.has(vpart) and mine.size() == 1 and (mine[0] as Dictionary).get("have") == true and rows.size() <= 8,
+			"install by item: the %s's item (%d) serves %d part types in the game's tables, its own among them; on its square the game's install read leaves %d of them that fit (%s), the %s with what it needs at hand"
+			% [picked, item, types.size(), rows.size(), rows.map(func(r: Dictionary) -> String: return str(r.get("name"))), picked])
+
+
 ## The item a part type is made from, as the game's id tables give it (lead-bridge's `item` on vpart rows) and the
 ## client reads it (lead-world's IdTables.Def.item); skipped until both are in. Part type `vpart` (a table index) of
 ## the part called `picked` names an item of the item table; a seatbelt's is the seatbelt.
@@ -1287,6 +1311,7 @@ func _work_install_live(wv: Variant, uid: int, old: Dictionary, picked: String, 
 				% [old["mount"], shown, all_types, picked, row if not row.is_empty() else "not among them"])
 		wv.call("end_install")
 		return
+	_install_by_item_live(wv.get("_inst"), old["vpart"], picked)
 	wv.call("pick_type", old["vpart"])
 	var button := (wv.get("_buttons") as Dictionary)["i"] as Button
 	var lines_in := func() -> bool: return wv.waiting != true

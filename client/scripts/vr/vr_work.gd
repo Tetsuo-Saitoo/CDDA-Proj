@@ -19,8 +19,10 @@ const MAX_SIZE_M := 10.0    # a part's size past this is junk
 var anchors := Callable()     # (uid) -> {row: {point, normal, size}}: VehicleView.part_anchors (main.gd)
 var highlight := Callable()   # (uid, row) -> void: VehicleView.highlight (main.gd); row -1: none
 var ray := Callable()         # (origin, dir, max_m) -> Dictionary: LookRay.cast ("hit", "point", "vehicle")
+var square := Callable()      # (uid, p) -> Vector2i: VehicleView.mount_at (Vector2i.MAX none); install by hand
+var light_square := Callable()   # (uid, mount) -> void: VehicleView.highlight_square
 
-var picked: Array = [{}, {}]  # hand (0 left, 1 right) -> {uid, row} it is on; {} none
+var picked: Array = [{}, {}]  # hand (0 left, 1 right) -> {uid, row} it is on, or {uid, at} (a square); {} none
 var lit: Array = []           # [uid, row] highlighted; [] none
 var hold := false             # the work wheel is up on a pick (VrRig): picks and light stay
 var _due: Array[int] = [0, 0]
@@ -97,6 +99,26 @@ func update(i: int, p: Vector3, dir: Vector3, free: bool, pointing: bool, snap: 
 	_light()
 
 
+## Per frame for hand `i` holding a part item at `p` (`free`: nothing else of the rig's in the way): the square of a
+## vehicle in reach under it, {uid, at}, is picked and lit (install by hand, VrRig). Looked for at most every PICK_MS.
+func update_square(i: int, p: Vector3, free: bool, snap: Snapshot, now_ms := Time.get_ticks_msec()) -> void:
+	if i < 0 or i > 1 or hold:
+		return
+	if not free or snap == null or VrDrive.driving_uid(snap) != 0 or not square.is_valid() or not p.is_finite():
+		picked[i] = {}
+		_due[i] = 0
+	elif now_ms >= _due[i]:
+		_due[i] = now_ms + PICK_MS
+		var w := {}
+		for veh in _in_reach(snap):
+			var m: Variant = square.call(veh.uid, p)
+			if m is Vector2i and m != Vector2i.MAX:
+				w = {"uid": veh.uid, "at": m}
+				break
+		picked[i] = w
+	_light()
+
+
 ## Nothing picked, nothing lit (the hands went away: no hands, a menu).
 func clear() -> void:
 	picked = [{}, {}]
@@ -115,15 +137,18 @@ func _light() -> void:
 	for i in [1, 0]:
 		var w: Dictionary = picked[i]
 		if not w.is_empty():
-			want = [w["uid"], w["row"]]
+			want = [w["uid"], w["row"] if w.has("row") else w["at"]]
 			break
 	if want == lit:
 		return
-	if highlight.is_valid():
-		if want.is_empty():
+	if want.is_empty():
+		if highlight.is_valid():
 			highlight.call(lit[0], -1)
-		else:
-			highlight.call(want[0], want[1])
+	elif want[1] is Vector2i:
+		if light_square.is_valid():
+			light_square.call(want[0], want[1])
+	elif highlight.is_valid():
+		highlight.call(want[0], want[1])
 	lit = want
 
 

@@ -35,6 +35,8 @@ func run(root: Node, check: Callable) -> void:
 	_test_rig_tool(root, snap)
 	_test_pull(root)
 	_test_rig_pull(root, snap)
+	_test_install(snap)
+	_test_rig_install(root, snap)
 
 
 static func _snap(veh: Snapshot.Vehicle, at: Vector3i, driving: bool) -> Snapshot:
@@ -356,7 +358,7 @@ func _test_pull(root: Node) -> void:
 	var kept: bool = _hides.size() == n and p.hand == -1
 	p.settle(false)
 	p.settle(false)
-	var shown: bool = _hides.size() == n + 1 and _hides.back() == [UID, 0, false]
+	var shown: bool = _hides.size() == n + 2 and _hides[n] == [UID, 0, false] and _hides.back() == [UID, -1, false]
 	parent.free()
 	_check.call(none and gripped and near and out and back and kept and shown,
 			"vr work pull: a gripped part's copy follows the hand, the original hidden; pulled %d cm out it asks once; let go before CDDA starts it shows again, after only when the work stops (%s)"
@@ -416,7 +418,7 @@ func _test_rig_pull(root: Node, snap: Snapshot) -> void:
 	rig.update_pull()
 	var over: bool = rig.pull.hand == -1 and _hides.size() == n
 	rig.update_pull()
-	var shown: bool = _hides.size() == n + 1 and _hides.back() == [UID, 0, false]
+	var shown: bool = _hides.size() == n + 2 and _hides[n] == [UID, 0, false] and _hides.back() == [UID, -1, false]
 	rig.work_session = null
 	rig.hands = null
 	rig.free()
@@ -426,3 +428,170 @@ func _test_rig_pull(root: Node, snap: Snapshot) -> void:
 	_check.call(gripped and held and sent and let_go and read_no and refused and runs and over and shown,
 			"vr work rig pull: the grip on a picked part takes it into the hand; pulled out it asks CDDA to remove it; let go, refused or a read refusing it: back; started: it stays in the hand while the work runs (%s)"
 			% [[gripped, held, sent, let_go, read_no, refused, runs, over, shown]])
+
+
+const INST := {"mount": Vector2i(1, 0), "reason": 0, "text": "", "types": [{"vpart": 3, "bits": 3},
+		{"vpart": 4, "bits": 1}, {"vpart": 5, "bits": 2}, {"vpart": 6, "bits": 3}]}
+
+
+## Install by hand: of CDDA's install read only the types the item serves that fit, in CDDA's order; the read for that
+## square only; the square under a part's item lit; the list on the wheel picks by the hand's height or a stick push.
+func _test_install(snap: Snapshot) -> void:
+	var name_of := func(vp: int) -> String: return "type %d" % vp
+	var rows := VrInstall.choices(INST, PackedInt32Array([5, 3, 4]), name_of)
+	var picks: bool = rows.size() == 2 and rows[0]["vpart"] == 3 and rows[1]["vpart"] == 5 and rows[0]["have"] \
+			and not rows[1]["have"] and rows[0]["name"] == "type 3" and VrInstall.choices(INST, PackedInt32Array([9]), name_of).is_empty()
+	var r := {"ok": true, "vehicle": UID, "install": INST}
+	var fors: bool = VrInstall.is_for(r, UID, Vector2i(1, 0)) and not VrInstall.is_for(r, UID, Vector2i(0, 0)) \
+			and not VrInstall.is_for(r, UID + 1, Vector2i(1, 0)) and VrInstall.is_for({"ok": false, "vehicle": UID}, UID, Vector2i(5, 5)) \
+			and not VrInstall.is_for({"ok": true, "vehicle": UID}, UID, Vector2i(1, 0)) \
+			and not VrInstall.is_for({"vehicle": "x"}, UID, Vector2i(1, 0))
+	var none: bool = VrInstall.types_for(null, 5).is_empty() and VrInstall.types_for(IdTables.new(), 5).is_empty()
+	var t := IdTables.new()
+	for k in 5:
+		t.vpart.append(IdTables.Def.new())
+	t.vpart[1].item = 9
+	t.vpart[3].item = 9
+	t.vpart[4].item = 2
+	var served: bool = VrInstall.types_for(t, 9) == PackedInt32Array([1, 3]) and VrInstall.types_for(t, 2) == PackedInt32Array([4]) \
+			and VrInstall.types_for(t, 7).is_empty() and VrInstall.types_for(t, 0).is_empty()
+	t.vpart[2].item = 9
+	t.generation += 1   # new tables: looked through again
+	served = served and VrInstall.types_for(t, 9) == PackedInt32Array([1, 2, 3])
+	var w := _work()
+	w.square = func(uid: int, p: Vector3) -> Variant:
+		return Vector2i(roundi(p.x), roundi(p.z)) if uid == UID and p.y < 2.0 else Vector2i.MAX
+	w.light_square = func(uid: int, at: Vector2i) -> void: _lights.append([uid, at])
+	_lights.clear()
+	w.update_square(1, Vector3(1.0, 1.0, 0.0), true, snap, 1000)
+	var sq: bool = w.picked[1] == {"uid": UID, "at": Vector2i(1, 0)} and _lights == [[UID, Vector2i(1, 0)]]
+	w.update_square(1, Vector3(1.0, 3.0, 0.0), true, snap, 1100)
+	var off: bool = w.picked[1].is_empty() and _lights.back() == [UID, -1]
+	w.update_square(1, Vector3(1.0, 1.0, 0.0), false, snap, 1200)
+	var not_free: bool = w.picked[1].is_empty()
+	var m := VrWorkMenu.new()
+	var head := Transform3D(Basis(), Vector3(0.0, 1.5, 1.0))
+	var at := Vector3(0.0, 1.0, 0.0)
+	m.open_list(1, at, head, UID, [], "x")
+	var empty: bool = not m.is_open()
+	m.open_list(1, at, head, UID, [{"text": "a", "value": 3}, {"text": "b", "value": 5}, {"text": "c", "value": 7}], "Install as:")
+	var listed: bool = m.is_open() and not m.armed and m.choice == 0 and m.choice_value() == 3 \
+			and m.panel_text().begins_with("Install as:\n> a")
+	m.point(at + Vector3(0.0, -0.03, 0.0))
+	var hand_down: bool = m.choice == 1 and m.panel_text().contains("> b")
+	m.point(at + Vector3(0.0, -0.03, 0.0), Vector2(0.0, -0.9))
+	m.point(at + Vector3(0.0, -0.03, 0.0), Vector2(0.0, -0.9))   # held: one row a push
+	var stick: bool = m.choice == 2 and m.choice_value() == 7
+	m.point(at + Vector3(0.0, -0.03, 0.0), Vector2.ZERO)
+	m.point(at + Vector3(0.0, -0.03, 0.0), Vector2(0.0, 0.9))
+	var up: bool = m.choice == 1
+	m.point(at + Vector3(0.0, -1.0, 0.0))
+	var clamped: bool = m.choice == 2
+	m.set_read({"ok": false, "vehicle": UID, "error": "x"})
+	var no_read: bool = m.read.is_empty()
+	m.open(1, at, head, UID, 0)
+	var back: bool = m.items.is_empty() and m.choice_value() == null and (m.get_child(0) as Label3D).visible
+	m.free()
+	_check.call(picks and fors and none and served and sq and off and not_free and empty and listed and hand_down and stick and up and clamped and no_read and back,
+			"vr work install: only the types the item serves that fit, in CDDA's order; the read for that square only; the square under a part's item lit; the list picks by the hand's height or a stick push (%s)"
+			% [[picks, fors, none, served, sq, off, not_free, empty, listed, hand_down, stick, up, clamped, no_read, back]])
+
+
+## The rig: the install read for the asked square installs the one type left (not connected here: said and flashed),
+## offers several on the wheel's list (the trigger let go on one installs it), says why when none fits or the read
+## refuses, and ignores another square's read.
+func _test_rig_install(root: Node, snap: Snapshot) -> void:
+	var world := WorldView.new()
+	world.snapshot = snap
+	var hands := Hands.new(world, ItemActions.new())
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.hands = hands
+	var w := _work()
+	rig.work = w
+	var s := VehicleWorkSession.new()
+	s.world = world
+	rig.work_session = s
+	s.open(UID)
+	rig.set("_work_mine", true)
+	rig.right.global_position = Vector3(0.0, 1.1, 0.0)
+	var r := {"ok": true, "vehicle": UID, "install": INST}
+	var not_yet := "Install isn't connected to the game yet."
+	_rig = rig
+	_ask([3])
+	s.result.emit(r)
+	var one: bool = rig.busy.get("_flash") == not_yet and rig.get("_install").is_empty()
+	_ask([4])
+	s.result.emit(r)
+	var none: bool = rig.busy.get("_flash") == "That doesn't fit there." and rig.get("_install").is_empty()
+	_ask([4])
+	s.result.emit({"ok": true, "vehicle": UID, "install": INST.merged({"selected": {"cmd": "i", "ok": false, "reason": 0,
+			"text": "Cannot install due to: no room.", "lines": []}}, true)})
+	var cdda_why: bool = rig.busy.get("_flash") == "Cannot install due to: no room." and rig.get("_install").is_empty()
+	_ask([3])
+	s.result.emit({"ok": false, "vehicle": UID, "error": "busy"})
+	var refused: bool = rig.busy.get("_flash") == "The game couldn't answer (busy)." and rig.get("_install").is_empty()
+	_ask([3])
+	rig.busy.flash("-")
+	s.result.emit({"ok": true, "vehicle": UID, "install": INST.merged({"mount": Vector2i(0, 0)}, true)})
+	var other: bool = rig.busy.get("_flash") == "-" and not rig.get("_install").is_empty()
+	var it := ItemRef.new()   # the list is for the hand holding the part's item: it stays up while held
+	it.type = 9
+	hands.hand("vr_r").held = {"kind": "item", "item": it}
+	_ask([3, 5])
+	s.result.emit(r)
+	var m := rig.work_menu
+	var listed: bool = m.is_open() and m.items.size() == 2 and w.hold and rig.get("_install").get("listing") == true
+	rig.right.global_position = m.center + Vector3(0.0, -0.03, 0.0)
+	rig.update_wheel()
+	var kept: bool = m.is_open() and m.choice == 1 and not rig.get("_install").is_empty()
+	rig.press(rig.right, "trigger_click")
+	rig.release(rig.right, "trigger_click")
+	var picked: bool = m.choice == -1 and not m.is_open() and rig.busy.get("_flash") == not_yet \
+			and rig.get("_install").is_empty() and not w.hold
+	_ask([3, 5])
+	s.result.emit(r)
+	rig.press(rig.right, "by_button")
+	var closed: bool = not m.is_open() and rig.get("_install").is_empty()
+	_ask([3, 5])
+	s.result.emit(r)
+	hands.hand("vr_r").held = {}   # the item gone from the hand: the list goes too
+	rig.update_wheel()
+	var dropped: bool = not m.is_open() and rig.get("_install").is_empty() and not w.hold
+	hands.hand("vr_r").held = {"kind": "item", "item": it}
+	var t := IdTables.new()   # the trigger with a part's item on a lit square asks CDDA's install read (here: no game)
+	for k in 10:
+		t.vpart.append(IdTables.Def.new())
+	t.vpart[3].item = 9
+	world.tables = t
+	w.square = func(uid: int, _p: Vector3) -> Variant: return Vector2i(1, 0) if uid == UID else Vector2i.MAX
+	rig.right.global_position = Vector3(1.0, 1.1, 0.0)
+	rig.update_hands(0.016, true)
+	var b0: int = rig.buzzes[1]
+	rig.press(rig.right, "trigger_click")
+	var trigger: bool = w.picked[1] == {"uid": UID, "at": Vector2i(1, 0)} and rig.buzzes[1] == b0 + 1 \
+			and rig.busy.get("_flash") == VehicleWorkSession.NO_INSTALL.left(VrBusy.MAX_CHARS) \
+			and rig.get("_install").is_empty()   # (the flash is capped)
+	hands.hand("vr_r").held = {}   # a square's pick left a moment after the item goes: no wheel, no grip on a part
+	w.picked[1] = {"uid": UID, "at": Vector2i(1, 0)}
+	var lingers: bool = not rig.open_work(rig.right) and not rig.grip_part(rig.right) and not m.is_open() \
+			and rig.pull.hand == -1
+	_rig = null
+	rig.work_session = null
+	rig.hands = null
+	rig.free()
+	if is_instance_valid(hands):
+		hands.free()
+	world.free()
+	_check.call(one and none and cdda_why and refused and other and listed and kept and picked and closed and dropped \
+			and trigger and lingers,
+			"vr work rig install: one type left installs, several go on the wheel's list while the item is held (let go on one installs it), none fits or a refused read says why, another square's read is ignored, a square's pick opens no wheel or grip (%s)"
+			% [[one, none, cdda_why, refused, other, listed, kept, picked, closed, dropped, trigger, lingers]])
+
+
+var _rig: VrRig
+
+
+func _ask(types: Array) -> void:
+	_rig.set("_install", {"uid": UID, "at": Vector2i(1, 0), "hand": 1, "types": PackedInt32Array(types),
+			"until": Time.get_ticks_msec() + 5000})
