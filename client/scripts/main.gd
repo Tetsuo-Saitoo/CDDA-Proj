@@ -91,6 +91,8 @@ var work_view: VehicleWorkView    # Shift+V: C6 vehicle work beside a car (flat 
 var work_cam: Object = null
 var work := VehicleWorkSession.new()   # C6: the work flow behind work_view and VR's work panel (lead-vr)
 var _work_uid := 0                       # the vehicle the flat work view was opened on
+var map_data := MapData.new()   # G5: the map's pages, for the screen map and VR's held map (lead-vr)
+var map_view: MapView           # M: the map (flat screen)
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -482,6 +484,7 @@ func _shown(snap: Snapshot, n: int, t0: int) -> void:
 	if character.visible or inspect.visible:
 		_ask_character()
 	work.follow(snap)   # C6: closed when the vehicle went, asked again when its parts or what is carried change
+	map_data.follow(snap)   # G5: the player's cell; a new one reads its page again
 	if hotbar != null:
 		hotbar.refresh()   # G2: which slots are carried or in hand now
 	if hands_panel != null:
@@ -912,10 +915,13 @@ func _start_live() -> void:
 	live.character_sheet.connect(character_data.set_sheet)   # G4: the character screen's stats, skills ...
 	work.live = live
 	live.vehicle_work.connect(work.on_read)   # C6: the work read
+	map_data.live = live
+	live.overmap.connect(map_data.on_page)   # G5: a map page
 	live.events_arrived.connect(work.on_events)   # C6: the work action's work_result
 	live.state_changed.connect(func(s: String) -> void:
 		if s != "running":
-			character_data.set_sheet(null))   # another game, another character
+			character_data.set_sheet(null)   # another game, another character
+			map_data.reset())   # G5: another game, another map
 	live.cheats_changed.connect(hud_data.set_cheats)
 	live.cheats_changed.connect(cheat_panel.on_cheats_changed)
 	live.state_changed.connect(_apply_test_args)
@@ -2121,6 +2127,10 @@ func _setup_hud() -> void:
 	character.data = character_data
 	character.opened.connect(_ask_character)
 	layer.add_child(character)
+	map_view = MapView.new()
+	map_view.data = map_data
+	map_view.blocked = func() -> bool: return request_ui != null and request_ui.visible   # CDDA's prompts first
+	layer.add_child(map_view)
 	work_view = VehicleWorkView.new()
 	work_view.blocked = func() -> bool: return request_ui != null and request_ui.visible   # CDDA's prompts first
 	work_view.type_name = func(vp: int) -> String:   # the id table's name for a part type
@@ -2307,7 +2317,8 @@ func _clock_tick(now_ms: int) -> void:
 
 
 func _menu_open() -> bool:
-	return key_menu.visible or inspect.visible or character.visible or work_view.visible or request_ui.visible \
+	return key_menu.visible or inspect.visible or character.visible or work_view.visible or map_view.visible \
+			or request_ui.visible \
 			or grab.tray_open() \
 			or vise_bench.visible or main_menu != null
 
@@ -2324,6 +2335,8 @@ func _setup_back_out() -> void:
 				tele_pick.picking = false
 				status = "teleport: cancelled"
 				return true)
+	back_out.add("map", func() -> bool: return map_view != null and map_view.visible,
+			func() -> bool: return map_view.handle_key(BackOut.esc()))
 	back_out.add("vehicle work", func() -> bool: return work_view != null and work_view.visible,
 			func() -> bool: return work_view.handle_key(BackOut.esc()))
 	back_out.add("character", func() -> bool: return character != null and character.visible,
@@ -2440,7 +2453,7 @@ func _demo_tick() -> void:
 
 func _process(_delta: float) -> void:
 	var typing := request_ui.wants_text_input() or key_menu.visible or inspect.visible \
-			or grab.tray_open()   # no camera or walking
+			or grab.tray_open() or map_view.visible   # no camera or walking
 	camera.set_process(vr == null and not first_person and not typing)
 	if vr == null and view_mode == "top" and fp.z != _top_z:   # top-down: the cut follows the player's level
 		_top_z = fp.z
@@ -2462,7 +2475,7 @@ func _process(_delta: float) -> void:
 	grab.update(get_viewport().get_camera_3d(), _pointer(), _fp_active() and not typing
 			and request_ui.target_widget() == null, Input.mouse_mode == Input.MOUSE_MODE_CAPTURED)
 	grab.update_tray(get_viewport().get_camera_3d(), _pointer(), vr != null or key_menu.visible or inspect.visible
-			or character.visible or work_view.visible or request_ui.visible or main_menu != null)
+			or character.visible or work_view.visible or map_view.visible or request_ui.visible or main_menu != null)
 	if typing or vr != null or (live != null and not _in_main_loop()):
 		pour.cancel()   # a menu or prompt took the keys: its release won't come here
 	elif pour.update(Time.get_ticks_msec()) == "refused":
@@ -2667,7 +2680,7 @@ func _input(event: InputEvent) -> void:
 	InputActions.note_device(event)   # prompts name a pad's buttons after the pad was used
 	if not BackOut.is_back(event):   # (Esc / Start while E's wheel is on its way: back_out's "wheel" step)
 		request_ui.note_input(event)   # another key before E's menu came: that menu isn't E's wheel
-	if key_menu.visible or inspect.visible or character.visible or work_view.visible:
+	if key_menu.visible or inspect.visible or character.visible or work_view.visible or map_view.visible:
 		tele_pick.picking = false   # a menu came up meanwhile (main's _input sees its clicks before its buttons do)
 	var pick := tele_pick.pick_event(event)   # the cheat's "pick a square": this click is the square
 	if pick == TeleportPick.PICK:
@@ -2693,7 +2706,7 @@ func start_teleport_pick() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if key_menu.visible or inspect.visible or character.visible or work_view.visible:
+	if key_menu.visible or inspect.visible or character.visible or work_view.visible or map_view.visible:
 		return   # the inspect view, the character screen and the work view take their keys themselves (their _input)
 	var key := event as InputEventKey
 	if key != null and key.pressed and not key.echo and key.physical_keycode == InputActions.MENU_KEY:
@@ -2704,6 +2717,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if inspect.handle_key(event, _can_inspect()):
 		return
 	if character.handle_key(event, _can_open_character()):
+		return
+	if vr == null and map_view.handle_key(event, _can_open_character()):   # G5: M, the map
+		return
+	if vr != null and InputActions.pressed(event, &"map"):   # G5: VR's held map (lead-vr's VrRig)
+		call_if(vr, "toggle_map", [])
 		return
 	if vr == null and InputActions.pressed(event, &"vehicle_work"):
 		_open_work()

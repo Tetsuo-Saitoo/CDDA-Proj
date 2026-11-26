@@ -88,6 +88,7 @@ func _initialize() -> void:
 	await preload("res://tests/ride_tests.gd").new().run(root, _check, data)
 	preload("res://tests/cargo_tests.gd").new().run(root, _check, data)
 	preload("res://tests/vehicle_work_tests.gd").new().run(root, _check, data)
+	preload("res://tests/map_tests.gd").new().run(root, _check)
 	preload("res://tests/work_camera_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/part_copy_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)
@@ -805,26 +806,32 @@ func _test_layout(data: Variant, tables: IdTables, terrain: TerrainCatalog, cat:
 		for xy: Vector2i in xys:
 			into[at.call(xy.x, xy.y)] = id
 	# Walls #, counters C, benches B, a table T with a chair c, a fridge F, beds: b (1 x 2), D (2 x 2),
-	# d (3 x 2: a dorm row of three single beds).
+	# d (3 x 2: a dorm row of three single beds), a toilet t in a stall with its door +.
 	#   x  0123456789AB
 	#   y0  ###
 	#    1 #CCC  #
 	#    2       B#
 	#    3       B# T
 	#    4          c#
+	#    5  ###
+	#    6  #t#
+	#    7   +
 	#    9   b  DD ddd
 	#   10   b FDD ddd
 	#   11   # ### ###
 	var walls := {}
 	cells.call([Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0), Vector2i(0, 1), Vector2i(6, 1), Vector2i(7, 2),
 			Vector2i(7, 3), Vector2i(10, 4), Vector2i(2, 11), Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11),
-			Vector2i(8, 11), Vector2i(9, 11), Vector2i(10, 11)], "t_wall_w", walls)
+			Vector2i(8, 11), Vector2i(9, 11), Vector2i(10, 11), Vector2i(1, 5), Vector2i(2, 5), Vector2i(3, 5),
+			Vector2i(1, 6), Vector2i(3, 6)], "t_wall_w", walls)
+	cells.call([Vector2i(2, 7)], "t_door_c", walls)
 	var furn := {}
 	cells.call([Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1)], "f_counter", furn)
 	cells.call([Vector2i(6, 2), Vector2i(6, 3)], "f_bench", furn)
 	cells.call([Vector2i(9, 3)], "f_table", furn)
 	cells.call([Vector2i(9, 4)], "f_chair", furn)
 	cells.call([Vector2i(4, 10)], "f_fridge", furn)
+	cells.call([Vector2i(2, 6)], "f_toilet", furn)
 	cells.call([Vector2i(2, 9), Vector2i(2, 10)], "f_bed", furn)
 	cells.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)], "f_bed", furn)
 	cells.call([Vector2i(8, 9), Vector2i(9, 9), Vector2i(10, 9), Vector2i(8, 10), Vector2i(9, 10), Vector2i(10, 10)], "f_bed", furn)
@@ -852,6 +859,11 @@ func _test_layout(data: Variant, tables: IdTables, terrain: TerrainCatalog, cat:
 	_check(faces.call([Vector2i(6, 2), Vector2i(6, 3)]) == [W, W], "benches between floor and a wall face the floor, not each other")
 	_check(faces.call([Vector2i(9, 4)]) == [N], "a chair at a table faces it, though a wall is beside it")
 	_check(faces.call([Vector2i(4, 10)]) == [N], "a fridge against a wall faces the room")
+	var stall := base + Vector3i(2, 6, 0)
+	var toilet := cat.furniture(sm.furn[at.call(2, 6)])
+	var door_score: int = pm._score(stall, toilet, S)
+	_check(faces.call([Vector2i(2, 6)]) == [S] and door_score > maxi(pm._score(stall, toilet, 1), pm._score(stall, toilet, W)),
+			"a toilet in a stall faces its door, not a side wall (no tie with them)")
 	_check(faces.call([Vector2i(2, 9), Vector2i(2, 10)]) == [N, N], "1 x 2 bed: one facing, along it, head at the wall")
 	_check(faces.call([Vector2i(5, 9), Vector2i(6, 9), Vector2i(5, 10), Vector2i(6, 10)]) == [N, N, N, N],
 			"2 x 2 bed: one facing, head at the wall")

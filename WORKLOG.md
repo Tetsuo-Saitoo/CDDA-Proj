@@ -1,5 +1,12 @@
 # WORKLOG
 
+- 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
+- 2026-11-26 — Map slice 1, screen side: MapData, MapCanvas and MapView (M), with map_tests and map_live_test (skips until the bridge's read lands).
+- 2026-11-26 — Map plan: the VR map scrolls by dragging it with the free hand's trigger (1:1), with chevrons showing it scrolls (lead-vr's text, the user's ask).
+- 2026-11-26 — Map plan: the user's answers in (CDDA's symbols first; routes with several stops, each leg CDDA's own travel, the stop list in the client).
+- 2026-11-26 — Map (G5): plan written in docs/MAP.md (slices, bridge read and commands, VR view, security, PZ notes), agreed with lead-bridge and lead-vr; waiting for the user.
+- 2026-11-26 — Tester AppImage test-2026-11-26 (private test repo, pre-release, not a release) from main 440cd5d + fork 80c6d91, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): C6 VR slice 2 (repair by touch, pull a part out, install by holding its item). Nothing tried in a headset.
+- 2026-11-25 — TASKS.md: the C6 vehicle work entry split into a short line and sub-bullets per piece (bridge, work view, camera and hood, VR slices 1 and 2, still to try, the visual lift).
 - 2026-11-26 — VR map (lead-vr): the map now opens as a sheet in your off hand (left stick click or the menu's Map row); point at it with the other hand to read a place's name, drag it with that trigger to scroll, and use the sticks to pan, zoom and change level. It shows the game's map once the screen map's drawing is in. Not tried in a headset yet.
 - 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
 - 2026-11-24 — Bridge: the game's list of car part types now says which item each one is made from, so VR can offer to install the part you are holding. Passes on Windows and Linux.

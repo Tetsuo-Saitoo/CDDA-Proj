@@ -27,6 +27,8 @@ signal character_sheet(sheet: Dictionary)
 ## C6: a vehicle-work read (query_vehicle_work) came back: VehicleWorkData.clean's Dictionary (`ok` false: {vehicle,
 ## error}).
 signal vehicle_work(result: Dictionary)
+## G5: a map page (query_overmap) came back: MapData.parse_page's Dictionary.
+signal overmap(result: Dictionary)
 ## K7 test range (CddaSim.get_range_info, RangeInfo.clean without `results`) changed: zones, the zone the
 ## character is in, AI frozen. {} when the game stops running.
 signal range_changed(info: Dictionary)
@@ -69,6 +71,9 @@ var _work_query := 0
 var _work_asked := 0
 var _work_uid := 0   # the vehicle _work_query asked about
 var _work_tag := 0   # the last vehicle_work action's tag (1..2^31-1, wraps)
+var _map_query := 0          # G5: the map page waiting for its result (0 none), when asked, and its origin
+var _map_asked := 0
+var _map_origin := Vector3i.ZERO
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
 const MAX_ITEM_TAG := 2147483647   # place / spot ops carry a tag 1..this, given back in their item_result
@@ -649,6 +654,56 @@ func _poll_vehicle_work() -> void:
 	vehicle_work.emit(d)
 
 
+## G5: the map page of 32x32 cells (OMTs) whose corner is `origin` (absolute OMT; x and y multiples of
+## MapData.PAGE, z a level): what CDDA's own map screen would show there (contracts/overmap.md; read-only, it never
+## creates ground). With `with_path` the player's destination path comes too. Returns the query id, 0 when refused
+## (no game, an older DLL, one still waiting: one at a time). overmap follows.
+func query_overmap(origin: Vector3i, with_path := false) -> int:
+	if not _can("query_overmap") or posmod(origin.x, MapData.PAGE) != 0 or posmod(origin.y, MapData.PAGE) != 0 			or absi(origin.x) > MapData.MAX_XY or absi(origin.y) > MapData.MAX_XY 			or origin.z < MapData.Z_MIN or origin.z > MapData.Z_MAX 			or (_map_query > 0 and Time.get_ticks_msec() - _map_asked < QUERY_TIMEOUT_MS):
+		return 0
+	var d := {"origin": [origin.x, origin.y, origin.z]}
+	if with_path:
+		d["path"] = true
+	var v: Variant = _sim.query_overmap(d)
+	var id := int(v) if (v is int or v is float) and is_finite(float(v)) else 0
+	if id < 1 or id > MapData.MAX_QUERY_ID:
+		return 0
+	_map_query = id
+	_map_asked = Time.get_ticks_msec()
+	_map_origin = origin
+	return id
+
+
+## Whether the bridge answers the map read (an older DLL doesn't: the map says it isn't connected).
+func has_overmap() -> bool:
+	return _can("query_overmap")
+
+
+func overmap_pending() -> bool:
+	return _map_query > 0
+
+
+func _poll_overmap() -> void:
+	if _map_query < 1:
+		return
+	if state != "running" or not _sim.has_method("take_query_result"):
+		_map_query = 0
+		return
+	var text: Variant = _sim.take_query_result(_map_query)
+	if not text is String or (text as String).is_empty():
+		if Time.get_ticks_msec() - _map_asked > QUERY_TIMEOUT_MS:
+			_map_query = 0
+			overmap.emit({"ok": false, "origin": _map_origin, "error": "internal"})   # the asker may ask again
+		return
+	var id := _map_query
+	_map_query = 0
+	var d := MapData.parse_page(text, id, _map_origin)
+	if d.is_empty():
+		push_warning("map query %d: unreadable result" % id)
+		d = {"ok": false, "origin": _map_origin, "error": "internal"}
+	overmap.emit(d)
+
+
 func character_pending() -> bool:
 	return _char_query > 0
 
@@ -710,6 +765,7 @@ func _make_sim() -> bool:
 	_sim = ClassDB.instantiate("CddaSim")
 	_base = null
 	_char_query = 0
+	_map_query = 0
 	_push_cheats_allowed()
 	return true
 
@@ -1057,6 +1113,7 @@ func _poll(delta: float) -> void:
 	_poll_queries()
 	_poll_character()
 	_poll_vehicle_work()
+	_poll_overmap()
 	_poll_range(delta)
 	var events: Array = _sim.drain_events()
 	if not events.is_empty():
