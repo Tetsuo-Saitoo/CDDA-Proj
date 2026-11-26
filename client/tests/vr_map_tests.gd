@@ -286,7 +286,8 @@ func _test_real(root: Node) -> void:
 	var d := MapData.new()
 	var c := MapCanvas.new()
 	c.data = d
-	var opened: bool = m.open(0, c) and c.cell_px == VrMap.CELL_PX and d.get("_users") == 1 			and c.size == Vector2(VrMap.PX)
+	var opened: bool = m.open(0, c) and c.cell_px == VrMap.CELL_PX and d.get("_users") == 1 \
+			and c.size == Vector2(VrMap.PX)
 	var p0 := Vector3(0.02, -0.01, 0.0)
 	var under := c.cell_at(VrMap.to_px(p0))
 	m.point(p0)
