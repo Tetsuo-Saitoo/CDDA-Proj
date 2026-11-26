@@ -57,6 +57,7 @@ const ACTIONS := [
 	[&"cutaway_down", "View", "show a level less", ["PageDown"]],
 	[&"roofs_toggle", "View", "roofs on / off", ["Y"]],
 	[&"frame_player", "View", "back to the player", ["Home"]],
+	[&"map", "View", "the map: the land you have seen (again or Esc: close)", ["M"]],
 	[&"reload", "View", "reload the snapshot (mock)", ["F9"]],
 	[&"classic_view", "View", "CDDA's classic view of the map (debug overlay)", ["F3"]],
 	[&"character", "View", "character screen: stats, body, needs, mood, skills, traits (again or Esc: close)", ["P"]],
