@@ -24,6 +24,7 @@
 #include "fp3d/held.h"
 #include "fp3d/id_tables.h"
 #include "fp3d/test_range.h"
+#include "fp3d/overmap_read.h"
 #include "fp3d/vehicle_work.h"
 #include "sim_session.h"
 
@@ -245,6 +246,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "match_recipes", "container" ), &CddaSim::match_recipes );
     ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
     ClassDB::bind_method( D_METHOD( "query_vehicle_work", "d" ), &CddaSim::query_vehicle_work );
+    ClassDB::bind_method( D_METHOD( "query_overmap", "d" ), &CddaSim::query_overmap );
     ClassDB::bind_method( D_METHOD( "queue_vehicle_work", "d" ), &CddaSim::queue_vehicle_work );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
@@ -986,6 +988,37 @@ int64_t CddaSim::query_vehicle_work( const Dictionary &d )
         return 0;
     }
     return static_cast<int64_t>( fp3d::post_vehicle_work_query( ask ) );
+}
+
+// G5: asks for one page of the overmap as the player knows it (fp3d/overmap_read.h, contracts/overmap.md).
+// Hostile input: `origin` must be three ints, in range and on the page grid; anything wrong is refused whole and
+// nothing is queued. The read itself changes nothing and creates no ground.
+int64_t CddaSim::query_overmap( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return 0;
+    }
+    Variant o;
+    Variant p;
+    if( !d.has( "origin" ) || !field( d, "origin", Variant::ARRAY, o ) || !field( d, "path", Variant::BOOL, p ) ) {
+        return 0;
+    }
+    const Array origin = o;
+    if( origin.size() != 3 || origin[0].get_type() != Variant::INT || origin[1].get_type() != Variant::INT ||
+        origin[2].get_type() != Variant::INT ) {
+        return 0;
+    }
+    const int64_t x = origin[0];
+    const int64_t y = origin[1];
+    const int64_t z = origin[2];
+    // Range first, so the narrowing below can't wrap.
+    if( x < -fp3d::max_overmap_xy || x > fp3d::max_overmap_xy || y < -fp3d::max_overmap_xy ||
+        y > fp3d::max_overmap_xy || z < -fp3d::max_overmap_z || z > fp3d::max_overmap_z ||
+        !fp3d::overmap_origin_ok( static_cast<int>( x ), static_cast<int>( y ), static_cast<int>( z ) ) ) {
+        return 0;
+    }
+    const fp3d::ui_point at{ static_cast<int>( x ), static_cast<int>( y ), static_cast<int>( z ) };
+    return static_cast<int64_t>( fp3d::post_overmap_query( at, d.has( "path" ) && static_cast<bool>( p ) ) );
 }
 
 // C6: start work on a vehicle part (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile input: every key

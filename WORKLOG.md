@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — Bridge: the game can now be asked for the map as the player knows it, one 32 by 32 page at a time: what each place looks like at the distance it was seen from, the player's notes and the travel path. Asking never creates new ground. The first piece of the in-game map (G5). Passes on Windows and Linux.
 - 2026-11-26 — Tester AppImage test-2026-11-26 (private test repo, pre-release, not a release) from main 440cd5d + fork 80c6d91, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): C6 VR slice 2 (repair by touch, pull a part out, install by holding its item). Nothing tried in a headset.
 - 2026-11-25 — TASKS.md: the C6 vehicle work entry split into a short line and sub-bullets per piece (bridge, work view, camera and hood, VR slices 1 and 2, still to try, the visual lift).
 - 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
