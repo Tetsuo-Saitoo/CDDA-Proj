@@ -330,6 +330,21 @@ func _test_view(root: Node) -> void:
 	held.looks[1]["name"] = ""   # a look CDDA left unnamed
 	var unnamed: bool = v.info_text() == "(-29, 2)  Something, seen vaguely."
 	held.looks[1]["name"] = "field"
+	held.vision[2 * 32 + 10] = 3   # (-22, 2): seen in detail, but its look was left out of a full page
+	v._hover = c.to_px(Vector2(-21.5, 2.5))
+	var unsent: bool = v.info_text() == "(-22, 2)  Something, seen in detail." \
+			and MapCanvas.cell_color(held, 2 * 32 + 10) == Color(0.41, 0.41, 0.41) \
+			and MapCanvas.cell_color(held, 0) == MapCanvas.FOG
+	var far := MapData.Page.new()   # a read page 4 pages west of the view, with a horde's danger area reaching it
+	far.origin = Vector3i(-160, 0, 0)
+	far.look.resize(MapData.CELLS)
+	far.vision.resize(MapData.CELLS)
+	far.flags.resize(MapData.CELLS)
+	far.notes[Vector2i(10, 3)] = {"text": "Horde", "symbol": "!", "color": Color.RED, "danger": true, "radius": 150}
+	far.notes[Vector2i(11, 3)] = {"text": "Far", "symbol": "!", "color": Color.RED, "danger": true, "radius": 5}
+	md.on_page({"ok": true, "origin": far.origin, "page": far})
+	var areas := c.danger_areas()
+	var danger: bool = areas.size() == 2 and areas.has(Rect2i(-29, 4, 5, 5)) and areas.has(Rect2i(-300, -147, 301, 301))
 	v._hover = c.to_px(Vector2(-26.5, 6.5))
 	var noted: bool = v.info_text().contains("Note (danger): Cache here!") and v.info_text().contains("Not seen.")
 	v._hover = c.to_px(Vector2(40.5, 2.5))
@@ -373,9 +388,9 @@ func _test_view(root: Node) -> void:
 	esc.pressed = true
 	var closed: bool = v.handle_key(esc) and not v.visible and not md.is_open() \
 			and mode[0] == Input.MOUSE_MODE_CAPTURED and md.page(Vector3i(-32, 0, 0)) == null
-	_check.call(refused and opened and asked_mine and under_prompt and field and unnamed and noted and unread and dragged and let_go and wheeled and level_up
+	_check.call(refused and opened and asked_mine and under_prompt and field and unnamed and unsent and danger and noted and unread and dragged and let_go and wheeled and level_up
 			and back and closed, "map view: M opens it (the mouse free), the line names the cell, its vision and "
 			+ "note; a drag moves the map 1:1, the wheel zooms, PgUp a level, Home back; Esc closes and drops the "
-			+ "pages (%s)" % [[refused, opened, asked_mine, under_prompt, field, unnamed, noted, unread, dragged, let_go, wheeled, level_up, back, closed]])
+			+ "pages (%s)" % [[refused, opened, asked_mine, under_prompt, field, unnamed, unsent, danger, noted, unread, dragged, let_go, wheeled, level_up, back, closed]])
 	root.remove_child(v)
 	v.free()

@@ -19,7 +19,8 @@ const MAX_PATH := 2048
 const MAX_NAME := 60          # a look's name, characters (the bridge's cap)
 const MAX_SYMBOL := 4         # a look's or note's symbol, characters (one glyph)
 const MAX_NOTE := 450         # CDDA's note box: columns (characters here)
-const MAX_RADIUS := 20        # a danger note's radius drawn, cells (CDDA's own note box allows 0-20)
+const MAX_RADIUS := 180       # a danger note's radius drawn, cells (the bridge sends at most 180)
+const UNSENT := Color(0.5, 0.5, 0.5)   # a seen cell whose look was left out of a full page
 const MAX_XY := 1 << 24       # |x|, |y| of a cell (absolute OMT; the bridge's bound)
 const Z_MIN := -10
 const Z_MAX := 10
@@ -201,6 +202,8 @@ func info(cell: Vector2i, z: int) -> Dictionary:
 	if v > 0 and k > 0 and k <= pg.looks.size():
 		var l: Dictionary = pg.looks[k - 1]
 		out = {"name": l["name"], "symbol": l["symbol"], "color": l["color"], "vision": v, "flags": pg.flags[i]}
+	elif v > 0:   # seen, but its look didn't fit in the page's answer (truncated): no name
+		out = {"name": "", "symbol": "", "color": UNSENT, "vision": v, "flags": pg.flags[i]}
 	var n: Variant = pg.notes.get(Vector2i(lx, ly))
 	if n != null:
 		out["note"] = n
