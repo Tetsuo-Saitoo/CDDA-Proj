@@ -60,6 +60,8 @@ func _run() -> void:
 
 
 func _map_checks() -> void:
+	root.size = Vector2i(1280, 720)   # (headless the window starts 64 x 64: the map's canvas would have no size)
+	await _frames(2)
 	var md := _main.map_data
 	var mv := _main.map_view
 	root.push_input(_key_of(&"map"))

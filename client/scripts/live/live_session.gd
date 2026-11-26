@@ -659,7 +659,10 @@ func _poll_vehicle_work() -> void:
 ## creates ground). With `with_path` the player's destination path comes too. Returns the query id, 0 when refused
 ## (no game, an older DLL, one still waiting: one at a time). overmap follows.
 func query_overmap(origin: Vector3i, with_path := false) -> int:
-	if not _can("query_overmap") or posmod(origin.x, MapData.PAGE) != 0 or posmod(origin.y, MapData.PAGE) != 0 			or absi(origin.x) > MapData.MAX_XY or absi(origin.y) > MapData.MAX_XY 			or origin.z < MapData.Z_MIN or origin.z > MapData.Z_MAX 			or (_map_query > 0 and Time.get_ticks_msec() - _map_asked < QUERY_TIMEOUT_MS):
+	if not _can("query_overmap") or posmod(origin.x, MapData.PAGE) != 0 or posmod(origin.y, MapData.PAGE) != 0 \
+			or absi(origin.x) > MapData.MAX_XY or absi(origin.y) > MapData.MAX_XY \
+			or origin.z < MapData.Z_MIN or origin.z > MapData.Z_MAX \
+			or (_map_query > 0 and Time.get_ticks_msec() - _map_asked < QUERY_TIMEOUT_MS):
 		return 0
 	var d := {"origin": [origin.x, origin.y, origin.z]}
 	if with_path:
