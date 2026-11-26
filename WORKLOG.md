@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — Map slice 1 follow-up (lead-qa's notes): an unnamed look reads "Something"; a view looks at most 8 pages each side of its middle; query_overmap's condition on several lines.
 - 2026-11-26 — Map slice 1, screen side: MapData, MapCanvas and MapView (M), with map_tests and map_live_test (skips until the bridge's read lands).
 - 2026-11-26 — Map plan: the VR map scrolls by dragging it with the free hand's trigger (1:1), with chevrons showing it scrolls (lead-vr's text, the user's ask).
 - 2026-11-26 — Map plan: the user's answers in (CDDA's symbols first; routes with several stops, each leg CDDA's own travel, the stop list in the client).

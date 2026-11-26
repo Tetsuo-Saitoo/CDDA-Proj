@@ -205,7 +205,8 @@ func info_text() -> String:
 		return "%s  Not read yet." % where
 	var parts := PackedStringArray([where])
 	if i.has("name"):
-		parts.append("%s, %s." % [i["name"], MapData.VISION_WORDS[i["vision"]]])
+		var what: String = i["name"] if not String(i["name"]).is_empty() else "Something"
+		parts.append("%s, %s." % [what, MapData.VISION_WORDS[i["vision"]]])
 	else:
 		parts.append("Not seen.")
 	if i.has("note"):
