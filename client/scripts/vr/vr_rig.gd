@@ -407,6 +407,7 @@ func _build() -> void:
 	add_child(wheel)
 	add_child(work_menu)
 	add_child(map)
+	map.said.connect(_on_map_said)
 	looking = VrLook.new()
 	add_child(looking)
 	zoom = VrZoom.new()
@@ -2215,6 +2216,12 @@ func toggle_map() -> bool:
 
 func close_map() -> void:
 	map.close()
+
+
+## The map's note to the player (a note refused, or not sent): low in the view, and a buzz in the pointing hand.
+func _on_map_said(t: String) -> void:
+	busy.flash(t)
+	feel(main_ctrl(), 0.3)
 
 
 ## G5, per frame: the map follows the off hand and takes both sticks; it is put away when that hand holds something,

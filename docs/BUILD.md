@@ -136,7 +136,10 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    click or the menu's Map row (on Vive wands the row, or M) opens the map in your off hand: point at it with the other hand to read a place's
    name; drag it with that trigger to scroll (a click opens a small wheel); its stick zooms (up / down) and changes
    level (left / right) while pointing at the map; the off hand's stick pans and its click comes back to you; B / Y
-   puts it away. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
+   puts it away. A place's wheel adds a note (Edit / Delete when it has one; Delete asks again): on the note panel
+   step the symbol and colour, toggle Danger and its radius, pick up to 3 words for the text (editing keeps the old
+   text unless you pick words), and Save; Type opens the note box on the menu panel instead. Not tried in
+   a headset. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
    from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=
