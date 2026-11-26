@@ -1,6 +1,7 @@
 # Map (PLAN.md G5): plan
 
-Status: plan only (lead-ui, 2026-11-26). No code until the user approves it.
+Status: plan only (lead-ui, 2026-11-26); the user answered its two questions. No code until the user approves
+slice 1.
 
 The goal is CDDA's overmap as a map the player looks at: 2D first, 3D later, with notes, routes and auto-travel.
 CDDA decides everything: what the player has seen, what a note says, whether a route exists and how travel runs.
@@ -47,18 +48,41 @@ The client only shows that and sends the player's choices. The HUD-in-view rule 
      - A VR keyboard is a later piece of lead-vr's and does not block this slice.
    - Live test: add a note, read it back, edit it, delete it. Overlong text is capped, and control characters
      are stripped.
-3. **Routes and auto-travel.**
-   - Picking a destination asks for CDDA's path to it. The path is drawn with its length.
-   - "Go" sends the travel command. CDDA asks its confirmation questions ("Travel to this point?", overburdened,
-     in a vehicle) as `popup` requests. Then it runs ACT_TRAVELLING, or autodrive when driving.
-   - A refusal comes back with CDDA's sentence ("Unable to find a path...", "same Z level").
-   - CDDA's own interruptions (a monster seen) stop the travel as usual.
-   - The player stops it themselves with a key on the flat screen, or a grip or stick push in VR. Both send the
-     bridge's existing `interrupt()`, and CDDA confirms first ("Cancel auto move?").
-   - VR: "Go" is its own wheel item, and CDDA's questions come on the VR panel. VR comfort (vignette, blink) has
-     to hold while the player moves on their own; lead-vr checks that in this slice.
-   - Live test on the range: travelling two cells changes the player's cell; an unreachable cell gives CDDA's
-     sentence; travel by car uses autodrive.
+3. **Routes with several stops, and auto-travel** (user, 2026-11-26: several stops, each leg CDDA's own route and
+   travel).
+   - **The stop list lives in the client** (MapData). It holds at most 16 stops, all on the level the route starts
+     on, because CDDA's travel never changes level.
+     - The player adds, moves and removes stops on the map. In VR, "Add stop" and "Clear stops" are on the wheel.
+     - The list is kept until the game ends and is not saved. Saving it can come later; if it does, it is read back
+       as untrusted data, bounded to 16 stops.
+   - **Drawing:**
+     - The current leg is CDDA's own path, the read's `path`, drawn with its length.
+     - Later legs are dashed straight lines between numbered stops, marked "not checked yet". CDDA checks each leg
+       when it becomes the current one.
+   - **Going:** "Go" sends `travel` for the first stop.
+     - CDDA asks its question as a `popup` request ("Travel to this point?", overburdened, walking while in a
+       vehicle). It does this for every leg, because the client never answers CDDA's questions for the player.
+     - Then CDDA runs ACT_TRAVELLING, or autodrive when driving.
+   - **Next leg:** a leg has ended when the snapshot shows the travel activity has stopped. If the player's cell
+     is that leg's stop, the stop is dropped and `travel` goes out for the next one, with CDDA's question again.
+   - **Refused, answered no, or interrupted partway** (CDDA's own interruption, such as a monster seen, or the
+     player's):
+     - The route stops there, and CDDA's sentence is shown.
+     - The rest of the list is kept but never run on its own. "Go" carries on from the next stop that hasn't been
+       reached.
+     - The player stops travel with a key on the flat screen, or a grip or stick push in VR. Both send the bridge's
+       existing `interrupt()`, which CDDA confirms first ("Cancel auto move?").
+   - **VR:** "Go" is its own wheel item, and CDDA's questions come on the VR panel. VR comfort (vignette, blink)
+     has to hold while the player moves on their own; lead-vr checks that in this slice.
+   - **Fork:** nothing new. Each leg is the same `travel` command (and `route` for the current leg's path).
+     Checking legs ahead would need `route` from a given cell; that can be added later with lead-bridge if
+     unchecked legs prove a nuisance.
+   - **Tests:**
+     - MapData tests: the cap, a reached stop dropped, and the rest kept after a refusal, a no and an
+       interruption.
+     - Live test on the range: a two-stop route ends on the second stop after CDDA's question for each leg. An
+       `interrupt()` partway keeps the rest. An unreachable stop gives CDDA's sentence. Travel by car uses
+       autodrive.
 4. **Overlays** that CDDA's map shows, and only when it shows them: hordes in sight, the player's vehicles, camps,
    mission targets, city names.
 5. **3D map (later)**, planned with lead-world when it is scheduled. C8 Horizon could reuse the same pages.
@@ -152,9 +176,7 @@ The client only shows that and sends the player's choices. The HUD-in-view rule 
 - **Where they differ:** PZ writes notes onto a map item; CDDA's notes belong to the character. We keep CDDA's.
 - PZ has no auto-travel; that part is CDDA's.
 
-## Open questions for the user
+## Decided (user, 2026-11-26)
 
-1. **Look:** CDDA's symbols and colours first, with a PZ-style paper look as a later pass? Or the paper look from
-   the start?
-2. **Routes:** CDDA's path to one destination, which is what CDDA has? Or several stops, each leg being CDDA's
-   travel?
+1. **Look:** CDDA's symbols and colours first; a PZ-style paper look is a later pass.
+2. **Routes:** several stops, each leg CDDA's own route and travel (slice 3).
