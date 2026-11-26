@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Map follows lead-bridge's newer read (fork 6de111d / root 86ba6e7): danger radius up to 180, drawn also from read pages off screen; a seen cell whose look was left out shows grey, "Something".
 - 2026-11-26 — VR map (lead-vr): the map held in VR now shows the game's real map, starting at where you are. Not tried in a headset yet.
