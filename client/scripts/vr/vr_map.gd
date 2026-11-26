@@ -36,7 +36,7 @@ const WHEEL_IN_M := 0.012             # the wheel's items: from this far from wh
 const WHEEL_OUT_M := 0.075            # ... to this far
 const WHEEL_R_M := 0.035              # its labels this far out
 const MAX_NAME := 60
-const CELL_PX := 24                   # the canvas's cell size to start with (its cell_px; the flat view's is 20)
+const CELL_PX := 24.0                 # the canvas's cell size to start with (its cell_px; the flat view's is 20)
 const INK := Color(1.0, 0.95, 0.8)    # the marker and the labels
 const PRIORITY := 2                   # the marker and the wheel over the canvas
 ## Slice 1 (read only): the wheel's items. Later slices add notes and "Go" (their values come out as `chosen`).

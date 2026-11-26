@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — VR map (lead-vr): the map held in VR now shows the game's real map, starting at where you are. Not tried in a headset yet.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Map slice 1 follow-up (lead-qa's notes): an unnamed look reads "Something"; a view looks at most 8 pages each side of its middle; query_overmap's condition on several lines.
 - 2026-11-26 — Map slice 1, screen side: MapData, MapCanvas and MapView (M), with map_tests and map_live_test (skips until the bridge's read lands).

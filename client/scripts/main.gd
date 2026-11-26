@@ -758,6 +758,11 @@ func _start_vr() -> void:
 	vr.pull.hide_part = vehicles_view.hide_part
 	vr.work.square = vehicles_view.mount_at   # ... and a part's item held to a square: installed there (VrInstall)
 	vr.work.light_square = vehicles_view.highlight_square
+	vr.map.make_canvas = func() -> Control:   # G5: the map held in VR, its own view on the shared MapData (VrMap)
+		var c := MapCanvas.new()
+		c.data = map_data
+		c.center_on_player()
+		return c
 	vr.drive.can_reach = vehicles_view.can_reach   # car storage by hand: the tray on an open trunk (VrDrive.cargo_at)
 	vr.drive.square_at = vehicles_view.square_at
 	vr.looking.teleport_to = _teleport_to   # VR look at (left X held): the main trigger's cheat teleport to the ring
