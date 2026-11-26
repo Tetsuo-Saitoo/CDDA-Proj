@@ -1,0 +1,273 @@
+extends RefCounted
+## G5 map slice 1 in VR (VrMap; docs/MAP.md "The VR view"): the sheet in the off hand shows a canvas; the free hand's
+## trigger clicks (under 12 mm: the wheel, no pan) or drags 1:1 (on and off the sheet); the scroll marker fades
+## after the first drag and is back on the next opening; the off hand's stick pans, the free hand's zooms and changes
+## the level while its ray is on the sheet; the player neither walks nor turns meanwhile (turns only off the sheet).
+## The canvas is a stand-in with lead-ui's agreed calls. Run by run_tests.gd.
+
+var _check: Callable
+
+
+## lead-ui's MapData as far as VrMap uses it: open / close counted, a name for every cell on level 0.
+class Data extends RefCounted:
+	var opens := 0
+	var closes := 0
+
+	func open() -> void:
+		opens += 1
+
+	func close() -> void:
+		closes += 1
+
+	func info(c: Vector2i, z: int) -> Dictionary:
+		return {"name": "field %d,%d" % [c.x, c.y]} if z == 0 else {}
+
+
+## lead-ui's MapCanvas as far as VrMap uses it: cells CELL px square, `offset` the px the map was moved.
+class Canvas extends Control:
+	const CELL := 24.0
+	var data := Data.new()
+	var level := 0
+	var cell_px := 20
+	var shown := 0   # refresh() after data.open(), release() before data.close()
+	var offset := Vector2.ZERO
+	var pans: Array[Vector2] = []
+	var zooms: Array = []
+	var levels: Array[int] = []
+	var centred := 0
+
+	func cell_at(px: Vector2) -> Vector2i:
+		return Vector2i(((px - offset) / CELL).floor())
+
+	func pan_px(d: Vector2) -> void:
+		offset += d
+		pans.append(d)
+
+	func zoom_at(px: Vector2, steps: int) -> void:
+		zooms.append([px, steps])
+
+	func change_level(d: int) -> void:
+		levels.append(d)
+
+	func center_on_player() -> void:
+		centred += 1
+
+	func refresh() -> void:
+		shown += 1 if data.opens == data.closes + 1 else 100
+
+	func release() -> void:
+		shown -= 1 if data.opens == data.closes + 1 else 100
+
+
+func run(root: Node, check: Callable) -> void:
+	_check = check
+	print("vr map")
+	_test_sheet(root)
+	_test_marker(root)
+	_test_sticks(root)
+	_test_rig(root)
+
+
+static func _m(px: float) -> float:   # canvas px to metres on the sheet
+	return px / VrMap.PX.x * VrMap.SHEET_M.x
+
+
+static func _sum(a: Array[Vector2]) -> Vector2:
+	var s := Vector2.ZERO
+	for v in a:
+		s += v
+	return s
+
+
+## Click and drag: under CLICK_M a click opens the wheel on that cell and pans nothing; a drag of 3 cells moves the
+## map exactly 3 cells and keeps the pressed spot under the ray; it goes on off the sheet; wheel items pick.
+func _test_sheet(root: Node) -> void:
+	var m := VrMap.new()
+	root.add_child(m)
+	var in_tree := Canvas.new()
+	root.add_child(in_tree)
+	var refused := not m.open(0, in_tree) and not m.open(2, Canvas.new()) and not m.is_open()
+	in_tree.free()
+	var cv := Canvas.new()
+	var opened := m.open(0, cv) and m.is_open() and m.visible and cv.get_parent() == m.viewport and m.marker == 1.0 \
+			and cv.data.opens == 1 and cv.data.closes == 0 and cv.cell_px == VrMap.CELL_PX and cv.shown == 1
+	var p0 := Vector3(0.01, 0.0, 0.0)
+	m.point(p0)
+	m.step(0.016)
+	var named: bool = m.named == cv.cell_at(VrMap.to_px(p0)) and (m.get("_name") as Label3D).text == "field 17,16"
+	var pressed := m.press()
+	m.point(p0 + Vector3(0.006, 0.006, 0.0))   # 8.5 mm: still a click
+	m.release()
+	m.point(Vector3(-0.1, 0.1, 0.0))   # pointing elsewhere: the title stays the wheel's cell's name
+	m.step(0.016)
+	var click: bool = pressed and cv.pans.is_empty() and m.wheel_at == Vector2(0.01, 0.0) and m.named == Vector2i(17, 16) \
+			and m.wheel_cell == Vector2i(17, 16) and not m.dragging
+	m.point(Vector3(-0.1, -0.1, 0.0))   # a click away from the wheel's items closes it, choosing nothing
+	m.press()
+	m.release()
+	var shut: bool = m.wheel_at == Vector2.INF and cv.pans.is_empty() and m.is_open()
+	var start := cv.cell_at(VrMap.to_px(p0))
+	m.point(p0)
+	m.press()
+	m.point(p0 + Vector3(0.01, 0.0, 0.0))   # 10 mm: not yet
+	var held: bool = cv.pans.is_empty() and not m.dragging
+	var to := p0 + Vector3(_m(3.0 * Canvas.CELL), 0.0, 0.0)
+	m.point(to)
+	m.step(0.016)
+	var moved := _sum(cv.pans)
+	var drag: bool = m.dragging and moved.is_equal_approx(Vector2(3.0 * Canvas.CELL, 0.0)) \
+			and cv.cell_at(VrMap.to_px(to)) == start and m.named == Vector2i.MAX
+	m.point(Vector3(0.25, 0.0, 0.0))   # off the sheet: on along its plane
+	var off_sheet: bool = not m.pointing and m.dragging \
+			and _sum(cv.pans).is_equal_approx(VrMap.to_px(Vector3(0.25, 0.0, 0.0)) - VrMap.to_px(p0))
+	m.release()
+	var ended: bool = not m.dragging and m.wheel_at == Vector2.INF
+	m.point(Vector3(0.05, 0.05, 0.0))   # the wheel, then "Centre here" (up): that spot to the middle
+	m.press()
+	m.release()
+	m.point(Vector3(0.05, 0.05 + VrMap.WHEEL_R_M, 0.0))
+	var hover := m.hover
+	var n := cv.pans.size()
+	m.press()
+	m.release()
+	var centre: bool = hover == 0 and cv.pans.size() == n + 1 \
+			and cv.pans[n].is_equal_approx(Vector2(VrMap.PX) * 0.5 - VrMap.to_px(Vector3(0.05, 0.05, 0.0)))
+	m.point(Vector3(0.0, 0.0, 0.0))   # "Close map" (down) puts it away
+	m.press()
+	m.release()
+	m.point(Vector3(0.0, -VrMap.WHEEL_R_M, 0.0))
+	m.press()
+	m.release()
+	var closed: bool = not m.is_open() and m.canvas == null and not m.visible and cv.data.opens == 1 \
+			and cv.data.closes == 1 and cv.shown == 0
+	m.free()
+	_check.call(refused and opened and named and click and shut and held and drag and off_sheet and ended and centre and closed,
+			"vr map: under 12 mm a click opens the wheel on that cell and pans nothing; a drag of 3 cells moves the map 3 cells, the pressed spot staying under the ray, on off the sheet; the wheel centres or closes (%s)"
+			% [[refused, opened, named, click, shut, held, drag, off_sheet, ended, centre, closed]])
+
+
+## The scroll marker shows on opening, stays until the first drag, then fades over FADE_S; back on the next opening.
+func _test_marker(root: Node) -> void:
+	var m := VrMap.new()
+	root.add_child(m)
+	m.open(1, Canvas.new())
+	var mk: Node3D = m.get("_marker")
+	m.step(2.0)
+	var stays: bool = m.marker == 1.0 and mk.visible and mk.get_child_count() == 5
+	m.point(Vector3.ZERO)
+	m.press()
+	m.point(Vector3(0.05, 0.0, 0.0))
+	m.release()
+	m.step(VrMap.FADE_S * 0.5)
+	var half: bool = is_equal_approx(m.marker, 0.5) and mk.visible
+	m.step(VrMap.FADE_S)
+	var gone: bool = m.marker == 0.0 and not mk.visible
+	m.close()
+	m.open(1, Canvas.new())
+	m.step(0.5)
+	var back: bool = m.marker == 1.0 and mk.visible
+	m.free()
+	_check.call(stays and half and gone and back,
+			"vr map marker: four chevrons and a drag icon until the first drag, then faded over 0.5 s; back on the next opening (%s)"
+			% [[stays, half, gone, back]])
+
+
+## The off hand's stick pans; the free hand's, only while its ray is on the sheet, zooms on the pointed cell (y)
+## and changes the level (x), once a push.
+func _test_sticks(root: Node) -> void:
+	var m := VrMap.new()
+	root.add_child(m)
+	var cv := Canvas.new()
+	m.open(0, cv)
+	m.sticks(Vector2(1.0, 0.0), Vector2.ZERO, 0.1)
+	var pan: bool = cv.pans.size() == 1 and cv.pans[0].is_equal_approx(Vector2(-VrMap.PAN_PX_S * 0.1, 0.0))
+	m.sticks(Vector2(0.1, 0.0), Vector2.ZERO, 0.1)
+	var dead: bool = cv.pans.size() == 1
+	m.point(Vector3(0.6, 0.0, 0.0))   # the ray off the sheet: the free stick is left to turning
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	var off: bool = cv.zooms.is_empty()
+	m.point(Vector3(0.03, 0.0, 0.0))
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.95), 0.016)   # held: one step a push
+	var zoom: bool = cv.zooms.size() == 1 and cv.zooms[0][1] == 1 \
+			and (cv.zooms[0][0] as Vector2).is_equal_approx(VrMap.to_px(Vector3(0.03, 0.0, 0.0)))
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(-0.9, 0.1), 0.016)
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.0, -0.9), 0.016)
+	var level: bool = cv.levels.size() == 1 and cv.levels[0] == -1 and cv.zooms.size() == 2 and cv.zooms[1][1] == -1
+	m.centre()
+	var home: bool = cv.centred == 1
+	m.free()
+	_check.call(pan and dead and off and zoom and level and home,
+			"vr map sticks: the off hand's pans; the free hand's zooms on the pointed cell and changes the level a push, only with its ray on the sheet (%s)"
+			% [[pan, dead, off, zoom, level, home]])
+
+
+## The rig: the left stick click opens the map in the off hand (no canvas: a note); the hint once; the sheet follows
+## that hand; the free hand's ray on it points; its trigger clicks; walking is held back and turning too while the
+## ray is on the sheet; something taken into the off hand, or B / Y, puts it away.
+func _test_rig(root: Node) -> void:
+	var snap := Snapshot.new()
+	var world := WorldView.new()
+	world.snapshot = snap
+	var hands := Hands.new(world, ItemActions.new())
+	var rig := VrRig.new(world, {"blink": false})
+	root.add_child(rig)
+	rig.hands = hands
+	var hints := Hints.new()
+	hints.persist = false
+	rig.hint.source = hints
+	rig.settings["vignette"] = 0.5
+	var b0: int = rig.buzzes[1]
+	rig.press(rig.left, "primary_click")
+	var note: bool = not rig.map.is_open() and rig.busy.get("_flash") == VrRig.NO_MAP and rig.buzzes[1] == b0 + 1
+	var made: Array[Canvas] = []
+	rig.map.make_canvas = func() -> Control:
+		var c := Canvas.new()
+		made.append(c)
+		return c
+	rig.press(rig.left, "primary_click")
+	var opened: bool = rig.map.is_open() and rig.map.hand == 0 and rig.ui_open() and hints.seen.has("vr_map")
+	rig.left.global_transform = Transform3D(Basis(), Vector3(0.0, 1.0, -0.3))
+	rig.update_map(0.016, true)
+	var held: bool = rig.map.global_transform.is_equal_approx(rig.left.global_transform * rig.map.hold)
+	var sheet := rig.map.global_transform
+	rig.right.global_transform = Transform3D(sheet.basis, sheet * Vector3(0.02, 0.0, 0.3))   # looking at the sheet
+	rig.update_pointer(true)
+	var points: bool = rig.map.pointing and rig.pointer.visible and rig.pointer_dot.visible \
+			and rig.pointer_dot.global_position.is_equal_approx(sheet * Vector3(0.02, 0.0, 0.0))
+	rig.press(rig.right, "trigger_click")
+	rig.release(rig.right, "trigger_click")
+	var click: bool = rig.map.wheel_at.is_equal_approx(Vector2(0.02, 0.0)) and made[0].pans.is_empty()
+	var b1: int = rig.buzzes[0]
+	rig.press(rig.left, "trigger_click")   # the off hand's trigger: nothing on the map
+	var off_trigger: bool = rig.buzzes[0] == b1 + 1 and rig.map.is_open()
+	rig.press(rig.left, "primary_click")   # the off hand's stick click: back to the player
+	var home: bool = rig.map.is_open() and made[0].centred == 1
+	var at := rig.global_position
+	var yaw := rig.global_basis
+	rig.step(0.5, {"move": Vector2(0.0, 1.0), "turn": Vector2.ZERO})
+	rig.step(0.016, {"move": Vector2.ZERO, "turn": Vector2(1.0, 0.0)})   # the ray on the sheet: no snap turn
+	var still: bool = rig.global_position == at and rig.global_basis.is_equal_approx(yaw) and rig.vignette == 0.0
+	rig.map.point(null)   # the ray off the sheet: the turn stick turns again
+	rig.step(0.016, {"move": Vector2.ZERO, "turn": Vector2.ZERO})
+	rig.step(0.016, {"move": Vector2.ZERO, "turn": Vector2(1.0, 0.0)})
+	var turns: bool = not rig.global_basis.is_equal_approx(yaw)
+	hands.hand("vr_l").held = {"kind": "item", "item": ItemRef.new()}
+	rig.update_map(0.016, true)
+	var taken: bool = not rig.map.is_open()
+	hands.hand("vr_l").held = {}
+	rig.press(rig.left, "primary_click")
+	rig.press(rig.right, "by_button")
+	var away: bool = not rig.map.is_open() and made.size() == 2 and not rig.ui_open()
+	rig.step(0.5, {"move": Vector2(0.0, 1.0), "turn": Vector2.ZERO})
+	var walks: bool = rig.vignette > 0.0   # (the map put away: the same stick walks again, the vignette shows)
+	rig.free()
+	if is_instance_valid(hands):
+		hands.free()
+	hints.free()
+	world.free()
+	_check.call(note and opened and held and points and click and off_trigger and home and still and turns and taken and away and walks,
+			"vr map rig: the left stick click opens the map in the off hand (the hint once; no canvas: a note); the free hand's ray points and its trigger clicks; no walking, no turning with the ray on the sheet; taking something or B / Y puts it away (%s)"
+			% [[note, opened, held, points, click, off_trigger, home, still, turns, taken, away, walks]])
