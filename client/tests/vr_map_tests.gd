@@ -28,7 +28,7 @@ class Canvas extends Control:
 	const CELL := 24.0
 	var data := Data.new()
 	var level := 0
-	var cell_px := 20
+	var cell_px := 20.0
 	var shown := 0   # refresh() after data.open(), release() before data.close()
 	var offset := Vector2.ZERO
 	var pans: Array[Vector2] = []
@@ -66,6 +66,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_marker(root)
 	_test_sticks(root)
 	_test_rig(root)
+	_test_real(root)
 
 
 static func _m(px: float) -> float:   # canvas px to metres on the sheet
@@ -274,3 +275,42 @@ func _test_rig(root: Node) -> void:
 	_check.call(note and opened and held and points and click and off_trigger and home and still and turns and taken and away and walks,
 			"vr map rig: the left stick click opens the map in the off hand (the hint once; no canvas: a note); the free hand's ray points and its trigger clicks; no walking, no turning with the ray on the sheet; taking something or B / Y puts it away (%s)"
 			% [[note, opened, held, points, click, off_trigger, home, still, turns, taken, away, walks]])
+
+
+## VrMap on lead-ui's real MapCanvas and MapData (what main's make_canvas gives): its cell size and MapData's user
+## while out; a click opens the wheel on the cell under the ray; a drag of 3 cells moves the map 3 cells, the pressed
+## spot staying under the ray; a zoom keeps the pointed cell still; put away, MapData's user goes.
+func _test_real(root: Node) -> void:
+	var m := VrMap.new()
+	root.add_child(m)
+	var d := MapData.new()
+	var c := MapCanvas.new()
+	c.data = d
+	var opened: bool = m.open(0, c) and c.cell_px == VrMap.CELL_PX and d.get("_users") == 1 \
+			and c.size == Vector2(VrMap.PX)
+	var p0 := Vector3(0.02, -0.01, 0.0)
+	var under := c.cell_at(VrMap.to_px(p0))
+	m.point(p0)
+	m.press()
+	m.release()
+	var click: bool = m.wheel_cell == under
+	m.point(Vector3(-0.12, 0.12, 0.0))   # away from the wheel's items: it closes
+	m.press()
+	m.release()
+	m.point(p0)
+	m.press()
+	var p1 := p0 + Vector3(VrMap.SHEET_M.x * 3.0 * VrMap.CELL_PX / VrMap.PX.x, 0.0, 0.0)
+	m.point(p1)
+	m.release()
+	var drag: bool = c.cell_at(VrMap.to_px(p1)) == under and c.cell_at(VrMap.to_px(p0)) == under - Vector2i(3, 0)
+	m.point(p0)
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	var at := c.cell_at(VrMap.to_px(p0))
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	var zoom: bool = c.cell_px > VrMap.CELL_PX and c.cell_at(VrMap.to_px(p0)) == at
+	m.close()
+	var closed: bool = d.get("_users") == 0 and not is_instance_valid(m.canvas)
+	m.free()
+	_check.call(opened and click and drag and zoom and closed,
+			"vr map on the real canvas: MapData has a user while out; a click opens the wheel on the cell under the ray; a drag of 3 cells keeps that spot under it; a zoom keeps the pointed cell (%s)"
+			% [[opened, click, drag, zoom, closed]])
