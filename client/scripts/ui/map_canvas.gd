@@ -150,6 +150,7 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var fsize := int(cell_px * 0.8)
 	var lo := MapData.page_origin(Vector3i(r.position.x, r.position.y, level))
+	var shown: Array[MapData.Page] = []
 	var y := lo.y
 	while y < r.end.y:
 		var x := lo.x
@@ -164,9 +165,13 @@ func _draw() -> void:
 				draw_texture_rect(_texture(pg), at, false, Color(g, g, g))
 				if glyphs:
 					_draw_glyphs(pg, r, font, fsize)
-				_draw_notes(pg, glyphs, font, fsize)
+				shown.append(pg)
 			x += MapData.PAGE
 		y += MapData.PAGE
+	for a: Rect2i in danger_areas():
+		draw_rect(Rect2(to_px(Vector2(a.position)), Vector2(a.size) * cell_px), DANGER)
+	for pg: MapData.Page in shown:
+		_draw_notes(pg, glyphs, font, fsize)
 	_draw_path()
 	_draw_player()
 
@@ -179,18 +184,22 @@ func _texture(pg: MapData.Page) -> ImageTexture:
 	var img := Image.create(MapData.PAGE, MapData.PAGE, false, Image.FORMAT_RGBA8)
 	for ly in MapData.PAGE:
 		for lx in MapData.PAGE:
-			var i := ly * MapData.PAGE + lx
-			var v := pg.vision[i]
-			var k := pg.look[i]
-			var c := FOG
-			if v > 0 and k > 0 and k <= pg.looks.size():
-				var base: Color = pg.looks[k - 1]["color"]
-				var f: float = SHADE[mini(v, MapData.MAX_VISION)]
-				c = Color(base.r * f, base.g * f, base.b * f)
-			img.set_pixel(lx, ly, c)
+			img.set_pixel(lx, ly, cell_color(pg, ly * MapData.PAGE + lx))
 	var tex := ImageTexture.create_from_image(img)
 	_textures[pg.origin] = [pg, tex]
 	return tex
+
+
+## Cell i's colour on page pg: its look's, darker the less it was seen; fog unseen; grey when seen but its look
+## was left out of a full page.
+static func cell_color(pg: MapData.Page, i: int) -> Color:
+	var v := pg.vision[i]
+	if v == 0:
+		return FOG
+	var k := pg.look[i]
+	var base: Color = pg.looks[k - 1]["color"] if k > 0 and k <= pg.looks.size() else MapData.UNSENT
+	var f: float = SHADE[mini(v, MapData.MAX_VISION)]
+	return Color(base.r * f, base.g * f, base.b * f)
 
 
 func _draw_glyphs(pg: MapData.Page, r: Rect2i, font: Font, fsize: int) -> void:
@@ -216,13 +225,36 @@ func _glyph(cell: Vector2, symbol: String, color: Color, font: Font, fsize: int)
 	draw_string(font, p + Vector2(0, cell_px * 0.8), symbol, HORIZONTAL_ALIGNMENT_CENTER, cell_px, fsize, color)
 
 
+## The danger areas (cells) of read notes that reach into the view, also from read pages up to MAX_RADIUS cells
+## outside it (a page is read while it is shown, so a note far off counts once its page has been on screen).
+func danger_areas() -> Array[Rect2i]:
+	var out: Array[Rect2i] = []
+	if data == null:
+		return out
+	var r := visible_cells()
+	var reach := r.grow(MapData.MAX_RADIUS)
+	var lo := MapData.page_origin(Vector3i(reach.position.x, reach.position.y, level))
+	var y := lo.y
+	while y < reach.end.y:
+		var x := lo.x
+		while x < reach.end.x:
+			var pg := data.page(Vector3i(x, y, level))
+			if pg != null:
+				for lc: Vector2i in pg.notes:
+					var n: Dictionary = pg.notes[lc]
+					var rad: int = n["radius"]
+					var a := Rect2i(x + lc.x - rad, y + lc.y - rad, 2 * rad + 1, 2 * rad + 1)
+					if n["danger"] and a.intersects(r):
+						out.append(a)
+			x += MapData.PAGE
+		y += MapData.PAGE
+	return out
+
+
 func _draw_notes(pg: MapData.Page, glyphs: bool, font: Font, fsize: int) -> void:
 	for lc: Vector2i in pg.notes:
 		var n: Dictionary = pg.notes[lc]
 		var cell := Vector2(pg.origin.x + lc.x, pg.origin.y + lc.y)
-		var radius: int = n["radius"]
-		if n["danger"]:
-			draw_rect(Rect2(to_px(cell - Vector2.ONE * radius), Vector2.ONE * ((2 * radius + 1) * cell_px)), DANGER)
 		if glyphs:
 			draw_rect(Rect2(to_px(cell), Vector2.ONE * cell_px), OUTLINE)
 			_glyph(cell, n["symbol"], n["color"], font, fsize)
