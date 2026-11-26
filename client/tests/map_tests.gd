@@ -211,11 +211,18 @@ func _test_data() -> void:
 		md.on_page({"ok": true, "origin": o, "page": pg})
 	var capped: bool = md.page(Vector3i(0, 0, 0)) == null and md.page(Vector3i(3 * 32, 0, 0)) == null \
 			and md.page(Vector3i(4 * 32, 0, 0)) != null and md.page(Vector3i((MapData.MAX_PAGES + 3) * 32, 0, 0)) != null
+	var t0 := Time.get_ticks_msec()
+	md.want(Rect2i(-(1 << 22), -(1 << 22), 1 << 23, 1 << 23), 0)   # a huge view: only the pages near its middle
+	var near := func(o: Vector3i) -> bool: return absi(o.x) <= MapData.WANT_SPAN * 32 and absi(o.y) <= MapData.WANT_SPAN * 32
+	var wide: bool = md._wanted.size() == MapData.MAX_WANTED and md._wanted.all(near) \
+			and Time.get_ticks_msec() - t0 < 500
 	md.close()
-	_check.call(quiet and no_bridge and first and nearest and known and failed_once and stepped and dropped and capped,
+	_check.call(quiet and no_bridge and first and nearest and known and failed_once and stepped and dropped and capped
+			and wide,
 			"map data: the player's page first (with the path), then the nearest; a cell's look, unseen, a note; a "
-			+ "failed page not asked again at once; a step reads the new page; closing drops all; 256 pages at most "
-			+ "(%s)" % [[quiet, no_bridge, first, nearest, known, failed_once, stepped, dropped, capped]])
+			+ "failed page not asked again at once; a step reads the new page; closing drops all; 256 pages at most; "
+			+ "a huge view reads only around its middle "
+			+ "(%s)" % [[quiet, no_bridge, first, nearest, known, failed_once, stepped, dropped, capped, wide]])
 
 
 func _test_recover() -> void:
@@ -319,6 +326,10 @@ func _test_view(root: Node) -> void:
 	var c := v.canvas
 	v._hover = c.to_px(Vector2(-28.5, 2.5))   # the field two cells from the player's forest
 	var field: bool = v.info_text() == "(-29, 2)  field, seen vaguely."
+	var held: MapData.Page = md.page(Vector3i(-32, 0, 0))
+	held.looks[1]["name"] = ""   # a look CDDA left unnamed
+	var unnamed: bool = v.info_text() == "(-29, 2)  Something, seen vaguely."
+	held.looks[1]["name"] = "field"
 	v._hover = c.to_px(Vector2(-26.5, 6.5))
 	var noted: bool = v.info_text().contains("Note (danger): Cache here!") and v.info_text().contains("Not seen.")
 	v._hover = c.to_px(Vector2(40.5, 2.5))
@@ -362,9 +373,9 @@ func _test_view(root: Node) -> void:
 	esc.pressed = true
 	var closed: bool = v.handle_key(esc) and not v.visible and not md.is_open() \
 			and mode[0] == Input.MOUSE_MODE_CAPTURED and md.page(Vector3i(-32, 0, 0)) == null
-	_check.call(refused and opened and asked_mine and under_prompt and field and noted and unread and dragged and let_go and wheeled and level_up
+	_check.call(refused and opened and asked_mine and under_prompt and field and unnamed and noted and unread and dragged and let_go and wheeled and level_up
 			and back and closed, "map view: M opens it (the mouse free), the line names the cell, its vision and "
 			+ "note; a drag moves the map 1:1, the wheel zooms, PgUp a level, Home back; Esc closes and drops the "
-			+ "pages (%s)" % [[refused, opened, asked_mine, under_prompt, field, noted, unread, dragged, let_go, wheeled, level_up, back, closed]])
+			+ "pages (%s)" % [[refused, opened, asked_mine, under_prompt, field, unnamed, noted, unread, dragged, let_go, wheeled, level_up, back, closed]])
 	root.remove_child(v)
 	v.free()

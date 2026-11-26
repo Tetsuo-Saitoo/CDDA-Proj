@@ -12,6 +12,7 @@ const PAGE := 32
 const CELLS := PAGE * PAGE
 const MAX_PAGES := 256        # kept while open (the least recently wanted go first)
 const MAX_WANTED := 160       # pages a view may ask for at once, nearest its middle first (4K at the smallest zoom)
+const WANT_SPAN := 8   # pages each side of a view's middle looked at, at most (17 x 17 before the cut)
 const MAX_LOOKS := 256
 const MAX_NOTES := 256
 const MAX_PATH := 2048
@@ -142,9 +143,11 @@ func want(rect: Rect2i, z: int, who := 0) -> void:
 		_wanted_by.erase(who)
 		_merge_wanted()
 		return
-	var lo := page_origin(Vector3i(rect.position.x, rect.position.y, z))
-	var hi := page_origin(Vector3i(rect.end.x - 1, rect.end.y - 1, z))
 	var mid := rect.get_center()
+	var at := page_origin(Vector3i(mid.x, mid.y, z))
+	var far := Vector3i(WANT_SPAN * PAGE, WANT_SPAN * PAGE, 0)
+	var lo := page_origin(Vector3i(rect.position.x, rect.position.y, z)).max(at - far)
+	var hi := page_origin(Vector3i(rect.end.x - 1, rect.end.y - 1, z)).min(at + far)
 	var list: Array[Vector3i] = []
 	var y := lo.y
 	while y <= hi.y:
