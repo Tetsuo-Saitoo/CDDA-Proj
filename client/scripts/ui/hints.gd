@@ -48,6 +48,7 @@ const VR_TEXTS := {
 	"vr_vise": "Let go of your gun at the vise to leave it there.",
 	"vr_eat": "Bring food or a drink to your mouth and hold it there.",
 	"vr_bleed": "Hold a bandage to the hurt part of your body for a moment.",
+	"vr_map": "Drag the map with your other hand's trigger.",
 }
 ## The VR hints of the first turn, in order.
 const VR_START: Array[String] = ["vr_start", "vr_take", "vr_pack", "vr_wrist", "vr_menu"]

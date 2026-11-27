@@ -18,6 +18,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_rig(root, world)
 	_test_stair_point(root, world)
 	_test_vehicle(root, data, tables)
+	_test_deep_water(root, data, tables)
 	preload("res://tests/vr_comfort_tests.gd").new().run(root, check, world)
 	world.free()
 
@@ -85,6 +86,48 @@ func _test_vehicle(root: Node, data: Variant, tables: IdTables) -> void:
 	world.set_id_tables(null)
 	_check.call(w.can_stand(row), "vr: without id tables car parts don't block")
 	world.free()
+
+
+## Deep water (CDDA's DEEP_WATER) isn't standable, since CDDA would make the player swim: a teleport arc onto it isn't
+## valid and a step doesn't go in. Rivers, the sea and pools (drawn as water once lead-world's 4517a1b is in) and a
+## lake's bed (water already) are checked. Shallow water stays standable; a bridge or a boat on deep water is stood
+## on; a head already in it (swimming) still moves.
+func _test_deep_water(root: Node, data: Variant, tables: IdTables) -> void:
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	d["vehicles"] = []
+	var world := WorldView.new()
+	world.catalog.load_registry_dir(ProjectSettings.globalize_path("res://").path_join("../assets/registry").simplify_path())
+	root.add_child(world)
+	world.set_id_tables(tables)
+	world.apply_snapshot(Snapshot.from_data(d))
+	var w := VrWalk.new(world)
+	var player := world.snapshot.player_pos
+	var head := world.coords.ms_center_to_world(player) + Vector3(0, 1.2, 0)
+	var free := w.teleport_arc(head, Vector3(1, 0.3, 0), 0)
+	var land := w.square_at(free["pos"], 0)
+	var l := CddaCoords.ms_to_local(land)
+	var i := l.y * CddaCoords.SEEX + l.x
+	var sm: Snapshot.Submap = world.snapshot.submaps[CddaCoords.ms_to_sm(land)]
+	var ok: Array[bool] = [free["valid"] and land != player]
+	for id: String in ["t_water_moving_dp", "t_swater_dp", "t_water_pool", "t_lake_bed"]:
+		sm.ter[i] = tables.index_of("ter", id)
+		var arc := w.teleport_arc(head, Vector3(1, 0.3, 0), 0)
+		ok.append(sm.ter[i] > 0 and not w.can_stand(land) and w.square_at(arc["pos"], 0) == land and not arc["valid"])
+	var inside := world.coords.ms_center_to_world(land)
+	ok.append(w.slide(inside, Vector3(0.1, 0, 0), 0).x > inside.x)   # swimming: still moves
+	sm.ter[i] = tables.index_of("ter", "t_water_sh")
+	ok.append(sm.ter[i] > 0 and w.can_stand(land))
+	sm.ter[i] = tables.index_of("ter", "t_lake_bed")
+	sm.furn[i] = tables.index_of("furn", "f_scrap_bridge")
+	ok.append(sm.furn[i] > 0 and w.can_stand(land))
+	d["vehicles"] = [{"uid": 1, "name": "Boat", "pos": [land.x, land.y, 0], "face_deg": 0.0,
+			"parts": [[0, 0, tables.index_of("vpart", "frame"), 255, 0, 0, 0, 0]]}]
+	world.apply_snapshot(Snapshot.from_data(d))
+	sm = world.snapshot.submaps[CddaCoords.ms_to_sm(land)]
+	sm.ter[i] = tables.index_of("ter", "t_lake_bed")
+	ok.append(w.can_stand(land))
+	world.free()
+	_check.call(not ok.has(false), "vr: deep water (a river, the sea, a pool, a lake's bed) isn't standable: no teleport or step into it; swimming still moves; shallow water, a bridge or a boat on it are (%s)" % [ok])
 
 
 func _test_walk(world: WorldView) -> void:

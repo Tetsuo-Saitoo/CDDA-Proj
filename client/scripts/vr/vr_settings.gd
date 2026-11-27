@@ -34,6 +34,7 @@ const ARGS := {"vr-move": "move", "vr-move-dir": "move_dir", "vr-turn": "turn", 
 		"vr-panel-text": "panel_text", "vr-mood": "mood_cues"}
 ## Menu rows that do something instead of holding a value (never saved): key -> what the row says.
 const ACTIONS := {"calibrate": "press to set from your head", "keys": "press to open", "inventory": "press to open",
+		"map": "press to open",
 		"character": "press to open", "wait": "press to wait (the game asks how long)",
 		"sleep": "press to sleep (the game asks first)",
 		"report": "press to save one", "time": "press to pause / go on (real time)"}
@@ -50,6 +51,7 @@ const ROWS := [["move", "Move"], ["move_dir", "Move toward"], ["speed", "Move sp
 		["wrist_hud", "Wrist HUD"], ["mood_cues", "Mood tint"],
 		["panel_text", "Menu text size"], ["height", "Height"],
 		["calibrate", "Calibrate height"], ["inventory", "Inventory"], ["character", "Character"],
+		["map", "Map"],
 		["wait", "Wait"], ["sleep", "Sleep"], ["time", "Time"],
 		["keys", "Keys and HUD settings"],
 		["report", "Report a bug"]]

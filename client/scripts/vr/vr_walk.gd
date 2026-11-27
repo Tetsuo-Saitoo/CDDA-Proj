@@ -4,7 +4,9 @@ extends RefCounted
 ## tests run it headless. A square is standable when the snapshot has it, it has a floor, and neither its
 ## terrain nor its furniture is impassable. Walls, windows, fences, trees, impassable furniture and closed
 ## doors block; doors open by dragging them (Grabbable): in mock mode the client's own state
-## (WorldView.door_open) counts, in a live game CDDA's.
+## (WorldView.door_open) counts, in a live game CDDA's. Deep water (CDDA's DEEP_WATER: rivers, lakes, the sea, pools)
+## isn't standable either unless a bridge or a vehicle (a boat) is on it: there CDDA makes the player swim, so
+## neither a teleport nor a step goes in (a head already in it, swimming, still moves; see slide).
 
 const K := TerrainCatalog.Kind
 const NO_STAND := [K.NONE, K.TREETOP]
@@ -49,6 +51,7 @@ func can_stand(p: Vector3i) -> bool:
 	var kind := world.catalog.style_for(ter).kind
 	if kind in NO_STAND:
 		return false
+	var deep := false
 	if kind == K.DOOR:
 		var open: bool = world.catalog.style_for(ter).state != 0
 		if world.door_local:
@@ -60,13 +63,15 @@ func can_stand(p: Vector3i) -> bool:
 		if td != null:
 			if td.move_cost <= 0 and (td.open.is_empty() or kind == K.WINDOW):
 				return false
+			deep = td.has("DEEP_WATER")
 		elif kind in BLOCKS:
 			return false
 	var f := sm.furn[i]
-	if f != 0:
-		var fd := _def("furn", f, snap.furn_names)
-		if fd != null and fd.move_cost < 0:
-			return false
+	var fd: IdTables.Def = _def("furn", f, snap.furn_names) if f != 0 else null
+	if fd != null and fd.move_cost < 0:
+		return false
+	if deep and (fd == null or not fd.has("BRIDGE")) and snap.vehicle_at(p).is_empty():   # (a boat: on it, as CDDA)
+		return false
 	return not VehicleView.blocks(snap, world.tables, p)   # a car's walls, closed doors, windows (C5)
 
 

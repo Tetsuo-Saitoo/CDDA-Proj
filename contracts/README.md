@@ -12,7 +12,8 @@ minor version and breaking changes bump the major.
 | [actions.md](actions.md) | client → sim | What the player wants to do |
 | [ui_requests.md](ui_requests.md) | sim ⇄ client | Blocking prompts the sim asks and the client answers |
 | [bridge_api.md](bridge_api.md) | Godot ⇄ sim | The GDExtension class `CddaSim` that carries all of the above in-process |
-| [vehicle_work.md](vehicle_work.md) | Godot ⇄ sim | C6: what can be done to a vehicle by hand (the read; the action is planned) |
+| [vehicle_work.md](vehicle_work.md) | Godot ⇄ sim | C6: work on a vehicle by hand: the read and the actions (install, repair, mend, remove, refill) |
+| [overmap.md](overmap.md) | Godot ⇄ sim | G5: the map: a page of the overmap as the player knows it (the read), and the notes on it (routes and travel are planned) |
 | [assets.md](assets.md) | data | `fp3d_model` registry and art fallback chain |
 | [ids.md](ids.md) | sim → client | Id tables (ter/furn/trap/field/item/monster/vpart) sent once per session |
 

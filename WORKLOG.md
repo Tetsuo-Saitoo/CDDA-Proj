@@ -1,10 +1,28 @@
 # WORKLOG
 
 - 2026-11-27 — First person: looking down now bends you forward at the hips, so your chest no longer hides the ground at your feet; clothes are drawn less bulky.
+- 2026-11-27 — Map slice 2 (notes), screen and VR sides merged and pushed: main dbe3ddb (f192eb1, 0053b22, 2cda1ce + d2bcde2); all suites green. The bridge side (fork 08228b4 / root 924336a) and lead-ui's prefix fix 5ebd41b wait for lead-qa's runs.
+- 2026-11-27 — Map notes follow lead-bridge's contract: the text goes behind CDDA's own "sym:color;" prefix (text starting "R;" or "x:" stays text), no radius without the danger mark, text capped at 445.
+- 2026-11-27 — VR: deep water (rivers, the sea, pools) stops a VR step or teleport, as lakes already did, since the game would make you swim; a bridge or a boat on it doesn't. Not tried in a headset yet.
+- 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
+- 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
+- 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
+- 2026-11-26 — Map notes, bridge side (slice 2): `queue_overmap` adds, changes and deletes a note on a map cell, also while paused, answered by a `map_result` event; text cleaned and capped to 450 columns, refused where no overmap exists yet. Text from game data has its colour tags removed in one bounded pass.
+- 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Water: deep water (lakes, rivers, pools) is now drawn as blue water instead of a see-through gap that looked like brown ground; all water has its own glossy surface, ready for a water shader.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
+- 2026-11-26 — Map follows lead-bridge's newer read (fork 6de111d / root 86ba6e7): danger radius up to 180, drawn also from read pages off screen; a seen cell whose look was left out shows grey, "Something".
+- 2026-11-26 — VR map (lead-vr): the map held in VR now shows the game's real map, starting at where you are. Not tried in a headset yet.
+- 2026-11-26 — Map slice 1 follow-up (lead-qa's notes): an unnamed look reads "Something"; a view looks at most 8 pages each side of its middle; query_overmap's condition on several lines.
+- 2026-11-26 — Map slice 1, screen side: MapData, MapCanvas and MapView (M), with map_tests and map_live_test (skips until the bridge's read lands).
+- 2026-11-26 — Map plan: the VR map scrolls by dragging it with the free hand's trigger (1:1), with chevrons showing it scrolls (lead-vr's text, the user's ask).
+- 2026-11-26 — Map plan: the user's answers in (CDDA's symbols first; routes with several stops, each leg CDDA's own travel, the stop list in the client).
+- 2026-11-26 — Map (G5): plan written in docs/MAP.md (slices, bridge read and commands, VR view, security, PZ notes), agreed with lead-bridge and lead-vr; waiting for the user.
+- 2026-11-26 — Bridge: the map read now draws places that blend into their surroundings from afar the way the game does (a campsite in a forest reads as forest), and marks on places the player hasn't seen are no longer told. Passes on Windows and Linux.
+- 2026-11-26 — Bridge: the game can now be asked for the map as the player knows it, one 32 by 32 page at a time: what each place looks like at the distance it was seen from, the player's notes and the travel path. Asking never creates new ground. The first piece of the in-game map (G5). Passes on Windows and Linux.
 - 2026-11-26 — Tester AppImage test-2026-11-26 (private test repo, pre-release, not a release) from main 440cd5d + fork 80c6d91, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): C6 VR slice 2 (repair by touch, pull a part out, install by holding its item). Nothing tried in a headset.
 - 2026-11-25 — TASKS.md: the C6 vehicle work entry split into a short line and sub-bullets per piece (bridge, work view, camera and hood, VR slices 1 and 2, still to try, the visual lift).
+- 2026-11-26 — VR map (lead-vr): the map now opens as a sheet in your off hand (left stick click or the menu's Map row); point at it with the other hand to read a place's name, drag it with that trigger to scroll, and use the sticks to pan, zoom and change level. It shows the game's map once the screen map's drawing is in. Not tried in a headset yet.
 - 2026-11-24 — Vehicle work: a car part hidden while a VR hand carries it can be shown again even after the car's parts list has changed.
 - 2026-11-24 — Bridge: the game's list of car part types now says which item each one is made from, so VR can offer to install the part you are holding. Passes on Windows and Linux.
 - 2026-11-24 — Live checks under the VR vehicle work (lead-qa): the range test now reads a part type's item from the running game's tables, grips a seatbelt with the VR pull on the real part copy (the part leaves the car's drawing, comes back when let go, and stays gone once the game removes it), and runs the VR install's choice of part types on the game's own install answer. The VR rig itself can't run without a headset, so the hand side stays on unit checks.

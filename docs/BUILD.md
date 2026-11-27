@@ -111,8 +111,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    `.so` built). Without the bridge, Godot prints once that `fp3d_cdda.gdextension` has no library for this
    platform; the mock town still runs.
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
-   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls and closed doors
-   stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
+   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls, closed doors
+   and deep water stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
    release; right B / A: level up / down; left Y: back to the player; hold left X (Index: left A) to look at: a ring
    on the square you look at, named (right trigger: teleport there, cheats on); hold the right stick click: a 3x
    zoom where you look; tilt your head sideways to peek around a corner (CDDA's peek). Eye-tracking headsets: the
@@ -132,7 +132,14 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    left refill; greyed ones say why): move the hand or stick to one and let go to start it, B / Y to close. An item
    held to a part lights it too; the trigger then asks the game to repair it. Grip a lit part and pull it out of
    its spot to ask the game to remove it. Hold a part's item to a car: the square under it lights, and the trigger
-   installs it there (several kinds: pick one from a short list, hand lower or stick, and let go). Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
+   installs it there (several kinds: pick one from a short list, hand lower or stick, and let go). The left stick
+   click or the menu's Map row (on Vive wands the row, or M) opens the map in your off hand: point at it with the other hand to read a place's
+   name; drag it with that trigger to scroll (a click opens a small wheel); its stick zooms (up / down) and changes
+   level (left / right) while pointing at the map; the off hand's stick pans and its click comes back to you; B / Y
+   puts it away. A place's wheel adds a note (Edit / Delete when it has one; Delete asks again): on the note panel
+   step the symbol and colour, toggle Danger and its radius, pick up to 3 words for the text (editing keeps the old
+   text unless you pick words), and Save; Type opens the note box on the menu panel instead. Not tried in
+   a headset. Settings: move smooth/teleport, move toward head/hand, speed, turn snap/smooth/off, snap
    angle, smooth turn speed, vignette (off or strength), blink on jumps, move with the right stick, controller
    layout (auto from the runtime / quest / vive), hands (finger tracking when the runtime gives it, else fingers
    from trigger/grip/thumb; or simple boxes). Command-line options win over the file: `--vr-move= --vr-move-dir=

@@ -13,7 +13,7 @@ Positions are absolute squares (`ui_point`, like the snapshot). Creature uids ar
 ```cpp
 struct event {
     event_kind kind;   // sound, message, attack, damage, projectile, explosion, death, anim, turn_end, lightning,
-                       // item_result, misfire, work_result
+                       // item_result, misfire, work_result, map_result
     int64 turn; uint64 seq;
     uint64 uid;        // actor (0 none)
     uint64 other;      // second creature (0 none)
@@ -38,6 +38,7 @@ struct event {
 | `turn_end` | | | | | | | | | every turn | `do_turn` |
 | `item_result` | the item's handle (not a creature) | | | 1 done, 0 refused | | | the action's `tag` | why it was refused ("" when done, or when CDDA gave its reason itself as a message) | an item action that carried a `tag` has run (`queue_item_action`). Done: it took its time (an activity it started counts) or, for place and spot, it went through. Refused: the text is the refusal's message; place and spot refusals come only here, not as a `message` | `fp3d::run_item_action` |
 | `work_result` | the vehicle's uid (not a creature) | | | 1 the work was started, 0 refused | | | the action's `tag` | why it was refused ("" when started, or when the player said no to CDDA's question) | a vehicle-work action that carried a `tag` has run (`queue_vehicle_work`, `vehicle_work.md`). Started means CDDA's activity began, not that the work is finished | `fp3d::run_vehicle_work` |
+| `map_result` | | | the command's cell, in overmap terrains (not squares) | 1 done, 0 refused | | | the command's `tag` | why it was refused ("" when done) | a map command that carried a `tag` has run (`queue_overmap`, `overmap.md` "Notes") | `fp3d::run_map_command` |
 | `misfire` | shooter | | shooter's square | | | `itype` gun | 1 misfire or malfunction, 2 the gun is jammed now | | the trigger was pulled and no round went off (CDDA's dirt or wet misfire, malfunction, or a jam it set); the player sees the shooter | `Character::fire_gun` when `handle_gun_damage` refuses (ranged.cpp) |
 | `lightning` | | | the player's square | | | | | | CDDA flashes lightning (a lightning storm, above ground; about once in 10 minutes of storm), whether or not the player is outside | the `lightning` effect in `npctalk.cpp` (`f_lightning`) |
 
