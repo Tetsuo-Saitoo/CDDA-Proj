@@ -55,7 +55,11 @@ const OFFSET_FOV := Vector2(0.3, 1.0)    # fov scale
 const OFFSET_NONE: Array[float] = [0.0, 0.0, 0.0, 0.0, 1.0]   # yaw, pitch, roll (rad), side (m), fov scale
 var _off_to: Array[float] = OFFSET_NONE.duplicate()
 var _off: Array[float] = OFFSET_NONE.duplicate()
-var _side := Vector3.ZERO                # the side shift in `position` now (slid against walls)
+var _side := Vector3.ZERO                # the side shift and the bend's in `position` now (slid against walls)
+## Looking down bends the body at the hips (PlayerBody.bend_for: radians, 0 upright) and the eyes move forward and down
+## with the head (PlayerBody.eye_shift, slid against walls like the side shift); none while riding a vehicle. main.gd
+## bends the drawn body as much.
+var bend := 0.0
 ## The field of view without the offset's zoom (main's G7 option); `fov` is this times the zoom.
 var base_fov := 75.0:
 	set(v):
@@ -105,8 +109,8 @@ static func _fin(v: float, none: float, limit: float) -> float:
 	return clampf(v, -limit, limit) if is_finite(v) else none
 
 
-## Eases the offset one frame and puts it on the camera: rotation, the side shift (slid like walking, so it stops at
-## a wall) and the fov.
+## Eases the offset one frame and puts it on the camera: rotation, the side shift and the bend's (slid like walking,
+## so they stop at a wall) and the fov.
 func _ease_offset(delta: float) -> void:
 	var k := 1.0 - exp(-OFFSET_RATE * delta)
 	for i in _off.size():
@@ -114,14 +118,16 @@ func _ease_offset(delta: float) -> void:
 		if absf(_off[i] - _off_to[i]) < 0.0005:
 			_off[i] = _off_to[i]   # arrives exactly (none is exactly none)
 	set_look(yaw, pitch)
+	bend = PlayerBody.bend_for(pitch) if _ride() == Transform3D() else 0.0
+	var lean := Basis(Vector3.UP, yaw) * PlayerBody.eye_shift(bend)
 	var base := base_position()
-	var want := right() * _off[3]
+	var want := right() * _off[3] + Vector3(lean.x, 0.0, lean.z)
 	var to := base
 	if want.length() > 0.0005 and world.snapshot != null:
 		var n := maxi(ceili(want.length() / MAX_STEP), 1)
 		for i in n:
 			to = walk.slide(to, want / n, z)
-		to.y = base.y
+	to.y = base.y + lean.y
 	_side = to - base
 	position = to
 	fov = base_fov * _off[4]

@@ -628,12 +628,15 @@ func _place_player_body() -> void:
 		yaw = vr.camera.global_rotation.y
 	elif from is Vector3i:
 		at = world.coords.ms_center_to_world(from)   # the body stays on its own square
+	elif own:   # under the eyes, bent at the hips as far as the camera is (looking down)
+		at = PlayerBody.stand_at(fp.base_position(), yaw, fp.bend)
 	elif first_person:
 		at = fp.base_position() - Vector3(0, FirstPersonCamera.EYE_H, 0)
 	elif vehicles_view != null:
 		var r := vehicles_view.ride_transform(world.snapshot)
 		at = r * at if r.is_finite() else at
 	player_body.position = at
+	player_body.bend = fp.bend if own and vr == null else 0.0
 	if vr != null:
 		player_body.follow_head(yaw, get_process_delta_time())
 		# the rig poses the hands and the arms after this (VrRig.drive_body)

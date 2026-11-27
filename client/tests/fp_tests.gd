@@ -32,6 +32,7 @@ func run(root: Node, check: Callable, data: Variant, tables: IdTables) -> void:
 	_test_rebinding(root)
 	_test_creatures(root, world, data, tables)
 	_test_player_body(root, data, tables)
+	_test_bend(root, world, data, tables)
 	world.free()
 
 
@@ -1134,3 +1135,64 @@ func _test_player_body(root: Node, data: Variant, tables: IdTables) -> void:
 	bad = (data as Dictionary).duplicate(true)
 	bad["player"]["worn"] = [{"type": 1, "covers": "torso"}]
 	_check.call(not Snapshot.from_data(bad).is_valid(), "body: covers must be a list")
+
+
+## Looking down in first person (user, 2026-11-27: the chest hid the ground at one's feet): the body bends at the hips,
+## the eyes (at the face) go forward and down with the head, the camera at most REACH and the hips back for the rest.
+func _test_bend(root: Node, world: WorldView, data: Variant, tables: IdTables) -> void:
+	var M := PlayerBody.MAX_BEND
+	var bends := []
+	for p: float in [0.5, 0.0, -PlayerBody.BEND_FROM, -0.6, -0.9, -PlayerBody.BEND_TO, -FirstPersonCamera.PITCH_MAX, NAN]:
+		bends.append(PlayerBody.bend_for(p))
+	_check.call(bends[0] == 0.0 and bends[1] == 0.0 and bends[2] == 0.0 and bends[3] > 0.0 and bends[4] > bends[3]
+			and bends[4] < M and bends[5] == M and bends[6] == M and bends[7] == 0.0
+			and is_equal_approx(PlayerBody.EYE.y, FirstPersonCamera.EYE_H),
+			"bend: none looking ahead, more the further down, all of it from BEND_TO; NaN none (%s)" % [bends])
+	# the fullest chest (every layer worn), bent all the way: the eyes are ahead of all of it, so the ground below
+	# them is in sight; upright, its top stays well under the eyes
+	var chest := PlayerBody._piece("torso", "worn", PlayerBody.MAX_LAYERS, Color.WHITE)
+	var lo: Vector3 = chest["centre"] - chest["size"] * 0.5
+	var hi: Vector3 = chest["centre"] + chest["size"] * 0.5
+	var front := INF
+	for i in 8:
+		var c := Vector3(hi.x if i & 1 else lo.x, hi.y if i & 2 else lo.y, hi.z if i & 4 else lo.z)
+		front = minf(front, (PlayerBody.hip_turn(M) * c).z)
+	var eye := PlayerBody.eye_of(M)
+	var shift := PlayerBody.eye_shift(M)
+	var at := PlayerBody.stand_at(Vector3(5, 1.6, 7), 0.8, M)
+	_check.call(eye.z < front - 0.02 and hi.y < PlayerBody.EYE.y - 0.1 and eye.y < PlayerBody.EYE.y
+			and is_equal_approx(shift.z, -PlayerBody.REACH) and shift.y < 0.0
+			and (at + Basis(Vector3.UP, 0.8) * eye).is_equal_approx(Vector3(5, 1.6, 7) + Basis(Vector3.UP, 0.8) * shift)
+			and PlayerBody.stand_at(Vector3(5, 1.6, 7), 0.0, 0.0).is_equal_approx(Vector3(5, 0, 7.1)),
+			"bend: bent all the way the eyes are ahead of the fullest chest (%.3f, %.3f); the body stands so they are where the camera is" % [eye.z, front])
+	var snap := Snapshot.from_data(data)
+	var pb := PlayerBody.new()
+	root.add_child(pb)
+	pb.apply(snap, tables)
+	pb.bend = 5.0   # clamped
+	var torso := pb.get_node("torso") as Node3D
+	var bent := torso.transform.is_equal_approx(PlayerBody.hip_turn(M)) 			and (pb.get_node("hand_r") as Node3D).transform.is_equal_approx(PlayerBody.hip_turn(M)) 			and (pb.get_node("leg_l") as Node3D).transform == Transform3D.IDENTITY
+	pb.key = ""
+	pb.apply(snap, tables)   # rebuilt: still bent
+	var kept := (pb.get_node("torso") as Node3D).transform.is_equal_approx(PlayerBody.hip_turn(M))
+	pb.bend = NAN
+	_check.call(bent and kept and pb.bend == 0.0 and (pb.get_node("torso") as Node3D).transform == Transform3D.IDENTITY,
+			"bend: the upper body turns at the hips, the legs stay; kept over a rebuild; NaN is upright")
+	pb.free()
+	var fp := FirstPersonCamera.new(world)
+	fp.go_to_square(world.snapshot.player_pos)
+	var eyes := fp.position
+	fp.set_look(0.3, -FirstPersonCamera.PITCH_MAX)
+	fp.step(0.05, {})
+	var moved := fp.position - fp.base_position()
+	var want := Basis(Vector3.UP, 0.3) * shift
+	var down_ok := fp.bend == M and fp.base_position().is_equal_approx(eyes) and moved.is_equal_approx(want)
+	fp.set_look(0.3, 0.0)
+	fp.step(0.05, {})
+	var level_ok := fp.bend == 0.0 and fp.position == eyes
+	fp.set_look(0.3, -FirstPersonCamera.PITCH_MAX)
+	fp.ride = func() -> Transform3D: return Transform3D(Basis(), Vector3(0.0, 0.0, 0.1))
+	fp.step(0.05, {})
+	_check.call(down_ok and level_ok and fp.bend == 0.0,
+			"bend: looking down the camera goes forward and down with the head, back when looking up; not while riding (%s)" % moved)
+	fp.free()

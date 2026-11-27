@@ -93,6 +93,9 @@ const SHOTS := [
 	{"name": "pond", "env": CLEAR, "yaw": -150.0, "pitch": -25.0, "pond": Vector3i(2, 3, 0)},
 	{"name": "pond_top", "env": CLEAR, "view": "top", "pond": Vector3i(2, 3, 0)},
 	{"name": "pond_rain", "env": RAIN, "yaw": -150.0, "pitch": -25.0, "pond": Vector3i(2, 3, 0), "turn": 1200},
+	# Looking down in first person: bent at the hips, the chest out of the way of the ground at one's feet.
+	{"name": "look_down", "env": CLEAR, "yaw": -150.0, "pitch": -60.0},
+	{"name": "look_feet", "env": CLEAR, "yaw": -150.0, "pitch": -86.0},
 	# Inside the building: the ceiling and the walls must read as a room, by day and by lamp light.
 	{"name": "room_day_window", "env": CLEAR, "yaw": -90.0, "pitch": 35.0, "move": Vector3i(-8, -6, 0), "roof": true},
 	{"name": "room_day_inward", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true},

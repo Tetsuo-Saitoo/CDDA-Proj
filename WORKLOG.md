@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-27 — First person: looking down now bends you forward at the hips, so your chest no longer hides the ground at your feet; clothes are drawn less bulky.
 - 2026-11-26 — Water: deep water (lakes, rivers, pools) is now drawn as blue water instead of a see-through gap that looked like brown ground; all water has its own glossy surface, ready for a water shader.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Tester AppImage test-2026-11-26 (private test repo, pre-release, not a release) from main 440cd5d + fork 80c6d91, after the QA lead's GO (smoke, nine Linux live suites, names and strings scans): C6 VR slice 2 (repair by touch, pull a part out, install by holding its item). Nothing tried in a headset.
