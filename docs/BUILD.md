@@ -111,8 +111,8 @@ Needs: Visual Studio 2022 Build Tools (C++ workload, CMake, Windows SDK), Git, P
    `.so` built). Without the bridge, Godot prints once that `fp3d_cdda.gdextension` has no library for this
    platform; the mock town still runs.
    Windows Mixed Reality headsets only run DirectX: add `--rendering-driver d3d12` before `--path`.
-   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls and closed doors
-   stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
+   Controls (Quest / Index / Pico / WMR, "quest" layout): left stick walks where you look (walls, closed doors
+   and deep water stop you; grip a door to swing it open); right stick left/right turns 45°; right stick forward aims a teleport (green = OK) and jumps on
    release; right B / A: level up / down; left Y: back to the player; hold left X (Index: left A) to look at: a ring
    on the square you look at, named (right trigger: teleport there, cheats on); hold the right stick click: a 3x
    zoom where you look; tilt your head sideways to peek around a corner (CDDA's peek). Eye-tracking headsets: the
