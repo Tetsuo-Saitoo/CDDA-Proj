@@ -57,8 +57,9 @@ var _off_to: Array[float] = OFFSET_NONE.duplicate()
 var _off: Array[float] = OFFSET_NONE.duplicate()
 var _side := Vector3.ZERO                # the side shift and the bend's in `position` now (slid against walls)
 ## Looking down bends the body at the hips (PlayerBody.bend_for: radians, 0 upright) and the eyes move forward and down
-## with the head (PlayerBody.eye_shift, slid against walls like the side shift); none while riding a vehicle. main.gd
-## bends the drawn body as much.
+## with the head (PlayerBody.eye_shift, slid against walls like the side shift); none on board a vehicle (seated, or
+## standing on its deck: the snapshot's player.vehicle, parked or moving) or riding one. main.gd bends the drawn body
+## as much.
 var bend := 0.0
 ## The field of view without the offset's zoom (main's G7 option); `fov` is this times the zoom.
 var base_fov := 75.0:
@@ -118,7 +119,7 @@ func _ease_offset(delta: float) -> void:
 		if absf(_off[i] - _off_to[i]) < 0.0005:
 			_off[i] = _off_to[i]   # arrives exactly (none is exactly none)
 	set_look(yaw, pitch)
-	bend = PlayerBody.bend_for(pitch) if _ride() == Transform3D() else 0.0
+	bend = 0.0 if _on_board() else PlayerBody.bend_for(pitch)
 	var lean := Basis(Vector3.UP, yaw) * PlayerBody.eye_shift(bend)
 	var base := base_position()
 	var want := right() * _off[3] + Vector3(lean.x, 0.0, lean.z)
@@ -201,6 +202,11 @@ func follow_square(sq: Vector3i) -> void:
 		position = target
 		_side = Vector3.ZERO
 	_has_target = true
+
+
+## On board a vehicle (the snapshot says so) or riding one: no bend (the eyes would go through the dashboard).
+func _on_board() -> bool:
+	return (world.snapshot != null and world.snapshot.player_vehicle != 0) or _ride() != Transform3D()
 
 
 func _ride() -> Transform3D:

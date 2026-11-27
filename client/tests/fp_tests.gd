@@ -1193,6 +1193,18 @@ func _test_bend(root: Node, world: WorldView, data: Variant, tables: IdTables) -
 	fp.set_look(0.3, -FirstPersonCamera.PITCH_MAX)
 	fp.ride = func() -> Transform3D: return Transform3D(Basis(), Vector3(0.0, 0.0, 0.1))
 	fp.step(0.05, {})
-	_check.call(down_ok and level_ok and fp.bend == 0.0,
-			"bend: looking down the camera goes forward and down with the head, back when looking up; not while riding (%s)" % moved)
+	var riding_ok := fp.bend == 0.0 and fp.position == eyes
+	fp.ride = Callable()
+	# seated in a parked car (lead-qa: the ride is identity there, and the eyes went past the glovebox's door)
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	d["player"]["vehicle"] = int(d["vehicles"][0]["uid"])
+	var seated := Snapshot.from_data(d)
+	var was := world.snapshot
+	world.snapshot = seated
+	fp.step(0.05, {})
+	var seated_ok := seated.player_vehicle != 0 and fp.bend == 0.0 and fp.position == eyes
+	world.snapshot = was
+	fp.step(0.05, {})
+	_check.call(down_ok and level_ok and riding_ok and seated_ok and fp.bend == PlayerBody.MAX_BEND,
+			"bend: looking down the camera goes forward and down with the head, back when looking up; never on board a vehicle, parked or riding (%s)" % moved)
 	fp.free()
