@@ -32,6 +32,7 @@ func _initialize() -> void:
 	_test_mock(data, tables)
 	_test_malformed(data)
 	_test_catalog(tables)
+	_test_water(data, tables)
 	_test_registry(tables)
 	_test_bad_registry()
 	_test_props(data, tables)
@@ -461,6 +462,85 @@ func _spaces(n: int) -> PackedByteArray:
 	b.resize(n)
 	b.fill(32)
 	return b
+
+
+## Water: deep water (CDDA's "empty space", so what goes in sinks) is water to see, not open air; blue, deeper darker;
+## on a surface of its own (TerrainMesher.WATER) that the ground's weather leaves alone.
+func _test_water(data: Variant, tables: IdTables) -> void:
+	print("water")
+	var cat := TerrainCatalog.new()
+	cat.load_registry_dir(_repo("assets/registry"))
+	cat.set_tables(tables)
+	var K := TerrainCatalog.Kind
+	var kinds := []
+	for n: String in ["t_water_dp", "t_water_moving_dp", "t_swater_dp", "t_water_pool", "t_water_cube", "t_water_sh",
+			"t_open_air", "t_lake_bed_concrete"]:
+		kinds.append(cat.style_for_id(n).kind)
+	_check(kinds == [K.WATER, K.WATER, K.WATER, K.WATER, K.WATER, K.WATER, K.NONE, K.STAIRS_UP],
+			"deep water is water, not open air; open air and a submerged stair stay what they are (%s)" % [kinds])
+	var deep := cat.style_for_id("t_water_dp").color
+	var shallow := cat.style_for_id("t_water_sh").color
+	_check(deep.b > deep.r + 0.2 and deep.b > deep.g + 0.2 and deep.get_luminance() < shallow.get_luminance(),
+			"deep water is blue, darker than shallow (%s, %s)" % [deep, shallow])
+	var d: Dictionary = (data as Dictionary).duplicate(true)
+	var sm: Dictionary = d["submaps"][0]
+	for i in 144:
+		sm["ter"][i] = tables.index_of("ter", "t_grass")
+		sm["furn"][i] = 0
+		sm["flags"][i] = 0   # under the open sky
+	sm["items"] = []
+	sm["ter"][3 * 12 + 3] = tables.index_of("ter", "t_water_dp")
+	sm["ter"][3 * 12 + 4] = tables.index_of("ter", "t_water_sh")
+	var snap := Snapshot.from_data(d)
+	if not snap.is_valid():
+		_check(false, "water: test snapshot (%s)" % snap.error)
+		return
+	cat.set_snapshot(snap)
+	var r := TerrainMesher.new(snap, cat).build(Vector3i(sm["pos"][0], sm["pos"][1], sm["pos"][2]))
+	var at := r.terrain.surface_find_by_name(TerrainMesher.WATER) if r.terrain != null else -1
+	var squares := {}
+	var ok := at >= 0 and r.terrain.surface_get_material(at) == TerrainMesher.material(TerrainMesher.WATER)
+	if at >= 0:
+		var arr := r.terrain.surface_get_arrays(at)
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var col: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+		var nrm: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		for t in range(0, v.size(), 3):
+			var c := (v[t] + v[t + 1] + v[t + 2]) / 3.0
+			ok = ok and is_equal_approx(c.y, TerrainMesher.WATER_Y)
+			if nrm[t].y > 0.5:
+				squares[Vector2i(floori(c.x), floori(c.z))] = col[t]
+	var ground_over := false   # the ground surface draws nothing on the water's squares
+	var banks := {}            # and a bank where the water meets land: side (2 x the square's middle + the way out) -> facing
+	var g := r.terrain.surface_find_by_name(TerrainMesher.GROUND) if r.terrain != null else -1
+	if g >= 0:
+		var garr := r.terrain.surface_get_arrays(g)
+		var gv: PackedVector3Array = garr[Mesh.ARRAY_VERTEX]
+		var gn: PackedVector3Array = garr[Mesh.ARRAY_NORMAL]
+		for t in range(0, gv.size(), 3):
+			var c := (gv[t] + gv[t + 1] + gv[t + 2]) / 3.0
+			if c.y < -0.001:
+				var side := Vector2i(roundi(c.x * 2.0), roundi(c.z * 2.0))
+				banks[side] = Vector2i(roundi(gn[t].x), roundi(gn[t].z)) if gn[t].y > 0.5 else Vector2i.MAX
+			else:
+				ground_over = ground_over or (c.z > 3 and c.z < 4 and c.x > 3 and c.x < 5)
+	var want := {Vector2i(7, 6): Vector2i(0, 1), Vector2i(9, 6): Vector2i(0, 1), Vector2i(7, 8): Vector2i(0, -1),
+			Vector2i(9, 8): Vector2i(0, -1), Vector2i(6, 7): Vector2i(1, 0), Vector2i(10, 7): Vector2i(-1, 0)}
+	_check(banks == want, "water: a bank sloping down on each side that meets land, facing the water; none between deep and shallow (%s)" % [banks])
+	var near := func(a: Variant, b: Color) -> bool:   # vertex colours are kept in 8 bits
+		return a is Color and absf(a.r - b.r) < 0.01 and absf(a.g - b.g) < 0.01 and absf(a.b - b.b) < 0.01
+	_check(ok and g >= 0 and not ground_over and squares.keys().size() == 2 and near.call(squares.get(Vector2i(3, 3)), deep)
+			and near.call(squares.get(Vector2i(4, 3)), shallow),
+			"water on its own surface (WATER, its own material), deep and shallow in their colours, no ground over it (%s)" % [squares])
+	var water := TerrainMesher.material(TerrainMesher.WATER)
+	var before := [water.roughness, water.albedo_color, water.next_pass]
+	TerrainMesher.wet_ground(1.0)
+	TerrainMesher.snow_ground(1.0, Vector3i.ZERO)
+	var after := [water.roughness, water.albedo_color, water.next_pass]
+	TerrainMesher.wet_ground(0.0)
+	TerrainMesher.snow_ground(0.0, Vector3i.ZERO)
+	_check(water != TerrainMesher.material(TerrainMesher.GROUND) and after == before and water.roughness < 0.2,
+			"water: glossy, and the ground's rain and snow leave it alone")
 
 
 func _test_catalog(tables: IdTables) -> void:

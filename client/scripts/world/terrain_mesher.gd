@@ -6,7 +6,8 @@ extends RefCounted
 ## places the result at the submap's corner. Walls fill their whole tile (CDDA walls are a tile thick,
 ## and collision will be too), so neighbour connections show up as culled shared faces and as the
 ## direction doors, windows and fences run. Outputs three meshes:
-## - terrain: floors, walls, door frames, windows (glass in its own transparent surface), stairs, ramps, props;
+## - terrain: floors, walls, door frames, windows (glass in its own transparent surface), stairs, ramps, props, and
+##   water in a surface of its own (named WATER, material(WATER): where a water shader goes);
 ##   door leaves are not in it: they come out as `doors` (WorldView makes each a Grabbable that swings);
 ## - roof: roof terrain and, where the level above isn't loaded, a lid over roofed (indoor) tiles;
 ## - caps: wall tops hidden under the floor above, shown only when the level above is cut away.
@@ -59,6 +60,11 @@ const PUDDLE_LAST := 0.85     # and the last
 static var _puddle_mat: ShaderMaterial   # the puddles' material (puddle_material), made on first use
 static var puddles_shown := false    # puddle_ground's level shows any puddle: the puddle meshes are visible
 const WET_TINT := Color(0.72, 0.74, 0.78)
+## The material and surface name of water (lakes, rivers, pools, sewage, flood water): its own surface in the terrain mesh, so
+## it never takes the ground's weather (wet, snow) and a water shader can replace material(WATER) alone.
+const WATER := "water"
+const WATER_Y := -0.1        # the water's surface lies this far below the ground around it
+const BANK_RUN := 0.1        # a bank slopes down from the ground's edge to the water over this much of the water square
 static var _materials := {}
 static var _materials_lock := Mutex.new()
 
@@ -133,7 +139,7 @@ class Buf:
 			colors.push_back(Color(0.0 if v == Vector3.ZERO else 1.0, 0.0, 0.0, start))
 			uvs.push_back(Vector2(v.x, v.z))
 
-	func commit(mesh: ArrayMesh, material: Material) -> void:
+	func commit(mesh: ArrayMesh, material: Material, name := "") -> void:
 		if verts.is_empty():
 			return
 		var arrays := []
@@ -145,6 +151,8 @@ class Buf:
 			arrays[Mesh.ARRAY_TEX_UV] = uvs
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, material)
+		if not name.is_empty():
+			mesh.surface_set_name(mesh.get_surface_count() - 1, name)
 
 
 class Result:
@@ -167,6 +175,7 @@ var _solid: Buf      # where the square being built puts its solid faces: _indoo
 var _indoor: Buf     # squares under a roof (material "solid")
 var _outdoor: Buf    # squares under the open sky (material "ground": the weather wets it)
 var _glass: Buf
+var _water: Buf      # water's surface (WATER), indoors and out
 var _roof: Buf
 var _caps: Buf
 var _puddles: Buf
@@ -191,6 +200,7 @@ func build(sm_pos: Vector3i) -> Result:
 	_outdoor = Buf.new()
 	_solid = _indoor
 	_glass = Buf.new()
+	_water = Buf.new()
 	_roof = Buf.new()
 	_caps = Buf.new()
 	_puddles = Buf.new()
@@ -212,9 +222,9 @@ func build(sm_pos: Vector3i) -> Result:
 			if (flags & Snapshot.FLAG_ROOF) and not above_loaded and st.kind != K.ROOF:
 				_roof.slab(o, H, Color(0.32, 0.3, 0.3))
 	var r := Result.new()
-	r.vertices = (_indoor.verts.size() + _outdoor.verts.size() + _glass.verts.size() + _roof.verts.size()
-			+ _caps.verts.size() + _puddles.verts.size())
-	r.terrain = _mesh([_outdoor, _indoor, _glass], [GROUND, "solid", "glass"])
+	r.vertices = (_indoor.verts.size() + _outdoor.verts.size() + _glass.verts.size() + _water.verts.size()
+			+ _roof.verts.size() + _caps.verts.size() + _puddles.verts.size())
+	r.terrain = _mesh([_outdoor, _indoor, _glass, _water], [GROUND, "solid", "glass", WATER])
 	r.roof = _mesh([_roof], [GROUND])
 	r.caps = _mesh([_caps], ["solid"])
 	if not _puddles.verts.is_empty():
@@ -245,7 +255,8 @@ func _tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bool) ->
 			if floor_ok:
 				_roof.slab(o, ROOF_LIFT, st.color)
 		K.WATER:
-			_solid.slab(o, -0.1, st.color)
+			_water.slab(o, WATER_Y, st.color)
+			_banks(p, o)
 		K.WALL:
 			_wall(p, o, st)
 		K.DOOR:
@@ -325,6 +336,23 @@ func _model_tile(p: Vector3i, o: Vector3, st: TerrainCatalog.Style, floor_ok: bo
 	if not md.has(st.model):
 		md[st.model] = []
 	(md[st.model] as Array).append(xf)
+
+
+## The bank on each side of a water square where no water is next to it: earth sloping from the ground's edge down to
+## the water, facing the water (without it the gap under the ground's edge shows from across the water). A slope, not
+## a wall: the light pass looks up a surface's light half a metre along its normal, and a wall below the floor would
+## take the dark level below.
+func _banks(p: Vector3i, o: Vector3) -> void:
+	for d in 4:
+		var n := _style_at(p + DIRS[d])
+		if n != null and n.kind == K.WATER:
+			continue
+		var out := Vector3(DIRS[d].x, 0, DIRS[d].y)
+		var c := o + Vector3(0.5, 0, 0.5) + out * 0.5
+		var along := Vector3(out.z, 0, out.x) * 0.5
+		var lo := Vector3(0, WATER_Y, 0) - out * BANK_RUN
+		var up := (Vector3.UP * BANK_RUN + out * WATER_Y).normalized()   # up and in, toward the water
+		_solid.quad(c - along + lo, c + along + lo, c + along, c - along, up, TerrainCatalog.GROUND)
 
 
 func _ground(o: Vector3, floor_ok: bool) -> void:
@@ -816,7 +844,7 @@ func _frame_color(p: Vector3i) -> Color:
 func _mesh(bufs: Array, mats: Array) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	for i in bufs.size():
-		(bufs[i] as Buf).commit(mesh, material(mats[i]))
+		(bufs[i] as Buf).commit(mesh, material(mats[i]), mats[i])
 	return mesh if mesh.get_surface_count() > 0 else null
 
 
@@ -879,8 +907,9 @@ static func puddle_material() -> ShaderMaterial:
 	return m
 
 
-## The shared material `name` ("solid", "ground" or "glass"), made on first use by whichever thread asks first: the meshing
-## worker and the main thread (props rebuilt for hidden items) both do, hence the lock.
+## The shared material `name` ("solid", "ground", "glass" or WATER: smooth and glossy, so it shows the sky), made on
+## first use by whichever thread asks first: the meshing worker and the main thread (props rebuilt for hidden items) both
+## do, hence the lock.
 static func material(name: String) -> StandardMaterial3D:
 	_materials_lock.lock()
 	var m: StandardMaterial3D = _materials.get(name)
@@ -894,6 +923,9 @@ static func material(name: String) -> StandardMaterial3D:
 			m.render_priority = WorldLighting.UNDER_PRIORITY   # darkened with what is behind it
 			m.roughness = 0.1
 			m.metallic_specular = 0.8
+		elif name == WATER:
+			m.roughness = 0.08
+			m.metallic_specular = 0.9
 		_materials[name] = m
 	_materials_lock.unlock()
 	return m

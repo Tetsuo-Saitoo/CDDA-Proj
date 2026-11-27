@@ -5,6 +5,7 @@
 - 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
 - 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
+- 2026-11-26 — Water: deep water (lakes, rivers, pools) is now drawn as blue water instead of a see-through gap that looked like brown ground; all water has its own glossy surface, ready for a water shader.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Map follows lead-bridge's newer read (fork 6de111d / root 86ba6e7): danger radius up to 180, drawn also from read pages off screen; a seen cell whose look was left out shows grey, "Something".
 - 2026-11-26 — VR map (lead-vr): the map held in VR now shows the game's real map, starting at where you are. Not tried in a headset yet.
