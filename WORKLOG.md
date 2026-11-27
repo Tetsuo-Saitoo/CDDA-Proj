@@ -4,6 +4,7 @@
 - 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
 - 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
 - 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
+- 2026-11-26 — Map notes, bridge side (slice 2): `queue_overmap` adds, changes and deletes a note on a map cell, also while paused, answered by a `map_result` event; text cleaned and capped to 450 columns, refused where no overmap exists yet. Text from game data has its colour tags removed in one bounded pass.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Water: deep water (lakes, rivers, pools) is now drawn as blue water instead of a see-through gap that looked like brown ground; all water has its own glossy surface, ready for a water shader.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.

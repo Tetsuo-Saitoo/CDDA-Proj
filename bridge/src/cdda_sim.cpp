@@ -143,7 +143,7 @@ const char *event_kind_name( fp3d::event_kind k )
 {
     static const char *const names[] = { "sound", "message", "attack", "damage", "projectile", "explosion",
                                          "death", "anim", "turn_end", "lightning", "item_result", "misfire",
-                                         "work_result"
+                                         "work_result", "map_result"
                                        };
     static_assert( std::size( names ) == fp3d::event_kind_count, "a name for every event kind" );
     const size_t i = static_cast<size_t>( k );
@@ -247,6 +247,7 @@ void CddaSim::_bind_methods()
     ClassDB::bind_method( D_METHOD( "query_character" ), &CddaSim::query_character );
     ClassDB::bind_method( D_METHOD( "query_vehicle_work", "d" ), &CddaSim::query_vehicle_work );
     ClassDB::bind_method( D_METHOD( "query_overmap", "d" ), &CddaSim::query_overmap );
+    ClassDB::bind_method( D_METHOD( "queue_overmap", "d" ), &CddaSim::queue_overmap );
     ClassDB::bind_method( D_METHOD( "queue_vehicle_work", "d" ), &CddaSim::queue_vehicle_work );
     ClassDB::bind_method( D_METHOD( "take_query_result", "id" ), &CddaSim::take_query_result );
 }
@@ -1019,6 +1020,62 @@ int64_t CddaSim::query_overmap( const Dictionary &d )
     }
     const fp3d::ui_point at{ static_cast<int>( x ), static_cast<int>( y ), static_cast<int>( z ) };
     return static_cast<int64_t>( fp3d::post_overmap_query( at, d.has( "path" ) && static_cast<bool>( p ) ) );
+}
+
+// G5: add, change or delete the note on a map cell (fp3d/overmap_read.h, contracts/overmap.md). Hostile input:
+// every key is checked for type and range and the text for size; anything wrong is refused whole and nothing is
+// queued. The fork checks it all again, and the cell's ground, when the command runs.
+bool CddaSim::queue_overmap( const Dictionary &d )
+{
+    if( fp3d_session::get_state() != fp3d_session::state::running ) {
+        return false;
+    }
+    Variant c;
+    Variant o;
+    Variant te;
+    Variant da;
+    Variant ra;
+    Variant t;
+    if( !d.has( "cmd" ) || !d.has( "omt" ) || !field( d, "cmd", Variant::STRING, c ) ||
+        !field( d, "omt", Variant::ARRAY, o ) || !field( d, "text", Variant::STRING, te ) ||
+        !field( d, "danger", Variant::BOOL, da ) || !field( d, "radius", Variant::INT, ra ) ||
+        !field( d, "tag", Variant::INT, t ) ) {
+        return false;
+    }
+    const String cmd = c;
+    const Array omt = o;
+    if( ( cmd != "note" && cmd != "unnote" ) || omt.size() != 3 || omt[0].get_type() != Variant::INT ||
+        omt[1].get_type() != Variant::INT || omt[2].get_type() != Variant::INT ) {
+        return false;
+    }
+    const int64_t x = omt[0];
+    const int64_t y = omt[1];
+    const int64_t z = omt[2];
+    const int64_t radius = d.has( "radius" ) ? static_cast<int64_t>( ra ) : 0;
+    const int64_t tag = d.has( "tag" ) ? static_cast<int64_t>( t ) : 0;
+    // Range first, so the narrowing below can't wrap.
+    if( x < -fp3d::max_overmap_xy || x > fp3d::max_overmap_xy || y < -fp3d::max_overmap_xy ||
+        y > fp3d::max_overmap_xy || z < -fp3d::max_overmap_z || z > fp3d::max_overmap_z || radius < 0 ||
+        radius > fp3d::max_map_danger_radius || ( d.has( "tag" ) && ( tag < 1 ||
+                tag > static_cast<int64_t>( fp3d::max_item_tag ) ) ) ) {
+        return false;
+    }
+    fp3d::map_command m;
+    m.cmd = cmd == "note" ? 'n' : 'u';
+    m.omt = fp3d::ui_point{ static_cast<int>( x ), static_cast<int>( y ), static_cast<int>( z ) };
+    if( d.has( "text" ) ) {
+        // Characters first: a text longer than that in characters is longer still in bytes.
+        const String text = te;
+        if( text.length() > static_cast<int64_t>( fp3d::max_map_note_input_bytes ) ) {
+            return false;
+        }
+        m.has_text = true;
+        m.text = to_std( text );
+    }
+    m.danger = d.has( "danger" ) ? ( static_cast<bool>( da ) ? 1 : 0 ) : -1;
+    m.radius = static_cast<int>( radius );
+    m.tag = static_cast<uint32_t>( tag );
+    return fp3d::queue_map_command( m );
 }
 
 // C6: start work on a vehicle part (fp3d/vehicle_work.h, contracts/vehicle_work.md). Hostile input: every key
