@@ -12,6 +12,7 @@ const EDGE := Color(0.4, 0.4, 0.4)
 const SAY := Color(0.75, 0.75, 0.75)
 const SAY_BAD := Color(1.0, 0.55, 0.45)
 const WAITING := "Waiting for the game..."
+const DOCK_PX := 12.0
 
 var data: MapData:
 	set(v):
@@ -138,6 +139,21 @@ func remove() -> void:
 		return
 	_tag = data.delete_note(cell)
 	_after_send()
+
+
+## Puts it in the middle of its parent's top edge (`top`) or bottom edge, DOCK_PX in, growing away from that edge
+## (MapView: on the side away from the cell being noted, so the cell stays in sight). Unset it sits in the middle.
+func dock(top: bool) -> void:
+	anchor_left = 0.5
+	anchor_right = 0.5
+	anchor_top = 0.0 if top else 1.0
+	anchor_bottom = anchor_top
+	offset_left = 0.0
+	offset_right = 0.0
+	offset_top = DOCK_PX if top else -DOCK_PX
+	offset_bottom = offset_top
+	grow_horizontal = Control.GROW_DIRECTION_BOTH
+	grow_vertical = Control.GROW_DIRECTION_END if top else Control.GROW_DIRECTION_BEGIN
 
 
 ## Closes it; a write still out lands all the same, its answer just isn't shown.

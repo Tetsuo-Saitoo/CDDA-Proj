@@ -189,6 +189,7 @@ func open_note(deleting := false) -> void:
 		return
 	canvas.pick(at)
 	notes.open_on(c, deleting)
+	notes.dock(canvas.to_px(Vector2(at) + Vector2(0.5, 0.5)).y > canvas.size.y * 0.5)   # away from the cell
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -208,7 +209,7 @@ func _gui_input(event: InputEvent) -> void:
 				canvas.pick(canvas.cell_at(at))
 				open_note()
 		elif b.pressed and b.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] and at.x >= 0:
-			canvas.zoom_at(at, 1 if b.button_index == MOUSE_BUTTON_WHEEL_UP else -1)
+			canvas.zoom_at(at, wheel_steps(b))
 		accept_event()
 		return
 	var m := event as InputEventMouseMotion
@@ -221,6 +222,13 @@ func _gui_input(event: InputEvent) -> void:
 		_hover = at
 		_show_info()
 		accept_event()
+
+
+## Zoom steps for one wheel event: its own amount (a mouse notch 1, a touchpad's small scroll a part of one, a fast
+## spin more), 1 where the platform gives none; out (< 0) for the wheel down.
+static func wheel_steps(b: InputEventMouseButton) -> float:
+	var f := b.factor if is_finite(b.factor) and b.factor > 0.0 else 1.0
+	return f if b.button_index == MOUSE_BUTTON_WHEEL_UP else -f
 
 
 ## The event's position on the canvas (local px), (-1, -1) when it isn't over it.

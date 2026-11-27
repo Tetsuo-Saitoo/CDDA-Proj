@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-27 — Map looked at on a real screen: it draws right. Fixed: the wheel zooms by its own amount, the note dialog opens away from the cell, dark note colours get a light box. A read bug (plain notes near a danger note show as dangerous) went to lead-bridge.
 - 2026-11-27 — The Cheats page's auto-pause switch now sets and saves the F1 Time setting, so the next game start no longer puts the old one back.
 - 2026-11-27 — Map notes follow lead-bridge's contract: the text goes behind CDDA's own "sym:color;" prefix (text starting "R;" or "x:" stays text), no radius without the danger mark, text capped at 445.
 - 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
