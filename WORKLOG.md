@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-27 — VR: deep water (rivers, the sea, pools) stops a VR step or teleport, as lakes already did, since the game would make you swim; a bridge or a boat on it doesn't. Not tried in a headset yet.
 - 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
 - 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
 - 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
