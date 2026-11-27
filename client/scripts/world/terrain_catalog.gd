@@ -221,6 +221,8 @@ func _kind(def: IdTables.Def) -> int:
 
 ## Kind from flags and links alone, -1 when they don't settle it.
 func _flag_kind(d: IdTables.Def) -> int:
+	if _is_water(d) and (d.has("NO_FLOOR") or d.has("EMPTY_SPACE")):
+		return Kind.WATER   # deep water: CDDA calls it empty space (what goes in sinks), but its surface is there to see
 	if d.has("NO_FLOOR") or d.has("EMPTY_SPACE") or d.has("RAMP_DOWN") \
 			or (d.has("TRANSPARENT_FLOOR") and d.has("Z_TRANSPARENT")):
 		return Kind.NONE   # open air, or the top of a ramp or stairs from below
@@ -246,9 +248,8 @@ func _flag_kind(d: IdTables.Def) -> int:
 		return Kind.WALL   # half walls
 	if d.has("SHRUB"):
 		return Kind.SHRUB
-	for f: String in WATER_FLAGS:
-		if d.has(f):
-			return Kind.WATER
+	if _is_water(d):
+		return Kind.WATER
 	if tables.is_roof(d.id):
 		return Kind.ROOF
 	if in_fence or (d.has("AUTO_WALL_SYMBOL") and not in_wall):
@@ -256,6 +257,13 @@ func _flag_kind(d: IdTables.Def) -> int:
 	if d.has("FLAT") or d.has("RUG"):
 		return Kind.FLOOR
 	return -1
+
+
+static func _is_water(d: IdTables.Def) -> bool:
+	for f: String in WATER_FLAGS:
+		if d.has(f):
+			return true
+	return false
 
 
 static func _is_door(d: IdTables.Def) -> bool:

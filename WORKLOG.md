@@ -3,11 +3,17 @@
 - 2026-11-27 — Rechecked on screen with lead-bridge's fix (fork 9451d11): a plain note near a danger note no longer shows as dangerous.
 - 2026-11-27 — Map looked at on a real screen: it draws right. Fixed: the wheel zooms by its own amount, the note dialog opens away from the cell, dark note colours get a light box. A read bug (plain notes near a danger note show as dangerous) went to lead-bridge.
 - 2026-11-27 — The Cheats page's auto-pause switch now sets and saves the F1 Time setting, so the next game start no longer puts the old one back.
+- 2026-11-27 — First person: looking down now bends you forward at the hips, so your chest no longer hides the ground at your feet; clothes are drawn less bulky.
+- 2026-11-27 — Map slice 2 (notes), screen and VR sides merged and pushed: main dbe3ddb (f192eb1, 0053b22, 2cda1ce + d2bcde2); all suites green. The bridge side (fork 08228b4 / root 924336a) and lead-ui's prefix fix 5ebd41b wait for lead-qa's runs.
 - 2026-11-27 — Map notes follow lead-bridge's contract: the text goes behind CDDA's own "sym:color;" prefix (text starting "R;" or "x:" stays text), no radius without the danger mark, text capped at 445.
+- 2026-11-27 — VR first aid: once the game shows a bandage, disinfectant or a stopped bleed on that body part, it says so by your hand in green ("Left arm: bandaged"). Not tried in a headset yet.
+- 2026-11-27 — VR: deep water (rivers, the sea, pools) stops a VR step or teleport, as lakes already did, since the game would make you swim; a bridge or a boat on it doesn't. Not tried in a headset yet.
 - 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
 - 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
 - 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
+- 2026-11-26 — Map notes, bridge side (slice 2): `queue_overmap` adds, changes and deletes a note on a map cell, also while paused, answered by a `map_result` event; text cleaned and capped to 450 columns, refused where no overmap exists yet. Text from game data has its colour tags removed in one bounded pass.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
+- 2026-11-26 — Water: deep water (lakes, rivers, pools) is now drawn as blue water instead of a see-through gap that looked like brown ground; all water has its own glossy surface, ready for a water shader.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Map follows lead-bridge's newer read (fork 6de111d / root 86ba6e7): danger radius up to 180, drawn also from read pages off screen; a seen cell whose look was left out shows grey, "Something".
 - 2026-11-26 — VR map (lead-vr): the map held in VR now shows the game's real map, starting at where you are. Not tried in a headset yet.

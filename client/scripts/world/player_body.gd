@@ -6,9 +6,11 @@ extends Node3D
 ## colour, browner with damage, paler with degradation, with dark tears from damage 2 up. Bandages, bleeding
 ## and bites show on top of the outermost layer of that part, so they stay visible. The origin is the floor;
 ## it faces -Z. In first person and VR the head (and what is worn only there) is hidden from the own camera.
+## Looking down in first person the upper body bends forward at the hips (`bend`, bend_for), the eyes with it, so
+## the chest doesn't hide the ground at one's feet; the legs stay.
 
 const SKIN := Color(0.85, 0.68, 0.55)
-const LAYER_M := 0.016          # each worn layer stands this much farther out
+const LAYER_M := 0.008          # each worn layer stands this much farther out
 const MAX_LAYERS := 6           # worn layers drawn per part (the outermost); more would only swell the box
 const MAX_CACHED := 256         # shared materials and box meshes kept (the cache starts over past it)
 const HEAD_PARTS := ["head", "eyes", "mouth"]
@@ -37,6 +39,17 @@ const ARM_REACH := UPPER_ARM + FOREARM   # shoulder to wrist, arm straight
 const ELBOW_HINT := Vector3(0.6, -1.0, 0.35)
 const HIP_SLACK := 0.6          # radians the head may turn before the hips follow
 const HIP_RATE := 6.0           # rad/s the hips catch up with
+## Bending to look down (flat first person): the upper body turns forward about the hips by up to MAX_BEND, more
+## the further one looks down from BEND_FROM to BEND_TO (pitch below level, radians). The eyes are at the face, EYE
+## (body-local, unbent); the camera follows them forward by at most REACH and the hips go back for the rest, so the
+## head ends up over the toes and the eyes stay inside the square.
+const HIP_Y := 0.9
+const EYE := Vector3(0, 1.6, -0.1)
+const MAX_BEND := 0.7
+const BEND_FROM := 0.35
+const BEND_TO := 1.3
+const REACH := 0.3
+const UPPER := ["torso", "head", "eyes", "mouth", "arm_l", "arm_r", "hand_l", "hand_r"]
 const ARMS := ["arm_l", "arm_r"]
 const HANDS := ["hand_l", "hand_r"]
 const BLOOD := Color(0.55, 0.02, 0.02)
@@ -54,6 +67,12 @@ var key := ""                   # what it was last built from
 var pieces: Array[Dictionary] = []   # the last plan (tests read it)
 
 var hip_yaw := 0.0              # set by follow_head (VR)
+## How far the upper body bends forward at the hips, radians (0 upright .. MAX_BEND); first person sets it from
+## the look (bend_for). Not in VR: the arms there reach for the hands (reach).
+var bend := 0.0:
+	set(v):
+		bend = clampf(v, 0.0, MAX_BEND) if is_finite(v) else 0.0
+		_apply_bend()
 ## False in VR: the rig draws the hands (VrHand, fingers and all) and the arms reach for their wrists.
 var show_hands := true:
 	set(v):
@@ -83,6 +102,45 @@ static func next_hip_yaw(hips: float, head: float, delta: float) -> float:
 		return hips
 	var step := signf(d) * minf(absf(d) - HIP_SLACK * 0.5, HIP_RATE * delta)
 	return wrapf(hips + step, -PI, PI)
+
+
+## The bend for a look `pitch` (radians, down negative): none down to BEND_FROM below level, MAX_BEND from BEND_TO.
+static func bend_for(pitch: float) -> float:
+	if not is_finite(pitch):
+		return 0.0
+	return MAX_BEND * smoothstep(BEND_FROM, BEND_TO, -pitch)
+
+
+## The upper body's turn about the hips for bend `b` (body-local).
+static func hip_turn(b: float) -> Transform3D:
+	var pivot := Vector3(0, HIP_Y, 0)
+	var basis := Basis(Vector3.RIGHT, -b)   # forward (-Z) and down
+	return Transform3D(basis, pivot - basis * pivot)
+
+
+## Where the eyes are with bend `b` (body-local).
+static func eye_of(b: float) -> Vector3:
+	return hip_turn(b) * EYE
+
+
+## How far the camera moves from the upright eyes for bend `b` (body-local: -Z forward, at most REACH, and down).
+static func eye_shift(b: float) -> Vector3:
+	var d := eye_of(b) - EYE
+	return Vector3(d.x, d.y, maxf(d.z, -REACH))
+
+
+## The body's origin for eyes upright at `eyes` (world, before the bend), facing `yaw`, bent `b`: under the eyes,
+## back by the face and by what the camera doesn't reach of the bend (eye_shift).
+static func stand_at(eyes: Vector3, yaw: float, b: float) -> Vector3:
+	return eyes + Basis(Vector3.UP, yaw) * (eye_shift(b) - eye_of(b))
+
+
+func _apply_bend() -> void:
+	var xf := hip_turn(bend)
+	for part: String in UPPER:
+		var n := get_node_or_null(part) as Node3D
+		if n != null:
+			n.transform = xf
 
 
 func follow_head(head_yaw: float, delta: float) -> void:
@@ -295,6 +353,8 @@ func _build() -> void:
 				holder.add_child(_box(half[0], half[1], p["colour"]))
 		else:
 			(nodes[part] as Node3D).add_child(_box(p["centre"], p["size"], p["colour"]))
+	if bend != 0.0:
+		_apply_bend()
 
 
 ## An arm piece cut at the elbow: [[centre, size, "upper" | "fore"], ...] (one entry when it lies on one side).

@@ -111,7 +111,42 @@ func _test_apply(rig: VrRig, acts: ItemActions, be: Backend) -> void:
 	var chest := eyes.origin + Vector3.DOWN * VrAid.CHEST_DOWN + Vector3.FORWARD * VrAid.CHEST_AHEAD
 	a.update(0, bandage, chest, 0.4)
 	var torso: bool = a.update(0, bandage, chest, 0.4) == VrAid.SENT and be.calls[-1] == [41.0, 1.0, "torso"]
+	var one: bool = a._watch.size() == 1 and a._watch.has(41) and a._watch[41]["part"] == "torso"
+	acts.on_events([{"kind": "item_result", "detail": be.tags[-1], "amount": 1}])   # CDDA done ...
+	var before: String = rig.notes[0].text
+	a.watch(0.5)   # ... the snapshot doesn't show it yet: nothing said
+	var waits: bool = a._watch.has(41) and rig.notes[0].text == before
+	var b0: int = rig.buzzes[0]
+	(rig.world.snapshot.player_parts[0] as Snapshot.BodyPart).bandaged = 2   # now it does
+	a.watch(0.1)
+	var shown: bool = rig.notes[0].text == "Chest: bandaged" and rig.notes[0].modulate.g > rig.notes[0].modulate.r \
+			and rig.buzzes[0] == b0 + 1 and a._watch.is_empty()
+	a.update(0, bandage, Vector3(0.6, 1.4, -0.6), 0.1)   # once more; done, but the snapshot never shows it
+	a.update(0, bandage, chest, 0.4)
+	var again: bool = a.update(0, bandage, chest, 0.4) == VrAid.SENT and a._watch.has(41)
+	acts.on_events([{"kind": "item_result", "detail": be.tags[-1], "amount": 1}])
+	var b1: int = rig.buzzes[0]
+	for k in int((VrAid.AFTER_S - 0.5) / 0.5):   # (a frame's delta counts at most 1 s)
+		a.watch(0.5)
+	var kept: bool = a._watch.has(41)
+	a.watch(0.5)
+	a.watch(0.5)
+	var let_go: bool = a._watch.is_empty() and rig.notes[0].text == "Chest: bandaged" and rig.buzzes[0] == b1
+	a.update(0, bandage, Vector3(0.6, 1.4, -0.6), 0.1)   # sent again, then the game left: forgotten
+	a.update(0, bandage, chest, 0.4)
+	a.update(0, bandage, chest, 0.4)
 	acts.clear()
-	_check.call(said and held and torso and a._sent.is_empty(),
+	var words := [VrAid.treated("arm_l", {"bleed": 5, "bandaged": 0, "disinfected": 0, "bite": 0, "infected": 0},
+			{"bleed": 0, "bandaged": 3, "disinfected": 2, "bite": 0, "infected": 0}),
+			VrAid.treated("leg_r", {"bleed": 9, "bandaged": 0, "disinfected": 0, "bite": 4, "infected": 0},
+			{"bleed": 3, "bandaged": 0, "disinfected": 0, "bite": 0, "infected": 0}),
+			VrAid.treated("head", {"bleed": 0, "bandaged": 0, "disinfected": 0, "bite": 0, "infected": 0},
+			{"bleed": 0, "bandaged": 0, "disinfected": 0, "bite": 0, "infected": 0}),
+			VrAid.treated("torso", {}, {"bleed": 0, "bandaged": 1, "disinfected": 0, "bite": 0, "infected": 0})]
+	_check.call(said and held and torso and a._sent.is_empty() and a._watch.is_empty(),
 			"vr aid: CDDA's no by that hand; again only after leaving the part; the chest is the torso; the game left forgets it (%s)"
 			% [be.calls])
+	_check.call(one and waits and shown and again and kept and let_go
+			and words == ["Left arm: bleeding stopped, bandaged, disinfected", "Right leg: bleeding slowed, treated", "", ""],
+			"vr aid: once the snapshot shows a treatment on that part, it says so by the hand in green with a buzz; done but never shown: let go %.0f s after; a refused one isn't watched (%s)"
+			% [VrAid.AFTER_S, [one, waits, shown, again, kept, let_go, words]])
