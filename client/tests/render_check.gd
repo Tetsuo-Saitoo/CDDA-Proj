@@ -88,6 +88,11 @@ const SHOTS := [
 	{"name": "puddles_filling", "env": RAIN, "yaw": 45.0, "pitch": -25.0, "turn": 400},
 	{"name": "puddles_full", "env": RAIN, "yaw": 45.0, "pitch": -25.0, "turn": 1200},
 	{"name": "puddles_full_top", "env": RAIN, "view": "top", "turn": 1200},
+	# A pond in the street south-east of the start (deep water in a ring of shallow): blue water, never mistaken for
+	# ground, by day and in the rain (the ground wet and dark, the water not).
+	{"name": "pond", "env": CLEAR, "yaw": -150.0, "pitch": -25.0, "pond": Vector3i(2, 3, 0)},
+	{"name": "pond_top", "env": CLEAR, "view": "top", "pond": Vector3i(2, 3, 0)},
+	{"name": "pond_rain", "env": RAIN, "yaw": -150.0, "pitch": -25.0, "pond": Vector3i(2, 3, 0), "turn": 1200},
 	# Inside the building: the ceiling and the walls must read as a room, by day and by lamp light.
 	{"name": "room_day_window", "env": CLEAR, "yaw": -90.0, "pitch": 35.0, "move": Vector3i(-8, -6, 0), "roof": true},
 	{"name": "room_day_inward", "env": CLEAR, "yaw": 90.0, "pitch": 25.0, "move": Vector3i(-8, -6, 0), "roof": true},
@@ -153,6 +158,39 @@ func _run() -> void:
 	quit(0 if _failed == 0 and errors.is_empty() else 1)
 
 
+const POND := Vector2i(8, 6)
+
+
+## Copies of the submaps with a pond POND squares across, its north-west corner at `nw`: deep water inside a ring of
+## shallow water.
+func _pond(submaps: Array, nw: Vector3i) -> Array:
+	var deep := _main.world.tables.index_of("ter", "t_water_dp")
+	var shallow := _main.world.tables.index_of("ter", "t_water_sh")
+	var out := []
+	for s: Dictionary in submaps:
+		var at := Vector3i(s["pos"][0], s["pos"][1], s["pos"][2])
+		var ter: Array = s["ter"]
+		var changed := false
+		for y in POND.y:
+			for x in POND.x:
+				var p := nw + Vector3i(x, y, 0)
+				if CddaCoords.ms_to_sm(p) != at:
+					continue
+				if not changed:
+					ter = ter.duplicate()
+					changed = true
+				var edge := x == 0 or y == 0 or x == POND.x - 1 or y == POND.y - 1
+				ter[posmod(p.y, CddaCoords.SEEX) * CddaCoords.SEEX + posmod(p.x, CddaCoords.SEEX)] = shallow if edge else deep
+		if not changed:
+			out.append(s)
+			continue
+		var copy := s.duplicate(false)
+		copy["ter"] = ter
+		copy["revision"] = int(s["revision"]) + 1000   # a new revision, or the world keeps the submap as it was
+		out.append(copy)
+	return out
+
+
 func _seconds(s: float) -> void:
 	await create_timer(s).timeout
 
@@ -206,6 +244,8 @@ func _shot(index: int, shot: Dictionary) -> void:
 			vehicles.append(copy)
 		d["vehicles"] = vehicles
 	d["player"] = player
+	if shot.has("pond"):
+		d["submaps"] = _pond(d["submaps"], Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]) + shot["pond"])
 	if shot.get("lamp", false):
 		_lamp(d, Vector3i(player["pos"][0], player["pos"][1], player["pos"][2]))
 	var snap := Snapshot.from_data(d)
