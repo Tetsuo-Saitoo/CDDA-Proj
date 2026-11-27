@@ -3,6 +3,7 @@
 - 2026-11-27 — First person: looking down now bends you forward at the hips, so your chest no longer hides the ground at your feet; clothes are drawn less bulky.
 - 2026-11-27 — Map slice 2 (notes), screen and VR sides merged and pushed: main dbe3ddb (f192eb1, 0053b22, 2cda1ce + d2bcde2); all suites green. The bridge side (fork 08228b4 / root 924336a) and lead-ui's prefix fix 5ebd41b wait for lead-qa's runs.
 - 2026-11-27 — Map notes follow lead-bridge's contract: the text goes behind CDDA's own "sym:color;" prefix (text starting "R;" or "x:" stays text), no radius without the danger mark, text capped at 445.
+- 2026-11-27 — VR first aid: once the game shows a bandage, disinfectant or a stopped bleed on that body part, it says so by your hand in green ("Left arm: bandaged"). Not tried in a headset yet.
 - 2026-11-27 — VR: deep water (rivers, the sea, pools) stops a VR step or teleport, as lakes already did, since the game would make you swim; a bridge or a boat on it doesn't. Not tried in a headset yet.
 - 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
 - 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.

@@ -637,6 +637,7 @@ func update_hands(delta: float, all_hands := false) -> void:
 		hands.set_hand_pose(id, _ctrl(i).global_transform, true)
 	if pack.hand >= 0:
 		pack.follow(_ctrl(pack.hand).global_transform)
+	aid.watch(delta)   # a treatment sent: what it did, by its hand, once the snapshot shows it
 	for i in 2:
 		var c := _ctrl(i)
 		var id: String = HAND_IDS[i]
@@ -1734,8 +1735,9 @@ func on_events(events: Variant) -> void:
 			say(i, r["said"])
 
 
-## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S.
-func say(i: int, text: String) -> void:
+## A short line by hand i (VR has no status line): billboarded, over everything, gone after NOTE_S. `good`: green (a
+## thing done), else red (a refusal).
+func say(i: int, text: String, good := false) -> void:
 	if notes[i] == null or not is_instance_valid(notes[i]):
 		var l := Label3D.new()
 		l.name = "Note"
@@ -1751,6 +1753,7 @@ func say(i: int, text: String) -> void:
 		l.position = Vector3(0, 0.13, 0.04)   # over the hand, above VrHeld's line
 		_ctrl(i).add_child(l)
 		notes[i] = l
+	notes[i].modulate = Color(0.55, 1.0, 0.6) if good else Color(1.0, 0.55, 0.5)
 	notes[i].text = text.strip_edges().replace("\n", " ").left(NOTE_MAX)
 	notes[i].visible = true
 	_note_left[i] = NOTE_S

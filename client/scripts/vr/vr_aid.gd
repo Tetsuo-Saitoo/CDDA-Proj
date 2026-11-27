@@ -6,6 +6,8 @@ extends RefCounted
 ## Parts: the other hand's forearm (that arm), the head, the chest (torso), a leg (the hand low, on that side). A part
 ## lights (a green ball there) when the item can treat it by CDDA's rule (needs(); the bridge decides in the end), with
 ## a light tick; a buzz when sent; CDDA's no (with why) by that hand. The hand leaves the part before it can again.
+## Once the snapshot shows the treatment on that part (its bleed down, bandaged or disinfected up, a bite or an
+## infection down), what was done shows by that hand ("Left arm: bandaged") with a light buzz (watch()).
 
 const HOLD_S := 0.6       # s at a part before it goes out: so a hand passing by treats nothing
 const ARM_BACK := 0.12    # m behind the other controller (toward its elbow): that forearm's middle ...
@@ -18,6 +20,11 @@ const CHEST_M := 0.2
 const LEG_DOWN := 0.8     # the hand this far under the eyes: a leg, on its side of the head
 const MARK_R := 0.05
 const MAX_SENT := 16
+const WATCH_S := 600.0    # s a sent treatment is watched for in the snapshot at most (CDDA's time in real time) ...
+const AFTER_S := 5.0      # ... and after CDDA finished it (the snapshot showing it comes a little later)
+const NAMES := {"arm_l": "Left arm", "arm_r": "Right arm", "head": "Head", "torso": "Chest", "leg_l": "Left leg",
+		"leg_r": "Right leg"}
+const STATE := ["bleed", "bandaged", "disinfected", "bite", "infected"]
 
 enum { NONE, NEAR, SENT }
 
@@ -43,6 +50,7 @@ var _at := [0.0, 0.0]       # seconds each hand has been at its part
 var _part := ["", ""]       # the part each hand is at and can treat, "" none
 var _armed := [true, true]  # false once sent, until the hand is at no part
 var _sent := {}             # uid -> the hand whose treatment CDDA hasn't answered yet
+var _watch := {}            # uid -> {hand, part, was (the part's state when sent), left (s)}: not seen done yet
 var _marks: Array[MeshInstance3D] = []
 var _hinted := false
 
@@ -143,8 +151,61 @@ func update(i: int, item: ItemRef, at: Vector3, delta: float) -> int:
 		rig.say(i, "You can't do that now.")
 		return NONE
 	_sent[item.uid] = i
+	var was := state_of(p, rig.world.snapshot, rig.world.tables)
+	if not was.is_empty() and _watch.size() < MAX_SENT:
+		_watch[item.uid] = {"hand": i, "part": p, "was": was, "left": WATCH_S}
 	rig.feel(c, 0.3, 0.06)
 	return SENT
+
+
+## Body part `part`'s treatment state in `snap` ({bleed, bandaged, disinfected, bite, infected}), {} not there.
+static func state_of(part: String, snap: Snapshot, tables: IdTables) -> Dictionary:
+	if snap == null or tables == null:
+		return {}
+	for b: Snapshot.BodyPart in snap.player_parts:
+		if tables.body_part_name(b.id) == part:
+			return {"bleed": b.bleed, "bandaged": b.bandaged, "disinfected": b.disinfected, "bite": b.bite,
+					"infected": b.infected}
+	return {}
+
+
+## What a treatment did to part `part`, from its state before (`was`) to now: "Left arm: bandaged, disinfected";
+## "" nothing yet.
+static func treated(part: String, was: Dictionary, now: Dictionary) -> String:
+	if was.is_empty() or now.is_empty():
+		return ""
+	var done := PackedStringArray()
+	if int(now["bleed"]) < int(was["bleed"]):
+		done.append("bleeding stopped" if int(now["bleed"]) <= 0 else "bleeding slowed")
+	if int(now["bandaged"]) > int(was["bandaged"]):
+		done.append("bandaged")
+	if int(now["disinfected"]) > int(was["disinfected"]):
+		done.append("disinfected")
+	if int(now["bite"]) < int(was["bite"]) or int(now["infected"]) < int(was["infected"]):
+		done.append("treated")
+	if done.is_empty():
+		return ""
+	return "%s: %s" % [NAMES.get(part, "That part"), ", ".join(done)]
+
+
+## Per frame: a sent treatment the snapshot now shows says so by its hand; one not seen in time is let go.
+func watch(delta: float) -> void:
+	if _watch.is_empty() or rig == null or rig.world == null:
+		return
+	var dt := clampf(delta, 0.0, 1.0) if is_finite(delta) else 0.0
+	for uid: int in _watch.keys():
+		var w: Dictionary = _watch[uid]
+		var text := treated(w["part"], w["was"], state_of(w["part"], rig.world.snapshot, rig.world.tables))
+		var left: float = w["left"] - dt
+		if text != "":
+			_watch.erase(uid)
+			var i: int = w["hand"]
+			rig.feel(rig.left if i == 0 else rig.right, 0.2, 0.04)
+			rig.say(i, text, true)
+		elif left <= 0.0:
+			_watch.erase(uid)
+		else:
+			_watch[uid] = {"hand": w["hand"], "part": w["part"], "was": w["was"], "left": left}
 
 
 ## The part hand i is at, "" none (tests).
@@ -193,6 +254,10 @@ func mark_shown(i: int) -> bool:
 func _on_finished(item: ItemRef, op: String) -> void:
 	if op == "consume" and item != null:
 		_sent.erase(item.uid)
+		if _watch.has(item.uid):   # done: its result shows in a snapshot soon, or not at all
+			var w: Dictionary = _watch[item.uid]
+			_watch[item.uid] = {"hand": w["hand"], "part": w["part"], "was": w["was"],
+					"left": minf(w["left"], AFTER_S)}
 
 
 ## CDDA said no (nothing to treat there, a broken or bionic limb, a filthy item): a buzz and why by that hand.
@@ -201,6 +266,7 @@ func _on_refused(item: ItemRef, op: String, reason: String) -> void:
 		return
 	var i: int = _sent[item.uid]
 	_sent.erase(item.uid)
+	_watch.erase(item.uid)
 	if rig != null and is_instance_valid(rig):
 		rig.feel(rig.left if i == 0 else rig.right)
 		rig.say(i, reason)
@@ -209,3 +275,4 @@ func _on_refused(item: ItemRef, op: String, reason: String) -> void:
 ## The game ended or was left (ItemActions.cleared): nothing it had in flight will be answered.
 func _forget() -> void:
 	_sent.clear()
+	_watch.clear()
