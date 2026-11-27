@@ -289,8 +289,14 @@ func _test_menu_and_panel() -> void:
 	p.on_cheats_changed(sim.cheats)
 	_check.call(t.button_pressed, "cheats: applied change shows")
 	p.kit_button.pressed.emit()
+	s.auto_pause = true
+	m.show_clock()
 	p.auto_pause.button_pressed = false
+	var kept := HudSettings.new()
+	kept.load_file(path)
 	_check.call(sim.kits == 1 and not sim.auto, "cheats: kit button and auto-pause reach the sim")
+	_check.call(not s.auto_pause and not kept.auto_pause and not m.auto_pause_check.button_pressed,
+			"cheats: the page's auto-pause is the F1 Time setting too: saved and shown there")
 	ls.state = "ended"
 	t.button_pressed = false
 	_check.call(sim.calls.size() == 1 and t.disabled, "cheats: a toggle after the game ended goes nowhere")
