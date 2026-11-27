@@ -21,6 +21,7 @@ const DANGER := Color(1.0, 0.1, 0.1, 0.22)
 const PLAYER := Color(1.0, 1.0, 1.0)
 const CURSOR := Color(1.0, 1.0, 1.0, 0.9)
 const OUTLINE := Color(0.0, 0.0, 0.0, 0.85)
+const NOTE_LIGHT := Color(0.9, 0.9, 0.9)   # the box behind a dark note colour (green, blue, brown...)
 ## How bright a cell is by CDDA's vision level (0 unseen .. 4 full).
 const SHADE := [0.0, 0.5, 0.65, 0.82, 1.0]
 
@@ -80,11 +81,14 @@ func pan_px(delta: Vector2) -> void:
 	_moved()
 
 
-## Zooms in (steps > 0) or out, keeping the map point under `local_px` where it is.
-func zoom_at(local_px: Vector2, steps: int) -> void:
+## Zooms in (steps > 0) or out, keeping the map point under `local_px` where it is. Steps may be parts of one (a
+## touchpad's small scrolls).
+func zoom_at(local_px: Vector2, steps: float) -> void:
+	if not is_finite(steps):
+		return
 	var was := cell_px
 	var under := to_map(local_px)
-	cell_px = clampf(cell_px * pow(ZOOM_STEP, clampi(steps, -8, 8)), MIN_CELL, MAX_CELL)
+	cell_px = clampf(cell_px * pow(ZOOM_STEP, clampf(steps, -8.0, 8.0)), MIN_CELL, MAX_CELL)
 	if cell_px == was:
 		return
 	middle = _bounded(under - (local_px - size * 0.5) / cell_px)
@@ -268,11 +272,34 @@ func _draw_notes(pg: MapData.Page, glyphs: bool, font: Font, fsize: int) -> void
 	for lc: Vector2i in pg.notes:
 		var n: Dictionary = pg.notes[lc]
 		var cell := Vector2(pg.origin.x + lc.x, pg.origin.y + lc.y)
+		var back := note_back(n["color"])
 		if glyphs:
-			draw_rect(Rect2(to_px(cell), Vector2.ONE * cell_px), OUTLINE)
+			draw_rect(Rect2(to_px(cell), Vector2.ONE * cell_px), back)
 			_glyph(cell, n["symbol"], n["color"], font, fsize)
 		else:
-			draw_circle(to_px(cell + Vector2(0.5, 0.5)), maxf(2.0, cell_px * 0.4), n["color"])
+			var mid := to_px(cell + Vector2(0.5, 0.5))
+			var r := maxf(2.0, cell_px * 0.4)
+			draw_circle(mid, r + 1.5, back)
+			draw_circle(mid, r, n["color"])
+
+
+## The box behind a note's glyph: black, or light grey when the note's colour is too dark to read on black (CDDA's
+## green, blue, brown, magenta, dark grey).
+static func note_back(c: Color) -> Color:
+	var on_dark := contrast(c, Color.BLACK)
+	return NOTE_LIGHT if contrast(c, NOTE_LIGHT) > on_dark else OUTLINE
+
+
+## WCAG's contrast ratio of two colours (1 the same .. 21 black on white); alpha left out.
+static func contrast(a: Color, b: Color) -> float:
+	var la := _luminance(a)
+	var lb := _luminance(b)
+	return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
+
+
+static func _luminance(c: Color) -> float:
+	var s := Color(c.r, c.g, c.b).srgb_to_linear()
+	return 0.2126 * s.r + 0.7152 * s.g + 0.0722 * s.b
 
 
 func _draw_path() -> void:

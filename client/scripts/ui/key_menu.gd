@@ -527,6 +527,7 @@ func _show_options() -> void:
 ## Adds the Cheats page (in place of the key list while shown) and its button in the bottom bar.
 func add_cheat_page(panel: CheatPanel) -> void:
 	cheat_page = panel
+	panel.auto_pause_set.connect(_on_cheat_auto_pause)
 	cheat_scroll = ScrollContainer.new()
 	cheat_scroll.name = "CheatScroll"
 	cheat_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -656,6 +657,15 @@ func _on_real_time(on: bool) -> void:
 
 func _on_auto_pause(on: bool) -> void:
 	hud.auto_pause = on
+	_save_clock()
+
+
+## The Cheats page's auto-pause switch: the same setting as the Time row's, saved and shown there.
+func _on_cheat_auto_pause(on: bool) -> void:
+	if hud == null:
+		return
+	hud.auto_pause = on
+	show_clock()
 	_save_clock()
 
 

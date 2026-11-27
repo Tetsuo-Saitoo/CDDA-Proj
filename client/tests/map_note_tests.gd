@@ -24,6 +24,57 @@ func run(root: Node, check: Callable) -> void:
 	_test_rules()
 	_test_writes()
 	_test_dialog(root)
+	_test_look(root)
+
+
+## Seen on screen (2026-11-27): the wheel zooms by its own amount, and every note colour reads on its box.
+func _test_look(root: Node) -> void:
+	var v := MapView.new()
+	v.mouse_hook = func(_set_to: int) -> int: return Input.MOUSE_MODE_VISIBLE
+	root.add_child(v)
+	v.visible = true
+	var c := v.canvas
+	c.size = Vector2(400, 300)
+	var steps := []
+	for f: float in [1.0, 3.0, 0.25, 0.0, -2.0, NAN]:
+		var b := InputEventMouseButton.new()
+		b.button_index = MOUSE_BUTTON_WHEEL_UP
+		b.factor = f
+		steps.append(MapView.wheel_steps(b))
+	var down := InputEventMouseButton.new()
+	down.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	down.factor = 2.0
+	var amounts: bool = steps == [1.0, 3.0, 0.25, 1.0, 1.0, 1.0] and MapView.wheel_steps(down) == -2.0
+	# through the map: a spin of three zooms three steps, a touchpad's quarter a quarter of one
+	c.cell_px = 20.0
+	var spin := InputEventMouseButton.new()
+	spin.button_index = MOUSE_BUTTON_WHEEL_UP
+	spin.pressed = true
+	spin.factor = 3.0
+	spin.global_position = c.global_position + Vector2(200, 150)
+	v._gui_input(spin)
+	var three: bool = is_equal_approx(c.cell_px, 20.0 * pow(MapCanvas.ZOOM_STEP, 3.0))
+	c.cell_px = 20.0
+	spin.factor = 0.25
+	v._gui_input(spin)
+	var quarter: bool = is_equal_approx(c.cell_px, 20.0 * pow(MapCanvas.ZOOM_STEP, 0.25))
+	c.zoom_at(Vector2(200, 150), NAN)
+	quarter = quarter and is_equal_approx(c.cell_px, 20.0 * pow(MapCanvas.ZOOM_STEP, 0.25))
+	# dark note colours get a light box, the others black; each of CDDA's 15 reads at 4.5:1 or better
+	var boxes: bool = MapCanvas.note_back(Color("#006e00")) == MapCanvas.NOTE_LIGHT \
+			and MapCanvas.note_back(Color("#0000c8")) == MapCanvas.NOTE_LIGHT \
+			and MapCanvas.note_back(Color("#ffff00")) == MapCanvas.OUTLINE \
+			and MapCanvas.note_back(Color("#ff0000")) == MapCanvas.OUTLINE \
+			and is_equal_approx(MapCanvas.contrast(Color.BLACK, Color.WHITE), 21.0)
+	var worst := 21.0
+	for e: Array in MapData.NOTE_COLORS:
+		worst = minf(worst, MapCanvas.contrast(e[2], MapCanvas.note_back(e[2])))
+	boxes = boxes and worst >= 4.5
+	_check.call(amounts and three and quarter and boxes, "map look: the wheel zooms by its own amount (a notch one "
+			+ "step, a fast spin more, a touchpad part of one, none given one); dark note colours get a light box, "
+			+ "every note colour reads at 4.5:1 or better (%s, worst %.2f)" % [[amounts, three, quarter, boxes], worst])
+	root.remove_child(v)
+	v.free()
 
 
 func _session() -> Array:
@@ -252,6 +303,15 @@ func _test_dialog(root: Node) -> void:
 	var empty_no: bool = d.said() == "Write something for the note." and sim.writes[-1].get("cmd") == "unnote"
 	v._input(_key(KEY_ESCAPE))
 	var esc: bool = not d.visible and v.visible
+	# it opens away from the cell: at the top for a cell low on the map, at the bottom for one high up
+	var away := func(at: Vector2i) -> bool:
+		c.pick(at)
+		v.handle_key(_key(KEY_N))
+		var px := c.to_px(Vector2(at) + Vector2(0.5, 0.5))
+		var ok: bool = d.visible and not d.get_rect().has_point(px) and (d.anchor_top == 0.0) == (px.y > c.size.y * 0.5)
+		v._input(_key(KEY_ESCAPE))
+		return ok
+	var docked: bool = away.call(Vector2i(-31, 6)) and away.call(Vector2i(-31, -2))
 	# a double click opens it on that cell
 	press.pressed = true
 	press.double_click = true
@@ -264,11 +324,11 @@ func _test_dialog(root: Node) -> void:
 	v.close()
 	var with_map: bool = not d.visible and not v.visible and glyphs
 	_check.call(picked and clicked and not_dragged and none and n_key and filled and kept and saved and refusal
-			and closed_ok and asks and unnoted and fresh and empty_no and esc and double and with_map,
+			and closed_ok and asks and unnoted and fresh and empty_no and esc and docked and double and with_map,
 			"map note dialog: a click picks a cell, a drag doesn't; N fills in the cell's note, M and Esc are the "
 			+ "dialog's while it is open, Save sends plain text, a refusal shows CDDA's sentence, done closes it; D "
-			+ "asks first, says when there is no note; a double click opens it (%s)" % [[picked, clicked, not_dragged,
-			none, n_key, filled, kept, saved, refusal, closed_ok, asks, unnoted, fresh, empty_no, esc, double,
-			with_map]])
+			+ "asks first, says when there is no note; it opens away from the cell; a double click opens it (%s)"
+			% [[picked, clicked, not_dragged, none, n_key, filled, kept, saved, refusal, closed_ok, asks, unnoted, fresh,
+			empty_no, esc, docked, double, with_map]])
 	root.remove_child(v)
 	v.free()

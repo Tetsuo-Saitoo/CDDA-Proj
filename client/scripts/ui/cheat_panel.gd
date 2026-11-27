@@ -18,6 +18,10 @@ const PICKED := Color(1.0, 0.8, 0.35)
 const WINDS := [["Wind as the game decides", -1.0], ["Calm", 0.0], ["Breeze", 5.0], ["Strong wind", 15.0]]
 const WEATHER_GAME := "Weather as the game decides"
 
+## Its auto-pause switch reached the game: the F1 menu keeps it as the Time setting (HudSettings.auto_pause, saved),
+## so the next game start or setting change doesn't put the old one back.
+signal auto_pause_set(on: bool)
+
 var backend: Object
 var toggles := {}   # cheat name -> CheckButton
 var kit_button: Button
@@ -182,7 +186,9 @@ func _on_toggled(on: bool, key: String) -> void:
 		refresh()
 	elif key == "unstoppable" and on:
 		_say("Unstoppable on: applies at the next turn. " + unstoppable_note(), false)
-	elif key != CheatModel.AUTO_PAUSE:
+	elif key == CheatModel.AUTO_PAUSE:
+		auto_pause_set.emit(on)
+	else:
 		_say("%s %s: applies at the next turn." % [CheatModel.LABELS[key], "on" if on else "off"], false)
 
 
