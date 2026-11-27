@@ -220,8 +220,11 @@ func _test_dialog(root: Node) -> void:
 	press.global_position = c.global_position + c.to_px(Vector2(-23.5, 5.5))
 	v._gui_input(press)
 	var double: bool = d.visible and d.cell == Vector3i(-24, 5, 0)
+	d._pick_symbol("Z")   # a note's own glyph is offered while it is open, then dropped
+	d._pick_symbol("N")
+	var glyphs: bool = d._symbol.item_count == MapData.NOTE_SYMBOLS.length()
 	v.close()
-	var with_map: bool = not d.visible and not v.visible
+	var with_map: bool = not d.visible and not v.visible and glyphs
 	_check.call(picked and clicked and not_dragged and none and n_key and filled and kept and saved and refusal
 			and closed_ok and asks and unnoted and fresh and empty_no and esc and double and with_map,
 			"map note dialog: a click picks a cell, a drag doesn't; N fills in the cell's note, M and Esc are the "

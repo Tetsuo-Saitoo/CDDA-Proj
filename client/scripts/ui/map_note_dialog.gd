@@ -179,6 +179,8 @@ func _on_done(tag: int, ok: bool, text: String) -> void:
 
 
 func _pick_symbol(s: String) -> void:
+	while _symbol.item_count > MapData.NOTE_SYMBOLS.length():   # the last note's own glyph goes
+		_symbol.remove_item(_symbol.item_count - 1)
 	if not MapData.ok_symbol(s):
 		s = "N"
 	for i in _symbol.item_count:
