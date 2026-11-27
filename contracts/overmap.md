@@ -1,10 +1,11 @@
 # The map (G5)
 
 CDDA's map screen is a curses loop the client can't answer, so the client draws its own map and asks the sim what
-the player knows of the overmap. Slice 1 is the read on this page. Notes, routes and travel (`queue_overmap`,
-the `map_result` event) are planned in `docs/MAP.md` and not built.
+the player knows of the overmap. Slice 1 is the read on this page, slice 2 the notes (`queue_overmap` with
+`note` and `unnote`, the `map_result` event). Routes and travel (`route`, `travel`) are planned in `docs/MAP.md`
+and not built.
 
-Status (2026-11-26): the read is built and frozen as written here.
+Status (2026-11-26): the read and the notes are built and frozen as written here.
 
 ## The read
 
@@ -71,3 +72,51 @@ part of this read.
 
 `{"id": 9, "ok": false, "kind": "overmap", "error": "..."}` with `error` `internal` or `too large`, as for the
 other queries.
+
+## Notes
+
+`CddaSim.queue_overmap(d)` → `bool`: adds, changes or deletes the note on one cell, as CDDA's map screen does.
+`false`, and nothing is queued, when it is refused (below).
+
+| Key | Type | |
+|---|---|---|
+| `cmd` | String, required | `"note"`: add a note, or change the one there. `"unnote"`: delete the note there. (`route` and `travel` are slice 3: refused for now.) |
+| `omt` | Array, required | `[x, y, z]`, three ints: the cell in absolute overmap terrains; `x` and `y` within ±16777216, `z` −10..10. |
+| `text` | String, `note` only | The note's new text. Without it the note keeps its text (to change only its danger mark); a cell with no note needs one. At most 8192 bytes as UTF-8 when sent. |
+| `danger` | bool, `note` only | `true`: mark the note dangerous with `radius`; `false`: clear the mark. Without it the mark stays as it is (a new note has none). |
+| `radius` | int, `note` with `danger: true` only | 0..20 cells, CDDA's own range ("Danger radius in overmap squares? (0-20)"). Default 0. |
+| `tag` | int, optional | ≥ 1, at most 2147483647: the client's number for the command, answered by a `map_result` event. Without it nothing tells how it went. |
+
+Refused (`false`): a missing `cmd` or `omt`, a key of the wrong type, a cell out of range, `text`, `danger` or
+`radius` with `unnote`, `radius` without `danger: true` or outside 0..20, text over 8192 bytes or not whole UTF-8,
+a tag out of range, 16 commands waiting already, no game running.
+
+**When it runs:** at the main loop's next request, also while paused (the map may be open on a paused game), one
+command an answer, in the order queued. It takes no game time. During an activity it waits for the activity to
+end.
+
+**The text** is cleaned before it is kept: control characters (C0, DEL, C1, so line breaks and tabs too) are
+removed, then CDDA's colour tags, then it is cut to 450 columns (CDDA's own note box) and at most 4 bytes a
+column, never inside a character. CDDA's own prefix stays: `G:` picks the symbol, `C;` the colour (`!:R;bandits`:
+a red `!`); the read parses it as CDDA's map does. Text that is empty once cleaned is refused when it runs.
+
+**It never creates ground.** A cell whose overmap doesn't exist yet (ground nobody has been near; the read shows
+it unseen) is refused, for `note` and `unnote` alike, and no overmap is made. Notes are allowed on cells the player
+hasn't seen, as on CDDA's map.
+
+CDDA asks "Really delete note?" before deleting one; the client asks its own question before it sends `unnote`.
+
+### `map_result`
+
+A tagged command answers with one event (`events.md`): `kind` `map_result`, `detail` the tag, `pos` the cell
+(`[x, y, z]` in overmap terrains, not squares), `amount` 1 done or 0 refused, `text` the sentence why ("" when
+done). The sentences:
+
+| `text` | |
+|---|---|
+| `Nothing is known of that place yet.` | The cell's overmap doesn't exist yet. |
+| `There is no note there.` | `unnote` on a cell without a note. |
+| `The note has no text.` | `note` with text that is empty once cleaned, or without text on a cell that has no note. |
+| `That can't be done.` | The command failed the fork's second check (should not happen). |
+
+The note's new look comes with the next read of its page; read it again after a `map_result` that is done.
