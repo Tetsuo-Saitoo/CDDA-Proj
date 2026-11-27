@@ -8,10 +8,45 @@ extends RefCounted
 var _check: Callable
 
 
-## lead-ui's MapData as far as VrMap uses it: open / close counted, a name for every cell on level 0.
+## lead-ui's MapData as far as VrMap uses it: open / close counted, a name for every cell on level 0, notes kept
+## (set_note / delete_note recorded; `refuse` answers false).
 class Data extends RefCounted:
+	signal note_done(tag: int, ok: bool, text: String)
+	const NOTE_SYMBOLS := "N!X+*#@"   # not all of VrMapNote.PICKS ($ and ? missing); @ isn't one
+	const NOTE_COLORS := [["Y", "yellow", Color(1, 1, 0)], ["R", "red", Color(1, 0, 0)], ["Q"],
+			["G", "green", Color(0, 1, 0)]]   # ["Q"]: a bad row, dropped
+	const MAX_DANGER_RADIUS := 20
 	var opens := 0
 	var closes := 0
+	var notes := {}          # Vector2i -> {text, symbol, color (a Color), danger, radius}
+	var sets: Array = []
+	var deletes: Array = []
+	var refuse := false      # set_note / delete_note answer 0
+	var busy := false        # writing()
+	var tag := 0
+
+	func set_note(c: Vector3i, text: String, symbol := "N", color := "Y", danger := false, radius := 0) -> int:
+		sets.append([c, text, symbol, color, danger, radius])
+		return _tag()
+
+	func delete_note(c: Vector3i) -> int:
+		deletes.append(c)
+		return _tag()
+
+	func writing() -> bool:
+		return busy
+
+	func note_color_code(c: Color) -> String:
+		for row: Array in NOTE_COLORS:
+			if row.size() == 3 and row[2] == c:
+				return row[0]
+		return "Y"
+
+	func _tag() -> int:
+		if refuse:
+			return 0
+		tag += 1
+		return tag
 
 	func open() -> void:
 		opens += 1
@@ -20,7 +55,12 @@ class Data extends RefCounted:
 		closes += 1
 
 	func info(c: Vector2i, z: int) -> Dictionary:
-		return {"name": "field %d,%d" % [c.x, c.y]} if z == 0 else {}
+		if z != 0:
+			return {}
+		var r := {"name": "field %d,%d" % [c.x, c.y]}
+		if notes.has(c):
+			r["note"] = notes[c]
+		return r
 
 
 ## lead-ui's MapCanvas as far as VrMap uses it: cells CELL px square, `offset` the px the map was moved.
@@ -67,6 +107,7 @@ func run(root: Node, check: Callable) -> void:
 	_test_sticks(root)
 	_test_rig(root)
 	_test_real(root)
+	_test_notes(root)
 
 
 static func _m(px: float) -> float:   # canvas px to metres on the sheet
@@ -133,10 +174,10 @@ func _test_sheet(root: Node) -> void:
 	m.release()
 	var centre: bool = hover == 0 and cv.pans.size() == n + 1 \
 			and cv.pans[n].is_equal_approx(Vector2(VrMap.PX) * 0.5 - VrMap.to_px(Vector3(0.05, 0.05, 0.0)))
-	m.point(Vector3(0.0, 0.0, 0.0))   # "Close map" (down) puts it away
+	m.point(Vector3(0.0, 0.0, 0.0))   # "Close map" puts it away
 	m.press()
 	m.release()
-	m.point(Vector3(0.0, -VrMap.WHEEL_R_M, 0.0))
+	m.point(_item(m, "close"))
 	m.press()
 	m.release()
 	var closed: bool = not m.is_open() and m.canvas == null and not m.visible and cv.data.opens == 1 \
@@ -248,7 +289,10 @@ func _test_rig(root: Node) -> void:
 	rig.press(rig.left, "trigger_click")   # the off hand's trigger: nothing on the map
 	var off_trigger: bool = rig.buzzes[0] == b1 + 1 and rig.map.is_open()
 	rig.press(rig.left, "primary_click")   # the off hand's stick click: back to the player
-	var home: bool = rig.map.is_open() and made[0].centred == 1
+	var b2: int = rig.buzzes[1]
+	rig.map.said.emit(VrMap.NOT_SENT)   # the map's notes: flashed, a buzz in the pointing hand
+	var home: bool = rig.map.is_open() and made[0].centred == 1 and rig.busy.get("_flash") == VrMap.NOT_SENT \
+			and rig.buzzes[1] == b2 + 1
 	var at := rig.global_position
 	var yaw := rig.global_basis
 	rig.step(0.5, {"move": Vector2(0.0, 1.0), "turn": Vector2.ZERO})
@@ -314,3 +358,134 @@ func _test_real(root: Node) -> void:
 	_check.call(opened and click and drag and zoom and closed,
 			"vr map on the real canvas: MapData has a user while out; a click opens the wheel on the cell under the ray; a drag of 3 cells keeps that spot under it; a zoom keeps the pointed cell (%s)"
 			% [[opened, click, drag, zoom, closed]])
+
+
+## Where wheel item `value` is (sheet frame); far off when it isn't on the wheel.
+static func _item(m: VrMap, value: String) -> Vector3:
+	for k in m.items.size():
+		if m.items[k]["value"] == value:
+			return (m.get("_labels")[k] as Label3D).position * Vector3(1.0, 1.0, 0.0)
+	return Vector3(9.0, 9.0, 0.0)
+
+
+## Where note panel button `id` is (sheet frame).
+static func _button(m: VrMap, id: String) -> Vector3:
+	for b: Dictionary in m.note.get("_buttons"):
+		if b["id"] == id:
+			var c := (b["rect"] as Rect2).get_center()
+			return Vector3(c.x, c.y, 0.0)
+	return Vector3(9.0, 9.0, 0.0)
+
+
+static func _click(m: VrMap, p: Vector3) -> void:
+	m.point(p)
+	m.press()
+	m.release()
+
+
+## Slice 2: the wheel adds a note, or edits and deletes one (asked again first). The panel offers MapData's symbols
+## and colours (a bad row dropped), steps them, toggles danger and steps its radius, picks up to 3 words (picked
+## again: out); editing keeps the old text, symbol and colour unless changed, and an odd old symbol isn't offered
+## for the next note. Save with no text, with another write out or refused here says so; CDDA's refusal of this
+## sheet's write says its sentence (others' answers, and one already given, nothing). The panel takes the ray (no
+## drag, no zoom); "Type" only with lead-ui's dialog given, handing the cell to it.
+func _test_notes(root: Node) -> void:
+	var m := VrMap.new()
+	root.add_child(m)
+	var cv := Canvas.new()
+	var d := cv.data
+	m.open(0, cv)
+	var said := []
+	m.said.connect(func(t: String) -> void: said.append(t))
+	var at := Vector3(-0.08, -0.08, 0.0)
+	var cell := cv.cell_at(VrMap.to_px(at))
+	var c3 := Vector3i(cell.x, cell.y, 0)
+	_click(m, at)
+	var plain: bool = m.items.map(func(i: Dictionary) -> String: return i["value"]) == ["centre", "note", "close"]
+	_click(m, _item(m, "note"))
+	var panel: bool = m.note.is_open() and m.note.cell == cell and m.wheel_at == Vector2.INF \
+			and not (m.note.get("_title") as Label3D).text.is_empty() and m.note._button_at(_button(m, "keyboard")) == ""
+	var lists: bool = "".join(PackedStringArray(m.note.symbols)) == "N!X+*#" and m.note.colors.size() == 3 \
+			and m.note.colors[2] == "G" and m.note.max_radius == 20
+	_click(m, _button(m, "save"))   # no words, no old text
+	var no_text: bool = d.sets.is_empty() and m.note.is_open() and said == [VrMap.NO_TEXT]
+	for w in ["Zombies", "Horde", "Loot", "Food"]:   # the fourth is one too many
+		_click(m, _button(m, "w:" + w))
+	var three: bool = m.note.text() == "Zombies Horde Loot"
+	_click(m, _button(m, "w:Horde"))
+	_click(m, _button(m, "sym+"))
+	_click(m, _button(m, "col+"))
+	_click(m, _button(m, "danger"))
+	_click(m, _button(m, "rad+"))
+	_click(m, _button(m, "rad+"))
+	m.point(Vector3(0.0, 0.0, 0.0))   # a press moved far on the panel: no drag
+	m.press()
+	m.point(Vector3(0.1, 0.0, 0.0))
+	m.release()
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	var held: bool = cv.pans.is_empty() and cv.zooms.is_empty() and not m.dragging
+	d.busy = true   # another write still out: said, and the panel stays to save again
+	_click(m, _button(m, "save"))
+	var busy: bool = d.sets.is_empty() and m.note.is_open() and said.size() == 2 and said[1] == VrMap.BUSY
+	d.busy = false
+	_click(m, _button(m, "save"))
+	var sent: bool = d.sets == [[c3, "Zombies Loot", "!", "R", true, 2]] and not m.note.is_open()
+	d.notes[cell] = {"text": "Old words", "symbol": "$", "color": Color(0, 1, 0), "danger": true, "radius": 3}
+	_click(m, at)
+	var both: bool = m.items.map(func(i: Dictionary) -> String: return i["value"]) == ["centre", "note", "unnote", "close"] \
+			and (m.get("_labels")[1] as Label3D).text == "Edit note"
+	_click(m, _item(m, "note"))
+	var edit: bool = m.note.symbols[m.note.symbol] == "$" and m.note.colors[m.note.color] == "G" and m.note.danger \
+			and m.note.radius == 3 and m.note.text() == "Old words" and d.notes[cell]["color"] is Color
+	_click(m, _button(m, "save"))
+	var kept: bool = d.sets.size() == 2 and d.sets[1] == [c3, "Old words", "$", "G", true, 3]
+	_click(m, Vector3(0.08, 0.08, 0.0))   # another cell's new note: the defaults, no "$"
+	_click(m, _item(m, "note"))
+	var fresh: bool = m.note.symbols[m.note.symbol] == "N" and not m.note.symbols.has("$") \
+			and m.note.colors[m.note.color] == "Y"
+	_click(m, _button(m, "cancel"))
+	fresh = fresh and not m.note.is_open() and d.sets.size() == 2
+	_click(m, at)
+	_click(m, _item(m, "unnote"))
+	var asked: bool = m.items.size() == 2 and d.deletes.is_empty()
+	_click(m, _item(m, "keep"))
+	var keep: bool = d.deletes.is_empty() and m.wheel_at == Vector2.INF
+	_click(m, at)
+	_click(m, _item(m, "unnote"))
+	_click(m, _item(m, "unnote!"))
+	var deleted: bool = d.deletes == [c3] and said.size() == 2
+	d.note_done.emit(1, true, "")                                    # the first save went in: nothing
+	d.note_done.emit(d.tag, false, "  That note can't go there.  ")   # CDDA refused the delete
+	d.note_done.emit(d.tag, false, "again")                           # answered already: nothing
+	d.note_done.emit(99, false, "not ours")                          # another view's write: nothing
+	var cdda: bool = said.size() == 3 and said[2] == "That note can't go there."
+	_click(m, at)   # with the wheel up the free stick steps nothing, and a delete stays on the wheel's level
+	_click(m, _item(m, "unnote"))
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.9, 0.0), 0.016)
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	var steps: bool = cv.levels.is_empty() and cv.zooms.is_empty() and m.pointing and m.wheel_at != Vector2.INF
+	cv.level = 1   # (the level changed some other way meanwhile)
+	_click(m, _item(m, "unnote!"))
+	cv.level = 0
+	var wheel_level: bool = steps and d.deletes.size() == 2 and d.deletes[1] == c3 and said.size() == 3
+	d.refuse = true
+	_click(m, at)
+	_click(m, _item(m, "unnote"))
+	_click(m, _item(m, "unnote!"))
+	var refused: bool = said.size() == 4 and said[3] == VrMap.NOT_SENT
+	d.refuse = false
+	var dialog: Array = []
+	m.open_note_dialog = func(c: Vector3i) -> void: dialog.append(c)
+	_click(m, at)
+	_click(m, _item(m, "note"))
+	_click(m, _button(m, "keyboard"))
+	var keyboard: bool = dialog == [c3] and not m.note.is_open()
+	m.free()
+	var all := [plain, panel, lists, no_text, three, held, busy, sent, both, edit, kept, fresh, asked, keep, deleted, cdda,
+			wheel_level, refused, keyboard]
+	_check.call(not all.has(false),
+			"vr map notes: the wheel adds, edits or deletes (asked again) a note; MapData's lists; symbol, colour, danger and radius step; 3 words at most; editing keeps the old note; no text, busy or a refusal says so; no level or zoom step with the wheel up, its picks on its own level; the panel takes the ray; Type only with the dialog given (%s)"
+			% [all])

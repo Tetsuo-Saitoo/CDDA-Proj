@@ -15,12 +15,15 @@ extends Node3D
 ## - The off hand's stick pans (VrRig holds walking back meanwhile), its click comes back to the player. The free
 ##   hand's stick, while its ray is on the sheet, zooms on the pointed cell (up / down) and changes the level
 ##   (left / right), one step a push; snap turn is held back only then.
-## - Only the map on the sheet moves: never the player's view or body. Read only: nothing here goes to the game.
+## - Only the map on the sheet moves: never the player's view or body.
+## - Slice 2 (notes): the wheel on a cell adds a note, or edits one and deletes it (asked again first). The note panel
+##   (VrMapNote) takes the ray while it is up. Writes go only through MapData (set_note / delete_note, one at a time);
+##   CDDA decides, and a refusal (note_done) is flashed with its own sentence (`said`).
 ## The canvas is lead-ui's MapCanvas, used duck-typed (cell_at, pan_px, zoom_at, change_level, center_on_player,
-## `level`, and its `data` MapData: open / close while the sheet is out, info(cell, level).name): a missing method
-## does nothing, so a stand-in works until lead-ui's lands.
+## `level`, and its `data` MapData: open / close while the sheet is out, info(cell, level), the note calls and lists):
+## a missing method does nothing, so a stand-in works until lead-ui's lands.
 
-signal chosen(value: Variant, cell: Vector2i)   # a wheel item the map doesn't handle itself (later slices)
+signal said(text: String)   # a note for the player: CDDA's refusal of a note, or why it wasn't sent (VrRig flashes it)
 
 const SHEET_M := Vector2(0.3, 0.3)    # the canvas on the sheet, about a folded paper map
 const PX := Vector2i(768, 768)        # the canvas's logical pixels (its SubViewport)
@@ -39,10 +42,16 @@ const MAX_NAME := 60
 const CELL_PX := 24.0                 # the canvas's cell size to start with (its cell_px; the flat view's is 20)
 const INK := Color(1.0, 0.95, 0.8)    # the marker and the labels
 const PRIORITY := 2                   # the marker and the wheel over the canvas
-## Slice 1 (read only): the wheel's items. Later slices add notes and "Go" (their values come out as `chosen`).
-const ITEMS: Array[Dictionary] = [{"text": "Centre here", "value": "centre"}, {"text": "Close map", "value": "close"}]
+const MAX_ITEMS := 4                  # wheel items at most (labels made)
+const NO_TEXT := "Pick a word for the note first."
+const NOT_SENT := "The note couldn't be sent."
+const BUSY := "Another note is still on its way."
+const MAX_TAGS := 16                  # writes waited on at most (MapData sends one at a time)
 
 var make_canvas := Callable()   # () -> Control: a new canvas on main's MapData (main.gd gives it)
+var open_note_dialog := Callable()   # (cell: Vector3i): lead-ui's note dialog on the VR panel, its keys (main.gd)
+var note := VrMapNote.new()    # slice 2: the note panel over the sheet
+var items: Array[Dictionary] = []   # the open wheel's items: {text, value}
 ## The sheet in the off hand's frame: a little ahead of and over the hand, tilted back to face the eyes.
 var hold := Transform3D(Basis(Vector3.RIGHT, deg_to_rad(-50.0)), Vector3(0.0, 0.07, -0.14))
 var hand := -1                  # the off hand holding it (0 left, 1 right); -1: put away
@@ -53,6 +62,7 @@ var dragging := false
 var marker := 1.0               # the scroll marker's opacity
 var wheel_at := Vector2.INF     # the open wheel's middle on the sheet (m, sheet frame); INF: none
 var wheel_cell := Vector2i.MAX
+var wheel_z := 0                # the level the wheel was opened on (its picks act there)
 var hover := -1                 # the wheel item pointed at, -1 none
 var named := Vector2i.MAX       # the cell whose name shows, MAX none
 var _p: Variant = null          # where the ray meets the sheet's plane (sheet frame), or null
@@ -61,6 +71,7 @@ var _last_px := Vector2.ZERO
 var _dragged := false           # dragged since this opening: the marker fades
 var _stick_armed := true
 var _data: Object = null        # the MapData this sheet opened (its reads go on while a view is open)
+var _tags := {}                 # MapData's tags of this sheet's note writes still out: a refusal is said
 var _mat: StandardMaterial3D
 var _ink: StandardMaterial3D
 var _name: Label3D
@@ -102,11 +113,11 @@ func _init() -> void:
 	_wheel.name = "Wheel"
 	_wheel.visible = false
 	add_child(_wheel)
-	for it in ITEMS:
+	for k in MAX_ITEMS:
 		var l := _label("Item", 0.0005)
-		l.text = it["text"]
 		_wheel.add_child(l)
 		_labels.append(l)
+	add_child(note)
 
 
 func _ready() -> void:
@@ -138,6 +149,10 @@ func open(off: int, c: Control) -> bool:
 	if d is Object and (d as Object).has_method("open") and (d as Object).has_method("close"):
 		_data = d
 		_data.call("open")
+		if _data.has_signal("note_done") and not _data.is_connected("note_done", _on_note_done):
+			_data.connect("note_done", _on_note_done)   # kept: an answer after the sheet closed is still said
+		note.set_lists(_const("NOTE_SYMBOLS", ""), _const("NOTE_COLORS", []),
+				_const("MAX_DANGER_RADIUS", VrMapNote.MAX_RADIUS))
 	_call("refresh", [])   # (lead-ui: after MapData.open, the canvas asks for its pages)
 	hand = off
 	marker = 1.0
@@ -169,6 +184,7 @@ func close() -> void:
 	named = Vector2i.MAX
 	_name.text = ""
 	_close_wheel()
+	note.close()
 
 
 ## Per frame: the sheet in the off hand at pose `off_xf` (world).
@@ -184,6 +200,9 @@ func point(p: Variant) -> void:
 		return
 	_p = p if p is Vector3 and (p as Vector3).is_finite() else null
 	pointing = covers(_p)
+	if note.is_open():   # the note panel takes the ray: no drag, no wheel
+		note.hover_at(_p)
+		return
 	if _press != null and _p != null:
 		var moved := Vector2((_p as Vector3).x - (_press as Vector3).x, (_p as Vector3).y - (_press as Vector3).y)
 		if not dragging and moved.length() > CLICK_M and wheel_at == Vector2.INF:
@@ -217,13 +236,17 @@ func release() -> bool:
 	dragging = false
 	if was:
 		return true
+	if note.is_open():
+		_note_click(note.click(Vector3(at.x, at.y, 0.0)))
+		return true
 	if wheel_at != Vector2.INF:
-		var k := hover
+		var v: Variant = items[hover]["value"] if hover >= 0 and hover < items.size() else null
 		var mid := wheel_at
 		var on := wheel_cell
-		_close_wheel()
-		if k >= 0:
-			_choose(ITEMS[k]["value"], mid, on)
+		var z := wheel_z
+		_close_wheel()   # (empties items)
+		if v != null:
+			_choose(v, mid, on, z)
 		return true
 	var c := _cell_at(at)
 	if c != Vector2i.MAX:
@@ -238,8 +261,11 @@ func sticks(off: Vector2, free: Vector2, delta: float) -> void:
 		return
 	var o := _dead(off)
 	if o != Vector2.ZERO and not dragging:
+		_close_wheel()   # the map moves away from the wheel's spot
 		_call("pan_px", [Vector2(-o.x, o.y) * PAN_PX_S * delta])
-	var l := free.length() if pointing and free.is_finite() else 0.0
+	# No zoom or level step with the wheel or the note panel up: their cell stays the one picked.
+	var l := free.length() if pointing and free.is_finite() and not note.is_open() and wheel_at == Vector2.INF \
+			else 0.0
 	if l < STEP_OFF:
 		_stick_armed = true
 	elif _stick_armed and l > STEP_ON:
@@ -252,6 +278,7 @@ func sticks(off: Vector2, free: Vector2, delta: float) -> void:
 
 ## The off hand's stick click: back to the player's cell and level.
 func centre() -> void:
+	_close_wheel()
 	_call("center_on_player", [])
 
 
@@ -287,13 +314,107 @@ static func to_px(p: Variant) -> Vector2:
 	return Vector2((v.x / SHEET_M.x + 0.5) * PX.x, (0.5 - v.y / SHEET_M.y) * PX.y)
 
 
-func _choose(v: Variant, mid: Vector2, c: Vector2i) -> void:
+## Wheel item `v` picked, the wheel having been at `mid` for cell `c` on level `z`.
+func _choose(v: Variant, mid: Vector2, c: Vector2i, z: int) -> void:
 	if v == "centre":   # that spot to the sheet's middle
 		_call("pan_px", [Vector2(PX) * 0.5 - to_px(mid)])
 	elif v == "close":
 		close()
+	elif v == "note":   # slice 2: the note panel for that cell (its note, if any, to edit; its colour as a code)
+		var n := _note_of(c, z).duplicate()
+		if n.has("color"):
+			var code: Variant = _data_call("note_color_code", [n["color"]]) if n["color"] is Color else n["color"]
+			n["color"] = code if code is String else ""
+		note.open(c, z, _name_of(c), n, open_note_dialog.is_valid())
+	elif v == "unnote":   # asked again first: deleting can't be undone
+		_open_wheel(mid, c, [{"text": "Delete it", "value": "unnote!"}, {"text": "Keep it", "value": "keep"}])
+	elif v == "unnote!":
+		_send("delete_note", [Vector3i(c.x, c.y, z)])
+
+
+## The note panel's answer: save sends the note through MapData (CDDA decides; a refusal comes as `said`), cancel
+## closes it, keyboard hands the cell to lead-ui's flat dialog.
+func _note_click(what: String) -> void:
+	if what == "save":
+		var r := note.result()
+		if (r["text"] as String).strip_edges().is_empty():
+			said.emit(NO_TEXT)
+			return
+		if _data_call("writing", []) == true:   # the panel stays, to save again
+			said.emit(BUSY)
+			return
+		note.close()
+		var c: Vector2i = r["cell"]
+		_send("set_note", [Vector3i(c.x, c.y, r["z"]), r["text"], r["symbol"], r["color"], r["danger"], r["radius"]])
+	elif what == "cancel":
+		note.close()
+	elif what == "keyboard":
+		var at := Vector3i(note.cell.x, note.cell.y, note.z)
+		note.close()
+		open_note_dialog.call(at)
+
+
+## The wheel's items for cell `c`: its note added, or edited and deleted.
+func _items_for(c: Vector2i) -> Array[Dictionary]:
+	var out: Array[Dictionary] = [{"text": "Centre here", "value": "centre"}]
+	if _note_of(c, wheel_z).is_empty():
+		out.append({"text": "Add note", "value": "note"})
 	else:
-		chosen.emit(v, c)
+		out.append({"text": "Edit note", "value": "note"})
+		out.append({"text": "Delete note", "value": "unnote"})
+	out.append({"text": "Close map", "value": "close"})
+	return out
+
+
+## A note write through MapData (`m`: set_note / delete_note): its tag is waited on; 0 (refused here) says so.
+func _send(m: String, args: Array) -> void:
+	if _data_call("writing", []) == true:
+		said.emit(BUSY)
+		return
+	var t: Variant = _data_call(m, args)
+	if not t is int or t == 0:
+		said.emit(NOT_SENT)
+		return
+	if _tags.size() >= MAX_TAGS:   # answers that never came: not waited on for good
+		_tags = {}
+	_tags[t] = true
+
+
+## MapData's answer to a write (note_done): one of this sheet's refused says CDDA's sentence (else NOT_SENT).
+func _on_note_done(tag: Variant, ok: Variant, text: Variant) -> void:
+	if not _tags.has(tag):
+		return
+	_tags.erase(tag)
+	if ok != true:
+		var t := (text as String).strip_edges() if text is String else ""
+		said.emit(t if not t.is_empty() else NOT_SENT)
+
+
+## MapData's script constant `k`, else `fallback` (missing, or of another type).
+func _const(k: String, fallback: Variant) -> Variant:
+	var s: Variant = _data.get_script() if _data != null else null
+	var v: Variant = (s as Script).get_script_constant_map().get(k) if s is Script else null
+	return v if typeof(v) == typeof(fallback) else fallback
+
+
+func _level() -> int:
+	var lv: Variant = canvas.get("level") if is_instance_valid(canvas) else null
+	return lv if lv is int else 0
+
+
+## Calls MapData's `m` (the canvas's data); null when there is none or it has no such call.
+func _data_call(m: String, args: Array) -> Variant:
+	var d: Variant = canvas.get("data") if is_instance_valid(canvas) else null
+	if d is Object and (d as Object).has_method(m):
+		return (d as Object).callv(m, args)
+	return null
+
+
+## Cell `c`'s note on the shown level (MapData.info's "note": {text, symbol, color, danger, radius}), {} none.
+func _note_of(c: Vector2i, z: int) -> Dictionary:
+	var r: Variant = _data_call("info", [c, z])
+	var n: Variant = (r as Dictionary).get("note") if r is Dictionary else null
+	return n if n is Dictionary else {}
 
 
 func _call(m: String, args: Array) -> Variant:
@@ -328,17 +449,25 @@ func _wheel_item(p: Variant) -> int:
 	var l := d.length()
 	if l < WHEEL_IN_M or l > WHEEL_OUT_M:
 		return -1
-	var n := ITEMS.size()
+	var n := items.size()
+	if n == 0:
+		return -1
 	return int(fposmod(atan2(d.x, d.y) + PI / n, TAU) / (TAU / n)) % n
 
 
-func _open_wheel(at: Vector2, c: Vector2i) -> void:
+## The wheel at `at` (sheet frame) for cell `c`: `list` ({text, value}), else the cell's own items.
+func _open_wheel(at: Vector2, c: Vector2i, list: Array[Dictionary] = []) -> void:
 	wheel_at = at
 	wheel_cell = c
-	var n := _labels.size()
-	for k in n:
-		var a := TAU * k / n   # the first item up, then clockwise
+	wheel_z = _level()
+	items = list if not list.is_empty() else _items_for(c)
+	items = items.slice(0, MAX_ITEMS)
+	var n := items.size()
+	for k in _labels.size():
+		var a := TAU * k / maxi(n, 1)   # the first item up, then clockwise
 		_labels[k].position = Vector3(at.x + sin(a) * WHEEL_R_M, at.y + cos(a) * WHEEL_R_M, 0.002)
+		_labels[k].visible = k < n
+		_labels[k].text = items[k]["text"] if k < n else ""
 	_wheel.visible = true
 
 
@@ -346,6 +475,7 @@ func _close_wheel() -> void:
 	wheel_at = Vector2.INF
 	wheel_cell = Vector2i.MAX
 	hover = -1
+	items = []
 	if _wheel != null:
 		_wheel.visible = false
 
