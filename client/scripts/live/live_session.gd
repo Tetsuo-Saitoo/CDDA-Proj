@@ -683,16 +683,20 @@ func has_overmap() -> bool:
 	return _can("query_overmap")
 
 
-## Map slice 2 (docs/MAP.md): writes or replaces CDDA's note on `cell` (absolute OMT): `text` as MapData.clean_note
-## leaves it, `symbol` and `color` as MapData checks them, the danger mark and its radius (0 when not dangerous).
-## CDDA answers with one `map_result` event carrying the tag returned; 0 when refused before it was queued.
+## Map slice 2 (docs/MAP.md, contracts/overmap.md "Notes"): writes or replaces CDDA's note on `cell` (absolute OMT):
+## `text` as MapData.clean_note leaves it, sent behind CDDA's prefix for `symbol` and `color` (MapData.note_prefix,
+## both checked here), the danger mark and its radius (sent only with the mark). CDDA answers with one `map_result`
+## event carrying the tag returned; 0 when refused before it was queued.
 func queue_map_note(cell: Vector3i, text: String, symbol: String, color: String, danger: bool, radius: int) -> int:
 	if not MapData.ok_cell(cell) or text.is_empty() or text != MapData.clean_note(text) or not MapData.ok_symbol(symbol) \
 			or MapData.note_color_index(color) < 0 or radius < 0 or radius > MapData.MAX_DANGER_RADIUS \
 			or (radius > 0 and not danger):
 		return 0
-	return _queue_map({"cmd": "note", "omt": [cell.x, cell.y, cell.z], "text": text, "sym": symbol, "color": color,
-			"danger": danger, "radius": radius})
+	var d := {"cmd": "note", "omt": [cell.x, cell.y, cell.z], "text": MapData.note_prefix(symbol, color) + text,
+			"danger": danger}
+	if danger:
+		d["radius"] = radius
+	return _queue_map(d)
 
 
 ## Deletes CDDA's note on `cell`; answered as queue_map_note is.

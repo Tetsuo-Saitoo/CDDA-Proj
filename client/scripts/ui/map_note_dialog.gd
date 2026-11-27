@@ -55,7 +55,7 @@ func _init() -> void:
 	_title = Label.new()
 	box.add_child(_title)
 	_text = LineEdit.new()
-	_text.max_length = MapData.MAX_NOTE
+	_text.max_length = MapData.MAX_NOTE_TEXT
 	_text.placeholder_text = "What is here"
 	_text.text_submitted.connect(func(_t: String) -> void: save())
 	box.add_child(_text)

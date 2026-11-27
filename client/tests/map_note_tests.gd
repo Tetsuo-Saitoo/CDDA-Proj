@@ -38,6 +38,35 @@ static func _result(tag: int, ok: bool, text := "") -> Dictionary:
 	return {"kind": "map_result", "detail": tag, "amount": 1 if ok else 0, "text": text, "type": 1}
 
 
+## CDDA's get_note_display_info (overmap_ui.cpp), ported: [symbol, colour code, text] of a stored note; "N" and "Y"
+## when the note doesn't set them.
+static func _cdda_note(note: String) -> Array:
+	var out := ["N", "Y", 0]
+	var set_symbol := false
+	var set_color := false
+	var pos := 0
+	for i in 2:
+		while pos < note.length() and note[pos] in [" ", ":", ";"]:
+			pos += 1
+		if pos >= note.length():
+			break
+		var end := pos
+		while end < note.length() and not note[end] in [" ", ":", ";"]:
+			end += 1
+		if end >= note.length():
+			break
+		if not set_symbol and note[end] == ":":
+			out[0] = note[end - 1]
+			out[2] = end + 1
+			set_symbol = true
+		elif not set_color and note[end] == ";":
+			out[1] = note.substr(pos, end - pos)
+			out[2] = end + 1
+			set_color = true
+		pos = end + 1
+	return [out[0], out[1], note.substr(out[2])]
+
+
 func _test_rules() -> void:
 	var symbols: bool = MapData.ok_symbol("N") and MapData.ok_symbol("!") and MapData.ok_symbol("~") \
 			and not MapData.ok_symbol(":") and not MapData.ok_symbol(";") and not MapData.ok_symbol(" ") \
@@ -53,8 +82,16 @@ func _test_rules() -> void:
 		colors = colors and MapData.note_color_code(MapData._color("c_" + (e[1] as String).replace(" ", "_"))) == e[0]
 	var dirty := "  <color_red>Cache</color>" + char(7) + " here:" + char(10) + "north;side" + char(0x2028) + "  "
 	var clean := MapData.clean_note(dirty)
-	var text: bool = clean == "Cache here: north;side" and MapData.clean_note("x".repeat(600)).length() == MapData.MAX_NOTE \
+	var text: bool = clean == "Cache here: north;side" \
+			and MapData.clean_note("x".repeat(600)).length() == MapData.MAX_NOTE_TEXT \
 			and MapData.clean_note(" " + char(9) + char(13)).is_empty()
+	# CDDA's prefix always goes first, so text that starts like one stays text, read back as CDDA's map reads it
+	var prefixed := true
+	for case: Array in [["R;x: loot", "N", "Y"], ["x:R;bandits", "!", "R"], [": ; :", "C", "lg"], ["B:Base", "~", "br"]]:
+		var stored: String = MapData.note_prefix(case[1], case[2]) + MapData.clean_note(case[0])
+		prefixed = prefixed and _cdda_note(stored) == [case[1], case[2], case[0]]
+	var longest: bool = (MapData.note_prefix("x", "lg") + "y".repeat(MapData.MAX_NOTE_TEXT)).length() == MapData.MAX_NOTE
+	text = text and prefixed and longest
 	_check.call(symbols and colors and text, "map notes: a symbol is one printable ASCII character but : and ;, the 15 "
 			+ "CDDA note colours and their codes, note text plain on one line and capped (%s, %s)"
 			% [[symbols, colors, text], clean])
@@ -78,7 +115,7 @@ func _test_writes() -> void:
 			and ls.queue_map_note(cell, "a", "N", "Y", false, 4) == 0 and sim.writes.is_empty()
 	var tag := md.set_note(cell, "Cache <color_red>here</color>", "C", "R", true, 3)
 	var sent: bool = tag > 0 and md.writing() and sim.writes.size() == 1 and sim.writes[0] == {"cmd": "note",
-			"omt": [3, 4, 0], "text": "Cache here", "sym": "C", "color": "R", "danger": true, "radius": 3, "tag": tag}
+			"omt": [3, 4, 0], "text": "C:R;Cache here", "danger": true, "radius": 3, "tag": tag}
 	var one_out: bool = md.set_note(cell, "b") == 0 and md.delete_note(cell) == 0 and sim.writes.size() == 1
 	md.on_events([_result(tag + 1, true), {"kind": "message", "text": "x"}, "junk"])
 	var others: bool = md.writing() and done.is_empty()
@@ -86,7 +123,8 @@ func _test_writes() -> void:
 			+ " here."}])
 	var said: bool = not md.writing() and done == [[tag, false, "No map here."]]
 	var safe := md.set_note(cell, "Quiet", "N", "Y", false, 9)   # no danger: no radius sent
-	var calm: bool = safe > 0 and sim.writes[-1]["radius"] == 0 and sim.writes[-1]["danger"] == false
+	var calm: bool = safe > 0 and not sim.writes[-1].has("radius") and sim.writes[-1]["danger"] == false \
+			and sim.writes[-1]["text"] == "N:Y;Quiet"
 	md.on_events([{"kind": "map_result", "detail": safe, "amount": 0, "text": ""}])
 	var plain_no: bool = done[-1] == [safe, false, MapData.REFUSED]
 	# done: the page holding the cell is read again
@@ -192,8 +230,8 @@ func _test_dialog(root: Node) -> void:
 	d._danger.button_pressed = false
 	d.save()
 	var w: Dictionary = sim.writes[-1] if not sim.writes.is_empty() else {}
-	var saved: bool = w.get("cmd") == "note" and w.get("text") == "Moved north" and w.get("sym") == "C" \
-			and w.get("color") == "Y" and w.get("danger") == false and w.get("radius") == 0 and d._save.disabled \
+	var saved: bool = w.get("cmd") == "note" and w.get("text") == "C:Y;Moved north" and not w.has("sym") \
+			and not w.has("color") and w.get("danger") == false and not w.has("radius") and d._save.disabled \
 			and d.said() == MapNoteDialog.WAITING
 	md.on_events([_result(w.get("tag", 0), false, "You can't note that.")])
 	var refusal: bool = d.visible and d.said() == "You can't note that." and not d._save.disabled

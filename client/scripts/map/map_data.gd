@@ -21,6 +21,9 @@ const MAX_PATH := 2048
 const MAX_NAME := 60          # a look's name, characters (the bridge's cap)
 const MAX_SYMBOL := 4         # a look's or note's symbol, characters (one glyph)
 const MAX_NOTE := 450         # CDDA's note box: columns (characters here)
+## A note's text as written here: what is left of MAX_NOTE once CDDA's prefix (note_prefix, "x:lg;" at most) is in
+## front of it.
+const MAX_NOTE_TEXT := MAX_NOTE - 5
 const MAX_RADIUS := 180       # a danger note's radius drawn, cells (the bridge sends at most 180)
 const UNSENT := Color(0.5, 0.5, 0.5)   # a seen cell whose look was left out of a full page
 const MAX_XY := 1 << 24       # |x|, |y| of a cell (absolute OMT; the bridge's bound)
@@ -296,7 +299,7 @@ func on_page(r: Dictionary) -> void:
 
 
 ## Slice 2: writes or replaces the note on `cell` (absolute OMT, z the level; an edit is a write over the old one):
-## `text` (clean_note: plain, one line, capped at MAX_NOTE; empty refused), `symbol` (ok_symbol), `color` (a
+## `text` (clean_note: plain, one line, capped at MAX_NOTE_TEXT; empty refused), `symbol` (ok_symbol), `color` (a
 ## NOTE_COLORS code), the danger mark and its radius (0..MAX_DANGER_RADIUS). CDDA checks it all again. Returns the
 ## tag note_done will carry, or 0 when refused here (not connected, a write already out, bad input).
 func set_note(cell: Vector3i, text: String, symbol := "N", color := "Y", danger := false, radius := 0) -> int:
@@ -360,11 +363,17 @@ func _finish_write(ok: bool, said: String) -> void:
 
 
 ## A note's text as sent: plain (colour tags and control characters out; line breaks and tabs are spaces), on one
-## line, capped at MAX_NOTE, trimmed.
+## line, capped at MAX_NOTE_TEXT, trimmed.
 static func clean_note(text: String) -> String:
 	for brk: String in [char(13) + char(10), char(10), char(13), char(9)]:
 		text = text.replace(brk, " ")
-	return _text(text, MAX_NOTE).strip_edges()
+	return _text(text, MAX_NOTE_TEXT).strip_edges()
+
+
+## CDDA's own prefix for a note's symbol and colour ("!:R;", get_note_display_info reads it back). It always goes in
+## front of the text sent, so a text that itself starts like one ("R;", "x:") stays text.
+static func note_prefix(symbol: String, color: String) -> String:
+	return "%s:%s;" % [symbol, color]
 
 
 ## A note symbol CDDA reads back as written: one printable ASCII character, not ':' or ';'.
