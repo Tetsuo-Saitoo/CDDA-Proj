@@ -460,6 +460,17 @@ func _test_notes(root: Node) -> void:
 	d.note_done.emit(d.tag, false, "again")                           # answered already: nothing
 	d.note_done.emit(99, false, "not ours")                          # another view's write: nothing
 	var cdda: bool = said.size() == 3 and said[2] == "That note can't go there."
+	_click(m, at)   # with the wheel up the free stick steps nothing, and a delete stays on the wheel's level
+	_click(m, _item(m, "unnote"))
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.9, 0.0), 0.016)
+	m.sticks(Vector2.ZERO, Vector2.ZERO, 0.016)
+	m.sticks(Vector2.ZERO, Vector2(0.0, 0.9), 0.016)
+	var steps: bool = cv.levels.is_empty() and cv.zooms.is_empty() and m.pointing and m.wheel_at != Vector2.INF
+	cv.level = 1   # (the level changed some other way meanwhile)
+	_click(m, _item(m, "unnote!"))
+	cv.level = 0
+	var wheel_level: bool = steps and d.deletes.size() == 2 and d.deletes[1] == c3 and said.size() == 3
 	d.refuse = true
 	_click(m, at)
 	_click(m, _item(m, "unnote"))
@@ -474,7 +485,7 @@ func _test_notes(root: Node) -> void:
 	var keyboard: bool = dialog == [c3] and not m.note.is_open()
 	m.free()
 	var all := [plain, panel, lists, no_text, three, held, busy, sent, both, edit, kept, fresh, asked, keep, deleted, cdda,
-			refused, keyboard]
+			wheel_level, refused, keyboard]
 	_check.call(not all.has(false),
-			"vr map notes: the wheel adds, edits or deletes (asked again) a note; MapData's lists; symbol, colour, danger and radius step; 3 words at most; editing keeps the old note; no text, busy or a refusal says so; the panel takes the ray; Type only with the dialog given (%s)"
+			"vr map notes: the wheel adds, edits or deletes (asked again) a note; MapData's lists; symbol, colour, danger and radius step; 3 words at most; editing keeps the old note; no text, busy or a refusal says so; no level or zoom step with the wheel up, its picks on its own level; the panel takes the ray; Type only with the dialog given (%s)"
 			% [all])

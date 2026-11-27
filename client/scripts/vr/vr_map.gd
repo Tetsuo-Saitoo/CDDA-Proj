@@ -62,6 +62,7 @@ var dragging := false
 var marker := 1.0               # the scroll marker's opacity
 var wheel_at := Vector2.INF     # the open wheel's middle on the sheet (m, sheet frame); INF: none
 var wheel_cell := Vector2i.MAX
+var wheel_z := 0                # the level the wheel was opened on (its picks act there)
 var hover := -1                 # the wheel item pointed at, -1 none
 var named := Vector2i.MAX       # the cell whose name shows, MAX none
 var _p: Variant = null          # where the ray meets the sheet's plane (sheet frame), or null
@@ -242,9 +243,10 @@ func release() -> bool:
 		var v: Variant = items[hover]["value"] if hover >= 0 and hover < items.size() else null
 		var mid := wheel_at
 		var on := wheel_cell
+		var z := wheel_z
 		_close_wheel()   # (empties items)
 		if v != null:
-			_choose(v, mid, on)
+			_choose(v, mid, on, z)
 		return true
 	var c := _cell_at(at)
 	if c != Vector2i.MAX:
@@ -259,8 +261,11 @@ func sticks(off: Vector2, free: Vector2, delta: float) -> void:
 		return
 	var o := _dead(off)
 	if o != Vector2.ZERO and not dragging:
+		_close_wheel()   # the map moves away from the wheel's spot
 		_call("pan_px", [Vector2(-o.x, o.y) * PAN_PX_S * delta])
-	var l := free.length() if pointing and free.is_finite() and not note.is_open() else 0.0
+	# No zoom or level step with the wheel or the note panel up: their cell stays the one picked.
+	var l := free.length() if pointing and free.is_finite() and not note.is_open() and wheel_at == Vector2.INF \
+			else 0.0
 	if l < STEP_OFF:
 		_stick_armed = true
 	elif _stick_armed and l > STEP_ON:
@@ -273,6 +278,7 @@ func sticks(off: Vector2, free: Vector2, delta: float) -> void:
 
 ## The off hand's stick click: back to the player's cell and level.
 func centre() -> void:
+	_close_wheel()
 	_call("center_on_player", [])
 
 
@@ -308,21 +314,22 @@ static func to_px(p: Variant) -> Vector2:
 	return Vector2((v.x / SHEET_M.x + 0.5) * PX.x, (0.5 - v.y / SHEET_M.y) * PX.y)
 
 
-func _choose(v: Variant, mid: Vector2, c: Vector2i) -> void:
+## Wheel item `v` picked, the wheel having been at `mid` for cell `c` on level `z`.
+func _choose(v: Variant, mid: Vector2, c: Vector2i, z: int) -> void:
 	if v == "centre":   # that spot to the sheet's middle
 		_call("pan_px", [Vector2(PX) * 0.5 - to_px(mid)])
 	elif v == "close":
 		close()
 	elif v == "note":   # slice 2: the note panel for that cell (its note, if any, to edit; its colour as a code)
-		var n := _note_of(c).duplicate()
+		var n := _note_of(c, z).duplicate()
 		if n.has("color"):
 			var code: Variant = _data_call("note_color_code", [n["color"]]) if n["color"] is Color else n["color"]
 			n["color"] = code if code is String else ""
-		note.open(c, _level(), _name_of(c), n, open_note_dialog.is_valid())
+		note.open(c, z, _name_of(c), n, open_note_dialog.is_valid())
 	elif v == "unnote":   # asked again first: deleting can't be undone
 		_open_wheel(mid, c, [{"text": "Delete it", "value": "unnote!"}, {"text": "Keep it", "value": "keep"}])
 	elif v == "unnote!":
-		_send("delete_note", [Vector3i(c.x, c.y, _level())])
+		_send("delete_note", [Vector3i(c.x, c.y, z)])
 
 
 ## The note panel's answer: save sends the note through MapData (CDDA decides; a refusal comes as `said`), cancel
@@ -350,7 +357,7 @@ func _note_click(what: String) -> void:
 ## The wheel's items for cell `c`: its note added, or edited and deleted.
 func _items_for(c: Vector2i) -> Array[Dictionary]:
 	var out: Array[Dictionary] = [{"text": "Centre here", "value": "centre"}]
-	if _note_of(c).is_empty():
+	if _note_of(c, wheel_z).is_empty():
 		out.append({"text": "Add note", "value": "note"})
 	else:
 		out.append({"text": "Edit note", "value": "note"})
@@ -404,8 +411,8 @@ func _data_call(m: String, args: Array) -> Variant:
 
 
 ## Cell `c`'s note on the shown level (MapData.info's "note": {text, symbol, color, danger, radius}), {} none.
-func _note_of(c: Vector2i) -> Dictionary:
-	var r: Variant = _data_call("info", [c, _level()])
+func _note_of(c: Vector2i, z: int) -> Dictionary:
+	var r: Variant = _data_call("info", [c, z])
 	var n: Variant = (r as Dictionary).get("note") if r is Dictionary else null
 	return n if n is Dictionary else {}
 
@@ -452,6 +459,7 @@ func _wheel_item(p: Variant) -> int:
 func _open_wheel(at: Vector2, c: Vector2i, list: Array[Dictionary] = []) -> void:
 	wheel_at = at
 	wheel_cell = c
+	wheel_z = _level()
 	items = list if not list.is_empty() else _items_for(c)
 	items = items.slice(0, MAX_ITEMS)
 	var n := items.size()

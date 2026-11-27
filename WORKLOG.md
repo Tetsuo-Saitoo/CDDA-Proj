@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — VR map notes follow-up (lead-qa's note): with the wheel up the free stick no longer changes the level or zooms, and the wheel's picks act on the level it was opened on.
 - 2026-11-26 — VR map notes (lead-vr, slice 2): a place's wheel adds, edits or deletes a note; the note panel picks symbol, colour, danger with radius and up to 3 words; the game's refusal is flashed. Not tried in a headset yet.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
