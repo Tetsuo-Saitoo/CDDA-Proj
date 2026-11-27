@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-27 — Map read: a note's danger is its own mark; a plain note inside another note's danger radius no longer reads as dangerous.
 - 2026-11-26 — Map notes, bridge side (slice 2): `queue_overmap` adds, changes and deletes a note on a map cell, also while paused, answered by a `map_result` event; text cleaned and capped to 450 columns, refused where no overmap exists yet. Text from game data has its colour tags removed in one bounded pass.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
