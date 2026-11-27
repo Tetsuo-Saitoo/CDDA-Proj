@@ -93,6 +93,7 @@ var work := VehicleWorkSession.new()   # C6: the work flow behind work_view and 
 var _work_uid := 0                       # the vehicle the flat work view was opened on
 var map_data := MapData.new()   # G5: the map's pages, for the screen map and VR's held map (lead-vr)
 var map_view: MapView           # M: the map (flat screen)
+var note_dialog: MapNoteDialog  # G5 slice 2 in VR: the flat note dialog on the VR panel (VrMap.open_note_dialog)
 var pour := PourHold.new()        # E with a liquid in hand: a tap uses, a hold pours
 var cheat_panel: CheatPanel       # the F1 menu's Cheats page (K7)
 var mood_cue: MoodCue             # the mood's screen tint (G1), under the HUD
@@ -838,6 +839,13 @@ func _start_vr() -> void:
 		text_dock.reparent(panel, false)   # ... and the other text fields get them from the dock
 		text_dock.auto = true
 		text_dock.ui_scale = PANEL_UI_SCALE
+		if "open_note_dialog" in vr.map:   # G5 slice 2: VR's map notes a cell with the flat dialog, typed on the dock
+			note_dialog = MapNoteDialog.new()
+			note_dialog.data = map_data
+			panel.add_child(note_dialog)
+			panel.move_child(note_dialog, request_ui.get_index())   # under CDDA's prompts
+			PanelFit.apply(note_dialog, PANEL_UI_SCALE)
+			vr.map.open_note_dialog = func(cell: Vector3i) -> void: note_dialog.open_on(cell)
 	if vr.has_signal("ui_asked"):   # the VR menu's rows for the F1 menu and the Tab view
 		vr.connect("ui_asked", open_ui)
 	print("VR on: %s" % vr.settings)
@@ -922,6 +930,7 @@ func _start_live() -> void:
 	live.vehicle_work.connect(work.on_read)   # C6: the work read
 	map_data.live = live
 	live.overmap.connect(map_data.on_page)   # G5: a map page
+	live.events_arrived.connect(map_data.on_events)   # G5 slice 2: map_result, the answer to a note write
 	live.events_arrived.connect(work.on_events)   # C6: the work action's work_result
 	live.state_changed.connect(func(s: String) -> void:
 		if s != "running":

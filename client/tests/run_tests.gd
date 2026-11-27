@@ -89,6 +89,7 @@ func _initialize() -> void:
 	preload("res://tests/cargo_tests.gd").new().run(root, _check, data)
 	preload("res://tests/vehicle_work_tests.gd").new().run(root, _check, data)
 	preload("res://tests/map_tests.gd").new().run(root, _check)
+	preload("res://tests/map_note_tests.gd").new().run(root, _check)
 	preload("res://tests/work_camera_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/part_copy_tests.gd").new().run(root, _check, data, tables)
 	preload("res://tests/aim_tests.gd").new().run(root, _check, data, tables)

@@ -19,6 +19,7 @@ const GLYPH_BACK := 0.22      # how bright a cell's colour is behind its glyph
 const PATH := Color(1.0, 0.85, 0.3, 0.9)
 const DANGER := Color(1.0, 0.1, 0.1, 0.22)
 const PLAYER := Color(1.0, 1.0, 1.0)
+const CURSOR := Color(1.0, 1.0, 1.0, 0.9)
 const OUTLINE := Color(0.0, 0.0, 0.0, 0.85)
 ## How bright a cell is by CDDA's vision level (0 unseen .. 4 full).
 const SHADE := [0.0, 0.5, 0.65, 0.82, 1.0]
@@ -39,6 +40,9 @@ var cell_px := 20.0
 ## The map point (in cells; a cell's middle is its x + 0.5) at the canvas's middle.
 var middle := Vector2(0.5, 0.5)
 
+## The picked cell on the shown level (pick); has_cursor false: none.
+var cursor := Vector2i.ZERO
+var has_cursor := false
 var _textures := {}   # Vector3i page origin -> [MapData.Page, ImageTexture]
 
 
@@ -95,6 +99,13 @@ func change_level(dz: int) -> void:
 
 
 ## Back to the player's cell and level.
+## Picks cell `c` on the shown level (MapView: a click; its note dialog writes there): drawn as a box.
+func pick(c: Vector2i) -> void:
+	cursor = c
+	has_cursor = true
+	queue_redraw()
+
+
 func center_on_player() -> void:
 	if data == null or not data.has_player:
 		return
@@ -173,6 +184,8 @@ func _draw() -> void:
 	for pg: MapData.Page in shown:
 		_draw_notes(pg, glyphs, font, fsize)
 	_draw_path()
+	if has_cursor:
+		draw_rect(Rect2(to_px(Vector2(cursor)), Vector2.ONE * cell_px), CURSOR, false, 2.0)
 	_draw_player()
 
 

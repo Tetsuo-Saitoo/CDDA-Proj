@@ -73,6 +73,7 @@ var _work_uid := 0   # the vehicle _work_query asked about
 var _work_tag := 0   # the last vehicle_work action's tag (1..2^31-1, wraps)
 var _map_query := 0          # G5: the map page waiting for its result (0 none), when asked, and its origin
 var _map_asked := 0
+var _map_tag := 0            # G5 slice 2: the last tag a map write carried
 var _map_origin := Vector3i.ZERO
 const MAX_QUERIES := 8          # the bridge refuses more pending ones
 const MAX_PART_LEN := 32   # consume's body part id (the bridge's cap)
@@ -680,6 +681,40 @@ func query_overmap(origin: Vector3i, with_path := false) -> int:
 ## Whether the bridge answers the map read (an older DLL doesn't: the map says it isn't connected).
 func has_overmap() -> bool:
 	return _can("query_overmap")
+
+
+## Map slice 2 (docs/MAP.md): writes or replaces CDDA's note on `cell` (absolute OMT): `text` as MapData.clean_note
+## leaves it, `symbol` and `color` as MapData checks them, the danger mark and its radius (0 when not dangerous).
+## CDDA answers with one `map_result` event carrying the tag returned; 0 when refused before it was queued.
+func queue_map_note(cell: Vector3i, text: String, symbol: String, color: String, danger: bool, radius: int) -> int:
+	if not MapData.ok_cell(cell) or text.is_empty() or text != MapData.clean_note(text) or not MapData.ok_symbol(symbol) \
+			or MapData.note_color_index(color) < 0 or radius < 0 or radius > MapData.MAX_DANGER_RADIUS \
+			or (radius > 0 and not danger):
+		return 0
+	return _queue_map({"cmd": "note", "omt": [cell.x, cell.y, cell.z], "text": text, "sym": symbol, "color": color,
+			"danger": danger, "radius": radius})
+
+
+## Deletes CDDA's note on `cell`; answered as queue_map_note is.
+func queue_map_unnote(cell: Vector3i) -> int:
+	if not MapData.ok_cell(cell):
+		return 0
+	return _queue_map({"cmd": "unnote", "omt": [cell.x, cell.y, cell.z]})
+
+
+## Whether the bridge takes the map's writes (an older DLL doesn't).
+func can_map_notes() -> bool:
+	return _can("queue_overmap")
+
+
+func _queue_map(d: Dictionary) -> int:
+	if not _can("queue_overmap"):
+		return 0
+	_map_tag = _map_tag % MapData.MAX_TAG + 1
+	d["tag"] = _map_tag
+	if _sim.queue_overmap(d) != true:
+		return 0
+	return _map_tag
 
 
 func overmap_pending() -> bool:

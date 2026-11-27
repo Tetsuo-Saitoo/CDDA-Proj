@@ -3,7 +3,9 @@ extends SceneTree
 ## in live mode starts the test range, M opens the map (MapView), and the pages come from the bridge's
 ## query_overmap: the player's cell is fully seen and named (and the line under the map names it), the player has
 ## no destination, a page far away reads as all unseen, PgUp shows the next level, and Esc closes the map and drops
-## its pages. Skips (passing) on a bridge without query_overmap. Uses this run's own CDDA folder.
+## its pages. Slice 2: a note added next to the player reads back, is edited, capped, cleaned and deleted (skipped
+## on a bridge without queue_overmap). Skips (passing) on a bridge without query_overmap. Uses this run's own CDDA
+## folder.
 ## Needs the DLL (build target fp3d-cdda) and the game data (../cdda). ~1 min. From the repo root:
 ##   godot --headless --path client --script res://tests/map_live_test.gd -- --live
 ## Exit code 0 = all passed.
@@ -12,6 +14,7 @@ const Main := preload("res://scripts/main.gd")
 const TestDir := preload("res://tests/test_dir.gd")
 const BOOT_TIMEOUT_MS := 300000
 const READ_TIMEOUT_MS := 60000
+const WRITE_TIMEOUT_MS := 15000
 const FAR_CELLS := 4096   # well past what the range's world has generated
 
 var _failed := 0
@@ -56,6 +59,7 @@ func _run() -> void:
 		_stop()
 		return
 	await _map_checks()
+	await _note_checks()
 	_stop()
 
 
@@ -96,6 +100,63 @@ func _map_checks() -> void:
 	await _frames(2)
 	_check(not mv.visible and not md.is_open() and md.page(Vector3i(me.x - posmod(me.x, 32), me.y - posmod(me.y, 32),
 			me.z)) == null, "M again closes it and drops its pages")
+
+
+## Slice 2: a note written next to the player through MapData (the calls the dialog and VR's wheel make) reads back
+## as CDDA keeps it; an edit replaces it; overlong text is capped; control characters and colour tags are gone; a
+## delete removes it; a second delete is refused with CDDA's sentence.
+func _note_checks() -> void:
+	if not _live.can_map_notes():
+		print("  skip  the bridge has no queue_overmap yet: the note checks need lead-bridge's writes")
+		return
+	var md := _main.map_data
+	var mv := _main.map_view
+	root.push_input(_key_of(&"map"))
+	await _frames(2)
+	var me := md.player_cell
+	var cell := Vector3i(me.x + 1, me.y, me.z)
+	var at := Vector2i(cell.x, cell.y)
+	await _until(func() -> bool: return md.page(MapData.page_origin(cell)) != null, READ_TIMEOUT_MS)
+	var said := []
+	md.note_done.connect(func(tag: int, ok: bool, text: String) -> void: said.append([tag, ok, text]))
+	var note_of := func() -> Dictionary: return md.info(at, cell.z).get("note", {})
+	# add
+	var tag := md.set_note(cell, "<color_red>Cache</color>" + char(7) + " here: north;side", "C", "R", true, 3)
+	var done := await _until(func() -> bool: return said.size() == 1, WRITE_TIMEOUT_MS)
+	var back := await _until(func() -> bool: return note_of.call().get("text") == "Cache here: north;side",
+			READ_TIMEOUT_MS)
+	var n: Dictionary = note_of.call()
+	_check(tag > 0 and done and said[0][1] and back and n.get("symbol") == "C" and n.get("danger") == true
+			and MapData.note_color_code(n.get("color", Color.BLACK)) == "R" and n.get("radius") == 3,
+			"a note added at %s reads back as written (colour tags and control characters out): %s %s" % [cell, n, said])
+	mv._hover = mv.canvas.to_px(Vector2(at) + Vector2(0.5, 0.5))
+	_check(mv.info_text().contains("Note (danger): Cache here: north;side"), "the line under the map shows it: "
+			+ mv.info_text())
+	# edit
+	tag = md.set_note(cell, "Cache moved", "!", "G", false, 0)
+	done = await _until(func() -> bool: return said.size() == 2, WRITE_TIMEOUT_MS)
+	back = await _until(func() -> bool: return note_of.call().get("text") == "Cache moved", READ_TIMEOUT_MS)
+	n = note_of.call()
+	_check(tag > 0 and done and said[1][1] and back and n.get("symbol") == "!" and n.get("danger") == false
+			and MapData.note_color_code(n.get("color", Color.BLACK)) == "G", "the note edited reads back: %s" % [n])
+	# overlong
+	tag = md.set_note(cell, "x".repeat(MapData.MAX_NOTE + 150))
+	done = await _until(func() -> bool: return said.size() == 3, WRITE_TIMEOUT_MS)
+	back = await _until(func() -> bool: return (note_of.call().get("text", "") as String).begins_with("xxx"),
+			READ_TIMEOUT_MS)
+	_check(tag > 0 and done and back and (note_of.call().get("text", "") as String).length() == MapData.MAX_NOTE,
+			"overlong text is capped at %d" % MapData.MAX_NOTE)
+	# delete, then again
+	tag = md.delete_note(cell)
+	done = await _until(func() -> bool: return said.size() == 4, WRITE_TIMEOUT_MS)
+	back = await _until(func() -> bool: return note_of.call().is_empty(), READ_TIMEOUT_MS)
+	_check(tag > 0 and done and said[3][1] and back, "the note deleted is gone (%s)" % [said.back()])
+	tag = md.delete_note(cell)
+	done = await _until(func() -> bool: return said.size() == 5, WRITE_TIMEOUT_MS)
+	_check(tag > 0 and done and not said[4][1] and not (said[4][2] as String).is_empty(),
+			"deleting it again is refused with CDDA's sentence: %s" % [said.back()])
+	root.push_input(_key_of(&"map"))
+	await _frames(2)
 
 
 func _stop() -> void:
