@@ -163,6 +163,7 @@ Each line: **ID — task.** Done-when. *(depends on)*
   *(B2)*
 - **E4 — 3D placement.** Construction ghosts, zone painting, moving furniture, vehicle construction view.
 - **E5 — Accessibility.** Text size, colour-blind palettes, FOV/motion options, hold vs toggle.
+- **Mouse = two hands (user, 2026-11-27).** First person keeps the mouse captured; holding a key (proposed Space) shows the cursor. Left click = left hand, right click = right hand: attack with a weapon, punch or grab/carry when empty, use a held tool or container on what you face, like VR's two controllers. *(E6, F, L2)*
 - **E6 — Hands for mouse and keyboard (user, 2026-11-09).** The flat screen gets as close to VR's hands as it
   can, on the same one-item bridge actions as L8/L9 (no separate rules): the crosshair picks one item, not
   just the pile; E takes the item you look at (hold E: its other actions), a quick key puts it straight into
