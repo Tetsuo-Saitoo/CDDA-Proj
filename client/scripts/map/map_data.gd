@@ -7,6 +7,8 @@ extends RefCounted
 ## decides what was seen; this only asks, checks what comes back and keeps it.
 
 signal changed
+## Slice 2: a note write (set_note / delete_note, its tag) was answered: done, or refused with CDDA's sentence.
+signal note_done(tag: int, ok: bool, text: String)
 
 const PAGE := 32
 const CELLS := PAGE * PAGE
@@ -37,6 +39,23 @@ const SQUARES_PER_CELL := 24   # map squares on an OMT's side (2 submaps)
 const RETRY_MS := 5000         # a page that failed is asked again after this
 const NO_BRIDGE := "The map isn't connected to the game yet."
 const ERRORS := ["internal", "too large"]
+## Slice 2, notes. The symbols the note dialog and VR's wheel offer: CDDA reads back any printable ASCII character but
+## ':' and ';' (its prefix marks) as a note's glyph; these are the usual ones.
+const NOTE_SYMBOLS := "N!X*+$#?@&%=^~"
+## CDDA's note colours (color_by_string_map, and its default Y first): [code sent, label, colour].
+const NOTE_COLORS := [
+	["Y", "yellow", Color("#ffff00")], ["R", "red", Color("#ff0000")], ["r", "light red", Color("#ff9696")],
+	["G", "green", Color("#006e00")], ["g", "light green", Color("#00ff00")], ["B", "blue", Color("#0000c8")],
+	["b", "light blue", Color("#6464ff")], ["C", "cyan", Color("#0096b4")], ["c", "light cyan", Color("#00f0ff")],
+	["P", "pink", Color("#fe00fe")], ["m", "magenta", Color("#8b3a62")], ["W", "white", Color("#ffffff")],
+	["lg", "light gray", Color("#969696")], ["dg", "dark gray", Color("#636363")], ["br", "brown", Color("#5c3317")],
+]
+const MAX_DANGER_RADIUS := 20   # CDDA's own range for a danger mark ("Danger radius in overmap squares? (0-20)")
+const MAX_TAG := 2147483647
+const MAX_EVENTS := 256         # events looked at in one batch
+const WRITE_TIMEOUT_MS := 10000
+const NO_ANSWER := "The game didn't answer."
+const REFUSED := "The game refused it."
 
 
 ## One page as read: cells row by row (index ly * PAGE + lx).
@@ -73,6 +92,9 @@ var _stale := {}                      # origin -> _seq when marked to read again
 var _seq := 0
 var _asked_seq := 0                   # _seq when the page out was asked
 var _failed := {}                     # origin -> msec it failed
+var _write_tag := 0                   # the note write out (0 none)
+var _write_cell := Vector3i.ZERO
+var _write_at := 0                    # msec it went out
 
 
 ## A view opened: pages are read from now (reference-counted: the screen map and VR's map may both be open).
@@ -117,6 +139,8 @@ func reset() -> void:
 	path.clear()
 	destination = null
 	note = ""
+	if _write_tag > 0:
+		_finish_write(false, NO_ANSWER)
 	changed.emit()
 
 
@@ -225,6 +249,8 @@ func reading() -> bool:
 func follow(snap: Snapshot) -> void:
 	if snap == null:
 		return
+	if _write_tag > 0 and Time.get_ticks_msec() - _write_at > WRITE_TIMEOUT_MS:
+		_finish_write(false, NO_ANSWER)
 	var c := cell_of_square(snap.player_pos)
 	if has_player and c == player_cell:
 		_ask_next()   # a page that failed is asked again once its wait is over
@@ -267,6 +293,104 @@ func on_page(r: Dictionary) -> void:
 	_evict()
 	changed.emit()
 	_ask_next()
+
+
+## Slice 2: writes or replaces the note on `cell` (absolute OMT, z the level; an edit is a write over the old one):
+## `text` (clean_note: plain, one line, capped at MAX_NOTE; empty refused), `symbol` (ok_symbol), `color` (a
+## NOTE_COLORS code), the danger mark and its radius (0..MAX_DANGER_RADIUS). CDDA checks it all again. Returns the
+## tag note_done will carry, or 0 when refused here (not connected, a write already out, bad input).
+func set_note(cell: Vector3i, text: String, symbol := "N", color := "Y", danger := false, radius := 0) -> int:
+	var t := clean_note(text)
+	if t.is_empty() or not ok_symbol(symbol) or note_color_index(color) < 0 or radius < 0 \
+			or radius > MAX_DANGER_RADIUS or not can_write() or not ok_cell(cell):
+		return 0
+	return _sent(live.queue_map_note(cell, t, symbol, color, danger, radius if danger else 0), cell)
+
+
+## Deletes the note on `cell`. The tag note_done will carry, or 0 when refused here.
+func delete_note(cell: Vector3i) -> int:
+	if not can_write() or not ok_cell(cell):
+		return 0
+	return _sent(live.queue_map_unnote(cell), cell)
+
+
+## Whether a note write is out (its note_done hasn't come yet).
+func writing() -> bool:
+	return _write_tag > 0
+
+
+## Whether a note can be written now: the bridge takes notes and none is out.
+func can_write() -> bool:
+	return live != null and live.can_map_notes() and not writing()
+
+
+func _sent(tag: int, cell: Vector3i) -> int:
+	if tag > 0:
+		_write_tag = tag
+		_write_cell = cell
+		_write_at = Time.get_ticks_msec()
+	return tag
+
+
+## LiveSession.events_arrived: the `map_result` for the write out (contracts/events.md; `detail` its tag, `amount`
+## 1 done or 0 refused, `text` CDDA's sentence). Done reads the cell's page again, so the note shows as CDDA keeps it.
+func on_events(events: Array) -> void:
+	if _write_tag == 0:
+		return
+	for i in mini(events.size(), MAX_EVENTS):
+		var ev: Variant = events[i]
+		if not ev is Dictionary or (ev as Dictionary).get("kind") != "map_result":
+			continue
+		var d: Dictionary = ev
+		if _int(d.get("detail"), 1, MAX_TAG) != _write_tag:
+			continue
+		var ok: bool = _int(d.get("amount"), 0, 1) == 1
+		var said := "" if ok else _text(d.get("text"), MAX_NOTE).strip_edges()
+		_finish_write(ok, said if ok or not said.is_empty() else REFUSED)
+		return
+
+
+func _finish_write(ok: bool, said: String) -> void:
+	var tag := _write_tag
+	_write_tag = 0
+	if ok and _users > 0:
+		_mark(page_origin(_write_cell))
+		_ask_next()
+	note_done.emit(tag, ok, said)
+
+
+## A note's text as sent: plain (colour tags and control characters out; line breaks and tabs are spaces), on one
+## line, capped at MAX_NOTE, trimmed.
+static func clean_note(text: String) -> String:
+	for brk: String in [char(13) + char(10), char(10), char(13), char(9)]:
+		text = text.replace(brk, " ")
+	return _text(text, MAX_NOTE).strip_edges()
+
+
+## A note symbol CDDA reads back as written: one printable ASCII character, not ':' or ';'.
+static func ok_symbol(s: String) -> bool:
+	return s.length() == 1 and s.unicode_at(0) >= 0x21 and s.unicode_at(0) <= 0x7E and s != ":" and s != ";"
+
+
+## The index in NOTE_COLORS of colour code `code`, -1 when it isn't one.
+static func note_color_index(code: String) -> int:
+	for i in NOTE_COLORS.size():
+		if NOTE_COLORS[i][0] == code:
+			return i
+	return -1
+
+
+## The NOTE_COLORS code of a note's colour as read ("Y", CDDA's default, when none matches).
+static func note_color_code(c: Color) -> String:
+	for e: Array in NOTE_COLORS:
+		if (e[2] as Color).is_equal_approx(c):
+			return e[0]
+	return "Y"
+
+
+## Whether `cell` (absolute OMT) is inside the bridge's bounds.
+static func ok_cell(cell: Vector3i) -> bool:
+	return absi(cell.x) <= MAX_XY and absi(cell.y) <= MAX_XY and cell.z >= Z_MIN and cell.z <= Z_MAX
 
 
 func _evict() -> void:

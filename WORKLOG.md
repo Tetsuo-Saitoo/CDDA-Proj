@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-26 — Map slice 2, screen side: notes (MapData.set_note / delete_note, map_result, the note dialog on N / D / a double click, VR's hook to it); waits for lead-bridge's queue_overmap.
 - 2026-11-26 — Map slice 1 (read-only 2D map, flat screen and VR) merged and pushed: main c54ca44, fork 6de111d; all suites green. Not looked at on a real screen or in a headset yet.
 - 2026-11-26 — Furniture: a toilet in a stall or a small bathroom with its door in front now faces the door instead of a side wall.
 - 2026-11-26 — Map follows lead-bridge's newer read (fork 6de111d / root 86ba6e7): danger radius up to 180, drawn also from read pages off screen; a seen cell whose look was left out shows grey, "Something".
