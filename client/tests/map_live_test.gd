@@ -140,20 +140,33 @@ func _note_checks() -> void:
 	_check(tag > 0 and done and said[1][1] and back and n.get("symbol") == "!" and n.get("danger") == false
 			and MapData.note_color_code(n.get("color", Color.BLACK)) == "G", "the note edited reads back: %s" % [n])
 	# overlong
-	tag = md.set_note(cell, "x".repeat(MapData.MAX_NOTE + 150))
+	tag = md.set_note(cell, "x".repeat(MapData.MAX_NOTE + 150))   # cut here to MAX_NOTE_TEXT
 	done = await _until(func() -> bool: return said.size() == 3, WRITE_TIMEOUT_MS)
 	back = await _until(func() -> bool: return (note_of.call().get("text", "") as String).begins_with("xxx"),
 			READ_TIMEOUT_MS)
-	_check(tag > 0 and done and back and (note_of.call().get("text", "") as String).length() == MapData.MAX_NOTE,
-			"overlong text is capped at %d" % MapData.MAX_NOTE)
+	_check(tag > 0 and done and back and (note_of.call().get("text", "") as String).length() == MapData.MAX_NOTE_TEXT,
+			"overlong text is capped at %d" % MapData.MAX_NOTE_TEXT)
+	# the fork's own cleaning, past the client's: control characters out, the note cut at 450 with its prefix
+	tag = 2147483000
+	var raw := "C:R;a" + char(7) + char(10) + "b" + "y".repeat(600)
+	var queued: bool = _live._sim.queue_overmap({"cmd": "note", "omt": [cell.x, cell.y, cell.z], "text": raw,
+			"danger": false, "tag": tag}) == true
+	md._sent(tag, cell)   # MapData waits for its map_result and reads the page again, as for its own writes
+	done = await _until(func() -> bool: return said.size() == 4, WRITE_TIMEOUT_MS)
+	back = await _until(func() -> bool: return (note_of.call().get("text", "") as String).begins_with("aby"),
+			READ_TIMEOUT_MS)
+	n = note_of.call()
+	_check(queued and done and back and (n.get("text", "") as String).length() == MapData.MAX_NOTE - 4
+			and n.get("symbol") == "C", "the fork strips control characters and cuts the note at %d with its prefix "
+			% MapData.MAX_NOTE + "(%d)" % (n.get("text", "") as String).length())
 	# delete, then again
 	tag = md.delete_note(cell)
-	done = await _until(func() -> bool: return said.size() == 4, WRITE_TIMEOUT_MS)
-	back = await _until(func() -> bool: return note_of.call().is_empty(), READ_TIMEOUT_MS)
-	_check(tag > 0 and done and said[3][1] and back, "the note deleted is gone (%s)" % [said.back()])
-	tag = md.delete_note(cell)
 	done = await _until(func() -> bool: return said.size() == 5, WRITE_TIMEOUT_MS)
-	_check(tag > 0 and done and not said[4][1] and not (said[4][2] as String).is_empty(),
+	back = await _until(func() -> bool: return note_of.call().is_empty(), READ_TIMEOUT_MS)
+	_check(tag > 0 and done and said[4][1] and back, "the note deleted is gone (%s)" % [said.back()])
+	tag = md.delete_note(cell)
+	done = await _until(func() -> bool: return said.size() == 6, WRITE_TIMEOUT_MS)
+	_check(tag > 0 and done and not said[5][1] and not (said[5][2] as String).is_empty(),
 			"deleting it again is refused with CDDA's sentence: %s" % [said.back()])
 	root.push_input(_key_of(&"map"))
 	await _frames(2)
