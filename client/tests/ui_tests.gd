@@ -1455,9 +1455,10 @@ func _test_hints() -> void:
 	var evil := Hints.new()
 	evil.path = path
 	var why := evil.load_file()
-	_check.call(why.contains("Object(") and evil.enabled and evil.seen.is_empty(),
+	_check.call(why.contains("Object") and evil.enabled and evil.seen.is_empty(),
 			"hints: a file with Object( is ignored (%s)" % why)
 	evil.free()
+	_settings_forms(path, dir.path("hotbar_forms.cfg"), dir.path("hud_forms.cfg"))
 	f = FileAccess.open(path, FileAccess.WRITE)
 	f.store_string("#".repeat(Hints.MAX_FILE_BYTES + 1))
 	f.close()
@@ -1468,6 +1469,48 @@ func _test_hints() -> void:
 
 
 ## The VR hints (lead-vr) in Hints: their own ids beside the flat ones, in the same file.
+## Settings files (hints.cfg, hotbar.cfg, hud.cfg) naming an object or a resource are not parsed, however the name is
+## spaced from its "(" (lead-qa, 2026-11-27); the game's own files still read.
+func _settings_forms(hints_path: String, hotbar_path: String, hud_path: String) -> void:
+	var forms := ["Object (RefCounted)", "Object\t(RefCounted)", "Object;c\n(RefCounted)",
+			"Resource (\"res://nowhere.tres\")", "ExtResource ( \"1\" )", "SubResource(\"x\")"]
+	var refused: Array = []
+	for form: String in forms:
+		var word := "Object" if form.begins_with("Object") else "Resource"
+		_write_text(hints_path, "[hints]\nenabled=false\nseen=[%s]\n" % form)
+		var h := Hints.new()
+		h.path = hints_path
+		var hw := h.load_file()
+		var hints_no: bool = hw.contains(word) and h.enabled and h.seen.is_empty()
+		h.free()
+		_write_text(hotbar_path, "[hotbar]\nslots=[%s]\n" % form)
+		var b := Hotbar.new()
+		b.path = hotbar_path
+		var bw := b.load_file()
+		var bar_no: bool = bw.contains(word) and b.slots.size() == Hotbar.SLOTS and b.slots[0] == ""
+		b.free()
+		_write_text(hud_path, "[debug]\ncheats=true\n[compass]\nopacity=%s\n" % form)
+		var s := HudSettings.new()
+		var sw := s.load_file(hud_path)
+		var hud_no: bool = sw.contains(word) and not s.debug_cheats
+		refused.append(hints_no and bar_no and hud_no)
+	_write_text(hints_path, "[hints]\nenabled=false\nseen=[\"start\"]\n")
+	var good := Hints.new()
+	good.path = hints_path
+	var reads: bool = good.load_file() == "" and not good.enabled and good.seen.keys() == ["start"] \
+			and UserFiles.cfg_refusal("[hud]\nkey_help=true\n") == "" and UserFiles.cfg_refusal("a=\"object\"") == ""
+	good.free()
+	_check.call(not refused.has(false) and reads, "settings files: one naming an object or a resource is not parsed, "
+			+ "however spaced (space, tab, a ; comment before the bracket); the game's own still read (%s, %s)"
+			% [refused, reads])
+
+
+func _write_text(path: String, text: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
+
+
 func _test_hints_vr() -> void:
 	var path: String = preload("res://tests/test_dir.gd").path("hints_vr.cfg")
 	_check.call(Hints.text_of("") == "" and Hints.text_of("nope") == "" and Hints.text_of("vr_x") == ""

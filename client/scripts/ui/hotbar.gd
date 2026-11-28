@@ -4,8 +4,8 @@ extends HBoxContainer
 ## 2 are the hand strikes) put into the main hand. The key takes the first carried item of the slot's type that is
 ## neither worn nor already in the main hand (ItemActions.hold, CDDA's wield). In the Tab view the key, with one item
 ## selected, puts that item's type in the slot (the same type again empties it; a type sits in one slot only).
-## Slots hold CDDA item type ids, saved in user://hotbar.cfg; the file is treated as hostile (size cap, no
-## Object(...), each id checked). The bar sits at the bottom centre while a slot is set or the Tab view is open:
+## Slots hold CDDA item type ids, saved in user://hotbar.cfg; the file is treated as hostile (size cap,
+## UserFiles.cfg_refusal, each id checked). The bar sits at the bottom centre while a slot is set or the Tab view is open:
 ## each slot's key and short name, dim when none is carried, bright when one is in the main hand.
 
 const SLOTS := 8
@@ -77,9 +77,9 @@ func load_file() -> String:
 	if f.get_length() > MAX_FILE_BYTES:
 		return "%s is over %d bytes" % [path, MAX_FILE_BYTES]
 	var text := f.get_as_text()
-	for bad: String in ["Object(", "Resource(", "ExtResource(", "SubResource("]:
-		if bad in text:
-			return "%s has %s, ignored" % [path, bad]
+	var bad := UserFiles.cfg_refusal(text)
+	if not bad.is_empty():
+		return "%s has %s, ignored" % [path, bad]
 	var cfg := ConfigFile.new()
 	if cfg.parse(text) != OK:
 		return "%s doesn't parse" % path

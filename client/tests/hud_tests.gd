@@ -61,7 +61,7 @@ func _test_feed_filter() -> void:
 			and (m.feed_checks["warning"] as CheckBox).tooltip_text.contains("monster"),
 			"feed filter: every group shown by default; the F1 boxes hide and show groups and save them")
 	var f := FileAccess.open(path, FileAccess.WRITE)
-	f.store_string("[feed]\nhide=[1, \"bad\", \"bad\", \"Object\", null, \"warning\"]\n")
+	f.store_string("[feed]\nhide=[1, \"bad\", \"bad\", \"Something\", null, \"warning\"]\n")
 	f.close()
 	var odd := HudSettings.new()
 	odd.load_file(path)
