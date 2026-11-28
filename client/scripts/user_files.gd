@@ -32,6 +32,16 @@ static func at(path: String) -> String:
 	return root.path_join(path.trim_prefix("user://"))
 
 
+## Why the text of a settings file (ConfigFile) must not be parsed: the word that rules it out, "" when it may be.
+## Godot's variant parser builds objects and loads resources from texts that name them; the game's own settings
+## never hold either word, so a text with "Object" or "Resource" anywhere is refused as a whole.
+static func cfg_refusal(text: String) -> String:
+	for word: String in ["Object", "Resource"]:
+		if text.contains(word):
+			return word
+	return ""
+
+
 ## The folder user files go to in a test or check run, "" in the game.
 static func test_root() -> String:
 	if not _decided:

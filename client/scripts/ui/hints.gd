@@ -5,7 +5,7 @@ extends PanelContainer
 ## the first hostile in sight, hunger or thirst, bleeding); each id shows once, ever,
 ## for SHOW_S seconds, one after another. `{action}` in a text becomes that action's first key (InputActions.key_of),
 ## so a rebound key reads right. Seen ids and the on / off switch (the F1 menu's Hints box) are kept in
-## user://hints.cfg, read as hostile: size cap, no Object(...), only known ids, a non-bool leaves hints on.
+## user://hints.cfg, read as hostile: size cap, UserFiles.cfg_refusal, only known ids, a non-bool leaves hints on.
 ## VR (lead-vr): its own ids and words (VR_TEXTS, "vr_" ids, one short line naming the button; no {action} keys), in
 ## the same seen set, file and switch; VrHint draws the one shown (text_of) in the headset, and main triggers the
 ## "vr_" ids instead of the flat ones while VR runs (VR_START on the first turn, vr_id() for due() and the others).
@@ -207,9 +207,9 @@ func load_file() -> String:
 	if f.get_length() > MAX_FILE_BYTES:
 		return "%s is over %d bytes" % [path, MAX_FILE_BYTES]
 	var text := f.get_as_text()
-	for bad: String in ["Object(", "Resource(", "ExtResource(", "SubResource("]:
-		if bad in text:
-			return "%s has %s, ignored" % [path, bad]
+	var bad := UserFiles.cfg_refusal(text)
+	if not bad.is_empty():
+		return "%s has %s, ignored" % [path, bad]
 	var cfg := ConfigFile.new()
 	if cfg.parse(text) != OK:
 		return "%s doesn't parse" % path

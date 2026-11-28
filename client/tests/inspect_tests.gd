@@ -149,7 +149,7 @@ func _test_hotbar() -> void:
 	f.close()
 	var why_bad := bad.load_file()
 	_check.call(why == "" and hb.slots == PackedStringArray(["rock", "", "", "", "hammer", "", "", ""])
-			and why_bad.contains("Object(") and bad.slots.size() == Hotbar.SLOTS and bad.slots[0] == "",
+			and why_bad.contains("Object") and bad.slots.size() == Hotbar.SLOTS and bad.slots[0] == "",
 			"hotbar: from the file only good ids, each once, 8 slots; an Object( file is ignored (%s)" % [hb.slots])
 	bad.free()
 	_view.hotbar = null

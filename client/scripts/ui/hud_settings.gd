@@ -212,10 +212,9 @@ func load_file(path := FILE) -> String:
 	if f.get_length() > MAX_FILE_BYTES:
 		return "%s is over %d bytes" % [path, MAX_FILE_BYTES]
 	var text := f.get_as_text()
-	# Godot's variant parser builds objects from "Object(...)" and loads resources: never from a file.
-	for bad: String in ["Object(", "Resource(", "ExtResource(", "SubResource("]:
-		if bad in text:
-			return "%s has %s, ignored" % [path, bad]
+	var bad := UserFiles.cfg_refusal(text)   # no objects or resources from a file
+	if not bad.is_empty():
+		return "%s has %s, ignored" % [path, bad]
 	var cfg := ConfigFile.new()
 	if cfg.parse(text) != OK:
 		return "%s doesn't parse" % path

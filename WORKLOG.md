@@ -1,6 +1,7 @@
 # WORKLOG
 
 - 2026-11-27 — Pushed: map slice 2 (notes, screen + VR + bridge, with the danger-read fix), deep water, the look-down bend, VR first-aid "treated" note, VR refuses deep water, Cheats auto-pause = F1 Time, map look fixes; main 716e8bb, fork 9451d11; all suites green.
+- 2026-11-27 — Settings files (hints, hotbar, HUD) are read more strictly (one shared check, UserFiles.cfg_refusal).
 - 2026-11-27 — Rechecked on screen with lead-bridge's fix (fork 9451d11): a plain note near a danger note no longer shows as dangerous.
 - 2026-11-27 — Map looked at on a real screen: it draws right. Fixed: the wheel zooms by its own amount, the note dialog opens away from the cell, dark note colours get a light box. A read bug (plain notes near a danger note show as dangerous) went to lead-bridge.
 - 2026-11-27 — The Cheats page's auto-pause switch now sets and saves the F1 Time setting, so the next game start no longer puts the old one back.
