@@ -1,5 +1,6 @@
 # WORKLOG
 
+- 2026-11-27 — v0.6.0 pre-release published on CDDA-Proj (Linux AppImage from main 98ed342 + fork 9451d11) after lead-qa's release review and GO; GitHub's asset digests match.
 - 2026-11-27 — Pushed: map slice 2 (notes, screen + VR + bridge, with the danger-read fix), deep water, the look-down bend, VR first-aid "treated" note, VR refuses deep water, Cheats auto-pause = F1 Time, map look fixes; main 716e8bb, fork 9451d11; all suites green.
 - 2026-11-27 — Settings files (hints, hotbar, HUD) are read more strictly (one shared check, UserFiles.cfg_refusal).
 - 2026-11-27 — Rechecked on screen with lead-bridge's fix (fork 9451d11): a plain note near a danger note no longer shows as dangerous.
