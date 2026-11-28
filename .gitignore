@@ -15,3 +15,5 @@ __pycache__/
 /client/bin/*.exp
 /client/bin/*.lib
 .serena/
+/.claude/settings.local.json
+/.claude/worktrees/
